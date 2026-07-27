@@ -18,7 +18,7 @@ SQLite хранит canonical normalized entities с integer IDs/FKs/hashes: `ra
 
 ## Editable export contract
 
-Экспорт создаёт новый путь, никогда не перезаписывает исходник. Copy должен сохранить исходные формулы, стили, merged cells, filters, comments и colors, добавить утверждённые новые колонки/значения/статусы так, чтобы файл оставался редактируемым Excel. Запись во временный файл → fsync/atomic replace нового target → reopen → manifest. Manifest связывает original hash, output hash, run coefficient, cost warnings/acknowledgements, run/rule/decision versions, добавленные/изменённые cells, rendered values и lineage; reopen сверяет это с workbook. Любая ошибка save/reopen/manifest оставляет исходник неизменным и сообщает recovery path.
+Экспорт создаёт новый путь, никогда не перезаписывает исходник. Semantic month-column resolver ищет единственную quantity/cost pair; при отсутствии column-pair builder добавляет её справа и клонирует соседний header/style/merged/width contract, при наличии переиспользует без дубликата. Nonblank destination создаёт old→new decision, который должен быть подтверждён до записи. Copy сохраняет исходные формулы, стили, merged cells, filters, comments и colors и остаётся редактируемым Excel. Запись во временный файл → fsync/atomic replace нового target → reopen → manifest. Manifest связывает original/output hashes, month pair, overwrite decisions, coefficient warnings, run/rule versions, changed cells, exact/rendered values и lineage; reopen сверяет это с workbook.
 
 ## GPT boundary
 

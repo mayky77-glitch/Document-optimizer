@@ -24,7 +24,7 @@ FR-04: Semantic unit fields are compared per source row (observed Table-2 F vers
 
 FR-05: Site has exactly two named upload zones («Дополнительный отчёт / Table 2» one XLSX; «Исходные KS / Table 1» folder/ZIP), CLI explicit report/source args, explicit stage and month/current-period validation against semantic Table 2 headers, then one review table. Every Table-1 candidate has a direct **«Учитывать»** checkbox, source lineage, contribution, recommendation/uncertainty and optional comment; totals recalculate after each change. Unresolved blocker disables export.
 
-FR-06: Export makes an editable new copy preserving formulas/styles/merged/filters/comments/colors, atomically saves, reopens and reconciles manifest/original hash.
+FR-06: Export semantically finds the selected month's quantity/cost pair, creates one styled pair at the right only when absent, and never duplicates it. Existing nonblank cells require visible old→new confirmation. Export then makes an editable new copy preserving formulas/styles/merged/filters/comments/colors, atomically saves, reopens and reconciles manifest/original hash.
 
 FR-07: Feedback memory is versioned and explicit, never model training; canonical SQLite entities use IDs/FKs/hashes, raw strings deduplicate once, active snapshot is separate from append-only audit, and reuse supports compatibility/undo/deactivate/rollback.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, ambiguous match, collisio
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, quantity/new-column destination and overwrite, automatic unit conversion, versions/stage, month/current-period semantics, freshness, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Full-precision calculation/final two-decimal rounding, J/L comparison, coefficient flow and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, automatic unit conversion, versions/stage, month/current-period semantics, formula freshness, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Semantic month-pair creation/reuse/overwrite, full-precision rounding, J/L comparison, coefficient flow and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 
