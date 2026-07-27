@@ -16,7 +16,7 @@ Site presents exactly two upload zones: «Дополнительный отчё�
 
 FR-01: Table 1/2 identities, semantic header lookup, immutable hashes и row lineage соответствуют [rules](BUSINESS_RULES.md).
 
-FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` Cyrillic/Latin/case и `~$` exclusion; semantic preflight extracts stage from workbook content and blocks missing/mismatch/ambiguity, while filename never proves stage.
+FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` variants и `~$` exclusion. Candidate ranking is semantic stage → semantic month → highest explicit `редN`; mtime never decides. A remaining tie may receive a schema-quality recommendation but always requires user confirmation.
 
 FR-03: M01–M14 versioned mappings, includes/excludes/suffixes и M13/M14 collision применяются детерминированно; fuzzy/GPT только candidate. Полное отсутствие process-name candidates даёт quantity/cost `0/0` с явным статусом.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, missing saved value behin
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, automatic unit conversion, versions/stage, month/current-period semantics, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Missing cached-value recovery, standalone zero-formula Table-2 output, month-pair flow, rounding, J/L, coefficient and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, automatic unit conversion, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Stage/month/revision selection, missing-cache recovery, standalone output and prior calculation/review rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 

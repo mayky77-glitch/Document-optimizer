@@ -18,9 +18,10 @@
 3. Отбросить файлы, начинающиеся с `~$`.
 4. Принять имя только если оно содержит index как отдельный токен: с обеих сторон начало/конец имени либо символ, не являющийся буквой/цифрой Unicode. Подстрока внутри большего номера не подходит.
 5. Имя должно также содержать отдельный токен `6а`: допустимы кириллическая `а`, латинская `a` и любой регистр (`6а`, `6А`, `6a`, `6A`). Другие части имени не обязаны иметь фиксированные буквы или шаблон.
-6. Semantic preflight извлекает stage из содержимого каждого workbook и сравнивает его с явно указанным stage UI/CLI (UI initially `13.1`; batch/CLI has no hidden default). Missing, mismatch или несколько semantic stage values — blocker. Имя файла только сужает список и никогда не доказывает stage. Версия определяется только явным правилом владельца или ручным выбором.
+6. Semantic preflight извлекает stage и month/current period из содержимого каждого workbook и сравнивает их с явно указанными UI/CLI значениями (UI stage initially `13.1`; batch/CLI has no hidden default). Filename только сужает кандидатов и никогда не доказывает stage/month.
+7. Несколько кандидатов ранжируются строго: semantic stage match → semantic month match → наибольший явный номер `редN` в имени (`ред2 > ред1`; отсутствие номера ниже numbered revision). Modification time не является приоритетом. Если после ранжирования остаётся несколько файлов, система может рекомендовать вариант по schema completeness/data-quality evidence, но не выбирает его автоматически: пользователь видит варианты/evidence и подтверждает один.
 
-`0` кандидатов — blocker с причиной и ручным выбором/явным пропуском. `>1` — blocker с перечнем hash, имени, даты/версии и действием «Выбрать кандидата»; первый по имени/дате никогда не выбирается молча. Тесты включают leading zero, boundary, `6а`/`6a`/регистр, `~$`, stage extracted from content, missing/mismatch/ambiguous stage, misleading filename, conflicting content и schema-version случаи.
+`0` кандидатов — blocker с причиной и ручным выбором/явным пропуском. Неразрешённая множественность — blocker до user confirmation. Тесты включают leading zero, boundary, `6а`/`6a`/case, `~$`, semantic stage/month, misleading filename, `ред1/ред2/no-revision`, misleading mtime, schema-quality tie и explicit confirmation.
 
 ## 3. Нормализация и приоритет
 
@@ -79,7 +80,7 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 
 ## 7. Gate 0 — решения владельца
 
-До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; stage и version-selection policy; лист/whole-period semantics; automatic unit conversion policy; M03/M07/M08/M12 suffix semantics и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. Missing cached-value recovery, standalone value-only Table-2 output, month-pair flow, rounding, J/L, coefficient, `0/0`, checkbox review и alternative-unit behavior уже утверждены. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
+До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; лист/whole-period semantics; automatic unit conversion policy; M03/M07/M08/M12 suffix semantics и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. Stage/month/revision file-selection policy, missing-cache recovery, standalone output, month-pair flow, rounding, J/L, coefficient, `0/0`, checkbox review и unit behavior уже утверждены. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
 
 ## 8. Проверяемые инварианты
 
