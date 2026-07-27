@@ -14,7 +14,7 @@ Site presents exactly two upload zones: «Дополнительный отчё�
 
 ## 4. Functional requirements
 
-FR-01: Table 1/2 identities, semantic header lookup, immutable hashes и row lineage соответствуют [rules](BUSINESS_RULES.md).
+FR-01: Table 1/2 identities, immutable hashes and lineage follow [rules](BUSINESS_RULES.md). Table 1 calculation uses only semantic KS-6a and the whole-period-construction block; KS-2/KS-3/current-month blocks are excluded, and zero/multiple matches block until resolved.
 
 FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` variants и `~$` exclusion. Candidate ranking is semantic stage → semantic month → highest explicit `редN`; mtime never decides. A remaining tie may receive a schema-quality recommendation but always requires user confirmation.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, missing saved value behin
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, automatic unit conversion, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Stage/month/revision selection, missing-cache recovery, standalone output and prior calculation/review rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, automatic unit conversion, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. KS-6a/whole-period selection, file ranking, standalone output and prior rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 

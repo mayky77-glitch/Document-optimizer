@@ -9,6 +9,8 @@
 
 Наблюдавшиеся Table-1 J/CF/CG (1006), BL/BM (1004), CJ/CK (0919), Table-2 E/F/J/K/L/M и иной лист KITSO — только fixtures. Любой столбец может сдвинуться вправо или остаться на месте. Production-код ищет поля по семантике merged-header tree и не фиксирует буквы колонок.
 
+Preflight Table 1 допускает варианты регистра/алфавита в имени листа `КС-6а`/`KS-6a`, но расчёт читает только этот semantic sheet. В нём выбирается только merged-header block со смыслом **«ВЫПОЛНЕНО ЗА ВЕСЬ ПЕРИОД СТРОИТЕЛЬСТВА»**, включая доказанные орфографические/формулировочные варианты вроде «СТРОИТЕЛЬСВА» и «с начала строительства». Листы КС-2/КС-3 и current-month blocks исключены. Ноль подходящих листов/блоков — blocker; несколько — список evidence и явный выбор пользователя, без автоматического объединения.
+
 ## 2. Детерминированный выбор файла Таблицы 1
 
 Для каждой непустой ячейки Table 2 `B`:
@@ -80,7 +82,7 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 
 ## 7. Gate 0 — решения владельца
 
-До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; лист/whole-period semantics; automatic unit conversion policy; M03/M07/M08/M12 suffix semantics и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. Stage/month/revision file-selection policy, missing-cache recovery, standalone output, month-pair flow, rounding, J/L, coefficient, `0/0`, checkbox review и unit behavior уже утверждены. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
+До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; automatic unit conversion policy; M03/M07/M08/M12 suffix semantics и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. KS-6a/whole-period selection, file-selection policy, missing-cache recovery, standalone output, month-pair flow, rounding, J/L, coefficient, `0/0`, checkbox review и unit behavior уже утверждены. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
 
 ## 8. Проверяемые инварианты
 

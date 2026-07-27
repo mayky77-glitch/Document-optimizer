@@ -12,6 +12,7 @@ Four linked planning documents define product, domain contract, architecture and
 
 - Table 1 is source KS-2/KS-3/KS-6a; Table 2 is `Расчет доп отчета карточка 23 Хандюк.xlsx`, `Лист1`.
 - Table 2 `Лист1` is 180×17; 1006 block rows 139–144. Table 1 period fields are semantic: observed 1006 CF/CG, 1004 BL/BM, 0919 CJ/CK; KITSO differs.
+- Calculation reads only normalized KS-6a sheet variants and the semantic whole-period-construction block; KS-2/KS-3/month blocks are excluded and zero/multiple matches require user resolution.
 - Stage 13.1 has 15 indices, 12 with candidates, missing 1005/0768/0778. Selection uses suffix-after-last-dot, Unicode token boundaries, `6а` Cyrillic/Latin/case and explicit missing/multiple review; semantic workbook content, not filename, proves stage.
 - Multiple candidates rank by semantic stage, semantic month and highest explicit `редN`; mtime never decides. Remaining schema/data-quality tie is only a recommendation and requires user confirmation.
 - [BUSINESS_RULES](../../docs/BUSINESS_RULES.md) v1 is the canonical contract for M01–M14, Decimal raw-RUB aggregation, red/yellow statuses, feedback memory and Gate 0.
@@ -26,7 +27,7 @@ Four linked planning documents define product, domain contract, architecture and
 
 ## Gate 0 / risks
 
-- Implementation is blocked until owner decides M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, sheet/whole-period validation, conversion, feedback reuse/retention and AI context/token budget. File selection, missing-cache recovery, standalone output and prior rules are fixed.
+- Implementation is blocked until owner decides M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, conversion, feedback reuse/retention and AI context/token budget. KS-6a/whole-period selection, file selection, standalone output and prior rules are fixed.
 - Feedback is versioned scoped memory, never online training: canonical SQLite IDs/FKs/hashes, deduplicated raw strings, active snapshot separate from immutable audit; deterministic SQL precedes any bounded GPT projection.
 - Model gateway supports disabled, local CLI and manual strict-JSON GPT-application modes without requiring an API. MVP imports XLSX/folder/ZIP; XLSB is an explicit post-MVP adapter. Implementation orchestration has a pre-P1 xhigh-profile setup/restart gate.
 
