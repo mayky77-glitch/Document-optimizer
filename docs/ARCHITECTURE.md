@@ -10,7 +10,7 @@ CLI и local site вызывают одно ядро и дают полный р
 
 Импорт знает Table 1 (КС-2/КС-3/КС-6а) и Table 2 (`Расчет доп отчета карточка 23 Хандюк.xlsx` / `Лист1`), не буквы Excel. Preflight resolves exactly one semantic KS-6a sheet and exactly one whole-period-construction merged-header block, accepting normalized spelling variants; KS-2/KS-3/current-month scopes are hard-excluded. Zero/multiple matches produce evidence and user resolution. Normalized row содержит source hash, chosen sheet/block, row, semantic fields, text, Decimal amount/unit and rule version. Calculation aggregates exact Decimal values and presentation quantizes final output.
 
-SQLite хранит canonical normalized entities с integer IDs/FKs/hashes: `raw_string` хранит каждую unique raw string один раз, entities/rules/runs/decisions ссылаются на IDs, а feedback rule keyed by Table-2 category + normalized Table-1 item + stage/scope + units + rule version. Materialized active rule snapshot отделён от append-only audit events; active rule records не содержат длинных prose/prompts. Indexes покрывают category, stage, unit, status и version. Compatibility validator отделяет current-run decision от reusable rule; undo/deactivate/rollback дописывают event и перестраивают snapshot.
+SQLite хранит canonical normalized entities с integer IDs/FKs/hashes and deduplicated raw strings. Materialized indefinite active-rule snapshot отделён от append-only version events. Opposite decision, off/on and restore append events then rebuild snapshot; no physical event deletion. Active rows are short IDs/status/scope, history is excluded from GPT. Indexes cover process/item/stage/scope/unit/status/version; compaction must preserve deterministic snapshot and lineage.
 
 ## Review UX
 

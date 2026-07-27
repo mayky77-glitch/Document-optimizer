@@ -26,7 +26,7 @@ FR-05: Site has exactly two named upload zones («Дополнительный �
 
 FR-06: Export semantically finds/creates the selected month's quantity/cost pair and handles old→new confirmation. The only delivered artifact is one standalone editable XLSX Table 2 with values, styles, merged cells, filters, comments and colors, but zero formulas, external workbook links or connections. Table-1 formulas are never copied; existing Table-2 formulas are flattened to saved visible values in the output copy. Internal manifest/audit stays local.
 
-FR-07: Feedback memory is versioned rules, never model training. Automatic confident matches do not create memory. A changed/confirmed uncertain row gets a direct default-on **«Запомнить»** switch; successful export activates an exact process+item+stage/scope+unit+version rule, while off/cancelled runs stay audit-only. Context drift returns to review.
+FR-07: Feedback memory is versioned rules, never model training. User feedback activates exact rules after export; active rules persist indefinitely. Opposite decisions create versions, and a compact **«Запомненные правила»** list offers direct on/off and restore. History is append-only/deduplicated, excluded from GPT context and never physically deleted.
 
 FR-08: GPT is default-off, strict-schema candidate-only and cannot select/sum/approve/write; deterministic SQL resolves first and suppresses AI call; otherwise only minimal compatible candidate/rule projections fit an owner-approved context/token budget. Model gateway must work without a paid API: local GPT-capable CLI adapter or a manual copy/paste JSON bridge to the GPT application are valid; API adapter is optional. CLI/site keep the full manual path when no model is available.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, missing saved value behin
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: feedback retention/deactivate/rollback and AI context/token budget plus performance/storage thresholds. Feedback creation/scope/activation, M04/M05 flow and prior rules are fixed. M02/M06 literals are fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: AI context/token budget plus performance/storage thresholds. Feedback creation/scope/activation/retention/on-off/restore and prior rules are fixed. M02/M06 literals are fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 
