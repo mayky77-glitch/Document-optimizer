@@ -20,7 +20,7 @@ FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `
 
 FR-03: M01–M14 versioned mappings, includes/excludes/suffixes и M13/M14 collision применяются детерминированно; fuzzy/GPT только candidate. Полное отсутствие process-name candidates даёт quantity/cost `0/0` с явным статусом.
 
-FR-04: Semantic unit fields are compared per source row (observed Table-2 F versus Table-1 J, never fixed coordinates). Quantity prefers the Table-2 unit; alternative units are grouped without cross-unit addition. Monetary cost sums all approved rows. Decimal calculations retain full precision; final quantity/cost and J/L comparison values use two-decimal `ROUND_HALF_UP`, while the coefficient check uses the unrounded aggregate. J/L equality, including `0 = 0` and blank/blank, is yellow; blank/number is not.
+FR-04: Semantic unit fields are compared per source row. Quantity prefers the Table-2 unit; alternatives are grouped without cross-unit addition. Unit conversion is default-off and only an explicit versioned owner-approved pair/factor may convert exact values. Monetary cost sums all approved rows. Decimal calculations retain full precision; final output uses two-decimal `ROUND_HALF_UP`.
 
 FR-05: Site has exactly two named upload zones («Дополнительный отчёт / Table 2» one XLSX; «Исходные KS / Table 1» folder/ZIP), CLI explicit report/source args, explicit stage and month/current-period validation against semantic Table 2 headers, then one review table. Every Table-1 candidate has a direct **«Учитывать»** checkbox, source lineage, contribution, recommendation/uncertainty and optional comment; totals recalculate after each change. Unresolved blocker disables export.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, missing saved value behin
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, automatic unit conversion, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. KS-6a/whole-period selection, file ranking, standalone output and prior rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Default-off explicit-only conversion, KS-6a scope, file ranking, standalone output and prior rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 
