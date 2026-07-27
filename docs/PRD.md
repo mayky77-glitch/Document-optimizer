@@ -16,7 +16,7 @@ Site presents exactly two upload zones: «Дополнительный отчё�
 
 FR-01: Table 1/2 identities, immutable hashes and lineage follow [rules](BUSINESS_RULES.md). Table 1 calculation uses only semantic KS-6a and the whole-period-construction block; KS-2/KS-3/current-month blocks are excluded, and zero/multiple matches block until resolved.
 
-FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` variants и `~$` exclusion. Candidate ranking is semantic stage → semantic month → highest explicit `редN`; mtime never decides. A remaining tie may receive a schema-quality recommendation but always requires user confirmation.
+FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` variants и `~$` exclusion. Candidate ranking is semantic stage → semantic month → highest explicit `редN`; mtime never decides. A remaining tie may receive a schema-quality recommendation but always requires user confirmation. If an index has no Table-1 file, its entire Table-2 object block gets one direct choice: carry the immediately previous semantic month quantity/cost values into the selected month or leave the new pair blank. Values only are copied; no formula or zero substitution is allowed.
 
 FR-03: M01–M14 are versioned. In KGS cable scope, explicit low-current/VOLS markers choose M05; otherwise M04. Wiring/device-connection, support, fastening and auxiliary rows are review-only candidates, never hard-excluded. Prefix and exclusive ownership rules apply before fuzzy/GPT candidate suggestions.
 
@@ -36,7 +36,7 @@ Inputs, normalized row, decision, feedback rule and calculation contracts are de
 
 ## 6. Errors, recovery and privacy
 
-Schema drift, unsupported XLSB, missing/multiple file, missing saved value behind a formula, ambiguous match, collision, duplicate lineage, Decimal/unit mismatch and verification failure are visible blockers, never silent fallback. Missing cached value shows file/sheet/cell and requires Excel recalculate-save-reupload; blank/zero substitution and automated LibreOffice recalculation are forbidden. Files and SQLite remain local; formulas/macros are never executed; GPT gets no money data.
+Schema drift, unsupported XLSB, missing Table-2 report, multiple Table-1 candidates, missing saved value behind a formula, ambiguous match, collision, duplicate lineage, Decimal/unit mismatch and verification failure are visible blockers, never silent fallback. A missing Table-1 index source is instead a visible whole-object carry-forward/blank decision, not an error; export waits only until the user chooses. Missing cached formula value always shows file/sheet/cell and requires Excel recalculate-save-reupload; the missing-source blank branch never bypasses the global formula-flattening gate. Blank/zero substitution and automated LibreOffice recalculation are forbidden. Files and SQLite remain local; formulas/macros are never executed; GPT gets no money data.
 
 ## 7. Quality and measurable acceptance
 
@@ -58,7 +58,7 @@ Primary risks: variable schemas, missing cached input values, mistaken unit/mone
 
 | Requirement | Contract | Acceptance evidence |
 | --- | --- | --- |
-| Inputs/selector | BR §1–2 | Unicode, boundary, misleading filename, content-stage and missing/multiple tests |
+| Inputs/selector | BR §1–2 | Unicode, boundary, misleading filename, content-stage, missing-index carry/blank and multiple-candidate tests |
 | 14 mappings | BR §3–4 | M01–M14, M04/M05 positive/cross-category/exclusion and M13/M14 collision tests |
 | Money/status | BR §5 | Decimal/order/golden/J-L/unit tests |
 | Review/export | ARCH UX/export | one delivered XLSX, zero formulas/external links, flattened cached values, preserved styles/colors and save/reopen/internal-manifest E2E |
