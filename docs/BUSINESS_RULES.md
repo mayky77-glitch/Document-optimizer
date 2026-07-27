@@ -56,7 +56,7 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 M04/M05 classifier работает только внутри соответствующего КГС scope после определения cable/wire-laying candidate. Explicit normalized low-current marker выбирает M05; иначе M04. Строки разводки/подключения жил, поддержек, креплений и прочих вспомогательных работ всегда видимы со статусом `needs_review`: система может показать checked/unchecked recommendation и evidence, но export требует явного user confirmation. Они не являются hard excludes и после подтверждения участвуют в feedback memory.
 | M06 | «Монтаж металлоконструкций» | «Монтаж м/к фундаментов и ростверков»; «Монтаж м/к каркасов зданий и сооружений»; «Монтаж м/к эстакад»; «Монтаж малых конструктивных элементов м/к(монтаж жалюзийных решеток)» | Exclude exact «Монтаж м/к мачт-молниеотводов»; «Монтаж м/к антенных мачт»; «Изготовление м/к (прим. емкостей)». |
 | M07 | «Сварка в нитку» | «сварка» + suffix | Exact or normalized prefix, e.g. «Сварка трубопровода Ду 300». |
-| M08 | «Укладка трубопроводов (укладка)» | «Укладка трубопроводов» + suffix | Exact or normalized prefix with any continuation. |
+| M08 | Table-2 aliases «Укладка»; «Укладка трубопроводов» | «Укладка трубопроводов» + suffix | Оба target literal принадлежат одному rule только в своём ГК object scope. Auto-include exact/normalized prefix с любым диаметром/маркой/пояснением; не расширять до общего «Укладка». |
 | M09 | «Бетонные работы» | «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Separate and traceable despite overlap with M02; de-duplicate identical source row. |
 | M10 | «Обратная засыпка» | «Обратная засыпка траншеи под трубопровод» | No broadening to other backfill. |
 | M11 | «Разработка траншеи» | «Разработка траншеи под трубопровод» | No broadening to other excavation. |
@@ -68,6 +68,8 @@ M04/M05 classifier работает только внутри соответст
 M13/M14 ownership is exclusive. Source-row key `(source_hash, sheet, row)` can contribute to only one Table-2 process. Manual reassignment to M13 atomically removes it from M14, recalculates both totals and records previous/new owner, actor, comment and rule version; double counting is a hard invariant violation.
 
 M15 — отдельный target rule, хотя его основной Table-1 literal совпадает с M01. M15 действует только для exact Table-2 process «Устройство свайного основания ВЛ» внутри ВЛ object scope; M01 не расширяется на ВЛ автоматически. Один source-row key не может одновременно принадлежать M01 и M15; несовместимый scope даёт collision blocker. Если пользователь явно включает «Изготовление и монтаж оголовков свай», строка с единицей `т` участвует в стоимости по общему правилу §5, но не складывается с количеством `шт`; unit cell становится красной `шт/т`. Испытания свай не предлагаются к включению. Corpus evidence: exact pile literal/unit `шт` найден для 0772, 0775, 0776, 0769 и 0777; missing 0768/0778 проходят supplemental-upload/carry/blank flow §2.
+
+M08 corpus evidence для stage 13.1: Table-2 0919 использует «Укладка трубопроводов», а 0918/0685/0686 — «Укладка»; в выбранных Table-1 fixtures найдено 18 prefix-matched pipe-laying rows, все с `км`. «Укладка контейнеров», геоматов, георешёток, геоматриц и рулонных геоматериалов не совпадают с pipe prefix и не являются M08 candidates.
 
 ## 5. Расчёт, деньги и статусы
 
