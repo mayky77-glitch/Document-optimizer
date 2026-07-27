@@ -6,7 +6,7 @@
 
 ## 2. Проблема и доказанный контекст
 
-В Table 2 заголовки на строках 5–6, B хранит блоки индексов, E работу, F unit, J documentary quantity, K million RUB incl. VAT, L/M current-period fields. Table 1 layouts schema-variable: 1006 CF/CG, 1004 BL/BM, 0919 CJ/CK, KITSO иной лист. В stage 13.1 наблюдались 15 индексов: 12 с кандидатами, 1005/0768/0778 missing; формулы legacy не oracle и cached values могут быть stale.
+В Table 2 заголовки на строках 5–6, B хранит блоки индексов, E работу, F unit, J documentary quantity, K million RUB incl. VAT, L/M current-period fields. Table 1 layouts schema-variable: 1006 CF/CG, 1004 BL/BM, 0919 CJ/CK, KITSO иной лист. Обследованный corpus содержит 347 XLSX/XLSM общим объёмом 766.15 MB. В stage 13.1 — 15 объектов, 87 строк и 15 уникальных процессов; для 12 индексов выбраны исходники, 1005/0768/0778 missing. Их semantic KS-6a sheets содержат 31,892 строк, 50–209 столбцов, 24,017 заполненных work-name cells и 1,025 уникальных нормализованных наименований. Формулы legacy не oracle и cached values могут быть stale.
 
 ## 3. Пользователь и workflow
 
@@ -28,7 +28,7 @@ FR-06: Export semantically finds/creates the selected month's quantity/cost pair
 
 FR-07: Feedback memory is versioned rules, never model training. User feedback activates exact rules after export; active rules persist indefinitely. Opposite decisions create versions, and a compact **«Запомненные правила»** list offers direct on/off and restore. History is append-only/deduplicated, excluded from GPT context and never physically deleted.
 
-FR-08: GPT is default-off, strict-schema candidate-only and cannot select/sum/approve/write; deterministic SQL resolves first and suppresses AI call; otherwise only minimal compatible candidate/rule projections fit an owner-approved context/token budget. Model gateway must work without a paid API: local GPT-capable CLI adapter or a manual copy/paste JSON bridge to the GPT application are valid; API adapter is optional. CLI/site keep the full manual path when no model is available.
+FR-08: GPT is role-bounded, strict-schema candidate-only and cannot select/sum/approve/write. Every previously unseen schema fingerprint goes through `schema_advisor`; its proposal must then be explicitly confirmed or corrected by the user and deterministically validated before entering cache. A validated cached fingerprint does not consume another call. If no model provider is configured, the same case becomes an explicit manual schema-confirmation blocker, never silent deterministic acceptance. The site may also invoke `mapping_advisor` for one unresolved process/candidate packet. A deterministic task router, not an LLM orchestrator, decides whether either worker is needed. No runtime agent exists for file selection, arithmetic, feedback activation, Excel writing or verification. Deterministic SQL resolves mappings first and suppresses mapping-AI calls; otherwise only minimal compatible projections fit the approved budgets. Model gateway must work without a paid API: allowlisted local GPT-capable CLI adapter or a manual copy/paste JSON bridge to the GPT application are valid; API adapter is optional. CLI/site keep the full explicit manual-confirmation path when no model is available.
 
 ## 5. Data and output contracts
 
@@ -43,12 +43,12 @@ Schema drift, unsupported XLSB, missing/multiple file, missing saved value behin
 - 100% monetary operations use Decimal; goldens: 1006 piles `261 / 37.313343`, concrete `2.36 / 0.034239`, TT `2138.059 / 33.75002661`, metal `100.39863 / 12.59387023` (quantity / million RUB).
 - Reordering rows does not change result; every included/excluded value has row/file/rule lineage.
 - Selector, all rule branches (including M04/M05 candidate-only until approved include sets), feedback compatibility, upload labels/count/report XLSX/source folder/ZIP, stage/month preservation, editable exports and manual/no-GPT path have automated tests; malformed GPT output is rejected deterministically.
-- Metrics/tests prove storage growth per decision, large-corpus retrieval latency, configurable prompt-token ceiling, zero duplicate raw strings, no full-history prompt and deterministic equivalence before/after retention compaction. Numeric thresholds are owner-approved at Gate 0.
+- Metrics/tests prove average SQLite growth `≤ 1 KiB` per feedback decision after checkpoint on a 100,000-decision fixture; exact compatible active-rule lookup at 1,000,000 audit events / 100,000 active rules is p95 `≤ 100 ms` warm and `≤ 500 ms` cold on the recorded reference machine. Prompt ceilings follow BUSINESS_RULES §7; tests also prove zero duplicate raw strings, no full-history prompt and deterministic equivalence before/after retention compaction.
 - Output opens editably, preserves styles/merged cells/filters/comments/colors, contains zero formulas/external links/connections and is the only delivered file; original hashes do not change and internal verification reconciles 100% changed cells and lineage.
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: AI context/token budget plus performance/storage thresholds. Feedback creation/scope/activation/retention/on-off/restore and prior rules are fixed. M02/M06 literals are fixed. CodeGraph only follows first scaffold.
+Gate 0 product decisions are complete and recorded in BUSINESS_RULES §7, including adaptive AI context budgets and performance/storage thresholds. This remains a planning-only phase: scaffold or implementation starts only on a separate owner instruction. Feedback creation/scope/activation/retention/on-off/restore and prior rules are fixed. M02/M06 literals are fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 

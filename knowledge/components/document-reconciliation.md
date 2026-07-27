@@ -13,7 +13,8 @@ Four linked planning documents define product, domain contract, architecture and
 - Table 1 is source KS-2/KS-3/KS-6a; Table 2 is `Расчет доп отчета карточка 23 Хандюк.xlsx`, `Лист1`.
 - Table 2 `Лист1` is 180×17; 1006 block rows 139–144. Table 1 period fields are semantic: observed 1006 CF/CG, 1004 BL/BM, 0919 CJ/CK; KITSO differs.
 - Calculation reads only normalized KS-6a sheet variants and the semantic whole-period-construction block; KS-2/KS-3/month blocks are excluded and zero/multiple matches require user resolution.
-- Stage 13.1 has 15 indices, 12 with candidates, missing 1005/0768/0778. Selection uses suffix-after-last-dot, Unicode token boundaries, `6а` Cyrillic/Latin/case and explicit missing/multiple review; semantic workbook content, not filename, proves stage.
+- Actual corpus: 347 XLSX/XLSM, 766.15 MB. Stage 13.1 has 15 objects / 87 rows / 15 unique processes; 12 selected source KS-6a sheets total 31,892 rows, 50–209 columns, 24,017 populated name cells and 1,025 unique normalized names. Missing indices: 1005/0768/0778.
+- Selection uses suffix-after-last-dot, Unicode token boundaries, `6а` Cyrillic/Latin/case and explicit missing/multiple review; semantic workbook content, not filename, proves stage.
 - Multiple candidates rank by semantic stage, semantic month and highest explicit `редN`; mtime never decides. Remaining schema/data-quality tie is only a recommendation and requires user confirmation.
 - [BUSINESS_RULES](../../docs/BUSINESS_RULES.md) v1 is the canonical contract for M01–M14, Decimal raw-RUB aggregation, red/yellow statuses, feedback memory and Gate 0.
 - Unit columns are semantic and movable: observed Table-2 F is compared per source row with observed Table-1 J. Quantity prefers that unit; one alternative unit is summed with red `old/source`; multiple units remain separate subtotals until the user selects one. Cost always sums all approved rows.
@@ -33,7 +34,10 @@ Four linked planning documents define product, domain contract, architecture and
 
 ## Gate 0 / risks
 
-- Implementation is blocked until owner decides AI context/token budget. Feedback creation/scope/activation/retention/on-off/restore and prior rules are fixed.
+- Gate 0 product decisions are complete; work remains planning-only until a separate implementation instruction.
+- GPT packets are bounded separately: schema `8,000/1,200` for up to 6 fingerprints; mapping `4,000/600` for one process/up to 20 unique candidates; run soft budget `25,000/5,000`, then manual fallback or explicit continuation. Tokenizer/UTF-8 byte-bound packing splits without truncation; prompt cache prevents identical repeat calls.
+- Runtime site AI is limited to stateless `schema_advisor` and `mapping_advisor`, invoked by a deterministic router. Every unseen schema fingerprint requires the first worker or manual schema entry when no provider exists; every proposal needs explicit user confirm/correct and deterministic validation before cache. Workers never select files, calculate, activate memory, export or verify; invalid/timeout results go to manual review without auto-retry.
+- Feedback storage acceptance is `≤ 1 KiB/decision` average at 100,000 decisions; lookup p95 `≤ 100 ms` warm / `≤ 500 ms` cold at 1,000,000 events and 100,000 active rules on a recorded reference machine.
 - Feedback is versioned scoped memory, never online training: canonical SQLite IDs/FKs/hashes, deduplicated raw strings, active snapshot separate from immutable audit; deterministic SQL precedes any bounded GPT projection.
 - Model gateway supports disabled, local CLI and manual strict-JSON GPT-application modes without requiring an API. MVP imports XLSX/folder/ZIP; XLSB is an explicit post-MVP adapter. Implementation orchestration has a pre-P1 xhigh-profile setup/restart gate.
 

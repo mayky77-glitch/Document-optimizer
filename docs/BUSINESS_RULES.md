@@ -85,9 +85,20 @@ M13/M14 ownership is exclusive. Source-row key `(source_hash, sheet, row)` can c
 
 Active feedback rules хранятся бессрочно. Новое противоположное решение создаёт новую version и деактивирует прежний active snapshot, не перезаписывая audit event. На сайте раздел **«Запомненные правила»** показывает компактную строку scope/rule/current status и прямой on/off switch; restore создаёт новую active version на основе выбранной исторической версии. Физического удаления событий нет. SQL indexes выбирают только compatible active snapshot; inactive/history никогда не отправляются GPT. Compaction deduplicates strings/events representation без изменения lineage или результата. Тесты доказывают indefinite reuse, on/off, opposite-version, restore, context isolation, drift, dedup, storage growth, retrieval latency и equivalence before/after compaction.
 
-## 7. Gate 0 — решения владельца
+## 7. Gate 0 — утверждённые бюджеты и пороги
 
-До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: configurable AI context/token budget. Feedback indefinite versioned retention/on-off/restore, exact compatibility/post-export activation, M04/M05 classifier and prior rules уже утверждены. M02/M06 literals are fixed. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
+Gate 0 закрыт решением владельца делегировать выбор безопасных порогов по фактическому corpus. Это не разрешение начинать scaffold: текущая фаза остаётся planning-only до отдельной команды.
+
+GPT никогда не получает workbook, raw rows, суммы, цены, дубли строк или историю feedback. Скрипты сначала выбирают файлы, строят schema fingerprint, нормализуют и дедуплицируют названия, применяют hard rules и active memory. AI видит только один из двух строгих пакетов:
+
+1. **Schema packet:** compact semantic header anchors/coordinates/shapes максимум для 6 неизвестных schema fingerprints; hard ceiling `8,000` input и `1,200` output tokens. Gateway сначала считает токены tokenizer-ом выбранной модели; если он недоступен, верхней консервативной оценкой служит UTF-8 byte count плюс 15% reserve. Packet уменьшается до прохождения ceiling — ни один fingerprint не обрезается. Каждый AI proposal пользователь явно подтверждает/исправляет, затем deterministic validator проверяет его; только после этого fingerprint входит в cache.
+2. **Mapping packet:** один Table-2 process и максимум 20 уникальных нормализованных Table-1 candidate names с units, short IDs и rule evidence; максимум `4,000` input и `600` output tokens. Повторяющиеся source rows не входят в prompt. Ответ — только IDs + enum decision/confidence/reason code по strict JSON schema.
+
+Soft run budget — `25,000` input и `5,000` output tokens. Жёсткого лимита в пять вызовов нет: он способен оборвать качественный разбор нового schema. При достижении soft budget автоматические AI-запросы останавливаются; оставшиеся сомнения идут в ручной review, а пользователь может явно открыть следующую budget tranche. Одинаковый `prompt_hash + model/schema/rule versions` повторно не отправляется: используется validated cache. Call count не прогнозируется: он зависит от фактических schema fingerprints и неоднозначностей после rules/memory; acceptance опирается на измеренные tokens/bytes каждого packet, а не на оценку числа запросов.
+
+Компактность памяти проверяется на fixture из 100,000 решений: после SQLite checkpoint средний прирост базы `≤ 1 KiB` на решение, без учёта загруженных workbook. Exact compatible active-rule lookup на fixture из 1,000,000 audit events / 100,000 active rules: p95 `≤ 100 ms` warm и `≤ 500 ms` cold на зафиксированной reference machine. Нарушение порога блокирует release, но не приводит к удалению audit history или ослаблению совместимости правил.
+
+Feedback indefinite versioned retention/on-off/restore, exact compatibility/post-export activation, M04/M05 classifier and prior rules утверждены. M02/M06 literals fixed.
 
 ## 8. Проверяемые инварианты
 

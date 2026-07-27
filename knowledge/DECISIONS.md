@@ -12,7 +12,7 @@ Record only accepted cross-cutting decisions. Link each decision to affected com
 
 ## Accepted
 
-- Script-first deterministic core; GPT optional/default-off and never numeric authority or file selector. [[components/document-reconciliation|Component card]]
+- Script-first deterministic core; GPT is never numeric authority or file selector. An unseen schema fingerprint requires bounded `schema_advisor` analysis or explicit manual confirmation when no provider is configured; validated fingerprints are cached. [[components/document-reconciliation|Component card]]
 - Immutable import, SHA-256 lineage, Decimal calculations, atomic copy export with reopen/manifest verification. [[components/document-reconciliation|Component card]]
 - CodeGraph deferred until first Python/TypeScript scaffold; then non-production `codegraph init`; `.codegraph/` remains local index. [[components/document-reconciliation|Component card]]
 - Model access does not require API: disabled, local GPT-capable CLI and manual strict-JSON GPT-application bridge are supported plan modes; an API adapter is optional. [[components/document-reconciliation|Component card]]
@@ -38,8 +38,10 @@ Record only accepted cross-cutting decisions. Link each decision to affected com
 - Inside KGS cable scope, explicit low-current/`ВОЛС` markers classify M05; otherwise a cable/wire-laying row classifies M04. «Разводка по устройствам и подключение жил электрических кабелей», supports, fastenings and auxiliaries are visible `needs_review` candidates, not hard excludes. [[components/document-reconciliation|Component card]]
 - Confident automatic matches do not create feedback memory. User-changed or explicitly confirmed uncertain rows get a direct default-on «Запомнить» switch; successful export activates an exact process+item+stage/scope+unit+version rule. Switch-off/cancelled runs remain audit-only; context drift returns to review. [[components/document-reconciliation|Component card]]
 - Active feedback rules persist indefinitely. Opposite decisions create new versions; compact «Запомненные правила» offers direct on/off and restore. Audit history is never physically deleted, is deduplicated/compacted without semantic change, and is excluded from GPT context. [[components/document-reconciliation|Component card]]
+- GPT budgets are adaptive by packet, not a five-call hard cap: schema `8,000/1,200` for up to 6 unknown fingerprints; mapping `4,000/600` for one process and up to 20 unique candidates; run soft budget `25,000/5,000` with manual fallback/explicit continuation. Packing uses the selected tokenizer or conservative UTF-8 byte bound and splits without truncation. Workbook rows, money, duplicates and feedback history never enter prompts; validated prompt hashes are cached. [[components/document-reconciliation|Component card]]
+- The site may invoke only two stateless runtime AI workers: `schema_advisor` and `mapping_advisor`. A deterministic `AiTaskRouter` decides need; every new schema proposal requires user confirm/correct plus deterministic validation before cache. All file selection, arithmetic, feedback activation, export and verification remain scripts. CLI execution is allowlisted/fixed-argument; invalid/timeout responses fall back to manual review without automatic retry. [[components/document-reconciliation|Component card]]
+- Feedback-store acceptance: average SQLite growth `≤ 1 KiB/decision` at 100,000 decisions after checkpoint; exact active-rule lookup p95 `≤ 100 ms` warm and `≤ 500 ms` cold at 1,000,000 audit events / 100,000 active rules on a recorded reference machine. [[components/document-reconciliation|Component card]]
 
-## Pending owner approval (Gate 0)
+## Gate 0 status
 
-- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: AI context/token budget. Feedback creation/scope/activation/retention/on-off/restore and prior rules are accepted. [[components/document-reconciliation|Component card]]
-- Feedback will be versioned memory rather than online training; exact reuse/retention/threshold values remain owner decisions. [[components/document-reconciliation|Component card]]
+- Product decisions are complete. The project remains planning-only until a separate owner instruction starts scaffold/implementation. [[components/document-reconciliation|Component card]]
