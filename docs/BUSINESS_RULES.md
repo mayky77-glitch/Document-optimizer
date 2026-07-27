@@ -42,8 +42,10 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 | M01 | «Устройство свайных фундаментов» | «Устройство основания из буроопускных металлических свай» | Exclude any pile tests. |
 | M02 | «Бетонные работы» | «Армирование и бетонирование монолитных участков из бетона (участки из жаростойкого бетона)»; «Армирование и бетонирование монолитных участков из бетона»; «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Exclude «железобетон». |
 | M03 | «Монтаж ТТ и СДТ КГС» | «Монтаж ТТ Д» + suffix | Exact/prefix match auto-candidate; монтаж трубопровода/похожие строки only candidate review. |
-| M04 | «Прокладка кабеля, провода (Силовые сети) КГС» | No approved literal Table 1 include set: all candidates are candidate-only | Exclude «Разводка по устройствам и подключение жил электрических кабелей»; supporting works candidate-only until owner provides the exact power include set. |
-| M05 | «Прокладка кабеля, провода (Слаботочные сети) КГС» | No approved literal Table 1 include set: all candidates are candidate-only | Power/cross-category/unclear rows are candidate-only and never auto-included until owner provides the exact low-current include set. |
+| M04 | «Прокладка кабеля, провода (Силовые сети) КГС» | В КГС строки прокладки кабеля/провода без explicit low-current marker | «Разводка по устройствам и подключение жил электрических кабелей», поддержки, крепления и вспомогательные работы — `needs_review`, не hard-exclude. |
+| M05 | «Прокладка кабеля, провода (Слаботочные сети) КГС» | В КГС строки прокладки кабеля/провода с explicit «слаботочн», «слаботочные сети» или «ВОЛС» | Без explicit marker строка относится к M04; cross-scope VЛ/VОЛС ownership rules retain priority. |
+
+M04/M05 classifier работает только внутри соответствующего КГС scope после определения cable/wire-laying candidate. Explicit normalized low-current marker выбирает M05; иначе M04. Строки разводки/подключения жил, поддержек, креплений и прочих вспомогательных работ всегда видимы со статусом `needs_review`: система может показать checked/unchecked recommendation и evidence, но export требует явного user confirmation. Они не являются hard excludes и после подтверждения участвуют в feedback memory.
 | M06 | «Монтаж металлоконструкций» | «Монтаж м/к фундаментов и ростверков»; «Монтаж м/к каркасов зданий и сооружений»; «Монтаж м/к эстакад»; «Монтаж малых конструктивных элементов м/к(монтаж жалюзийных решеток)» | Exclude exact «Монтаж м/к мачт-молниеотводов»; «Монтаж м/к антенных мачт»; «Изготовление м/к (прим. емкостей)». |
 | M07 | «Сварка в нитку» | «сварка» + suffix | Exact or normalized prefix, e.g. «Сварка трубопровода Ду 300». |
 | M08 | «Укладка трубопроводов (укладка)» | «Укладка трубопроводов» + suffix | Exact or normalized prefix with any continuation. |
@@ -85,7 +87,7 @@ M13/M14 ownership is exclusive. Source-row key `(source_hash, sheet, row)` can c
 
 ## 7. Gate 0 — решения владельца
 
-До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. Exact/normalized-prefix suffix semantics, M14/M13 ownership, unit conversion, KS-6a scope, file selection, standalone output and prior rules уже утверждены. M02/M06 literals are fixed. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
+До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. M04/M05 marker classifier and review-only auxiliary rows, prefix semantics, M14/M13 ownership and prior rules уже утверждены. M02/M06 literals are fixed. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
 
 ## 8. Проверяемые инварианты
 

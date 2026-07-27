@@ -35,8 +35,9 @@ Record only accepted cross-cutting decisions. Link each decision to affected com
 - Unit conversion is not expected and is default-off. The system never infers a factor; only an explicit owner-approved, versioned source/target-unit pair with Decimal factor may convert, with exact/raw/converted lineage and rollback. [[components/document-reconciliation|Component card]]
 - Source text «Прокладка самонесущего кабеля ВОЛС по стальным опорам» belongs to M14 «Монтаж ВОЛС ВЛ» by default. Explicit M13 reassignment removes M14 ownership atomically; one source row can never count in both. [[components/document-reconciliation|Component card]]
 - For M03/M07/M08/M12, “base phrase + value” means exact normalized base or a string starting with it followed by any diameter/mark/number/text. Continuation is not matched separately to Table 2; hard excludes retain priority. [[components/document-reconciliation|Component card]]
+- Inside KGS cable scope, explicit low-current/`ВОЛС` markers classify M05; otherwise a cable/wire-laying row classifies M04. «Разводка по устройствам и подключение жил электрических кабелей», supports, fastenings and auxiliaries are visible `needs_review` candidates, not hard excludes. [[components/document-reconciliation|Component card]]
 
 ## Pending owner approval (Gate 0)
 
-- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: M04/M05 include/supporting-work policy, feedback policy and AI context/token budget. Prefix semantics, M14/M13 ownership and prior rules are accepted. [[components/document-reconciliation|Component card]]
+- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: feedback policy and AI context/token budget. M04/M05 classifier/review flow, prefix semantics, M14/M13 ownership and prior rules are accepted. [[components/document-reconciliation|Component card]]
 - Feedback will be versioned memory rather than online training; exact reuse/retention/threshold values remain owner decisions. [[components/document-reconciliation|Component card]]

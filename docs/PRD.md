@@ -18,7 +18,7 @@ FR-01: Table 1/2 identities, immutable hashes and lineage follow [rules](BUSINES
 
 FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` variants и `~$` exclusion. Candidate ranking is semantic stage → semantic month → highest explicit `редN`; mtime never decides. A remaining tie may receive a schema-quality recommendation but always requires user confirmation.
 
-FR-03: M01–M14 are versioned. M03/M07/M08/M12 `+ value` uses exact-or-normalized-prefix semantics with any continuation and hard-exclude priority. VOLS rows default exclusively to M14 with atomic M13 reassignment. Fuzzy/GPT only propose candidates. No process-name candidate gives `0/0`.
+FR-03: M01–M14 are versioned. In KGS cable scope, explicit low-current/VOLS markers choose M05; otherwise M04. Wiring/device-connection, support, fastening and auxiliary rows are review-only candidates, never hard-excluded. Prefix and exclusive ownership rules apply before fuzzy/GPT candidate suggestions.
 
 FR-04: Semantic unit fields are compared per source row. Quantity prefers the Table-2 unit; alternatives are grouped without cross-unit addition. Unit conversion is default-off and only an explicit versioned owner-approved pair/factor may convert exact values. Monetary cost sums all approved rows. Decimal calculations retain full precision; final output uses two-decimal `ROUND_HALF_UP`.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, missing saved value behin
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 include/supporting-work policy, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Prefix suffix semantics, M14/M13 ownership and prior rules are fixed. M02/M06 literals are fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. M04/M05 classifier/review flow, prefix semantics, M14/M13 ownership and prior rules are fixed. M02/M06 literals are fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 
