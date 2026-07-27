@@ -16,10 +16,11 @@ Four linked planning documents define product, domain contract, architecture and
 - [BUSINESS_RULES](../../docs/BUSINESS_RULES.md) v1 is the canonical contract for M01–M14, Decimal raw-RUB aggregation, red/yellow statuses, feedback memory and Gate 0.
 - Unit columns are semantic and movable: observed Table-2 F is compared per source row with observed Table-1 J. Quantity prefers that unit; one alternative unit is summed with red `old/source`; multiple units remain separate subtotals until the user selects one. Cost always sums all approved rows. Automatic conversion remains Gate 0.
 - No process-name candidate produces quantity/cost `0/0`. Every candidate is visible with a preselected **«Учитывать»** checkbox, contribution, uncertainty and optional comment; user changes recalculate totals.
+- Coefficient `2.7` is a review heuristic only: `cost_mln × 2.7 < Table2.K` produces a visible warning with the inputs/result/difference and does not alter the exported cost.
 
 ## Gate 0 / risks
 
-- Implementation is blocked until owner decides M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, stage/month/period/quantity, coefficient 2.7, J/L tolerance, no-compatible-quantity behavior and conversion, versions, formula freshness, feedback reuse/retention and AI context/token budget. M02/M06 literals, semantic unit comparison/red slash marking and quantity/cost inclusion rules are fixed.
+- Implementation is blocked until owner decides M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, stage/month/period/quantity, 2.7 scope/editability/warning acknowledgement, J/L tolerance, conversion, versions, formula freshness, feedback reuse/retention and AI context/token budget. The 2.7 formula/status, M02/M06 literals and unit/cost rules are fixed.
 - Feedback is versioned scoped memory, never online training: canonical SQLite IDs/FKs/hashes, deduplicated raw strings, active snapshot separate from immutable audit; deterministic SQL precedes any bounded GPT projection.
 - Model gateway supports disabled, local CLI and manual strict-JSON GPT-application modes without requiring an API. MVP imports XLSX/folder/ZIP; XLSB is an explicit post-MVP adapter. Implementation orchestration has a pre-P1 xhigh-profile setup/restart gate.
 
