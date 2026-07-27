@@ -12,7 +12,7 @@ Four linked planning documents define product, domain contract, architecture and
 
 - Table 1 is source KS-2/KS-3/KS-6a; Table 2 is `Расчет доп отчета карточка 23 Хандюк.xlsx`, `Лист1`.
 - Table 2 `Лист1` is 180×17; 1006 block rows 139–144. Table 1 period fields are semantic: observed 1006 CF/CG, 1004 BL/BM, 0919 CJ/CK; KITSO differs.
-- Calculation reads only normalized KS-6a sheet variants and the semantic whole-period-construction block; KS-2/KS-3/month blocks are excluded and zero/multiple matches require user resolution.
+- Calculation reads only normalized KS-6a and the proven current-cumulative whole-period block. Multiple same-name blocks require header/dependency plus 100%-leaf Decimal identity under a confirmed schema; no rightmost heuristic or independent summing. Zero/multiple proof results require user resolution.
 - Actual corpus: 347 XLSX/XLSM, 766.15 MB. Stage 13.1 has 15 objects / 87 rows / 15 unique processes; 12 selected source KS-6a sheets total 31,892 rows, 50–209 columns, 24,017 populated name cells and 1,025 unique normalized names. Missing indices: 1005/0768/0778.
 - Selection uses suffix-after-last-dot, Unicode token boundaries and `6а` Cyrillic/Latin/case; semantic workbook content, not filename, proves stage. Missing index source is named with its object and offers direct supplemental-upload/carry-previous-period/leave-blank actions; multiple files still require review.
 - Multiple candidates rank by semantic stage, semantic month and highest explicit `редN`; mtime never decides. Remaining schema/data-quality tie is only a recommendation and requires user confirmation.

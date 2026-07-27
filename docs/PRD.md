@@ -14,7 +14,7 @@ Site presents exactly two upload zones: «Дополнительный отчё�
 
 ## 4. Functional requirements
 
-FR-01: Table 1/2 identities, immutable hashes and lineage follow [rules](BUSINESS_RULES.md). Table 1 calculation uses only semantic KS-6a and the whole-period-construction block; KS-2/KS-3/current-month blocks are excluded, and zero/multiple matches block until resolved.
+FR-01: Table 1/2 identities, immutable hashes and lineage follow [rules](BUSINESS_RULES.md). Table 1 calculation uses only semantic KS-6a and the proven current-cumulative whole-period-construction block; KS-2/KS-3/standalone current-month blocks are excluded. Multiple same-name blocks are not summed: exactly one may be selected by header/dependency plus 100%-leaf-row Decimal identity proof under a confirmed schema; otherwise user resolution blocks calculation.
 
 FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` variants и `~$` exclusion. Candidate ranking is semantic stage → semantic month → highest explicit `редN`; mtime never decides. A remaining tie may receive a schema-quality recommendation but always requires user confirmation. If an index has no Table-1 file, the site names the missing index/object and offers three direct actions: upload that Table 1 into the current run, declare it absent and carry the immediately previous semantic month quantity/cost values, or leave the new pair blank. A supplemental upload is revalidated for index/stage/month/schema. Carry copies values only; no formula or zero substitution is allowed.
 
