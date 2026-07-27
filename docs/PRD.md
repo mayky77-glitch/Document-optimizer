@@ -36,7 +36,7 @@ Inputs, normalized row, decision, feedback rule and calculation contracts are de
 
 ## 6. Errors, recovery and privacy
 
-Schema drift, unsupported XLSB, missing/multiple file, missing saved value behind a formula, ambiguous match, collision, duplicate lineage, Decimal/unit mismatch and verification failure are visible blockers, never silent fallback. Files and SQLite remain local; formulas/macros are never executed; GPT gets no money data.
+Schema drift, unsupported XLSB, missing/multiple file, missing saved value behind a formula, ambiguous match, collision, duplicate lineage, Decimal/unit mismatch and verification failure are visible blockers, never silent fallback. Missing cached value shows file/sheet/cell and requires Excel recalculate-save-reupload; blank/zero substitution and automated LibreOffice recalculation are forbidden. Files and SQLite remain local; formulas/macros are never executed; GPT gets no money data.
 
 ## 7. Quality and measurable acceptance
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, missing saved value behin
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, automatic unit conversion, versions/stage, month/current-period semantics, missing cached-value recovery, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Standalone zero-formula Table-2 output, month-pair flow, rounding, J/L, coefficient and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, automatic unit conversion, versions/stage, month/current-period semantics, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Missing cached-value recovery, standalone zero-formula Table-2 output, month-pair flow, rounding, J/L, coefficient and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 
