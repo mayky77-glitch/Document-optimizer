@@ -51,11 +51,12 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 ## 5. Расчёт, деньги и статусы
 
 - Количество и стоимость берутся из Table 1 за **весь период** через semantic headers. Единица Table 2 (в образце F) сравнивается с единицей каждой строки Table 1 (в образце J). Буквы F/J — fixtures, а не контракт координат.
-- Для проверки единиц применяются NFKC, trim, схлопывание пробелов и case-fold, но не автоматическая конверсия. Совпадение единиц делает строку допустимой для суммирования физического количества. При несовпадении ячейка единицы Table 2 становится красной и получает `исходная_единица/единица_Table1`.
+- Для проверки единиц применяются NFKC, trim, схлопывание пробелов и case-fold, но не автоматическая конверсия. Физическое количество суммируется приоритетно и по умолчанию только по одобренным строкам, чья единица совпадает с единицей Table 2. Количество строк с другой единицей без утверждённой конверсии не прибавляется. При несовпадении ячейка единицы Table 2 становится красной и получает `исходная_единица/единица_Table1`.
 - Все суммы/количества — `Decimal`; суммируются сырые RUB по строкам, и только затем результат один раз делится на `1_000_000` для вывода в млн RUB. Никаких float, округления по строкам или повторного деления.
+- Денежная стоимость суммируется по всем одобренным строкам соответствия независимо от совпадения единиц. Unit mismatch не исключает стоимость, но остаётся видимым предупреждением и сохраняется в lineage.
 - Desired comparison: `(Table1_raw_cost_RUB / 1_000_000 * 2.7) >= Table2.K`. Основание 2.7 (валюта, НДС, период) не утверждено: это **Gate 0 blocker**, не implementation default.
 - Неизменённые `Table2.J` и `Table2.L` подсвечиваются жёлтым. Equality/tolerance, destination quantity и conversion policy — Gate 0 blockers; до решения жёлтый статус не является разрешением экспорта.
-- Unit mismatch остаётся красным и содержит old/source. Включение количества и/или стоимости строки с несовпадающей единицей, конверсия и отображение нескольких разных source units остаются Gate-0 blockers. Duplicate lineage, stale formula/freshness failure, malformed Decimal, missing/multiple candidate, ambiguous match и M13/M14 collision — blockers.
+- Unit mismatch остаётся красным и содержит old/source. Quantity mismatch исключается из физической суммы без конверсии; стоимость одобренной строки включается. Поведение при отсутствии хотя бы одной строки с совпадающей единицей, conversion policy и отображение нескольких разных source units остаются Gate-0 blockers. Duplicate lineage, stale formula/freshness failure, malformed Decimal, missing/multiple candidate, ambiguous match и M13/M14 collision — blockers.
 
 ## 6. Feedback memory, а не online training
 
@@ -67,7 +68,7 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 
 ## 7. Gate 0 — решения владельца
 
-До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; stage и version-selection policy; лист/whole-period semantics; quantity destination/new-column meaning; coefficient 2.7 basis; J/L equality/tolerance; включение количества/стоимости строк с unit mismatch, conversion policy и формат нескольких source units; formula freshness/recalc policy; M03/M07/M08/M12 suffix semantics и M04 supporting works; display precision/overwrite; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
+До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; stage и version-selection policy; лист/whole-period semantics; quantity destination/new-column meaning; coefficient 2.7 basis; J/L equality/tolerance; результат при отсутствии unit-compatible quantity, conversion policy и формат нескольких source units; formula freshness/recalc policy; M03/M07/M08/M12 suffix semantics и M04 supporting works; display precision/overwrite; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
 
 ## 8. Проверяемые инварианты
 
