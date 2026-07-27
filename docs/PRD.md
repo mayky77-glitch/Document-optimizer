@@ -18,7 +18,7 @@ FR-01: Table 1/2 identities, immutable hashes and lineage follow [rules](BUSINES
 
 FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` variants и `~$` exclusion. Candidate ranking is semantic stage → semantic month → highest explicit `редN`; mtime never decides. A remaining tie may receive a schema-quality recommendation but always requires user confirmation.
 
-FR-03: M01–M14 versioned mappings, includes/excludes/suffixes и M13/M14 collision применяются детерминированно; fuzzy/GPT только candidate. Полное отсутствие process-name candidates даёт quantity/cost `0/0` с явным статусом.
+FR-03: M01–M14 are versioned. Explicit VOLS source rows default exclusively to M14; manual M13 reassignment atomically removes M14 ownership, so one source row never contributes twice. Fuzzy/GPT only propose candidates. No process-name candidate gives `0/0`.
 
 FR-04: Semantic unit fields are compared per source row. Quantity prefers the Table-2 unit; alternatives are grouped without cross-unit addition. Unit conversion is default-off and only an explicit versioned owner-approved pair/factor may convert exact values. Monetary cost sums all approved rows. Decimal calculations retain full precision; final output uses two-decimal `ROUND_HALF_UP`.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, missing saved value behin
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Default-off explicit-only conversion, KS-6a scope, file ranking, standalone output and prior rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, suffix/supporting-work semantics, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. M14-default/M13-reassignment, conversion, KS-6a scope, file ranking, standalone output and prior rules are fixed. M02/M06 literals are fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 

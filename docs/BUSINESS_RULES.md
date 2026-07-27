@@ -51,8 +51,10 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 | M10 | «Обратная засыпка» | «Обратная засыпка траншеи под трубопровод» | No broadening to other backfill. |
 | M11 | «Разработка траншеи» | «Разработка траншеи под трубопровод» | No broadening to other excavation. |
 | M12 | «Монтаж опор ВЛ» | «Комплект анкерной концевой опоры» + suffix | Never equal to «Монтаж железобетонных опор ВЛ» when the latter is measured in tonnes. |
-| M13 | «Монтаж силового кабеля ВЛ» | «Прокладка самонесущего кабеля ВОЛС по стальным опорам» | Suspicious/candidate-only and collision blocker with M14. |
-| M14 | «Монтаж ВОЛС ВЛ» | «Прокладка самонесущего кабеля ВОЛС по стальным опорам» | Collision blocker with M13; no automatic application. |
+| M13 | «Монтаж силового кабеля ВЛ» | «Прокладка самонесущего кабеля ВОЛС по стальным опорам» | Never auto-include; only explicit reassignment from M14 by the user. |
+| M14 | «Монтаж ВОЛС ВЛ» | «Прокладка самонесущего кабеля ВОЛС по стальным опорам» | Default owner because source text explicitly says «ВОЛС». |
+
+M13/M14 ownership is exclusive. Source-row key `(source_hash, sheet, row)` can contribute to only one Table-2 process. Manual reassignment to M13 atomically removes it from M14, recalculates both totals and records previous/new owner, actor, comment and rule version; double counting is a hard invariant violation.
 
 ## 5. Расчёт, деньги и статусы
 
@@ -83,8 +85,8 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 
 ## 7. Gate 0 — решения владельца
 
-До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; M03/M07/M08/M12 suffix semantics и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. Default-off explicit-only unit conversion, KS-6a scope, file selection, standalone output and prior calculation/review rules уже утверждены. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
+До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set; M03/M07/M08/M12 suffix semantics и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. Exclusive M14-default/M13-reassignment, unit conversion, KS-6a scope, file selection, standalone output and prior rules уже утверждены. M02/M06 literals are fixed. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
 
 ## 8. Проверяемые инварианты
 
-Результат order-independent; каждое значение имеет lineage; export запрещён при любом unresolved blocker; rules и feedback versioned; original hash неизменён. Goldens 1006: сваи `261 / 37.313343`, бетон `2.36 / 0.034239`, ТТ `2138.059 / 33.75002661`, металлоконструкции `100.39863 / 12.59387023` (количество / млн RUB).
+Результат order-independent; каждое значение имеет lineage; один source-row key имеет максимум одного Table-2 owner; export запрещён при unresolved blocker; rules/feedback versioned; original hash неизменён. Goldens 1006: сваи `261 / 37.313343`, бетон `2.36 / 0.034239`, ТТ `2138.059 / 33.75002661`, металлоконструкции `100.39863 / 12.59387023` (количество / млн RUB).
