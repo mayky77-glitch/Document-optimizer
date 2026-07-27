@@ -20,7 +20,7 @@ FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `
 
 FR-03: M01–M14 versioned mappings, includes/excludes/suffixes и M13/M14 collision применяются детерминированно; fuzzy/GPT только candidate. Полное отсутствие process-name candidates даёт quantity/cost `0/0` с явным статусом.
 
-FR-04: Semantic unit fields are compared per source row (observed Table-2 F versus Table-1 J, never fixed coordinates). Quantity prefers the Table-2 unit; if unavailable, one alternative unit is summed and written as red `old/source`; multiple units produce separate subtotals and require one explicit unit-group selection without cross-unit addition. Monetary cost sums all approved rows regardless of the quantity group. Decimal pipeline sums raw RUB then divides once by `1e6`. A separate heuristic check compares `cost_mln × run_coefficient` (default `2.7`) with Table2.K. Table2.J/L are yellow when numerically equal after two-decimal rounding, including `0 = 0`; blank/blank is also yellow, while blank/number is not. Rounding mode remains Gate 0.
+FR-04: Semantic unit fields are compared per source row (observed Table-2 F versus Table-1 J, never fixed coordinates). Quantity prefers the Table-2 unit; alternative units are grouped without cross-unit addition. Monetary cost sums all approved rows. Decimal calculations retain full precision; final quantity/cost and J/L comparison values use two-decimal `ROUND_HALF_UP`, while the coefficient check uses the unrounded aggregate. J/L equality, including `0 = 0` and blank/blank, is yellow; blank/number is not.
 
 FR-05: Site has exactly two named upload zones («Дополнительный отчёт / Table 2» one XLSX; «Исходные KS / Table 1» folder/ZIP), CLI explicit report/source args, explicit stage and month/current-period validation against semantic Table 2 headers, then one review table. Every Table-1 candidate has a direct **«Учитывать»** checkbox, source lineage, contribution, recommendation/uncertainty and optional comment; totals recalculate after each change. Unresolved blocker disables export.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, ambiguous match, collisio
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, quantity/new columns, J/L rounding mode, automatic unit conversion, versions/stage, month/current-period semantics, freshness, other output precision/overwrite, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Numeric/blank two-decimal J/L comparison, coefficient flow and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, quantity/new-column destination and overwrite, automatic unit conversion, versions/stage, month/current-period semantics, freshness, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Full-precision calculation/final two-decimal rounding, J/L comparison, coefficient flow and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 
