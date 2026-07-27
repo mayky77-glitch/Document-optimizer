@@ -48,7 +48,7 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 | ID | Table 2 literal | Table 1 literal include | Exclude / suffix / result |
 | --- | --- | --- | --- |
 | M01 | «Устройство свайных фундаментов» | «Устройство основания из буроопускных металлических свай» | Exclude any pile tests. |
-| M02 | «Бетонные работы» | «Армирование и бетонирование монолитных участков из бетона (участки из жаростойкого бетона)»; «Армирование и бетонирование монолитных участков из бетона»; «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Exclude «железобетон». |
+| M02 | КГС scope: «Бетонные работы» | «Армирование и бетонирование монолитных участков из бетона (участки из жаростойкого бетона)»; «Армирование и бетонирование монолитных участков из бетона»; «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Exact normalized auto-include only in КГС. «Устройство бетонной подготовки» is visible `needs_review`, unchecked. Any «железобетон» is hard-excluded. |
 | M03 | «Монтаж ТТ и СДТ КГС» | «Монтаж ТТ» + suffix | Exact/normalized prefix auto-include, including diameter/mark continuation. «Монтаж трубопровода», «Монтаж технологических трубопроводов», «Монтаж вставки электроизолирующей…» и similar rows — visible `needs_review`, unchecked by default. |
 | M04 | «Прокладка кабеля, провода (Силовые сети) КГС» | В КГС строки прокладки кабеля/провода без explicit low-current marker | «Разводка по устройствам и подключение жил электрических кабелей», поддержки, крепления и вспомогательные работы — `needs_review`, не hard-exclude. |
 | M05 | «Прокладка кабеля, провода (Слаботочные сети) КГС» | В КГС строки прокладки кабеля/провода с explicit «слаботочн», «слаботочные сети» или «ВОЛС» | Без explicit marker строка относится к M04; cross-scope VЛ/VОЛС ownership rules retain priority. |
@@ -57,7 +57,7 @@ M04/M05 classifier работает только внутри соответст
 | M06 | «Монтаж металлоконструкций» | «Монтаж м/к фундаментов и ростверков»; «Монтаж м/к каркасов зданий и сооружений»; «Монтаж м/к эстакад»; «Монтаж малых конструктивных элементов м/к(монтаж жалюзийных решеток)» | Exclude exact «Монтаж м/к мачт-молниеотводов»; «Монтаж м/к антенных мачт»; «Изготовление м/к (прим. емкостей)». |
 | M07 | «Сварка в нитку» | «сварка» + suffix | Exact or normalized prefix, e.g. «Сварка трубопровода Ду 300». |
 | M08 | Table-2 aliases «Укладка»; «Укладка трубопроводов» | «Укладка трубопроводов» + suffix | Оба target literal принадлежат одному rule только в своём ГК object scope. Auto-include exact/normalized prefix с любым диаметром/маркой/пояснением; не расширять до общего «Укладка». |
-| M09 | «Бетонные работы» | «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Separate and traceable despite overlap with M02; de-duplicate identical source row. |
+| M09 | ГК scope: «Бетонные работы» | «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Exact normalized auto-include only in ГК. «Устройство бетонной подготовки» is visible `needs_review`, unchecked. Any «железобетон» is hard-excluded. M02/M09 source ownership is scope-exclusive. |
 | M10 | «Обратная засыпка» | «Обратная засыпка траншеи под трубопровод» | No broadening to other backfill. |
 | M11 | «Разработка траншеи» | «Разработка траншеи под трубопровод» | No broadening to other excavation. |
 | M12 | «Монтаж опор ВЛ» | «Комплект анкерной концевой опоры» + suffix | Exact/prefix; never equal to «Монтаж железобетонных опор ВЛ» when measured in tonnes. |
@@ -72,6 +72,8 @@ M15 — отдельный target rule, хотя его основной Table-1
 M08 corpus evidence для stage 13.1: Table-2 0919 использует «Укладка трубопроводов», а 0918/0685/0686 — «Укладка»; в выбранных Table-1 fixtures найдено 18 prefix-matched pipe-laying rows, все с `км`. «Укладка контейнеров», геоматов, георешёток, геоматриц и рулонных геоматериалов не совпадают с pipe prefix и не являются M08 candidates.
 
 M03 corpus evidence для stage 13.1: 1004 содержит одну «Монтаж ТТ», 1006 — четыре «Монтаж ТТ Д …», 0621 — одну «Монтаж ТТ»; все шесть имеют source unit `м`. Table-2 unit `ст` therefore follows the general mismatch rule as red `ст/м`; 1004/1006 already demonstrate it, while 0621 receives it when processed. Missing 1005 follows §2. Section headings without a unit and hydraulic/pneumatic tests, nitrogen purging and thermal insulation are not M03 candidates.
+
+«Бетонные работы» dispatch по object scope: КГС→M02, ГК→M09, ВЛ→no baseline auto-rule. Observed КГС 1004/1006/0621 have 7 M02 rows, all `м3`; observed ГК 0919/0918/0685/0686 have 6 M09 rows, all `м3`. Each of КГС and ГК has one concrete-preparation row shown unchecked. In available ВЛ 0772/0775/0776/0769/0777 there are zero allowed concrete candidates, so quantity/cost is `0/0`; six reinforced-concrete support/equipment rows are excluded. Missing ВЛ 0768/0778 and КГС 1005 follow §2 rather than synthetic zero. A future non-reinforced-concrete ВЛ candidate is visible unchecked and may become an exact scoped feedback rule only after approval and successful export.
 
 ## 5. Расчёт, деньги и статусы
 
@@ -113,7 +115,7 @@ Soft run budget — `25,000` input и `5,000` output tokens. Жёсткого л
 
 Компактность памяти проверяется на fixture из 100,000 решений: после SQLite checkpoint средний прирост базы `≤ 1 KiB` на решение, без учёта загруженных workbook. Exact compatible active-rule lookup на fixture из 1,000,000 audit events / 100,000 active rules: p95 `≤ 100 ms` warm и `≤ 500 ms` cold на зафиксированной reference machine. Нарушение порога блокирует release, но не приводит к удалению audit history или ослаблению совместимости правил.
 
-Feedback indefinite versioned retention/on-off/restore, exact compatibility/post-export activation, M04/M05 classifier and prior rules утверждены. M02/M06 literals fixed.
+Feedback indefinite versioned retention/on-off/restore, exact compatibility/post-export activation, M02/M09 scope dispatch, M04/M05 classifier and prior rules утверждены. M02/M06 literals fixed.
 
 ## 8. Проверяемые инварианты
 
