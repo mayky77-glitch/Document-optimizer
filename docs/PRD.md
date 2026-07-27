@@ -20,7 +20,7 @@ FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `
 
 FR-03: M01–M14 versioned mappings, includes/excludes/suffixes и M13/M14 collision применяются детерминированно; fuzzy/GPT только candidate.
 
-FR-04: Decimal pipeline sums raw RUB then divides once by `1e6`; coefficient 2.7 and J/L tolerance remain Gate 0.
+FR-04: Semantic unit fields are compared per source row (observed Table-2 F versus Table-1 J, never fixed coordinates); mismatch writes `old/source` in red. Decimal pipeline sums raw RUB then divides once by `1e6`; mismatch inclusion, coefficient 2.7 and J/L tolerance remain Gate 0.
 
 FR-05: Site has exactly two named upload zones («Дополнительный отчёт / Table 2» one XLSX; «Исходные KS / Table 1» folder/ZIP), CLI explicit report/source args, explicit stage and month/current-period validation against semantic Table 2 headers, then one-table direct decisions, filters and lineage; unresolved blocker disables export.
 
@@ -48,7 +48,7 @@ Schema drift, unsupported XLSB, missing/multiple file, ambiguous match, collisio
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, quantity/new columns, 2.7 basis, J/L tolerance, units, versions/stage, month/current-period semantics, freshness, display/overwrite, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, quantity/new columns, 2.7 basis, J/L tolerance, mismatch quantity/cost inclusion, unit conversion/multiple-source display, versions/stage, month/current-period semantics, freshness, display/overwrite, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 

@@ -18,8 +18,9 @@ Record only accepted cross-cutting decisions. Link each decision to affected com
 - Model access does not require API: disabled, local GPT-capable CLI and manual strict-JSON GPT-application bridge are supported plan modes; an API adapter is optional. [[components/document-reconciliation|Component card]]
 - MVP supports XLSX and folder/ZIP inputs; XLSB is an explicit blocker and post-MVP adapter, never a silent partial import. [[components/document-reconciliation|Component card]]
 - Implementation orchestration targets an explicitly authorised xhigh project profile; profile configuration/restart is a pre-P1 setup gate, not part of the current planning-only work. [[components/document-reconciliation|Component card]]
+- Units are resolved by semantic headers, not fixed letters: observed Table-2 F is compared per row with observed Table-1 J even if either column shifts. A mismatch makes the Table-2 unit cell red and appends the source unit after `/`. [[components/document-reconciliation|Component card]]
 
 ## Pending owner approval (Gate 0)
 
-- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, stage/month/whole-period/quantity, 2.7, J/L tolerance, units, versions, formula freshness, feedback policy and AI context/token budget. M02/M06 literals are accepted. [[components/document-reconciliation|Component card]]
+- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, stage/month/whole-period/quantity, 2.7, J/L tolerance, inclusion/conversion/display for mismatched units, versions, formula freshness, feedback policy and AI context/token budget. M02/M06 literals and semantic unit comparison/red `old/source` marking are accepted. [[components/document-reconciliation|Component card]]
 - Feedback will be versioned memory rather than online training; exact reuse/retention/threshold values remain owner decisions. [[components/document-reconciliation|Component card]]
