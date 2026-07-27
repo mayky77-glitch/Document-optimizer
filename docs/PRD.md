@@ -18,7 +18,7 @@ FR-01: Table 1/2 identities, immutable hashes and lineage follow [rules](BUSINES
 
 FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` variants и `~$` exclusion. Candidate ranking is semantic stage → semantic month → highest explicit `редN`; mtime never decides. A remaining tie may receive a schema-quality recommendation but always requires user confirmation. If an index has no Table-1 file, the site names the missing index/object and offers three direct actions: upload that Table 1 into the current run, declare it absent and carry the immediately previous semantic month quantity/cost values, or leave the new pair blank. A supplemental upload is revalidated for index/stage/month/schema. Carry copies values only; no formula or zero substitution is allowed.
 
-FR-03: M01–M14 are versioned. In KGS cable scope, explicit low-current/VOLS markers choose M05; otherwise M04. Wiring/device-connection, support, fastening and auxiliary rows are review-only candidates, never hard-excluded. Prefix and exclusive ownership rules apply before fuzzy/GPT candidate suggestions.
+FR-03: M01–M15 are versioned. In KGS cable scope, explicit low-current/VOLS markers choose M05; otherwise M04. Wiring/device-connection, support, fastening and auxiliary rows are review-only candidates, never hard-excluded. M15 auto-includes the exact bored-drop metal-pile foundation row in ВЛ scope, hard-excludes pile tests and shows pile-head fabrication/installation unchecked as `needs_review`. Prefix, scope and exclusive ownership rules apply before fuzzy/GPT candidate suggestions.
 
 FR-04: Semantic unit fields are compared per source row. Quantity prefers the Table-2 unit; alternatives are grouped without cross-unit addition. Unit conversion is default-off and only an explicit versioned owner-approved pair/factor may convert exact values. Monetary cost sums all approved rows. Decimal calculations retain full precision; final output uses two-decimal `ROUND_HALF_UP`.
 
@@ -59,7 +59,7 @@ Primary risks: variable schemas, missing cached input values, mistaken unit/mone
 | Requirement | Contract | Acceptance evidence |
 | --- | --- | --- |
 | Inputs/selector | BR §1–2 | Unicode, boundary, misleading filename, content-stage, missing-index supplemental-upload/carry/blank and multiple-candidate tests |
-| 14 mappings | BR §3–4 | M01–M14, M04/M05 positive/cross-category/exclusion and M13/M14 collision tests |
+| 15 mappings | BR §3–4 | M01–M15, M04/M05 positive/cross-category/exclusion, M13/M14 and M01/M15 collision tests |
 | Money/status | BR §5 | Decimal/order/golden/J-L/unit tests |
 | Review/export | ARCH UX/export | one delivered XLSX, zero formulas/external links, flattened cached values, preserved styles/colors and save/reopen/internal-manifest E2E |
 | GPT/manual | ARCH GPT | schema rejection + CLI adapter/manual app bridge + no-model CLI/site tests |

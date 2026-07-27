@@ -37,7 +37,7 @@ Preflight Table 1 допускает варианты регистра/алфа�
 
 Если после нормализации и применения mapping для процесса Table 2 в Table 1 нет ни одной строки-кандидата по наименованию, результат количества и стоимости равен `0`; это состояние `no_process_match`, а не unit mismatch. Если кандидаты есть, система предварительно отмечает рекомендуемые строки как `include=true`, но сомнительный выбор требует подтверждения пользователя на review-экране.
 
-## 4. Четырнадцать пользовательских соответствий (versioned mappings v1)
+## 4. Пятнадцать пользовательских соответствий (versioned mappings v1)
 
 Repeated spaces/typos are normalized under §3, but every mapping remains a separate versioned ID and preserves the literal shown below. `+ suffix` means a normalized Table-1 string equals the base phrase or starts with that phrase followed by any diameter, mark, number or clarifying text. The continuation is not separately compared with Table 2. A hard exclude still wins.
 
@@ -59,8 +59,11 @@ M04/M05 classifier работает только внутри соответст
 | M12 | «Монтаж опор ВЛ» | «Комплект анкерной концевой опоры» + suffix | Exact/prefix; never equal to «Монтаж железобетонных опор ВЛ» when measured in tonnes. |
 | M13 | «Монтаж силового кабеля ВЛ» | «Прокладка самонесущего кабеля ВОЛС по стальным опорам» | Never auto-include; only explicit reassignment from M14 by the user. |
 | M14 | «Монтаж ВОЛС ВЛ» | «Прокладка самонесущего кабеля ВОЛС по стальным опорам» | Default owner because source text explicitly says «ВОЛС». |
+| M15 | «Устройство свайного основания ВЛ» | «Устройство основания из буроопускных металлических свай» | Exact normalized literal in ВЛ scope is auto-included; pile tests are hard-excluded; «Изготовление и монтаж оголовков свай» is `needs_review`, unchecked by default. |
 
 M13/M14 ownership is exclusive. Source-row key `(source_hash, sheet, row)` can contribute to only one Table-2 process. Manual reassignment to M13 atomically removes it from M14, recalculates both totals and records previous/new owner, actor, comment and rule version; double counting is a hard invariant violation.
+
+M15 — отдельный target rule, хотя его основной Table-1 literal совпадает с M01. M15 действует только для exact Table-2 process «Устройство свайного основания ВЛ» внутри ВЛ object scope; M01 не расширяется на ВЛ автоматически. Один source-row key не может одновременно принадлежать M01 и M15; несовместимый scope даёт collision blocker. Если пользователь явно включает «Изготовление и монтаж оголовков свай», строка с единицей `т` участвует в стоимости по общему правилу §5, но не складывается с количеством `шт`; unit cell становится красной `шт/т`. Испытания свай не предлагаются к включению. Corpus evidence: exact pile literal/unit `шт` найден для 0772, 0775, 0776, 0769 и 0777; missing 0768/0778 проходят supplemental-upload/carry/blank flow §2.
 
 ## 5. Расчёт, деньги и статусы
 
