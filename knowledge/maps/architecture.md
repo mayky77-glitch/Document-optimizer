@@ -14,4 +14,4 @@ Add links to component cards as they are created. Use this map for local graph n
 - [[../INDEX|Knowledge index]]
 - [[../components/document-reconciliation|Document reconciliation]]
 
-Planning boundary: exactly two uploads (report XLSX; source folder/ZIP) → semantic preflight of stage and month/current period → Unicode selector → baseline/feedback rules → one-table review → Decimal validation → editable atomic export/manifest. Filename only narrows candidates; GPT is optional/default-off; SQL-first retrieval supplies only bounded compatible projections. CodeGraph follows the first scaffold only.
+Planning boundary: exactly two uploads → dual formula/data-only read → semantic preflight → selector/rules → one-table review → Decimal calculation → flatten Table 2 → one standalone value-only XLSX with zero formulas/external links; internal manifest stays local. GPT is optional/default-off; CodeGraph follows the first scaffold only.

@@ -20,10 +20,11 @@ Four linked planning documents define product, domain contract, architecture and
 - Table-2 J/L compare after `ROUND_HALF_UP` to two decimals; exact equality, `0 = 0` and blank/blank are yellow. Blank/number is not yellow and blank is not zero.
 - Aggregation/control retain full Decimal precision; final quantity/cost and J/L comparison values use two-decimal `ROUND_HALF_UP`. Manifest retains exact and rendered values.
 - Selected month resolves to one semantic quantity/cost pair. Missing pair is styled/appended at the right; existing pair is reused without duplication; nonblank old→new requires explicit overwrite confirmation.
+- Final delivery is exactly one standalone Table-2 XLSX: Table 1 supplies saved values only, all Table-2 formulas are flattened to saved visible values, new results are numeric, and reopen verifies zero formulas/external links while preserving styles/colors/editability. Internal manifest remains local.
 
 ## Gate 0 / risks
 
-- Implementation is blocked until owner decides M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, stage/month/period validation, conversion, versions, formula freshness, feedback reuse/retention and AI context/token budget. Month-pair handling, rounding, J/L, coefficient, M02/M06 and unit/cost rules are fixed.
+- Implementation is blocked until owner decides M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, stage/month/period validation, conversion, versions, missing cached-value recovery, feedback reuse/retention and AI context/token budget. Standalone value-only output, month-pair, rounding, J/L, coefficient, M02/M06 and unit/cost rules are fixed.
 - Feedback is versioned scoped memory, never online training: canonical SQLite IDs/FKs/hashes, deduplicated raw strings, active snapshot separate from immutable audit; deterministic SQL precedes any bounded GPT projection.
 - Model gateway supports disabled, local CLI and manual strict-JSON GPT-application modes without requiring an API. MVP imports XLSX/folder/ZIP; XLSB is an explicit post-MVP adapter. Implementation orchestration has a pre-P1 xhigh-profile setup/restart gate.
 

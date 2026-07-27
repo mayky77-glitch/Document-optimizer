@@ -2,7 +2,7 @@
 
 ## 1. Цель и границы
 
-Локальный инструмент для одного пользователя сверяет исходные КС-2/КС-3/КС-6а (**Table 1**) с `Расчет доп отчета карточка 23 Хандюк.xlsx` / `Лист1` (**Table 2**), даёт человеку проверить соответствия и создаёт новую редактируемую копию. Cloud, многопользовательский режим, изменение исходников, online training, автоматическая рекалькуляция Excel и GPT-authority — out of scope. MVP принимает XLSX и ZIP/папку с XLSX; обнаруженные XLSB фиксируются как unsupported blocker и переходят в отдельный adapter backlog, а не читаются частично или молча.
+Локальный инструмент для одного пользователя сверяет исходные КС-2/КС-3/КС-6а (**Table 1**) с `Расчет доп отчета карточка 23 Хандюк.xlsx` / `Лист1` (**Table 2**), даёт человеку проверить соответствия и создаёт один самостоятельный value-only XLSX Table 2. Cloud, многопользовательский режим, изменение исходников, online training, формулы/внешние ссылки в финальном отчёте и GPT-authority — out of scope. MVP принимает XLSX и ZIP/папку с XLSX; обнаруженные XLSB фиксируются как unsupported blocker.
 
 ## 2. Проблема и доказанный контекст
 
@@ -24,7 +24,7 @@ FR-04: Semantic unit fields are compared per source row (observed Table-2 F vers
 
 FR-05: Site has exactly two named upload zones («Дополнительный отчёт / Table 2» one XLSX; «Исходные KS / Table 1» folder/ZIP), CLI explicit report/source args, explicit stage and month/current-period validation against semantic Table 2 headers, then one review table. Every Table-1 candidate has a direct **«Учитывать»** checkbox, source lineage, contribution, recommendation/uncertainty and optional comment; totals recalculate after each change. Unresolved blocker disables export.
 
-FR-06: Export semantically finds the selected month's quantity/cost pair, creates one styled pair at the right only when absent, and never duplicates it. Existing nonblank cells require visible old→new confirmation. Export then makes an editable new copy preserving formulas/styles/merged/filters/comments/colors, atomically saves, reopens and reconciles manifest/original hash.
+FR-06: Export semantically finds/creates the selected month's quantity/cost pair and handles old→new confirmation. The only delivered artifact is one standalone editable XLSX Table 2 with values, styles, merged cells, filters, comments and colors, but zero formulas, external workbook links or connections. Table-1 formulas are never copied; existing Table-2 formulas are flattened to saved visible values in the output copy. Internal manifest/audit stays local.
 
 FR-07: Feedback memory is versioned and explicit, never model training; canonical SQLite entities use IDs/FKs/hashes, raw strings deduplicate once, active snapshot is separate from append-only audit, and reuse supports compatibility/undo/deactivate/rollback.
 
@@ -32,11 +32,11 @@ FR-08: GPT is default-off, strict-schema candidate-only and cannot select/sum/ap
 
 ## 5. Data and output contracts
 
-Inputs, normalized row, decision, feedback rule and calculation contracts are defined in [architecture](ARCHITECTURE.md) and [rules](BUSINESS_RULES.md). Output = new XLSX plus manifest/audit records: input/output hashes, schema/rule/feedback versions, decisions, values/statuses and per-row lineage. Input hashes must equal their import hashes after every run.
+Inputs, normalized row, decision, feedback rule and calculation contracts are defined in [architecture](ARCHITECTURE.md) and [rules](BUSINESS_RULES.md). User output = exactly one value-only Table-2 XLSX. Internal SQLite keeps hashes, schema/rule/feedback versions, decisions, exact/rendered values and per-row lineage; it is not an additional delivered report. Input hashes must remain unchanged.
 
 ## 6. Errors, recovery and privacy
 
-Schema drift, unsupported XLSB, missing/multiple file, ambiguous match, collision, duplicate lineage, stale formula, Decimal/unit mismatch and manifest failure are visible blockers, never silent fallback. UI/CLI shows evidence and recovery (choose candidate, fix schema, explicit skip, owner decision, re-run). Files and SQLite remain local; macros/formulas are not executed; GPT gets no money data.
+Schema drift, unsupported XLSB, missing/multiple file, missing saved value behind a formula, ambiguous match, collision, duplicate lineage, Decimal/unit mismatch and verification failure are visible blockers, never silent fallback. Files and SQLite remain local; formulas/macros are never executed; GPT gets no money data.
 
 ## 7. Quality and measurable acceptance
 
@@ -44,15 +44,15 @@ Schema drift, unsupported XLSB, missing/multiple file, ambiguous match, collisio
 - Reordering rows does not change result; every included/excluded value has row/file/rule lineage.
 - Selector, all rule branches (including M04/M05 candidate-only until approved include sets), feedback compatibility, upload labels/count/report XLSX/source folder/ZIP, stage/month preservation, editable exports and manual/no-GPT path have automated tests; malformed GPT output is rejected deterministically.
 - Metrics/tests prove storage growth per decision, large-corpus retrieval latency, configurable prompt-token ceiling, zero duplicate raw strings, no full-history prompt and deterministic equivalence before/after retention compaction. Numeric thresholds are owner-approved at Gate 0.
-- Output opens editably and preserves formulas/styles/merged cells/filters/comments/colors; original hash does not change; manifest reconciles 100% changed cells and lineage.
+- Output opens editably, preserves styles/merged cells/filters/comments/colors, contains zero formulas/external links/connections and is the only delivered file; original hashes do not change and internal verification reconciles 100% changed cells and lineage.
 
 ## 8. Gate 0 and dependencies
 
-No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, automatic unit conversion, versions/stage, month/current-period semantics, formula freshness, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Semantic month-pair creation/reuse/overwrite, full-precision rounding, J/L comparison, coefficient flow and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
+No scaffold or implementation starts until owner approves every item in BUSINESS_RULES §7: M04/M05 exact include sets, M13/M14, suffix/supporting-work semantics, period semantics, automatic unit conversion, versions/stage, month/current-period semantics, missing cached-value recovery, feedback reuse/retention/rollback and AI context/token budget plus performance/storage thresholds. Standalone zero-formula Table-2 output, month-pair flow, rounding, J/L, coefficient and unit/cost rules are fixed. M02/M06 literals are already fixed. CodeGraph only follows first scaffold.
 
 ## 9. Risks and non-goals
 
-Primary risks: variable schemas, stale formulas, mistaken unit/money semantics, accidental version selection, feedback overreach and privacy leakage. Non-goals are listed in §1; especially no silent rule broadening from one item to a category.
+Primary risks: variable schemas, missing cached input values, mistaken unit/money semantics, accidental version selection, feedback overreach and privacy leakage. Non-goals are listed in §1; especially no formulas or external workbook dependencies in the delivered report.
 
 ## 10. Traceability matrix
 
@@ -61,7 +61,7 @@ Primary risks: variable schemas, stale formulas, mistaken unit/money semantics, 
 | Inputs/selector | BR §1–2 | Unicode, boundary, misleading filename, content-stage and missing/multiple tests |
 | 14 mappings | BR §3–4 | M01–M14, M04/M05 positive/cross-category/exclusion and M13/M14 collision tests |
 | Money/status | BR §5 | Decimal/order/golden/J-L/unit tests |
-| Review/export | ARCH UX/export | exact two upload zones, XLSX/folder/ZIP, stage/month preservation, preselected checkbox/comment/recalculation and save/reopen/manifest E2E |
+| Review/export | ARCH UX/export | one delivered XLSX, zero formulas/external links, flattened cached values, preserved styles/colors and save/reopen/internal-manifest E2E |
 | GPT/manual | ARCH GPT | schema rejection + CLI adapter/manual app bridge + no-model CLI/site tests |
 | Feedback memory | BR §6 | reuse/isolation/conflict/rollback/drift/duplicate, compact-storage and compaction-equivalence tests |
 | AI context control | ARCH GPT | SQL-first/no-call, token ceiling and no-full-history-prompt tests |
