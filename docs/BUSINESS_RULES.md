@@ -35,22 +35,22 @@ Preflight Table 1 допускает варианты регистра/алфа�
 
 ## 4. Четырнадцать пользовательских соответствий (versioned mappings v1)
 
-Repeated spaces/typos are normalized under §3, but every mapping remains a separate versioned ID and preserves the literal shown below. `+ suffix` means the Table 2 key's value/suffix must match under the owner-approved suffix semantics; otherwise the row is candidate-only.
+Repeated spaces/typos are normalized under §3, but every mapping remains a separate versioned ID and preserves the literal shown below. `+ suffix` means a normalized Table-1 string equals the base phrase or starts with that phrase followed by any diameter, mark, number or clarifying text. The continuation is not separately compared with Table 2. A hard exclude still wins.
 
 | ID | Table 2 literal | Table 1 literal include | Exclude / suffix / result |
 | --- | --- | --- | --- |
 | M01 | «Устройство свайных фундаментов» | «Устройство основания из буроопускных металлических свай» | Exclude any pile tests. |
 | M02 | «Бетонные работы» | «Армирование и бетонирование монолитных участков из бетона (участки из жаростойкого бетона)»; «Армирование и бетонирование монолитных участков из бетона»; «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Exclude «железобетон». |
-| M03 | «Монтаж ТТ и СДТ КГС» | «Монтаж ТТ Д» + suffix | Монтаж трубопровода/похожие строки only candidate review. |
+| M03 | «Монтаж ТТ и СДТ КГС» | «Монтаж ТТ Д» + suffix | Exact/prefix match auto-candidate; монтаж трубопровода/похожие строки only candidate review. |
 | M04 | «Прокладка кабеля, провода (Силовые сети) КГС» | No approved literal Table 1 include set: all candidates are candidate-only | Exclude «Разводка по устройствам и подключение жил электрических кабелей»; supporting works candidate-only until owner provides the exact power include set. |
 | M05 | «Прокладка кабеля, провода (Слаботочные сети) КГС» | No approved literal Table 1 include set: all candidates are candidate-only | Power/cross-category/unclear rows are candidate-only and never auto-included until owner provides the exact low-current include set. |
 | M06 | «Монтаж металлоконструкций» | «Монтаж м/к фундаментов и ростверков»; «Монтаж м/к каркасов зданий и сооружений»; «Монтаж м/к эстакад»; «Монтаж малых конструктивных элементов м/к(монтаж жалюзийных решеток)» | Exclude exact «Монтаж м/к мачт-молниеотводов»; «Монтаж м/к антенных мачт»; «Изготовление м/к (прим. емкостей)». |
-| M07 | «Сварка в нитку» | «сварка» + suffix | No matching suffix → candidate-only. |
-| M08 | «Укладка трубопроводов (укладка)» | «Укладка трубопроводов» + suffix | No matching suffix → candidate-only. |
+| M07 | «Сварка в нитку» | «сварка» + suffix | Exact or normalized prefix, e.g. «Сварка трубопровода Ду 300». |
+| M08 | «Укладка трубопроводов (укладка)» | «Укладка трубопроводов» + suffix | Exact or normalized prefix with any continuation. |
 | M09 | «Бетонные работы» | «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Separate and traceable despite overlap with M02; de-duplicate identical source row. |
 | M10 | «Обратная засыпка» | «Обратная засыпка траншеи под трубопровод» | No broadening to other backfill. |
 | M11 | «Разработка траншеи» | «Разработка траншеи под трубопровод» | No broadening to other excavation. |
-| M12 | «Монтаж опор ВЛ» | «Комплект анкерной концевой опоры» + suffix | Never equal to «Монтаж железобетонных опор ВЛ» when the latter is measured in tonnes. |
+| M12 | «Монтаж опор ВЛ» | «Комплект анкерной концевой опоры» + suffix | Exact/prefix; never equal to «Монтаж железобетонных опор ВЛ» when measured in tonnes. |
 | M13 | «Монтаж силового кабеля ВЛ» | «Прокладка самонесущего кабеля ВОЛС по стальным опорам» | Never auto-include; only explicit reassignment from M14 by the user. |
 | M14 | «Монтаж ВОЛС ВЛ» | «Прокладка самонесущего кабеля ВОЛС по стальным опорам» | Default owner because source text explicitly says «ВОЛС». |
 
@@ -85,7 +85,7 @@ M13/M14 ownership is exclusive. Source-row key `(source_hash, sheet, row)` can c
 
 ## 7. Gate 0 — решения владельца
 
-До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set; M03/M07/M08/M12 suffix semantics и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. Exclusive M14-default/M13-reassignment, unit conversion, KS-6a scope, file selection, standalone output and prior rules уже утверждены. M02/M06 literals are fixed. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
+До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set и M04 supporting works; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. Exact/normalized-prefix suffix semantics, M14/M13 ownership, unit conversion, KS-6a scope, file selection, standalone output and prior rules уже утверждены. M02/M06 literals are fixed. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
 
 ## 8. Проверяемые инварианты
 

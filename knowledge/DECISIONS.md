@@ -34,8 +34,9 @@ Record only accepted cross-cutting decisions. Link each decision to affected com
 - Table-1 calculation reads only the semantic KS-6a sheet and whole-period-construction block, accepting proven name/header spelling variants. KS-2, KS-3 and current-month blocks are excluded; zero/multiple matches require explicit resolution. [[components/document-reconciliation|Component card]]
 - Unit conversion is not expected and is default-off. The system never infers a factor; only an explicit owner-approved, versioned source/target-unit pair with Decimal factor may convert, with exact/raw/converted lineage and rollback. [[components/document-reconciliation|Component card]]
 - Source text «Прокладка самонесущего кабеля ВОЛС по стальным опорам» belongs to M14 «Монтаж ВОЛС ВЛ» by default. Explicit M13 reassignment removes M14 ownership atomically; one source row can never count in both. [[components/document-reconciliation|Component card]]
+- For M03/M07/M08/M12, “base phrase + value” means exact normalized base or a string starting with it followed by any diameter/mark/number/text. Continuation is not matched separately to Table 2; hard excludes retain priority. [[components/document-reconciliation|Component card]]
 
 ## Pending owner approval (Gate 0)
 
-- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: M04/M05 exact include sets, suffix/supporting-work semantics, feedback policy and AI context/token budget. M14/M13 ownership and prior rules are accepted. [[components/document-reconciliation|Component card]]
+- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: M04/M05 include/supporting-work policy, feedback policy and AI context/token budget. Prefix semantics, M14/M13 ownership and prior rules are accepted. [[components/document-reconciliation|Component card]]
 - Feedback will be versioned memory rather than online training; exact reuse/retention/threshold values remain owner decisions. [[components/document-reconciliation|Component card]]

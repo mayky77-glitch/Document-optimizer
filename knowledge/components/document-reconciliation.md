@@ -19,6 +19,7 @@ Four linked planning documents define product, domain contract, architecture and
 - Unit columns are semantic and movable: observed Table-2 F is compared per source row with observed Table-1 J. Quantity prefers that unit; one alternative unit is summed with red `old/source`; multiple units remain separate subtotals until the user selects one. Cost always sums all approved rows.
 - Unit conversion is default-off and not expected; only an explicit owner-approved versioned pair/factor may convert, with exact/raw/converted lineage and rollback. No inferred factors.
 - VOLS source rows default exclusively to M14; manual M13 reassignment atomically removes M14 ownership. One source row can never contribute to both processes.
+- M03/M07/M08/M12 `+ value` matches the exact normalized base or any string beginning with it plus continuation; no separate Table-2 suffix comparison, hard excludes first.
 - No process-name candidate produces quantity/cost `0/0`. Every candidate is visible with a preselected **«Учитывать»** checkbox, contribution, uncertainty and optional comment; user changes recalculate totals.
 - Coefficient is one editable run-level field, default `2.7`. `cost_mln × coefficient < Table2.K` produces an orange warning with inputs/result/difference; acknowledged warnings do not block export and never alter exported cost. Coefficient and acknowledgement enter manifest/audit.
 - Table-2 J/L compare after `ROUND_HALF_UP` to two decimals; exact equality, `0 = 0` and blank/blank are yellow. Blank/number is not yellow and blank is not zero.
@@ -29,7 +30,7 @@ Four linked planning documents define product, domain contract, architecture and
 
 ## Gate 0 / risks
 
-- Implementation is blocked until owner decides M04/M05 exact include sets, suffix/supporting-work semantics, feedback reuse/retention and AI context/token budget. M14/M13 ownership and prior rules are fixed.
+- Implementation is blocked until owner decides M04/M05 include/supporting-work policy, feedback reuse/retention and AI context/token budget. Prefix semantics, M14/M13 ownership and prior rules are fixed.
 - Feedback is versioned scoped memory, never online training: canonical SQLite IDs/FKs/hashes, deduplicated raw strings, active snapshot separate from immutable audit; deterministic SQL precedes any bounded GPT projection.
 - Model gateway supports disabled, local CLI and manual strict-JSON GPT-application modes without requiring an API. MVP imports XLSX/folder/ZIP; XLSB is an explicit post-MVP adapter. Implementation orchestration has a pre-P1 xhigh-profile setup/restart gate.
 
