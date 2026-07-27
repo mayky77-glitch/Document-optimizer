@@ -27,6 +27,8 @@
 
 Приоритет: hard exclude → точное подтверждённое правило → literal include → candidate-only → fuzzy/GPT candidate. Более широкое правило не отменяет более узкое; равный приоритет с несовместимым результатом — collision blocker. Ни fuzzy, ни GPT не создают автоматическое совпадение.
 
+Если после нормализации и применения mapping для процесса Table 2 в Table 1 нет ни одной строки-кандидата по наименованию, результат количества и стоимости равен `0`; это состояние `no_process_match`, а не unit mismatch. Если кандидаты есть, система предварительно отмечает рекомендуемые строки как `include=true`, но сомнительный выбор требует подтверждения пользователя на review-экране.
+
 ## 4. Четырнадцать пользовательских соответствий (versioned mappings v1)
 
 Repeated spaces/typos are normalized under §3, but every mapping remains a separate versioned ID and preserves the literal shown below. `+ suffix` means the Table 2 key's value/suffix must match under the owner-approved suffix semantics; otherwise the row is candidate-only.
@@ -56,11 +58,13 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 - Денежная стоимость суммируется по всем одобренным строкам соответствия независимо от совпадения единиц. Unit mismatch не исключает стоимость, но остаётся видимым предупреждением и сохраняется в lineage.
 - Desired comparison: `(Table1_raw_cost_RUB / 1_000_000 * 2.7) >= Table2.K`. Основание 2.7 (валюта, НДС, период) не утверждено: это **Gate 0 blocker**, не implementation default.
 - Неизменённые `Table2.J` и `Table2.L` подсвечиваются жёлтым. Equality/tolerance, destination quantity и conversion policy — Gate 0 blockers; до решения жёлтый статус не является разрешением экспорта.
-- Unit mismatch остаётся красным и содержит old/source. Quantity mismatch исключается из физической суммы без конверсии; стоимость одобренной строки включается. Поведение при отсутствии хотя бы одной строки с совпадающей единицей, conversion policy и отображение нескольких разных source units остаются Gate-0 blockers. Duplicate lineage, stale formula/freshness failure, malformed Decimal, missing/multiple candidate, ambiguous match и M13/M14 collision — blockers.
+- Unit mismatch остаётся красным и содержит old/source. Quantity mismatch исключается из физической суммы без конверсии; стоимость одобренной строки включается. Отсутствие любого совпадения по наименованию даёт `0/0` и не подменяется unit mismatch. Поведение, когда процесс найден только в другой единице, conversion policy и отображение нескольких разных source units остаются Gate-0 blockers. Duplicate lineage, stale formula/freshness failure, malformed Decimal, missing/multiple candidate, ambiguous match и M13/M14 collision — blockers.
 
 ## 6. Feedback memory, а не online training
 
-Подтверждение inclusion/exclusion/выбора кандидата сохраняется как решение текущего run. Только отдельное явное действие **«Запомнить правило»** может создать versioned feedback rule; «Reject + comment» лишь предлагает exclusion-кандидат и не создаёт правило само.
+Каждая строка-кандидат Table 1 показывается с наименованием, единицей, количеством, стоимостью, source file/sheet/row, причиной и уверенностью. Прямой checkbox **«Учитывать»** отражает `include=true/false`: рекомендуемые строки предварительно отмечены, сомнительные выделены и требуют подтверждения. Пользователь может снять/поставить галочку и добавить необязательный комментарий; итог пересчитывается детерминированно до экспорта.
+
+Подтверждение inclusion/exclusion/выбора кандидата сохраняется как решение текущего run. Только отдельное явное действие **«Запомнить правило»** может создать versioned feedback rule; снятая галочка с комментарием лишь предлагает exclusion-кандидат и не создаёт reusable rule сама.
 
 Минимальный ключ памяти: Table-2 category, normalized Table-1 item, stage/scope, units и baseline rule version. Active data компактны: canonical normalized entities в SQLite имеют integer IDs/FKs и hashes; каждая unique raw string хранится один раз/deduplicated; decision events ссылаются на IDs, а не копируют prose. Active rule records не содержат длинных raw text/prompts; append-only audit отделён от materialized active snapshot. Payload: rule id/version/status, include/exclude/candidate value, user, timestamp, source hash, comment, prior/new value и provenance. Перед reuse проверяются все ключи и schema/rule version compatibility. Несовместимый контекст, conflict, schema drift или duplicate rule — review blocker; правило не расширяется с одного item до всей категории и не применяется молча.
 
@@ -68,7 +72,7 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 
 ## 7. Gate 0 — решения владельца
 
-До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; stage и version-selection policy; лист/whole-period semantics; quantity destination/new-column meaning; coefficient 2.7 basis; J/L equality/tolerance; результат при отсутствии unit-compatible quantity, conversion policy и формат нескольких source units; formula freshness/recalc policy; M03/M07/M08/M12 suffix semantics и M04 supporting works; display precision/overwrite; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
+До owner-approved записи запрещены scaffold и реализация. Владелец обязан решить: M04 exact power include set, M05 exact low-current include set, M13/M14; stage и version-selection policy; лист/whole-period semantics; quantity destination/new-column meaning; coefficient 2.7 basis; J/L equality/tolerance; результат, когда процесс найден только с другой единицей, conversion policy и формат нескольких source units; formula freshness/recalc policy; M03/M07/M08/M12 suffix semantics и M04 supporting works; display precision/overwrite; feedback reuse, compatible context и retention/rollback policy; configurable AI context/token budget. `0/0` при полном отсутствии process-name candidates и checkbox review уже утверждены. M02/M06 four literal variants already approved and are not reopened. Thresholds storage growth, retrieval latency и prompt tokens owner-approved, не implementation defaults.
 
 ## 8. Проверяемые инварианты
 

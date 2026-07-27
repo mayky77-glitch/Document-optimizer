@@ -14,7 +14,7 @@ SQLite хранит canonical normalized entities с integer IDs/FKs/hashes: `ra
 
 ## Review UX
 
-Один экран и **одна таблица review**: каждая строка показывает Table 2, кандидатов Table 1, rule/version, source hashes/rows, validated stage/month, unit, raw/derived money, status и blocker. Прямые действия: **Approve**, **Reject**, **Reject + comment**, **Choose candidate**; «Remember rule» — отдельное действие с показом scope. Фильтры: stage, month/current period, index, status/blocker, rule/version, candidate state, unit mismatch, source file и feedback applicability. При двух вариантах — прямой клик без dropdown/modal. Export disabled, пока есть unresolved blocker.
+Один экран и **одна таблица review**: для каждой строки Table 2 раскрыт плоский список кандидатов Table 1 с rule/version, source hash/file/sheet/row, validated stage/month, unit, quantity/cost contribution, reason, confidence и status. У каждого кандидата один прямой checkbox **«Учитывать»**: deterministic recommendation предварительно отмечена, uncertainty визуально выделена; изменение checkbox сразу пересчитывает quantity/cost. Рядом доступен необязательный comment. **Choose candidate** используется только для версии файла; «Remember rule» — отдельное действие с показом scope. Фильтры: stage, month/current period, index, status/blocker, rule/version, candidate state, unit mismatch, source file и feedback applicability. При двух состояниях используется прямой checkbox без dropdown/modal. Export disabled, пока сомнительный выбор не подтверждён или остаётся другой blocker.
 
 ## Editable export contract
 

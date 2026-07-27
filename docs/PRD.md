@@ -18,11 +18,11 @@ FR-01: Table 1/2 identities, semantic header lookup, immutable hashes и row lin
 
 FR-02: Unicode-aware selector сохраняет leading zero, boundary index, `6а` Cyrillic/Latin/case и `~$` exclusion; semantic preflight extracts stage from workbook content and blocks missing/mismatch/ambiguity, while filename never proves stage.
 
-FR-03: M01–M14 versioned mappings, includes/excludes/suffixes и M13/M14 collision применяются детерминированно; fuzzy/GPT только candidate.
+FR-03: M01–M14 versioned mappings, includes/excludes/suffixes и M13/M14 collision применяются детерминированно; fuzzy/GPT только candidate. Полное отсутствие process-name candidates даёт quantity/cost `0/0` с явным статусом.
 
 FR-04: Semantic unit fields are compared per source row (observed Table-2 F versus Table-1 J, never fixed coordinates); mismatch writes `old/source` in red. Physical quantity sums only approved rows matching the Table-2 unit unless an explicit conversion exists; monetary cost sums all approved rows regardless of unit mismatch. Decimal pipeline sums raw RUB then divides once by `1e6`; no-compatible-quantity behavior, coefficient 2.7 and J/L tolerance remain Gate 0.
 
-FR-05: Site has exactly two named upload zones («Дополнительный отчёт / Table 2» one XLSX; «Исходные KS / Table 1» folder/ZIP), CLI explicit report/source args, explicit stage and month/current-period validation against semantic Table 2 headers, then one-table direct decisions, filters and lineage; unresolved blocker disables export.
+FR-05: Site has exactly two named upload zones («Дополнительный отчёт / Table 2» one XLSX; «Исходные KS / Table 1» folder/ZIP), CLI explicit report/source args, explicit stage and month/current-period validation against semantic Table 2 headers, then one review table. Every Table-1 candidate has a direct **«Учитывать»** checkbox, source lineage, contribution, recommendation/uncertainty and optional comment; totals recalculate after each change. Unresolved blocker disables export.
 
 FR-06: Export makes an editable new copy preserving formulas/styles/merged/filters/comments/colors, atomically saves, reopens and reconciles manifest/original hash.
 
@@ -61,7 +61,7 @@ Primary risks: variable schemas, stale formulas, mistaken unit/money semantics, 
 | Inputs/selector | BR §1–2 | Unicode, boundary, misleading filename, content-stage and missing/multiple tests |
 | 14 mappings | BR §3–4 | M01–M14, M04/M05 positive/cross-category/exclusion and M13/M14 collision tests |
 | Money/status | BR §5 | Decimal/order/golden/J-L/unit tests |
-| Review/export | ARCH UX/export | exact two upload zones, XLSX/folder/ZIP, stage/month preservation, UI decision/filter and save/reopen/manifest E2E |
+| Review/export | ARCH UX/export | exact two upload zones, XLSX/folder/ZIP, stage/month preservation, preselected checkbox/comment/recalculation and save/reopen/manifest E2E |
 | GPT/manual | ARCH GPT | schema rejection + CLI adapter/manual app bridge + no-model CLI/site tests |
 | Feedback memory | BR §6 | reuse/isolation/conflict/rollback/drift/duplicate, compact-storage and compaction-equivalence tests |
 | AI context control | ARCH GPT | SQL-first/no-call, token ceiling and no-full-history-prompt tests |

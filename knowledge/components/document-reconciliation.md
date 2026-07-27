@@ -15,6 +15,7 @@ Four linked planning documents define product, domain contract, architecture and
 - Stage 13.1 has 15 indices, 12 with candidates, missing 1005/0768/0778. Selection uses suffix-after-last-dot, Unicode token boundaries, `6а` Cyrillic/Latin/case and explicit missing/multiple review; semantic workbook content, not filename, proves stage.
 - [BUSINESS_RULES](../../docs/BUSINESS_RULES.md) v1 is the canonical contract for M01–M14, Decimal raw-RUB aggregation, red/yellow statuses, feedback memory and Gate 0.
 - Unit columns are semantic and movable: observed Table-2 F is compared per source row with observed Table-1 J. Mismatch writes red `old/source`. Quantity sums matching-unit approved rows; cost sums all approved rows. No-compatible-unit behavior and conversion remain Gate 0.
+- No process-name candidate produces quantity/cost `0/0`. Every candidate is visible with a preselected **«Учитывать»** checkbox, contribution, uncertainty and optional comment; user changes recalculate totals.
 
 ## Gate 0 / risks
 
