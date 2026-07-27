@@ -49,7 +49,7 @@ Repeated spaces/typos are normalized under §3, but every mapping remains a sepa
 | --- | --- | --- | --- |
 | M01 | «Устройство свайных фундаментов» | «Устройство основания из буроопускных металлических свай» | Exclude any pile tests. |
 | M02 | «Бетонные работы» | «Армирование и бетонирование монолитных участков из бетона (участки из жаростойкого бетона)»; «Армирование и бетонирование монолитных участков из бетона»; «Бетонирование фундаментов»; «Бетонирование фундаментов общего назначения» | Exclude «железобетон». |
-| M03 | «Монтаж ТТ и СДТ КГС» | «Монтаж ТТ Д» + suffix | Exact/prefix match auto-candidate; монтаж трубопровода/похожие строки only candidate review. |
+| M03 | «Монтаж ТТ и СДТ КГС» | «Монтаж ТТ» + suffix | Exact/normalized prefix auto-include, including diameter/mark continuation. «Монтаж трубопровода», «Монтаж технологических трубопроводов», «Монтаж вставки электроизолирующей…» и similar rows — visible `needs_review`, unchecked by default. |
 | M04 | «Прокладка кабеля, провода (Силовые сети) КГС» | В КГС строки прокладки кабеля/провода без explicit low-current marker | «Разводка по устройствам и подключение жил электрических кабелей», поддержки, крепления и вспомогательные работы — `needs_review`, не hard-exclude. |
 | M05 | «Прокладка кабеля, провода (Слаботочные сети) КГС» | В КГС строки прокладки кабеля/провода с explicit «слаботочн», «слаботочные сети» или «ВОЛС» | Без explicit marker строка относится к M04; cross-scope VЛ/VОЛС ownership rules retain priority. |
 
@@ -70,6 +70,8 @@ M13/M14 ownership is exclusive. Source-row key `(source_hash, sheet, row)` can c
 M15 — отдельный target rule, хотя его основной Table-1 literal совпадает с M01. M15 действует только для exact Table-2 process «Устройство свайного основания ВЛ» внутри ВЛ object scope; M01 не расширяется на ВЛ автоматически. Один source-row key не может одновременно принадлежать M01 и M15; несовместимый scope даёт collision blocker. Если пользователь явно включает «Изготовление и монтаж оголовков свай», строка с единицей `т` участвует в стоимости по общему правилу §5, но не складывается с количеством `шт`; unit cell становится красной `шт/т`. Испытания свай не предлагаются к включению. Corpus evidence: exact pile literal/unit `шт` найден для 0772, 0775, 0776, 0769 и 0777; missing 0768/0778 проходят supplemental-upload/carry/blank flow §2.
 
 M08 corpus evidence для stage 13.1: Table-2 0919 использует «Укладка трубопроводов», а 0918/0685/0686 — «Укладка»; в выбранных Table-1 fixtures найдено 18 prefix-matched pipe-laying rows, все с `км`. «Укладка контейнеров», геоматов, георешёток, геоматриц и рулонных геоматериалов не совпадают с pipe prefix и не являются M08 candidates.
+
+M03 corpus evidence для stage 13.1: 1004 содержит одну «Монтаж ТТ», 1006 — четыре «Монтаж ТТ Д …», 0621 — одну «Монтаж ТТ»; все шесть имеют source unit `м`. Table-2 unit `ст` therefore follows the general mismatch rule as red `ст/м`; 1004/1006 already demonstrate it, while 0621 receives it when processed. Missing 1005 follows §2. Section headings without a unit and hydraulic/pneumatic tests, nitrogen purging and thermal insulation are not M03 candidates.
 
 ## 5. Расчёт, деньги и статусы
 
