@@ -36,8 +36,9 @@ Record only accepted cross-cutting decisions. Link each decision to affected com
 - Source text «Прокладка самонесущего кабеля ВОЛС по стальным опорам» belongs to M14 «Монтаж ВОЛС ВЛ» by default. Explicit M13 reassignment removes M14 ownership atomically; one source row can never count in both. [[components/document-reconciliation|Component card]]
 - For M03/M07/M08/M12, “base phrase + value” means exact normalized base or a string starting with it followed by any diameter/mark/number/text. Continuation is not matched separately to Table 2; hard excludes retain priority. [[components/document-reconciliation|Component card]]
 - Inside KGS cable scope, explicit low-current/`ВОЛС` markers classify M05; otherwise a cable/wire-laying row classifies M04. «Разводка по устройствам и подключение жил электрических кабелей», supports, fastenings and auxiliaries are visible `needs_review` candidates, not hard excludes. [[components/document-reconciliation|Component card]]
+- Confident automatic matches do not create feedback memory. User-changed or explicitly confirmed uncertain rows get a direct default-on «Запомнить» switch; successful export activates an exact process+item+stage/scope+unit+version rule. Switch-off/cancelled runs remain audit-only; context drift returns to review. [[components/document-reconciliation|Component card]]
 
 ## Pending owner approval (Gate 0)
 
-- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: feedback policy and AI context/token budget. M04/M05 classifier/review flow, prefix semantics, M14/M13 ownership and prior rules are accepted. [[components/document-reconciliation|Component card]]
+- The values listed in [BUSINESS_RULES §7](../docs/BUSINESS_RULES.md) are blockers, not accepted defaults: feedback retention/deactivate/rollback and AI context/token budget. Feedback creation/scope/activation and prior rules are accepted. [[components/document-reconciliation|Component card]]
 - Feedback will be versioned memory rather than online training; exact reuse/retention/threshold values remain owner decisions. [[components/document-reconciliation|Component card]]
