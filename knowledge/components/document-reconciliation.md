@@ -13,7 +13,7 @@ Four linked planning documents define product, domain contract, architecture and
 - Table 1 is source KS-2/KS-3/KS-6a; Table 2 is `Расчет доп отчета карточка 23 Хандюк.xlsx`, `Лист1`.
 - Table 2 `Лист1` is 180×17; 1006 block rows 139–144. Table 1 period fields are semantic: observed 1006 CF/CG, 1004 BL/BM, 0919 CJ/CK; KITSO differs.
 - Calculation reads only normalized KS-6a and the proven current-cumulative whole-period block. Multiple same-name blocks require header/dependency plus 100%-leaf Decimal identity under a confirmed schema; no rightmost heuristic or independent summing. Zero/multiple proof results require user resolution.
-- Actual corpus: 347 XLSX/XLSM, 766.15 MB. Stage 13.1 has 15 objects / 87 rows / 15 unique processes; 12 selected source KS-6a sheets total 31,892 rows, 50–209 columns, 24,017 populated name cells and 1,025 unique normalized names. Missing indices: 1005/0768/0778.
+- Actual analyzed corpus: 347 XLSX, 766.15 MB. Stage 13.1 has 15 objects / 87 rows / 15 unique processes; 12 selected source KS-6a sheets total 31,892 rows, 50–209 columns, 24,017 populated name cells and 1,025 unique normalized names. Missing indices: 1005/0768/0778.
 - Selection uses suffix-after-last-dot, Unicode token boundaries and `6а` Cyrillic/Latin/case; semantic workbook content, not filename, proves stage. Missing index source is named with its object and offers direct supplemental-upload/carry-previous-period/leave-blank actions; multiple files still require review.
 - Multiple candidates rank by semantic stage, semantic month and highest explicit `редN`; mtime never decides. Remaining schema/data-quality tie is only a recommendation and requires user confirmation.
 - [BUSINESS_RULES](../../docs/BUSINESS_RULES.md) v1 is the canonical contract for M01–M15, Decimal raw-RUB aggregation, red/yellow statuses, feedback memory and Gate 0.
@@ -31,12 +31,16 @@ Four linked planning documents define product, domain contract, architecture and
 - Active rules persist indefinitely; opposite decisions version, and compact on/off/restore never physically deletes audit. History is deduplicated and excluded from GPT context.
 - No process-name candidate produces quantity/cost `0/0`. Every candidate is visible with a preselected **«Учитывать»** checkbox, contribution, uncertainty and optional comment; user changes recalculate totals.
 - Missing Table-1 file and no process match are distinct: missing index source asks for a supplemental file first, with object-level carry/blank fallbacks; `0/0` applies only when a valid source file exists but contains no process-name candidate.
-- Coefficient is one editable run-level field, default `2.7`. `cost_mln × coefficient < Table2.K` produces an orange warning with inputs/result/difference; acknowledged warnings do not block export and never alter exported cost. Coefficient and acknowledgement enter manifest/audit.
+- Coefficient is one editable run-level field, default `2.7`. A shortfall outside the tolerated branch below produces an orange warning with inputs/result/difference; acknowledged warnings do not block export and never alter exported cost. Coefficient and acknowledgement enter manifest/audit.
+- Exception: if numeric J and calculated L match after two-decimal rounding, a shortfall no greater than 5% of K is normal `cost_check_tolerated`, not orange and not acknowledgement-gated. Exact difference and versioned tolerance remain auditable.
 - Table-2 J/L compare after `ROUND_HALF_UP` to two decimals; exact equality, `0 = 0` and blank/blank are yellow. Blank/number is not yellow and blank is not zero.
 - Aggregation/control retain full Decimal precision; final quantity/cost and J/L comparison values use two-decimal `ROUND_HALF_UP`. Manifest retains exact and rendered values.
 - Selected month resolves to one semantic quantity/cost pair. Missing pair is styled/appended at the right; existing pair is reused without duplication; nonblank old→new requires explicit overwrite confirmation.
 - Final delivery is exactly one standalone Table-2 XLSX: Table 1 supplies saved values only, all Table-2 formulas are flattened to saved visible values, new results are numeric, and reopen verifies zero formulas/external links while preserving styles/colors/editability. Internal manifest remains local.
 - Missing saved value behind a required formula blocks with file/sheet/cell evidence; recovery is Excel recalculate-save-reupload. No blank/zero substitution, formula/macro execution or LibreOffice recalc.
+- A single alternative source unit is a red review warning and may export as `old/source`; only an unresolved choice among multiple unit groups blocks export. ZIP imports use isolated extraction, reject traversal/absolute/symlink entries and enforce recorded resource limits above the reference corpus.
+- Uncertain candidates remain `pending` until direct include/exclude even when a recommended action is highlighted. Target-month pair and previous-pair cardinalities are separate; carry is disabled with evidence unless the prior pair is unique.
+- Numeric cells cross the adapter as raw-lexeme Decimal canonicalized to 15 significant digits, never binary float. The local site is loopback-only with unguessable per-run session plus Host/Origin/CSRF and cross-session protection.
 
 ## Gate 0 / risks
 
