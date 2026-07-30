@@ -128,3 +128,16 @@ def test_all_exit_groups_are_reachable_as_controlled_results(inputs, tmp_path) -
         ProcessingExitCode.MANUAL_REVIEW_REQUIRED,
         ProcessingExitCode.QUALITY_BLOCKED,
     ]
+
+
+def test_adapter_fault_is_contained_as_controlled_internal_error(inputs) -> None:
+    source, target = inputs
+
+    class BrokenAdapters(RecordingAdapters):
+        def inspect(self, context):
+            raise RuntimeError("adapter fault")
+
+    result = ProcessingEngine(BrokenAdapters()).process_report(ProcessReportRequest(source, target))
+    assert result.state is ProcessingState.FAILED
+    assert result.exit_code is ProcessingExitCode.CONTROLLED_INTERNAL_ERROR
+    assert result.errors

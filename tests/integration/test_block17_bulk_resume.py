@@ -53,7 +53,7 @@ def test_bulk_keeps_request_order_and_isolates_controlled_failure(tmp_path) -> N
     assert adapters.inspections == 2
 
 
-def test_repeat_is_deterministic_and_resume_requires_matching_input_hashes(tmp_path) -> None:
+def test_repeat_is_deterministic_and_resume_rejects_changed_input_hashes(tmp_path) -> None:
     cache = tmp_path / "cache"
     adapters = CountingAdapters()
     request = _request(tmp_path, "repeat", cache_directory=cache)
@@ -74,6 +74,10 @@ def test_repeat_is_deterministic_and_resume_requires_matching_input_hashes(tmp_p
     assert (first.run_key, first.exit_code) == (repeated.run_key, repeated.exit_code)
     assert resumed.resumed is True
     assert changed.resumed is False
+    assert changed.exit_code in {
+        ProcessingExitCode.INVALID_INPUT,
+        ProcessingExitCode.WRITE_OR_VERIFICATION_FAILED,
+    }
     assert changed.run_key != first.run_key
 
 
@@ -97,3 +101,16 @@ def test_resume_cache_does_not_store_a_workbook_payload(tmp_path) -> None:
     payloads = list(cache.glob("*.json"))
     assert len(payloads) == 1
     assert ".xlsx" not in payloads[0].read_text(encoding="utf-8")
+
+
+def test_corrupt_partial_resume_cache_is_rejected_and_leaves_no_temporary_files(tmp_path) -> None:
+    cache = tmp_path / "cache"
+    request = _request(tmp_path, "corrupt", cache_directory=cache, resume=True)
+    cache.mkdir()
+    (cache / "partial.json").write_text("{broken", encoding="utf-8")
+    result = ProcessingEngine(CountingAdapters()).process_report(request)
+    assert result.exit_code in {
+        ProcessingExitCode.INVALID_INPUT,
+        ProcessingExitCode.WRITE_OR_VERIFICATION_FAILED,
+    }
+    assert not list(cache.glob("*.tmp"))
