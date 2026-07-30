@@ -1,4 +1,4 @@
-"""Frozen public API contract for ExcelWriterEngine-15.0."""
+"""Frozen public API contract for ExcelWriterEngine-15.1."""
 
 from dataclasses import fields
 from typing import get_type_hints
@@ -21,8 +21,8 @@ from report_processor.schema import LogicalColumn
 
 
 def test_public_versions_exports_enums_and_result_shapes_are_frozen() -> None:
-    assert EXCEL_WRITER_CONTRACT_VERSION == "ExcelWriterContract-15.0"
-    assert EXCEL_WRITER_ENGINE_VERSION == "ExcelWriterEngine-15.0"
+    assert EXCEL_WRITER_CONTRACT_VERSION == "ExcelWriterContract-15.1"
+    assert EXCEL_WRITER_ENGINE_VERSION == "ExcelWriterEngine-15.1"
     assert tuple(item.value for item in WriteStatus) == ("written", "skipped_decision")
     assert callable(write_target_report)
     assert issubclass(ExcelWriterInputError, ExcelWriterError)

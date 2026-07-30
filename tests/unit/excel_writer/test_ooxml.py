@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
+from openpyxl import Workbook
 
 from report_processor.excel_writer import ExcelWriterIntegrityError, ExcelWriterSafetyError
-from report_processor.excel_writer.ooxml import inspect_cell, publish_no_clobber, replace_cell_value
+from report_processor.excel_writer.ooxml import (
+    formula_count,
+    inspect_cell,
+    materialize_formula_cells,
+    publish_no_clobber,
+    replace_cell_value,
+    verify_temp_package,
+    worksheet_part_map,
+    write_temp_package,
+)
 
 _SHEET_XML = (
     b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
@@ -46,3 +57,86 @@ def test_publish_no_clobber_keeps_existing_output_and_removes_temp(tmp_path: Pat
 
     assert output_path.read_bytes() == b"existing"
     assert not temp_path.exists()
+
+
+def test_formula_cells_become_numeric_literals_including_shared_formula_cells() -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row r="30"><c r="D30" s="5"><v>0</v></c>'
+        b'<c r="E30" s="7"><f t="shared" si="0">D30*2</f><v>0</v></c>'
+        b'<c r="F30" s="7"><f t="shared" si="0"/><v>0</v></c>'
+        b"</row></sheetData></worksheet>"
+    )
+
+    updated, values = materialize_formula_cells(xml)
+
+    assert formula_count(xml) == 2
+    assert formula_count(updated) == 0
+    assert values == {"E30": "0", "F30": "0"}
+    for coordinate in values:
+        _, value, is_formula, has_style, cell_type = inspect_cell(updated, coordinate)
+        assert value == "0"
+        assert not is_formula
+        assert has_style
+        assert cell_type in {None, "n"}
+
+
+@pytest.mark.parametrize(
+    "cell_xml",
+    (
+        b'<c r="E30"><f>D30</f></c>',
+        b'<c r="E30" t="str"><f>D30</f><v>text</v></c>',
+        b'<c r="E30"><f>D30</f><v>#VALUE!</v></c>',
+        b'<c r="E30"><f>D30</f><v>NaN</v></c>',
+        b'<c r="E30"><f>D30</f><v>Infinity</v></c>',
+    ),
+)
+def test_invalid_formula_results_are_rejected_before_publication(cell_xml: bytes) -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row r="30">' + cell_xml + b"</row></sheetData></worksheet>"
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match="FORMULA_RESULT_NOT_NUMERIC"):
+        materialize_formula_cells(xml)
+
+
+def test_calc_chain_part_and_references_are_removed_from_a_temp_package(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.xlsx"
+    temp_path = tmp_path / "temporary.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "Лист"
+    workbook.active["D30"] = 5
+    workbook.save(source_path)
+    workbook.close()
+    seeded_path = tmp_path / "seeded.xlsx"
+    with ZipFile(source_path) as source, ZipFile(seeded_path, "w", ZIP_DEFLATED) as output:
+        for info in source.infolist():
+            payload = source.read(info.filename)
+            if info.filename == "[Content_Types].xml":
+                payload = payload.replace(
+                    b"</Types>",
+                    b'<Override PartName="/xl/calcChain.xml" '
+                    b'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/>'
+                    b"</Types>",
+                )
+            elif info.filename == "xl/_rels/workbook.xml.rels":
+                payload = payload.replace(
+                    b"</Relationships>",
+                    b'<Relationship Id="rId99" Target="calcChain.xml" '
+                    b'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain"/>'
+                    b"</Relationships>",
+                )
+            output.writestr(info, payload)
+        output.writestr("xl/calcChain.xml", b"<calcChain/>")
+    seeded_path.replace(source_path)
+
+    worksheet = worksheet_part_map(source_path)["Лист"]
+    changes = {worksheet: (("D30", "0"),)}
+    write_temp_package(source_path, temp_path, changes, remove_calc_chain=True)
+    verify_temp_package(source_path, temp_path, changes, remove_calc_chain=True)
+
+    with ZipFile(temp_path) as package:
+        assert "xl/calcChain.xml" not in package.namelist()
+        assert b"calcChain" not in package.read("[Content_Types].xml")
+        assert b"calcChain" not in package.read("xl/_rels/workbook.xml.rels")
