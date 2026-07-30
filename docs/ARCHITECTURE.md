@@ -171,15 +171,21 @@ formula/trace/totals и normalized units. Приоритет: `BLOCK_WRITE`,
 Issues и IDs сортируются детерминированно. Отчёт содержит safe evidence без raw
 cell values, formula text и document content; workbook не изменяется.
 
-## Блок 15: Excel writer boundary
+## Блок 15.1: formula materialization boundary
 
-`excel_writer/` — отдельная граница записи. Decision gate пропускает только
+`excel_writer/` — отдельная граница записи. Контракт `ExcelWriterContract-15.1`
+добавляет numeric-only output: финальные worksheet cells не содержат формул.
+Формулы остаются только в immutable source и internal provenance. Decision gate пропускает только
 `ALLOW_WRITE` и `ALLOW_WRITE_WITH_WARNINGS`; остальные решения дают
 `SKIPPED_DECISION` без output. Writable bindings ровно две: текущие quantity и
 cost. Значения — finite `Decimal` без пересчёта, а `None` не очищает ячейку.
 
-Writer выполняет targeted OOXML cell update, не используя `openpyxl.save`;
-формулы, кэш, стили, merged ranges и остальные package entries сохраняются.
+Writer выполняет targeted OOXML cell update, не используя `openpyxl.save`.
+Если formulas count > 0, LibreOffice headless пересчитывает private temp copy с
+isolated profile; при нуле формул пересчёт не запускается. Stale cache после
+approved write не используется. Любой unavailable/timeout/error/blank/text или
+non-finite result блокирует publication. В output formulas удаляются, а numeric
+results сохраняются вместе с форматированием, merged ranges и структурой.
 Поддерживается только `.xlsx`; signed OOXML и `.xlsm` отклоняются. Source
 identity и fingerprint перепроверяются перед публикацией. Output должен быть
 отдельным отсутствующим путём и публикуется атомарно через hard-link
