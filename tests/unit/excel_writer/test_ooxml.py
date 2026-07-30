@@ -13,6 +13,7 @@ from report_processor.excel_writer.ooxml import (
     formula_count,
     inspect_cell,
     materialize_formula_cells,
+    numeric_formula_values,
     publish_no_clobber,
     replace_cell_value,
     verify_temp_package,
@@ -68,7 +69,8 @@ def test_formula_cells_become_numeric_literals_including_shared_formula_cells() 
         b"</row></sheetData></worksheet>"
     )
 
-    updated, values = materialize_formula_cells(xml)
+    values = numeric_formula_values(xml, ("E30", "F30"))
+    updated = materialize_formula_cells(xml, values)
 
     assert formula_count(xml) == 2
     assert formula_count(updated) == 0
@@ -98,7 +100,7 @@ def test_invalid_formula_results_are_rejected_before_publication(cell_xml: bytes
     )
 
     with pytest.raises(ExcelWriterIntegrityError, match="FORMULA_RESULT_NOT_NUMERIC"):
-        materialize_formula_cells(xml)
+        numeric_formula_values(xml, ("E30",))
 
 
 def test_calc_chain_part_and_references_are_removed_from_a_temp_package(tmp_path: Path) -> None:

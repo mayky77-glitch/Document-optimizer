@@ -70,13 +70,13 @@ def inspect_cell(xml: bytes, coordinate: str) -> tuple[bytes, str | None, bool, 
             continue
         value = _VALUE.search(cell)
         lexeme = value.group(1).decode("utf-8") if value and value.group(1) is not None else None
-        cell_type = _TYPE.search(cell)
+        cell_type = _cell_type(cell)
         return (
             cell,
             lexeme,
             _FORMULA.search(cell) is not None,
             _STYLE.search(cell) is not None,
-            cell_type.group(2).decode("ascii") if cell_type is not None else None,
+            cell_type.decode("ascii") if cell_type is not None else None,
         )
     raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", coordinate)
 
@@ -96,8 +96,8 @@ def replace_cell_value(xml: bytes, coordinate: str, decimal_text: str) -> bytes:
             raise ExcelWriterIntegrityError(
                 "TARGET_CELL_MISSING", f"duplicate XML cell {coordinate}"
             )
-        cell_type = _TYPE.search(cell)
-        if cell_type is not None and cell_type.group(2) not in {b"n"}:
+        cell_type = _cell_type(cell)
+        if cell_type is not None and cell_type not in {b"n"}:
             raise ExcelWriterIntegrityError("TARGET_CELL_LEXEME_MISMATCH", coordinate)
         value = _VALUE.search(cell)
         if value is None:
@@ -359,8 +359,8 @@ def _remove_calc_chain_metadata(name: str, payload: bytes) -> bytes:
 
 
 def _finite_numeric_lexeme(cell: bytes, coordinate: str) -> str:
-    cell_type = _TYPE.search(cell)
-    if cell_type is not None and cell_type.group(2) not in {b"n"}:
+    cell_type = _cell_type(cell)
+    if cell_type is not None and cell_type not in {b"n"}:
         raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
     value = _VALUE.search(cell)
     if value is None or value.group(1) is None:
@@ -373,6 +373,15 @@ def _finite_numeric_lexeme(cell: bytes, coordinate: str) -> str:
     if not numeric.is_finite():
         raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
     return decimal_text
+
+
+def _cell_type(cell: bytes) -> bytes | None:
+    """Return the cell type without matching formula attributes such as t="shared"."""
+
+    opening_end = cell.find(b">")
+    opening = cell if opening_end < 0 else cell[: opening_end + 1]
+    match = _TYPE.search(opening)
+    return match.group(2) if match is not None else None
 
 
 def publish_no_clobber(temp_path: Path, output_path: Path) -> None:
