@@ -12,6 +12,6 @@ updated: 2026-07-31
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
 - [[../ORCHESTRATION|Orchestration rules]]
-- [[../tasks/document-optimizer-block-15-production]]
-- [[../tasks/document-optimizer-block-15-tests]]
-- [[../tasks/document-optimizer-block-15-docs]]
+- [[../tasks/document-optimizer-block-15-formula-materialization-production]]
+- [[../tasks/document-optimizer-block-15-formula-materialization-tests]]
+- [[../tasks/document-optimizer-block-15-formula-materialization-docs]]
