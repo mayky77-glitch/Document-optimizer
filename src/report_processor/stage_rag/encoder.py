@@ -37,10 +37,8 @@ class RuBERTTiny2Encoder:
         try:
             batch = self._tokenizer(list(texts), padding=True, truncation=True, return_tensors="pt")
             with self._torch.inference_mode():
-                hidden = self._model(**batch).last_hidden_state
-                mask = batch["attention_mask"].unsqueeze(-1).to(hidden.dtype)
-                pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
-            return tuple(tuple(float(value) for value in row.tolist()) for row in pooled)
+                cls_vectors = self._model(**batch).last_hidden_state[:, 0, :]
+            return tuple(tuple(float(value) for value in row.tolist()) for row in cls_vectors)
         except StageRAGModelUnavailableError:
             raise
         except Exception as exc:
