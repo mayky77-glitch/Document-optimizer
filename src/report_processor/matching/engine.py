@@ -257,11 +257,18 @@ def _selection(
 ) -> tuple[MatchCandidate | None, MatchStatus, tuple[str, ...], tuple[str, ...]]:
     if not eligible:
         if candidates:
+            if any(not candidate.blockers for candidate in candidates):
+                return (
+                    None,
+                    MatchStatus.AMBIGUOUS,
+                    ("MANUAL_REVIEW_REQUIRED",),
+                    ("only manual candidates matched",),
+                )
             return (
                 None,
                 MatchStatus.UNMATCHED,
                 ("NO_ELIGIBLE_CANDIDATE",),
-                ("all candidates manual or blocked",),
+                ("all candidates blocked",),
             )
         return None, MatchStatus.UNMATCHED, ("NO_CANDIDATES",), ("no strategy matched",)
     best_ordinal = min(item.strategy_ordinal for item in eligible)
