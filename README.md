@@ -5,7 +5,7 @@ Python-проект для поэтапной обработки строите�
 
 ## Текущий статус
 
-Локально интегрированы **блоки 1–8 — от инвентаризации и выбора источника до
+В integration-ветке реализованы **блоки 1–10 — от инвентаризации и выбора источника до
 канонических строк и бизнес-нормализации** (текущая версия пакета `0.8.0`).
 Блок 8 прошёл focused, полный и 50k-row performance gates; GitHub CI проверяется
 в Pull Request перед merge в `main`. Real-data gate на reviewed-схеме
@@ -260,3 +260,33 @@ DuckDB schema v1 выполняет транзакционный idempotent upse
 
 Модули и границы ответственности описаны в
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+Блоки 9 и 10 реализованы в integration-ветке; PR, CI и merge в `main` являются
+отдельным release gate.
+
+## Блок 9: чтение целевого отчёта
+
+```bash
+report-processor read-target-report \
+  --source "/path/to/report.xlsx" \
+  --schema output/target_schema.json \
+  --output output/target_report.json
+```
+
+Команда формирует `TargetReportSchema-9.0`, канонические строки, snapshots
+формул/кэша и provenance. `WritableCellPlan` только описывает допустимые ячейки
+и не применяется этим блоком. Ненадёжный кэш формул и неоднозначный выбор
+возвращаются на ручную проверку. Исходная книга не изменяется.
+
+## Блок 10: data-only бизнес-правила
+
+```bash
+report-processor validate-business-rules \
+  --config config/business_rules.yaml \
+  --output output/business_rules.json
+```
+
+Поддерживаются JSON/YAML data-only конфигурации. Дубликаты YAML-ключей,
+tags, anchors/aliases и исполняемые конструкции отклоняются. Валидатор
+сохраняет `Decimal`, precedence, scope, политики количества/стоимости,
+структурированные конфликты M01–M15, canonical JSON и SHA-256.

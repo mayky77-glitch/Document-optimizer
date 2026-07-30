@@ -254,3 +254,37 @@ provenance и детерминизм. **26** collision явно зафиксир
 потерь строк нет. Три сложные реальные книги без reviewed-схемы
 детерминированно возвращают `LOW_CONFIDENCE_SCHEMA` и не угадывают
 сомнительные колонки.
+
+## Блок 9
+
+- **Название:** чтение целевого отчёта и безопасный write-plan
+- **Статус:** реализован в integration-ветке; PR/CI и merge в `main` ещё не завершены
+- **Контракт:** `TargetReportSchema-9.0`, `TargetReportResult`, `TargetReportRow`
+- **CLI:** `read-target-report --source --schema --output`
+
+Чтение read-only сохраняет provenance, snapshots формул/кэша, dimensions,
+merged ranges, autofilter, freeze panes, comments и hidden. `WritableCellPlan`
+только описывает допустимые ячейки и не применяется этим блоком. Ненадёжный
+кэш или неоднозначный выбор требуют ручной проверки.
+
+Real-XLSX gate: лист `Лист`, 107 строк, 60 ограниченных планов, 0 diagnostics;
+SHA-256, размер и статистика исходника до/после совпали.
+
+## Блок 10
+
+- **Название:** безопасная валидация бизнес-правил
+- **Статус:** реализован в integration-ветке; PR/CI и merge в `main` ещё не завершены
+- **Контракт:** `RuleConfigurationVersion-1.0`, `ValidatedRuleSet`, `RuleValidationResult`
+- **CLI:** `validate-business-rules --config --output`
+
+Поддерживаются только data-only JSON/YAML. Дубликаты ключей, YAML tags,
+anchors/aliases и исполняемые конструкции отклоняются. `Decimal`, precedence,
+scope, политики количества/стоимости, canonical JSON, hash и конфликты M01–M15
+сохраняются структурированно.
+
+### Проверки блоков 9–10
+
+- focused: **28 passed**;
+- полный suite: **441 passed, 1 skipped**;
+- Ruff: PASS;
+- реальный XLSX: `TargetReportSchema-9.0` OK, исходник неизменён.
