@@ -13,12 +13,14 @@ from typing import Any
 
 from report_processor.domain.exceptions import ManifestReadError, ManifestWriteError
 from report_processor.domain.models import (
-    MANIFEST_SCHEMA_VERSION,
     FileManifest,
     FileManifestEntry,
     ManifestSummary,
 )
-from report_processor.domain.statuses import StatusCode
+from report_processor.domain.statuses import IndexStatus, IndexWarning, StatusCode
+from report_processor.identifiers.models import DocumentIndex
+from report_processor.metadata.period_models import DocumentPeriod
+from report_processor.metadata.revisions import DocumentRevision
 
 LOGGER = logging.getLogger(__name__)
 
@@ -104,7 +106,94 @@ def _optional_int(value: Any, field_name: str) -> int | None:
     return value
 
 
+def _optional_float(value: Any, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"{field_name} должен быть числом или null")
+    return float(value)
+
+
+def _document_index_from_dict(value: Any, field_name: str) -> DocumentIndex | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} должен быть объектом или null")
+    return DocumentIndex(
+        raw=_required_str(value, "raw"),
+        normalized=_required_str(value, "normalized"),
+        main=_required_str(value, "main"),
+        secondary=_required_str(value, "secondary"),
+    )
+
+
+def _document_index_list(value: Any, field_name: str) -> list[DocumentIndex]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} должен быть списком объектов")
+    indexes: list[DocumentIndex] = []
+    for item in value:
+        index = _document_index_from_dict(item, field_name)
+        if index is None:
+            raise ValueError(f"{field_name} не должен содержать null")
+        indexes.append(index)
+    return indexes
+
+
+def _document_period_from_dict(value: Any, field_name: str) -> DocumentPeriod | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} должен быть объектом или null")
+    return DocumentPeriod(year=_required_int(value, "year"), month=_required_int(value, "month"))
+
+
+def _document_period_list(value: Any, field_name: str) -> list[DocumentPeriod]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} должен быть списком объектов")
+    return [
+        _document_period_from_dict(item, field_name)
+        for item in value
+        if _document_period_from_dict(item, field_name) is not None
+    ]
+
+
+def _document_revision_from_dict(value: Any, field_name: str) -> DocumentRevision | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} должен быть объектом или null")
+    number = value.get("number")
+    if number is not None and (not isinstance(number, int) or isinstance(number, bool)):
+        raise ValueError("document_revision.number должен быть целым числом или null")
+    label = value.get("label")
+    if label is not None and not isinstance(label, str):
+        raise ValueError("document_revision.label должен быть строкой или null")
+    return DocumentRevision(
+        number=number,
+        label=label,
+        status=_required_str(value, "status"),
+        is_final=_required_bool(value, "is_final"),
+        is_approved=_required_bool(value, "is_approved"),
+        is_draft=_required_bool(value, "is_draft"),
+    )
+
+
 def _entry_from_dict(payload: Mapping[str, Any]) -> FileManifestEntry:
+    payload = {
+        "size_bytes": None,
+        "compressed_size_bytes": None,
+        "modified_at": None,
+        "crc32": None,
+        "is_archive_entry": False,
+        "archive_path": None,
+        "document_markers": [],
+        "is_temporary": False,
+        "is_probable_copy": False,
+        "is_probably_outdated": False,
+        "status": StatusCode.OK.value,
+        "warnings": [],
+        **payload,
+    }
     warnings = _string_list(_required(payload, "warnings"), "warnings")
     for warning in warnings:
         StatusCode(warning)
@@ -115,6 +204,23 @@ def _entry_from_dict(payload: Mapping[str, Any]) -> FileManifestEntry:
         StatusCode.UNREADABLE_FILE.value,
     }:
         raise ValueError(f"недопустимый статус записи: {status}")
+    document_index_status = payload.get(
+        "document_index_status", IndexStatus.INDEX_NOT_PROCESSED.value
+    )
+    if not isinstance(document_index_status, str):
+        raise ValueError("document_index_status должен быть строкой")
+    IndexStatus(document_index_status)
+    document_index_warnings = _string_list(
+        payload.get("document_index_warnings", []), "document_index_warnings"
+    )
+    for warning in document_index_warnings:
+        IndexWarning(warning)
+    document_period_status = payload.get("document_period_status", "PERIOD_NOT_PROCESSED")
+    document_revision_status = payload.get("document_revision_status", "REVISION_NOT_PROCESSED")
+    if not isinstance(document_period_status, str):
+        raise ValueError("document_period_status должен быть строкой")
+    if not isinstance(document_revision_status, str):
+        raise ValueError("document_revision_status должен быть строкой")
 
     return FileManifestEntry(
         file_id=_required_str(payload, "file_id"),
@@ -131,23 +237,62 @@ def _entry_from_dict(payload: Mapping[str, Any]) -> FileManifestEntry:
         crc32=_optional_int(payload.get("crc32"), "crc32"),
         is_archive_entry=_required_bool(payload, "is_archive_entry"),
         archive_path=(
-            None
-            if payload.get("archive_path") is None
-            else _required_str(payload, "archive_path")
+            None if payload.get("archive_path") is None else _required_str(payload, "archive_path")
         ),
         document_type=_required_str(payload, "document_type"),
-        document_markers=_string_list(
-            _required(payload, "document_markers"), "document_markers"
-        ),
+        document_markers=_string_list(_required(payload, "document_markers"), "document_markers"),
         is_temporary=_required_bool(payload, "is_temporary"),
         is_probable_copy=_required_bool(payload, "is_probable_copy"),
         is_probably_outdated=_required_bool(payload, "is_probably_outdated"),
         status=status,
         warnings=warnings,
+        document_index=_document_index_from_dict(payload.get("document_index"), "document_index"),
+        document_index_status=document_index_status,
+        document_index_confidence=_optional_float(
+            payload.get("document_index_confidence"), "document_index_confidence"
+        ),
+        document_index_candidates=_document_index_list(
+            payload.get("document_index_candidates", []), "document_index_candidates"
+        ),
+        document_index_warnings=document_index_warnings,
+        document_period=_document_period_from_dict(
+            payload.get("document_period"), "document_period"
+        ),
+        document_period_status=document_period_status,
+        document_period_confidence=_optional_float(
+            payload.get("document_period_confidence"), "document_period_confidence"
+        ),
+        document_period_candidates=_document_period_list(
+            payload.get("document_period_candidates", []), "document_period_candidates"
+        ),
+        document_period_warnings=_string_list(
+            payload.get("document_period_warnings", []), "document_period_warnings"
+        ),
+        document_revision=_document_revision_from_dict(
+            payload.get("document_revision"), "document_revision"
+        ),
+        document_revision_status=document_revision_status,
+        document_revision_warnings=_string_list(
+            payload.get("document_revision_warnings", []), "document_revision_warnings"
+        ),
+        is_final=payload.get("is_final", False),
+        is_approved=payload.get("is_approved", False),
+        is_draft=payload.get("is_draft", False),
     )
 
 
 def _summary_from_dict(payload: Mapping[str, Any]) -> ManifestSummary:
+    payload = {
+        "total_size_bytes": 0,
+        "files_by_extension": {},
+        "files_by_document_type": {},
+        "temporary_files": 0,
+        "probable_copies": 0,
+        "probably_outdated_files": 0,
+        "unsafe_archive_entries": 0,
+        "warnings_count": 0,
+        **payload,
+    }
     return ManifestSummary(
         total_entries=_required_int(payload, "total_entries"),
         total_size_bytes=_required_int(payload, "total_size_bytes"),
@@ -177,6 +322,49 @@ def _summary_from_dict(payload: Mapping[str, Any]) -> ManifestSummary:
             if payload.get("compression_ratio") is None
             else float(payload["compression_ratio"])
         ),
+        entries_with_document_index=_optional_int(
+            payload.get("entries_with_document_index", 0), "entries_with_document_index"
+        )
+        or 0,
+        entries_without_document_index=_optional_int(
+            payload.get("entries_without_document_index", 0), "entries_without_document_index"
+        )
+        or 0,
+        entries_with_ambiguous_index=_optional_int(
+            payload.get("entries_with_ambiguous_index", 0), "entries_with_ambiguous_index"
+        )
+        or 0,
+        entries_with_low_confidence_index=_optional_int(
+            payload.get("entries_with_low_confidence_index", 0), "entries_with_low_confidence_index"
+        )
+        or 0,
+        unique_document_indexes=_optional_int(
+            payload.get("unique_document_indexes", 0), "unique_document_indexes"
+        )
+        or 0,
+        files_by_document_index=_string_int_dict(
+            payload.get("files_by_document_index", {}), "files_by_document_index"
+        ),
+        entries_with_period=_optional_int(
+            payload.get("entries_with_period", 0), "entries_with_period"
+        )
+        or 0,
+        entries_without_period=_optional_int(
+            payload.get("entries_without_period", 0), "entries_without_period"
+        )
+        or 0,
+        entries_with_ambiguous_period=_optional_int(
+            payload.get("entries_with_ambiguous_period", 0), "entries_with_ambiguous_period"
+        )
+        or 0,
+        entries_with_revision=_optional_int(
+            payload.get("entries_with_revision", 0), "entries_with_revision"
+        )
+        or 0,
+        files_by_period=_string_int_dict(payload.get("files_by_period", {}), "files_by_period"),
+        files_by_revision_status=_string_int_dict(
+            payload.get("files_by_revision_status", {}), "files_by_revision_status"
+        ),
     )
 
 
@@ -199,7 +387,7 @@ def manifest_from_dict(payload: Mapping[str, Any]) -> FileManifest:
     source_kind = _required_str(payload, "source_kind")
     if source_kind not in {"directory", "zip", "file"}:
         raise ValueError(f"неподдерживаемый source_kind: {source_kind}")
-    schema_version = payload.get("schema_version", MANIFEST_SCHEMA_VERSION)
+    schema_version = payload.get("schema_version", "1.0")
     if not isinstance(schema_version, str):
         raise ValueError("schema_version должен быть строкой")
 
