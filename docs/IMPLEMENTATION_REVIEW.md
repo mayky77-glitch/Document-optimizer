@@ -145,9 +145,12 @@ float, пересчёта, округления, quantize или очистки 
 non-finite result блокируют publication. Source identity, atomic temp verification
 и hard-link no-clobber сохраняются; CLI нет.
 
-Evidence: baseline до remediation — **492 passed, 11 skipped**; historical
-Block 15.0 focused real-data result — **13 passed**. Block 15.1 post-merge
-pytest и real-data gate пока не подтверждены; READY/main/CI не заявляются.
+Локальный evidence Block 15.1: real-data suite — **7 passed in 44.38s**;
+полный suite с real XLSX и slow performance — **514 passed in 80.22s**.
+Ruff, format, clean sync, compileall и `git diff --check` — PASS. Реальный
+output содержит `D30 = 0`, формулы **14 → 0**, merged ranges — **128**;
+SHA-256, size и `mtime` обеих исходных книг не изменились. READY/main/CI
+требуют зелёного Pull Request.
 
 ## Блок 12 — детерминированный matching engine
 

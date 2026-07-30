@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-15-docs
-status: claimed
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-block-15
@@ -12,8 +12,8 @@ agent_role: documentation-agent
 owner: block-15-docs
 profile: L0
 routing_grade: P1
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 2
+state_fingerprint: "feature:b30ca064732dbee358407594980393336b960dfc;integration:70d54a9111f04138d5a8c74a6514c30341b48326"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Bounded factual documentation-only update including GitHub README."
@@ -21,9 +21,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-luna
 reasoning_effort: low
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-luna
+actual_reasoning_effort: low
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-31
@@ -64,7 +64,7 @@ acceptance_commands:
   - "git diff --check"
 tags:
   - task/documentation
-  - status/claimed
+  - status/done
   - layer/docs
   - risk/low
 ---

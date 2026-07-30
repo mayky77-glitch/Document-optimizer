@@ -290,9 +290,12 @@ raw cells, formula text и document content в отчёт не копируют�
 публикацию. Исходник не изменяется; output публикуется атомарно через
 hard-link no-clobber и не перезаписывается. CLI в блоке 15.1 нет.
 
-Текущий baseline до remediation: **492 passed, 11 skipped**; focused real-data
-`13 passed` относится только к историческому Block 15.0. Для этой версии
-post-merge pytest и real-data gate ещё не подтверждены; READY/main/CI не заявляются.
+Локальный Block 15.1 gate подтверждён: real-data suite — **7 passed in
+44.38s**; полный suite с real XLSX и slow performance — **514 passed in
+80.22s**. Ruff, format, clean sync, compileall и `git diff --check` — PASS.
+Реальный output: `D30 = 0`, формулы **14 → 0**, merged ranges — **128**;
+SHA-256, size и `mtime` исходных книг не изменились. READY/main/CI фиксируются
+только после зелёного Pull Request.
 
 ## Ограничения блоков 1–7
 

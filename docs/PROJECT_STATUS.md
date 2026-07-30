@@ -354,7 +354,7 @@ Ruff, format, clean install, compileall и `git diff --check` — PASS. READY/ma
 ## Блок 15.1
 
 - **Название:** numeric-only XLSX output с materialization формул
-- **Статус:** документация обновлена; post-merge pytest и real-data gate pending
+- **Статус:** локальный release gate пройден; GitHub PR/CI pending
 - **Контракт:** `ExcelWriterContract-15.1` / `ExcelWriterEngine-15.1`
 - **API:** `write_target_report(...)`
 - **CLI:** отсутствует
@@ -372,10 +372,12 @@ timeout, error, blank, text или non-finite result блокируют publicat
 
 Source identity перепроверяется перед публикацией. Output — отдельный
 несуществующий путь, публикация — atomic hard-link no-clobber; source и
-существующий output не перезаписываются. Baseline до remediation: **492 passed,
-11 skipped**; focused real-data **13 passed** относится к историческому Block
-15.0. Post-merge pytest и real-data gate для Block 15.1 ещё не подтверждены;
-READY/main/CI не присваивается.
+существующий output не перезаписываются. Real-data suite: **7 passed in
+44.38s**; полный suite с real XLSX и slow performance: **514 passed in
+80.22s**. Ruff, format, clean sync, compileall и `git diff --check` — PASS.
+Реальный output: `D30 = 0`, формулы **14 → 0**, merged ranges — **128**;
+SHA-256, size и `mtime` обеих исходных книг не изменились. READY/main/CI
+присваиваются после зелёного Pull Request.
 
 ## Блок 13
 
