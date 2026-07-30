@@ -72,7 +72,7 @@ def _entry_from_selection(path: Path) -> FileManifestEntry:
     return file_manifest_entry_from_dict(entry_mapping)
 
 
-def _resolve_candidate(args: argparse.Namespace) -> SourceCandidate:
+def resolve_workbook_candidate(args: argparse.Namespace) -> SourceCandidate:
     manifest_mode = args.manifest is not None or args.file_id is not None
     selection_mode = args.selection is not None
     if manifest_mode == selection_mode:
@@ -135,7 +135,7 @@ def run_inspect_workbook(args: argparse.Namespace) -> int:
             "--max-file-size-mb должен быть положительным",
         )
 
-    candidate = _resolve_candidate(args)
+    candidate = resolve_workbook_candidate(args)
     max_bytes = args.max_file_size_mb * 1024**2
     with prepared_workbook_session(candidate, max_file_size_bytes=max_bytes) as session:
         worksheets = collect_worksheet_metadata(session)
