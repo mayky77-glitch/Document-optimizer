@@ -1,0 +1,252 @@
+status: frozen
+work_id: document-optimizer-block-16
+objective: "Создать append-only аудит, безопасную трассировку, отчёты и feedback lifecycle без утечки содержимого документов"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block16"
+planning_parent_sha: 375c0a844cf860ca276980a8701e477f0572fca8
+dependency_sha: 375c0a844cf860ca276980a8701e477f0572fca8
+published_base_sha_ref: "commit containing this frozen manifest and all three task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 375c0a844cf860ca276980a8701e477f0572fca8
+contract_versions:
+  event: AuditEventEnvelope-16.0
+  journal: StageJournal-16.0
+  bundle: AuditBundle-16.0
+  run_report: RunReport-16.0
+  trace_report: TraceReport-16.0
+  feedback: FeedbackRuleVersion-16.0
+  export_allowlist: AuditExportAllowlist-16.0
+  sqlite: AuditSQLite-1
+  identity: AuditIdentity-16.0
+  workbook_adapter: WorkbookSchemaAdapter-16.0
+  writer_input: ExcelWriterContract-15.1
+upstream_contracts:
+  manifest: "FileManifest-2.0 / enriched manifest 3.0"
+  extraction: ExtractionResult-6.0
+  training: TrainingData-7.0
+  normalization: Normalization-8.0
+  target: "TargetReportSchema-9.0 / TargetReportRow-9.0"
+  rules: RuleConfigurationVersion-1.0
+  analytics: "AnalyticalStore-11.0 / AnalyticalSchema-1"
+  matching: MatchingContract-12.0
+  calculation: CalculationContract-13.0
+  quality_control: QualityControlContract-14.0
+  writer: ExcelWriterContract-15.1
+  bulk_store: DuckDBSchema-1
+  workbook_schema: "WorkbookSchemaAdapter-16.0 over producer SHA 375c0a844cf860ca276980a8701e477f0572fca8"
+identity_contract:
+  run_key: "SHA-256 canonical JSON of sorted input refs, normalized options, contract versions and rule content hash"
+  run_id: "SHA-256 of AuditIdentity-16.0, run_key and persisted random 128-bit nonce; repeated invocations are distinct"
+  resume: "persisted nonce and run_id are stable for the same journaled invocation"
+  stage_attempt_id: "SHA-256 of AuditIdentity-16.0, run_id, controlled stage code and positive attempt number"
+event_contract:
+  ordering: "strict positive event_sequence unique with run_id"
+  append_only: "UPDATE and DELETE denied by SQLite triggers; corrections are new events"
+  chain: "event_hash = SHA-256 canonical envelope including previous_event_hash; first previous hash is fixed genesis"
+  transitions: "controlled stage/state transition table validated before commit"
+  transaction: "sequence uniqueness, transition validation, previous hash and new event commit in one IMMEDIATE transaction"
+  saga_states:
+    - PENDING
+    - DATA_COMMITTED
+    - EXPORT_PREPARED
+    - EXPORT_VERIFIED
+  integrity_blockers:
+    - HASH_CHAIN_INVALID
+    - SEQUENCE_GAP
+    - INVALID_STAGE_TRANSITION
+    - SNAPSHOT_CHANGED
+    - EXPORT_HASH_MISMATCH
+    - EXPORT_DESTINATION_EXISTS
+  feedback_activation: "only after the same run reaches EXPORT_VERIFIED"
+report_contract:
+  audit_bundle: "run identity, controlled stage/event summaries, artifact hashes, counts and report refs"
+  run_report: "deterministic run/stage status, controlled warnings/errors and counts"
+  trace_report: "write_id -> calculation_id -> trace_id -> match_result_id -> candidate_id/source_row_id links without values or formulas"
+  corrections: "new linked events; historical events remain immutable"
+export_contract:
+  formats:
+    - JSON
+    - JSONL
+    - CSV
+  deterministic: "canonical UTF-8, LF, fixed field order, stable sort; same SQLite snapshot produces byte-identical files regardless of input order"
+  prepare: "write private temp files, flush, fsync, hash and reopen"
+  verify: "parse, validate allowlist/schema/count/hash from one stable read snapshot"
+  publish: "atomic hard-link no-clobber; never replace destination; fsync destination directory"
+  cleanup: "success and failure leave no temp residue"
+redaction_contract:
+  policy: strict_allowlist
+  allowed:
+    - contract_version
+    - run_id
+    - run_key
+    - stage_attempt_id
+    - event_id
+    - event_sequence
+    - previous_event_hash
+    - event_hash
+    - controlled_stage_code
+    - controlled_state_code
+    - controlled_reason_code
+    - controlled_warning_code
+    - artifact_id
+    - artifact_sha256
+    - input_ref_hash
+    - output_ref_hash
+    - rule_version_id
+    - source_row_id
+    - line_id
+    - target_row_id
+    - candidate_id
+    - match_result_id
+    - calculation_id
+    - trace_id
+    - write_id
+    - row_number
+    - column_number
+    - coordinate
+    - hashed_sheet_ref
+    - count
+    - boolean_flag
+    - timestamp_utc
+  forbidden:
+    - paths
+    - filenames
+    - raw_sheet_names
+    - raw_values
+    - cached_values
+    - raw_lexemes
+    - formulas
+    - formula_tokens
+    - money
+    - quantities
+    - costs
+    - totals
+    - object_text
+    - unit_text
+    - name_text
+    - comments
+    - free_form_exceptions
+    - user_or_pii
+    - environment
+    - cli_arguments
+    - credentials
+    - arbitrary_mappings
+feedback_contract:
+  immutable_versions: "FeedbackRuleVersion-16.0 records controlled rule IDs, source event refs and content hashes"
+  activation: "prepared feedback stays inactive until EXPORT_VERIFIED"
+  drift: "contract/rule/source hash drift blocks activation and creates a new diagnostic event"
+  compaction: "deterministic compaction keeps active versions and cryptographic lineage; never rewrites audit events"
+sqlite_contract:
+  schema: AuditSQLite-1
+  pragmas: "foreign_keys=ON; trusted_schema=OFF; WAL with explicit durable checkpoints at verified boundaries"
+  recovery: "reopen validates schema, unique sequence, saga state and full hash chain before resume"
+  cross_store: "DuckDB/data commit and SQLite/export state reconcile through recorded hashes and saga state; mismatches block feedback/publication"
+  growth_limit: "at 100000 decision events, database bytes divided by decision count <= 1024"
+performance_contract:
+  run_slow_only: true
+  append_event_p95_ms: 25
+  deterministic_export_100k_p95_ms: 5000
+  decision_count: 100000
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv sync --locked --extra dev"
+  - "uv run --extra dev ruff check ."
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<read-only source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<read-only target>' RUN_SLOW=1 uv run --extra dev pytest -q"
+baseline_results:
+  - "clean install and ruff: pass on accepted Block 15 main"
+  - "pytest with real XLSX and RUN_SLOW=1: 514 passed in 80.22s"
+  - "Block 15 real XLSX: 7 passed in 44.38s"
+  - "origin/main CI run 30569606304: success"
+  - "origin/main SHA: 375c0a844cf860ca276980a8701e477f0572fca8"
+shared_paths_owner: integration
+shared_paths:
+  - .gitignore
+  - knowledge
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - src/report_processor/workflow.py
+  - tests/conftest.py
+  - pyproject.toml
+  - uv.lock
+production_scope:
+  - src/report_processor/audit
+test_scope:
+  - tests/unit/audit
+  - tests/fixtures/audit
+  - tests/contract/test_block16_audit_contract.py
+  - tests/integration/test_block16_audit_journal.py
+  - tests/integration/test_block16_audit_exports.py
+  - tests/integration/test_block16_cross_store_recovery.py
+  - tests/integration/test_block16_feedback.py
+  - tests/integration/test_block16_real_data.py
+  - tests/integration/test_block16_performance.py
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+forbidden_paths:
+  - ".env*"
+  - cache
+  - logs
+  - output
+  - .github
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - src/report_processor/analytics
+  - src/report_processor/business_rules
+  - src/report_processor/calculation
+  - src/report_processor/domain
+  - src/report_processor/excel
+  - src/report_processor/excel_writer
+  - src/report_processor/extraction
+  - src/report_processor/indexing
+  - src/report_processor/matching
+  - src/report_processor/normalization
+  - src/report_processor/quality_control
+  - src/report_processor/schema
+  - src/report_processor/selection
+  - src/report_processor/storage
+  - src/report_processor/target_report
+  - src/report_processor/training_data
+acceptance_commands:
+  - "uv sync --locked --extra dev"
+  - "uv run --extra dev ruff check ."
+  - "uv run --extra dev ruff format --check ."
+  - "uv run --extra dev pytest -q tests/unit/audit"
+  - "uv run --extra dev pytest -q tests/contract/test_block16_audit_contract.py"
+  - "uv run --extra dev pytest -q tests/integration/test_block16_audit_journal.py tests/integration/test_block16_audit_exports.py tests/integration/test_block16_cross_store_recovery.py tests/integration/test_block16_feedback.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<read-only source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<read-only target>' uv run --extra dev pytest -q tests/integration/test_block16_real_data.py"
+  - "RUN_SLOW=1 uv run --extra dev pytest -q tests/integration/test_block16_performance.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<read-only source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<read-only target>' RUN_SLOW=1 uv run --extra dev pytest -q"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+real_data_contract:
+  source_sha256: 556454e5c087f1728c994b2888191644f04d29d48fbd2a29e9aa136cf1ab0698
+  target_sha256: 5b38ed6650aa5c1388c2757f3fa7aab54d012f2e54a9b0f6287f4badb1904194
+  access: "read-only through environment paths and private temporary outputs"
+  invariance: "SHA-256, size and mtime_ns unchanged before and after tests"
+  leak_canary: "scan exported bytes for canary digests without printing source content"
+required_evidence:
+  - deterministic reverse-order JSON, JSONL and CSV exports
+  - full-chain tamper, sequence gap and transition tamper detection
+  - saga crash points before and after every state boundary
+  - concurrent sequence and publication race tests
+  - existing destinations never overwritten and no temp residue
+  - feedback inactive before EXPORT_VERIFIED; activation, drift and compaction covered
+  - cross-store recovery blocks mismatched data and export hashes
+  - strict allowlist leak-canary scan without printing content
+  - SQLite average growth <= 1024 bytes per decision at 100000 decisions
+  - RUN_SLOW p95 thresholds
+  - real source and target SHA-256, size and mtime_ns unchanged
+created_at: "2026-07-31T12:00:00+08:00"
+accepted_integration_sha: 6f799ccee896275f196c64020894cf61095fcba1
+acceptance_results:
+  focused_block16: "33 passed"
+  full_real_slow: "547 passed in 89.32s"
+  sqlite_growth: "583.3 bytes/event at 100000 decisions"
+  append_p95: "0.072 ms"
+  real_inputs: "SHA-256, size and mtime_ns unchanged"

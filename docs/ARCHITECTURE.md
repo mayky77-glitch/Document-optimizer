@@ -280,3 +280,17 @@ non-finite values и unit conversion запрещены. Approved `EXCLUDE` по
 trace IDs — детерминированные SHA-256; trace хранит формулы, coefficient,
 quantum, rule IDs, решения, Decimal values, contributing rows и provenance.
 Workbook writes отсутствуют.
+
+## Блок 16 — durable audit boundary
+
+`report_processor.audit` изолирует аудит в SQLite с append-only hash chain и
+переходами `PENDING → DATA_COMMITTED → EXPORT_PREPARED → EXPORT_VERIFIED`.
+Run/report/trace IDs детерминированы; redaction выполняется до сериализации.
+JSON/JSONL/CSV exports сортируются, валидируются по SHA/count и публикуются
+fsync + hard-link no-clobber; invalid outputs очищаются. Recovery сверяет
+data/export hashes и state. Feedback активируется только при `EXPORT_VERIFIED`,
+compaction не переписывает events.
+
+Локальный gate: focused **33 passed**, полный real+slow suite
+**547 passed in 89.32s**, **583.3 B/event**, append p95 **0.072 ms**;
+реальные файлы неизменны. PR CI/main acceptance Block 16 ещё отсутствуют.

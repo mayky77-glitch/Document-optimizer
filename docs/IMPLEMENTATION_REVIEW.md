@@ -194,3 +194,15 @@ Focused calculation gate: **11 passed**, real-XLSX gate: **1 passed**,
 `6b814337cb55e574cae7ab42bf9c4d81af99bc163067d76c31d56085c4ee8d54`.
 SHA-256, размер и `mtime` обеих исходных XLSX неизменны. GitHub CI и статус
 `main` подтверждаются только после Pull Request.
+
+## Блок 16 — audit implementation review
+
+Accepted evidence commit `99d7ffedf5a2d65cccf1c21206c3fbe847d83a6a`, frozen base
+`e951bef5397d21037680901cbb52752b5556d9b8`: focused+slow+real **33 passed**;
+полный real+slow suite **547 passed in 89.32s**; 100k **583.3 B/event**,
+append p95 **0.072 ms**; real files unchanged.
+Проверены append-only chain/transitions, redacted deterministic exports,
+cross-store recovery, feedback только после `EXPORT_VERIFIED`, compaction,
+no-clobber и invalid-output cleanup. Block 15 принят: PR #15, CI `30569460356`,
+main CI `30569606304`, 514 passed/real 7 passed. Block 16 PR/main acceptance
+ещё не заявляются.

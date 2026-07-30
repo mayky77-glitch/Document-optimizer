@@ -354,7 +354,7 @@ Ruff, format, clean install, compileall и `git diff --check` — PASS. READY/ma
 ## Блок 15.1
 
 - **Название:** numeric-only XLSX output с materialization формул
-- **Статус:** локальный release gate пройден; GitHub PR/CI pending
+- **Статус:** READY в `main`; PR #15 merged
 - **Контракт:** `ExcelWriterContract-15.1` / `ExcelWriterEngine-15.1`
 - **API:** `write_target_report(...)`
 - **CLI:** отсутствует
@@ -376,8 +376,8 @@ Source identity перепроверяется перед публикацией
 44.38s**; полный suite с real XLSX и slow performance: **514 passed in
 80.22s**. Ruff, format, clean sync, compileall и `git diff --check` — PASS.
 Реальный output: `D30 = 0`, формулы **14 → 0**, merged ranges — **128**;
-SHA-256, size и `mtime` обеих исходных книг не изменились. READY/main/CI
-присваиваются после зелёного Pull Request.
+SHA-256, size и `mtime` обеих исходных книг не изменились. PR #15, PR CI
+`30569460356` и post-merge main CI `30569606304` — success.
 
 ## Блок 13
 
@@ -402,3 +402,12 @@ Focused: **11 passed**, real XLSX: **1 passed**, полный suite: **482 passe
 Ruff, format, clean install, compileall и `git diff --check` прошли; SHA-256,
 размер и `mtime` обеих книг не изменились. READY/main фиксируется после
 зелёного Pull Request.
+
+## Блок 16
+
+- **Статус:** локально integration-ready; ожидает PR CI и main acceptance.
+- **Контракты:** AuditIdentity/EventEnvelope/StageJournal/AuditBundle/RunReport/TraceReport/FeedbackRuleVersion 16.0.
+- **Поведение:** append-only SQLite hash chain (`PENDING → DATA_COMMITTED → EXPORT_PREPARED → EXPORT_VERIFIED`); deterministic redacted JSON/JSONL/CSV exports с SHA/count validation, no-clobber и cleanup invalid outputs; cross-store recovery; feedback activation только после `EXPORT_VERIFIED`; compaction не переписывает events.
+- **Evidence:** focused+slow+real **33 passed**; полный real+slow suite **547 passed in 89.32s**; 100k **583.3 B/event**, append p95 **0.072 ms**; реальные файлы не изменились.
+
+Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 passed и real 7 passed. Для Block 16 PR CI и main acceptance ещё не подтверждены.
