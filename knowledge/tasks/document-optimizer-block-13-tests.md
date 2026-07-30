@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-13-tests
-status: claimed
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-block-13
@@ -12,7 +12,7 @@ agent_role: tester
 owner: block-13-tests
 profile: L1
 routing_grade: P3
-progress_revision: 0
+progress_revision: 5
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -21,11 +21,11 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: medium
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
-fallback_reason: ""
-model_fallback: false
+launch_status: inherited
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
+fallback_reason: "Fresh higher-route worker fixed repeated integration-only Ruff import ordering after two unsuccessful tester attempts."
+model_fallback: true
 last_verified: 2026-07-30
 updated: 2026-07-30
 card_path: knowledge/tasks/document-optimizer-block-13-tests.md

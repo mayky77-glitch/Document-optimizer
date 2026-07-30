@@ -331,7 +331,7 @@ rows, **107** target rows, **35** кандидатов, статусы **1 match
 
 ## Блок 13
 
-- **Статус:** contract frozen; integration evidence ожидается
+- **Статус:** интегрирован локально; release-набор пройден, GitHub CI ожидается
 - **Контракты:** `CalculationContract-13.0`, `CalculationEngine-13.0`
 - **API:** `calculate_matches(match_results, rule_set)`
 
@@ -345,5 +345,10 @@ work/material/service; отсутствующий или неизвестный 
 decisions, Decimal values, contributing rows и provenance. Workbook read-only.
 
 На reviewed real input все **382** source rows имеют отсутствующий
-`cost_type_code` и ожидаются как **UNCLASSIFIED**. READY/main, тесты, digest,
-PR и CI добавятся после подтверждения integration owner.
+`cost_type_code`. Результат: **1 calculated**, **5 manual_review**,
+**101 no_match**; единственный вклад — `UNCLASSIFIED`. Digest:
+`6b814337cb55e574cae7ab42bf9c4d81af99bc163067d76c31d56085c4ee8d54`.
+Focused: **11 passed**, real XLSX: **1 passed**, полный suite: **482 passed**.
+Ruff, format, clean install, compileall и `git diff --check` прошли; SHA-256,
+размер и `mtime` обеих книг не изменились. READY/main фиксируется после
+зелёного Pull Request.
