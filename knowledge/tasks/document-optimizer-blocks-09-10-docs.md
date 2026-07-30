@@ -34,6 +34,7 @@ base_sha_ref: card_commit_sha_ref
 dependency_shas:
   - c04008c51d39996788b0bcb9d6465e280d01938c
 branch: codex/blocks-09-10-docs
+worktree: "/Users/x/Documents/Сооотношение документов/Document-optimizer-blocks09-10-docs"
 branch_base_sha_ref: card_commit_sha_ref
 write_scope:
   - README.md
