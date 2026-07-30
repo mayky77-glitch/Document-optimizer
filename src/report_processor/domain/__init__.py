@@ -15,7 +15,7 @@ from report_processor.domain.models import (
     FileManifestEntry,
     ManifestSummary,
 )
-from report_processor.domain.statuses import StatusCode
+from report_processor.domain.statuses import IndexStatus, IndexWarning, StatusCode
 
 __all__ = [
     "MANIFEST_SCHEMA_VERSION",
@@ -23,6 +23,8 @@ __all__ = [
     "FileClassification",
     "FileManifest",
     "FileManifestEntry",
+    "IndexStatus",
+    "IndexWarning",
     "InventoryError",
     "ManifestReadError",
     "ManifestSummary",

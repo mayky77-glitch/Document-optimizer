@@ -12,7 +12,14 @@ from report_processor.domain.exceptions import (
     SourceNotFoundError,
 )
 from report_processor.domain.models import ManifestSummary
-from report_processor.inventory.file_manifest import build_file_manifest, save_manifest_json
+from report_processor.identifiers.manifest_enricher import (
+    enrich_manifest_with_document_indexes,
+)
+from report_processor.inventory.file_manifest import (
+    build_file_manifest,
+    load_manifest_json,
+    save_manifest_json,
+)
 
 EXIT_OK = 0
 EXIT_SOURCE_NOT_FOUND = 2
@@ -34,10 +41,41 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Путь для JSON-манифеста",
     )
     inventory.add_argument(
+        "--extract-indexes",
+        action="store_true",
+        help="Сразу обогатить новый манифест индексами документов",
+    )
+    inventory.add_argument(
+        "--allow-loose",
+        action="store_true",
+        help="Искать низкоуверенные индексы с разделителями вместо скобок",
+    )
+    inventory.add_argument(
         "--recursive",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Рекурсивно обходить каталог (по умолчанию: да)",
+    )
+    extract = subparsers.add_parser(
+        "extract-indexes", help="Обогатить существующий манифест индексами"
+    )
+    extract.add_argument("--manifest", type=Path, required=True, help="Входной JSON-манифест")
+    extract.add_argument("--output", type=Path, required=True, help="Новый JSON-манифест")
+    extract.add_argument(
+        "--use-parent-paths",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Искать индекс также в каталогах относительного пути",
+    )
+    extract.add_argument(
+        "--allow-loose",
+        action="store_true",
+        help="Искать низкоуверенные индексы с разделителями вместо скобок",
+    )
+    extract.add_argument(
+        "--log-level",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        default="INFO",
     )
     inventory.add_argument(
         "--log-level",
@@ -74,6 +112,7 @@ def _print_summary(
     print(f"Временных файлов: {summary.temporary_files}")
     print(f"Возможных копий: {summary.probable_copies}")
     print(f"Предупреждений: {summary.warnings_count}")
+    print(f"Индекс найден: {summary.entries_with_document_index}")
     print(f"Манифест: {output}")
 
 
@@ -84,11 +123,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _configure_logging(args.log_level)
 
-    if args.command != "inventory":
-        parser.error("неизвестная команда")
-
     try:
+        if args.command == "extract-indexes":
+            manifest = load_manifest_json(args.manifest)
+            enriched = enrich_manifest_with_document_indexes(
+                manifest,
+                use_parent_paths=args.use_parent_paths,
+                allow_loose=args.allow_loose,
+            )
+            save_manifest_json(enriched, args.output)
+            _print_summary(args.manifest, args.output, enriched.summary, enriched.source_kind)
+            return EXIT_OK
+
         manifest = build_file_manifest(args.source, recursive=args.recursive)
+        if args.extract_indexes:
+            manifest = enrich_manifest_with_document_indexes(
+                manifest, use_parent_paths=True, allow_loose=args.allow_loose
+            )
         save_manifest_json(manifest, args.output)
     except SourceNotFoundError as exc:
         logging.error("%s", exc)

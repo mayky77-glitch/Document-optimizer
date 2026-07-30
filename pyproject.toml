@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "document-optimizer"
-version = "0.1.0"
-description = "Поэтапная обработка строительных отчётов; блок 1 — инвентаризация источников"
+version = "0.2.0"
+description = "Поэтапная обработка строительных отчётов; блоки 1–2 — инвентаризация и индексы"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }

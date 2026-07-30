@@ -2,8 +2,12 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
-MANIFEST_SCHEMA_VERSION = "1.0"
+from report_processor.domain.statuses import IndexStatus
+from report_processor.identifiers.models import DocumentIndex
+
+MANIFEST_SCHEMA_VERSION = "2.0"
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,6 +50,12 @@ class FileManifestEntry:
 
     status: str
     warnings: list[str] = field(default_factory=list)
+    document_index: DocumentIndex | None = None
+    document_index_status: str = IndexStatus.INDEX_NOT_PROCESSED.value
+    document_index_confidence: float | None = None
+    document_index_candidates: list[DocumentIndex] = field(default_factory=list)
+    document_index_warnings: list[str] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)
@@ -66,6 +76,13 @@ class ManifestSummary:
     total_compressed_size: int | None = None
     total_uncompressed_size: int | None = None
     compression_ratio: float | None = None
+    entries_with_document_index: int = 0
+    entries_without_document_index: int = 0
+    entries_with_ambiguous_index: int = 0
+    entries_with_low_confidence_index: int = 0
+    unique_document_indexes: int = 0
+    files_by_document_index: dict[str, int] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)
@@ -78,3 +95,4 @@ class FileManifest:
     entries: list[FileManifestEntry]
     summary: ManifestSummary
     schema_version: str = MANIFEST_SCHEMA_VERSION
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)

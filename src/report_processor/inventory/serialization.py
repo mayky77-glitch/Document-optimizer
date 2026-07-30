@@ -18,7 +18,8 @@ from report_processor.domain.models import (
     FileManifestEntry,
     ManifestSummary,
 )
-from report_processor.domain.statuses import StatusCode
+from report_processor.domain.statuses import IndexStatus, IndexWarning, StatusCode
+from report_processor.identifiers.models import DocumentIndex
 
 LOGGER = logging.getLogger(__name__)
 
@@ -104,6 +105,39 @@ def _optional_int(value: Any, field_name: str) -> int | None:
     return value
 
 
+def _optional_float(value: Any, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"{field_name} должен быть числом или null")
+    return float(value)
+
+
+def _document_index_from_dict(value: Any, field_name: str) -> DocumentIndex | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} должен быть объектом или null")
+    return DocumentIndex(
+        raw=_required_str(value, "raw"),
+        normalized=_required_str(value, "normalized"),
+        main=_required_str(value, "main"),
+        secondary=_required_str(value, "secondary"),
+    )
+
+
+def _document_index_list(value: Any, field_name: str) -> list[DocumentIndex]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} должен быть списком объектов")
+    indexes: list[DocumentIndex] = []
+    for item in value:
+        index = _document_index_from_dict(item, field_name)
+        if index is None:
+            raise ValueError(f"{field_name} не должен содержать null")
+        indexes.append(index)
+    return indexes
+
+
 def _entry_from_dict(payload: Mapping[str, Any]) -> FileManifestEntry:
     warnings = _string_list(_required(payload, "warnings"), "warnings")
     for warning in warnings:
@@ -115,6 +149,17 @@ def _entry_from_dict(payload: Mapping[str, Any]) -> FileManifestEntry:
         StatusCode.UNREADABLE_FILE.value,
     }:
         raise ValueError(f"недопустимый статус записи: {status}")
+    document_index_status = payload.get(
+        "document_index_status", IndexStatus.INDEX_NOT_PROCESSED.value
+    )
+    if not isinstance(document_index_status, str):
+        raise ValueError("document_index_status должен быть строкой")
+    IndexStatus(document_index_status)
+    document_index_warnings = _string_list(
+        payload.get("document_index_warnings", []), "document_index_warnings"
+    )
+    for warning in document_index_warnings:
+        IndexWarning(warning)
 
     return FileManifestEntry(
         file_id=_required_str(payload, "file_id"),
@@ -144,6 +189,17 @@ def _entry_from_dict(payload: Mapping[str, Any]) -> FileManifestEntry:
         is_probably_outdated=_required_bool(payload, "is_probably_outdated"),
         status=status,
         warnings=warnings,
+        document_index=_document_index_from_dict(
+            payload.get("document_index"), "document_index"
+        ),
+        document_index_status=document_index_status,
+        document_index_confidence=_optional_float(
+            payload.get("document_index_confidence"), "document_index_confidence"
+        ),
+        document_index_candidates=_document_index_list(
+            payload.get("document_index_candidates", []), "document_index_candidates"
+        ),
+        document_index_warnings=document_index_warnings,
     )
 
 
@@ -176,6 +232,29 @@ def _summary_from_dict(payload: Mapping[str, Any]) -> ManifestSummary:
             None
             if payload.get("compression_ratio") is None
             else float(payload["compression_ratio"])
+        ),
+        entries_with_document_index=_optional_int(
+            payload.get("entries_with_document_index", 0), "entries_with_document_index"
+        )
+        or 0,
+        entries_without_document_index=_optional_int(
+            payload.get("entries_without_document_index", 0), "entries_without_document_index"
+        )
+        or 0,
+        entries_with_ambiguous_index=_optional_int(
+            payload.get("entries_with_ambiguous_index", 0), "entries_with_ambiguous_index"
+        )
+        or 0,
+        entries_with_low_confidence_index=_optional_int(
+            payload.get("entries_with_low_confidence_index", 0), "entries_with_low_confidence_index"
+        )
+        or 0,
+        unique_document_indexes=_optional_int(
+            payload.get("unique_document_indexes", 0), "unique_document_indexes"
+        )
+        or 0,
+        files_by_document_index=_string_int_dict(
+            payload.get("files_by_document_index", {}), "files_by_document_index"
         ),
     )
 
