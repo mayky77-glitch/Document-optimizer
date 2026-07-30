@@ -261,7 +261,7 @@ DuckDB schema v1 выполняет транзакционный idempotent upse
 Модули и границы ответственности описаны в
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-Блоки 9 и 10 реализованы в integration-ветке; PR, CI и merge в `main` являются
+Блоки 9–11 реализованы в integration-ветке; PR, CI и merge в `main` являются
 отдельным release gate.
 
 ## Блок 9: чтение целевого отчёта
@@ -290,3 +290,18 @@ report-processor validate-business-rules \
 tags, anchors/aliases и исполняемые конструкции отклоняются. Валидатор
 сохраняет `Decimal`, precedence, scope, политики количества/стоимости,
 структурированные конфликты M01–M15, canonical JSON и SHA-256.
+
+## Блок 11: аналитический DuckDB
+
+`report_processor.analytics.AnalyticalStore` — отдельное аналитическое хранилище
+DuckDB. Оно принимает `NormalizedSourceRow`, `TargetReportRow` с явными
+`target_source_id` и `target_fingerprint`, а также `ValidatedRuleSet`; рабочий
+`DuckDBStore` блока 6 не открывается и не изменяется.
+
+Схема `AnalyticalSchema-1` создаёт таблицы источников, целей, правил, clauses и
+warnings, служебную metadata и views `v_source_rows`, `v_target_rows`,
+`v_rule_clauses`, `v_diagnostics`. Загрузка идемпотентна; конфликт payload для
+существующего идентификатора откатывает транзакцию. Named queries ограничены
+фиксированным allowlist и параметризованными значениями. Диагностика
+экспортируется детерминированно в JSONL атомарной заменой файла. Сопоставление
+и бизнес-логика блока 12 сюда не входят.

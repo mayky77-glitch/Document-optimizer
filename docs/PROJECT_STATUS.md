@@ -288,3 +288,19 @@ scope, политики количества/стоимости, canonical JSON,
 - полный suite: **441 passed, 1 skipped**;
 - Ruff: PASS;
 - реальный XLSX: `TargetReportSchema-9.0` OK, исходник неизменён.
+
+## Блок 11
+
+- **Название:** аналитический слой DuckDB
+- **Статус:** реализация завершена; ожидаются финальная интеграция и CI
+- **Контракт:** `AnalyticalStore-11.0`, `AnalyticalSchema-1`
+- **Вход:** `NormalizedSourceRow`, `TargetReportRow` с явным контекстом,
+  `ValidatedRuleSet`
+- **Выход:** отдельная аналитическая DuckDB, bounded named-query results и
+  диагностический JSONL
+
+Хранилище изолировано от `DuckDBStore` блока 6. Загрузки идемпотентны и
+детерминированы; конфликт payload приводит к полной отмене транзакции. Named
+queries используют фиксированные имена, allowlist фильтров и параметры.
+Фокусированный набор блока 11: **46 passed**. Полный suite, real-data gate и
+GitHub Actions ещё не заявляются до финальной интеграции.
