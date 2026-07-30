@@ -295,10 +295,34 @@ compaction не переписывает events.
 **547 passed in 89.32s**, **583.3 B/event**, append p95 **0.072 ms**;
 реальные файлы неизменны. Block 16 принят: PR #16, PR CI `30572493480`, main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`, post-merge main CI `30572598426` — success.
 
-## Блок 17 — processing controller (local READY)
+## Блок 17 — processing controller (принят в main)
 
 Контроллер отвечает за порядок этапов, типизированный контекст, переходы состояний и адаптеры; бизнес-логика остаётся в Blocks 1–16. API — `process_report` и `process_reports`; CLI — `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без мутаций, dry-run без публикации, write с QC gate. States: `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`; exit codes `0`–`6`. Resume boundaries: `PENDING`, `DATA_COMMITTED`, `EXPORT_PREPARED`, `EXPORT_VERIFIED` с проверкой хешей и версий контрактов.
 
 Локально подтверждены focused **21 passed**, полный real+slow suite **569
 passed in 92.84s**, реальный inspect-контроллер и неизменность обеих XLSX.
-PR/main/CI ещё не заявляются.
+PR #17 и CI приняты: PR `30575326764`, post-merge main `30575425467`, main SHA
+`322cb9ce08f14c017dbdc3bf16c5b91b33238e63`; полный real+slow — **569 passed in
+92.84s**.
+
+## Блок 18 — stage-relation RAG и локальная панель
+
+Optional local RAG использует `cointegrated/rubert-tiny2`, revision
+`e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae` (29.4M параметров, 312 dimensions,
+Russian), lazy local loading без remote API, normalized embeddings/cosine и
+deterministic top-k/tie ordering. Missing dependency/model даёт controlled
+unavailable без silent matching change. Block 12 rules authoritative; semantic-
+only relations требуют manual review.
+
+`admin_panel/` — отдельная локальная presentation boundary. Starlette app
+принимает только `.xlsx/.xlsm` в приватные каталоги `0700`, хранит файлы `0600`
+и запускает публичный `ProcessingContract-17.0`; исходники сверяются по SHA
+после выполнения. Client JSON не содержит серверных путей. Каждая RAG-пара
+показывается отдельной карточкой с названиями целевого и предложенного этапа,
+score и прямыми `fit/not_fit`; запись решения не подменяет Block 12.
+Static assets поставляются внутри wheel, внешних UI-запросов нет. CLI слушает
+только `127.0.0.1`/`localhost`.
+
+Локальный gate: **603 passed in 119.80s**, real admin **1 passed in 4.49s**,
+desktop/mobile browser PASS, clean base/RAG installs и wheel assets PASS.
+PR/CI остаются release gate.

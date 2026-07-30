@@ -1,0 +1,153 @@
+status: frozen
+work_id: document-optimizer-block-18
+objective: "Завершить проект сквозным release gate и локальным RAG-сопоставлением этапов"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block18"
+planning_parent_sha: 322cb9ce08f14c017dbdc3bf16c5b91b33238e63
+dependency_sha: 322cb9ce08f14c017dbdc3bf16c5b91b33238e63
+published_base_sha_ref: "commit containing this frozen manifest and all three task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 322cb9ce08f14c017dbdc3bf16c5b91b33238e63
+contract_versions:
+  release: FinalIntegration-18.0
+  rag: StageRelationRAG-18.0
+  model: RuBERTTiny2Embedding-18.0
+  admin_panel: LocalAdminPanel-18.0
+upstream_contracts:
+  processing: "ProcessingContract/Engine/State-17.0"
+  matching: MatchingContract-12.0
+  calculation: CalculationContract-13.0
+  quality_control: QualityControlContract-14.0
+  writer: ExcelWriterContract-15.1
+  audit: StageJournal-16.0
+rag_contract:
+  model_id: cointegrated/rubert-tiny2
+  model_revision: e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae
+  model_parameters: 29400000
+  embedding_dimensions: 312
+  language: Russian
+  loading: "lazy local Hugging Face load; exact revision; no remote API"
+  retrieval: "normalized embeddings, cosine similarity, deterministic top-k and tie ordering"
+  authority: "existing Block 12 rules remain primary; semantic-only relations require manual review"
+  failure: "missing optional dependency/model is controlled and never silently changes matching"
+release_contract:
+  inputs: "all real XLSX opened read-only; original SHA-256, size and mtime_ns invariant"
+  clean_install: "base and rag extras install from lock in private temporary environments"
+  golden: "versioned deterministic expected results without copying sensitive workbook content"
+  performance: "master-plan thresholds with RUN_SLOW=1"
+  public_api: "all frozen contracts importable without optional rag dependencies"
+admin_panel_contract:
+  network: "local-only 127.0.0.1 by default; no external assets or remote inference API"
+  workflow: "upload source and target, choose stage, run, review uncertain relations, download result/review"
+  default_stage: "13.1"
+  review: "semantic suggestions require explicit fit/not-fit decision; decisions are versioned and downloadable"
+  discrepancy_colors:
+    unit_conflict: red
+    unchanged_value: yellow
+    cost_threshold: orange
+    manual_review: blue
+  brand:
+    primary: "#0079C2"
+    source: "Gazprom Pantone 300 C / RGB 0 121 194"
+  safety: "uploads live in private per-job workspaces; original client files are never modified"
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_results:
+  - "Block 17 full real+slow: 569 passed in 92.84s"
+  - "Block 17 PR CI run 30575326764: success"
+  - "origin/main CI run 30575425467: success"
+  - "origin/main SHA: 322cb9ce08f14c017dbdc3bf16c5b91b33238e63"
+  - "pre-admin Block 18 full real+slow+model suite: 592 passed in 95.50s"
+  - "pinned RuBERT smoke: 2 passed; Russian top-1 examples correct"
+  - "clean locked base and rag-extra installs: pass"
+  - "final Block 18 full real+slow+model suite: 603 passed in 119.80s"
+  - "real admin private-copy workflow: 1 passed in 4.49s"
+  - "desktop/mobile Chrome: 0 console, page and external-request errors"
+shared_paths_owner: integration
+shared_paths:
+  - .gitignore
+  - knowledge
+  - pyproject.toml
+  - uv.lock
+  - src/report_processor/__init__.py
+  - src/report_processor/processing/adapters.py
+  - src/report_processor/cli.py
+  - src/report_processor/cli_process.py
+  - src/report_processor/cli_admin.py
+  - tests/conftest.py
+production_scope:
+  - src/report_processor/stage_rag
+  - src/report_processor/admin_panel
+test_scope:
+  - tests/unit/stage_rag
+  - tests/fixtures/stage_rag
+  - tests/contract/test_block18_release_contract.py
+  - tests/integration/test_block18_e2e.py
+  - tests/integration/test_block18_golden.py
+  - tests/integration/test_block18_rag.py
+  - tests/integration/test_block18_real_data.py
+  - tests/performance/test_block18_release_performance.py
+  - tests/unit/admin_panel
+  - tests/integration/test_block18_admin_panel.py
+  - tests/integration/test_block18_admin_real_data.py
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+  - docs/FINAL_RELEASE_REPORT.md
+forbidden_paths:
+  - ".env*"
+  - cache
+  - logs
+  - output
+  - .github
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - src/report_processor/adapters
+  - src/report_processor/analytics
+  - src/report_processor/audit
+  - src/report_processor/business_rules
+  - src/report_processor/calculation
+  - src/report_processor/domain
+  - src/report_processor/excel
+  - src/report_processor/excel_writer
+  - src/report_processor/extraction
+  - src/report_processor/identifiers
+  - src/report_processor/inventory
+  - src/report_processor/matching
+  - src/report_processor/materialization
+  - src/report_processor/metadata
+  - src/report_processor/normalization
+  - src/report_processor/quality_control
+  - src/report_processor/schema
+  - src/report_processor/selection
+  - src/report_processor/storage
+  - src/report_processor/target_report
+  - src/report_processor/training_data
+acceptance_commands:
+  - "uv sync --locked --extra dev"
+  - "uv run --extra dev ruff check ."
+  - "uv run --extra dev ruff format --check ."
+  - "uv run --extra dev pytest -q tests/unit/stage_rag tests/contract/test_block18_release_contract.py tests/integration/test_block18_*.py"
+  - "RUN_SLOW=1 uv run --extra dev pytest -q"
+  - "RUN_RAG_MODEL=1 uv run --extra rag pytest -q tests/integration/test_block18_rag.py"
+  - "clean install base and rag extras in private temporary environments"
+  - "uv run python -m compileall -q src tests"
+  - "git diff --check"
+  - "uv run pytest -q tests/unit/admin_panel tests/integration/test_block18_admin_panel.py"
+  - "Playwright local UI: upload, stage 13.1, review controls, color tokens, download, keyboard and mobile"
+required_evidence:
+  - deterministic reverse-order E2E and golden outputs
+  - semantic stage relation ranking and manual-review safety
+  - exact pinned real model smoke or explicit external blocker
+  - clean base install and clean rag-extra install
+  - real source and target SHA-256, size and mtime_ns unchanged
+  - no input overwrite, temp residue, sensitive golden payload or circular imports
+  - full and performance suites
+  - local-only admin server and no external asset requests
+  - Gazprom UI token #0079C2 plus red/yellow/orange/manual-review color semantics
+  - review decisions round-trip and output/review download behavior
+created_at: "2026-07-31T03:40:00+08:00"

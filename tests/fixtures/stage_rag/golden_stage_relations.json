@@ -1,0 +1,18 @@
+{
+  "version": "StageRelationRAGGolden-18.0",
+  "description": "Synthetic, non-sensitive deterministic cosine fixture.",
+  "embedding_dimensions": 2,
+  "sources": [
+    {"identity": "source-a", "text": "source-a"},
+    {"identity": "source-b", "text": "source-b"},
+    {"identity": "source-c", "text": "source-c"}
+  ],
+  "targets": [{"identity": "target-a", "text": "target-a"}],
+  "vectors": {
+    "source-a": [2.0, 0.0],
+    "source-b": [1.0, 0.0],
+    "source-c": [0.0, 3.0],
+    "target-a": [4.0, 0.0]
+  },
+  "expected": {"target-a": ["source-a", "source-b", "source-c"]}
+}

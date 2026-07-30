@@ -24,6 +24,7 @@ _UPSTREAM_CONTRACTS = {
     "quality_control": "QualityControlContract-14.0",
     "writer": "ExcelWriterContract-15.1",
     "audit": "StageJournal-16.0",
+    "stage_rag": "StageRelationRAG-18.0",
 }
 
 
@@ -63,6 +64,9 @@ class DefaultProcessingAdapters:
     Domain-specific selections and rules are deliberately passed by the caller's
     integration adapter; this class keeps the public default safe and read-only.
     """
+
+    def __init__(self, stage_encoder: object | None = None) -> None:
+        self._stage_encoder = stage_encoder
 
     def inspect(self, context: ProcessingContext) -> StageOutcome:
         from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
@@ -148,6 +152,9 @@ class DefaultProcessingAdapters:
             target_fingerprint=target_report.schema.source_fingerprint.value,
         )
         calculations = calculate_matches(matches, validation.rule_set)
+        rag_artifacts, rag_warnings = self._stage_relation_suggestions(
+            request, normalized.rows, matches
+        )
         return StageOutcome(
             artifacts={
                 "rule_set": validation.rule_set,
@@ -157,9 +164,69 @@ class DefaultProcessingAdapters:
                 "analytics_rule_count": rule_load.received_count,
                 "matches": matches,
                 "calculations": calculations,
+                **rag_artifacts,
             },
-            warnings=normalized.warnings,
+            warnings=(*normalized.warnings, *rag_warnings),
         )
+
+    def _stage_relation_suggestions(self, request, source_rows, matches):
+        if request.options.get("stage_rag") is not True:
+            return {}, ()
+
+        from report_processor.matching import MatchStatus
+        from report_processor.stage_rag import (
+            RUBERT_TINY2_MODEL_ID,
+            RUBERT_TINY2_MODEL_REVISION,
+            RuBERTTiny2Encoder,
+            StageRAGModelUnavailableError,
+            StageText,
+            retrieve_stage_relations,
+        )
+
+        sources = tuple(
+            StageText(row.source_row_id, row.work_name)
+            for row in source_rows
+            if row.work_name and row.work_name.strip()
+        )
+        targets = tuple(
+            StageText(
+                match.result_id,
+                match.target_row.stage or match.target_row.work_name,
+            )
+            for match in matches
+            if match.status is not MatchStatus.MATCHED
+            and (match.target_row.stage or match.target_row.work_name)
+        )
+        if not sources or not targets:
+            return {
+                "stage_rag_status": "NO_STAGE_TEXT",
+                "stage_relation_suggestions": (),
+            }, ()
+
+        top_k = request.options.get("stage_rag_top_k", 3)
+        if isinstance(top_k, bool) or not isinstance(top_k, int):
+            raise ValueError("stage_rag_top_k должен быть целым")
+        top_k = min(top_k, len(sources))
+        encoder = self._stage_encoder or RuBERTTiny2Encoder()
+        try:
+            suggestions = retrieve_stage_relations(
+                encoder,
+                sources,
+                targets,
+                k=top_k,
+            )
+        except StageRAGModelUnavailableError:
+            return {
+                "stage_rag_status": "RAG_MODEL_UNAVAILABLE",
+                "stage_rag_requires_manual_review": True,
+            }, ("RAG_MODEL_UNAVAILABLE",)
+        return {
+            "stage_rag_status": "MANUAL_REVIEW_REQUIRED",
+            "stage_rag_model_id": RUBERT_TINY2_MODEL_ID,
+            "stage_rag_model_revision": RUBERT_TINY2_MODEL_REVISION,
+            "stage_rag_requires_manual_review": True,
+            "stage_relation_suggestions": suggestions,
+        }, ("STAGE_RAG_MANUAL_REVIEW_REQUIRED",)
 
     def audit(self, context: ProcessingContext) -> StageOutcome:
         from report_processor.audit import AuditJournal, AuditStage, AuditState, export_snapshot
@@ -218,6 +285,11 @@ class DefaultProcessingAdapters:
                     export_hash=export_hash,
                 )
             events = journal.validate_run(run.run_id)
+        decision = (
+            "require_manual_review"
+            if context.values.get("stage_rag_requires_manual_review") is True
+            else report.decision.value
+        )
         return StageOutcome(
             artifacts={
                 "quality_report": report,
@@ -226,7 +298,7 @@ class DefaultProcessingAdapters:
                 "audit_export_hash": export_hash or "",
             },
             warnings=tuple(issue.code.value for issue in report.issues),
-            decision=report.decision.value,
+            decision=decision,
         )
 
     def write(self, context: ProcessingContext) -> StageOutcome:

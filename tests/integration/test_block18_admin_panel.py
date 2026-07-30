@@ -1,0 +1,199 @@
+"""Black-box contract tests for the local-only Block 18 admin panel."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
+
+import pytest
+from starlette.testclient import TestClient
+
+from report_processor.admin_panel import create_app
+
+
+class FakeAdminService:
+    """Injectable in-memory service with a private result path."""
+
+    def __init__(self, result_path: Path) -> None:
+        self.result_path = result_path
+        self.create_calls: list[dict[str, object]] = []
+        self.decision_calls: list[dict[str, str]] = []
+        self.jobs = {
+            "job-001": {
+                "job_id": "job-001",
+                "stage": "13.1",
+                "status": "review_required",
+                "summary": {"processed": 2},
+                "discrepancies": [
+                    {"category": "unit_conflict", "color": "red"},
+                    {"category": "unchanged_value", "color": "yellow"},
+                    {"category": "cost_threshold", "color": "orange"},
+                    {"category": "manual_review", "color": "blue"},
+                ],
+                "suggestions": [
+                    {"suggestion_id": "suggestion-001", "requires_manual_review": True}
+                ],
+                "download_url": None,
+            }
+        }
+
+    def create_job(
+        self,
+        *,
+        source_name: str,
+        source_content: bytes,
+        target_name: str,
+        target_content: bytes,
+        stage: str,
+        mode: str,
+    ) -> Mapping[str, object]:
+        self.create_calls.append(
+            {
+                "source_name": source_name,
+                "source_content": source_content,
+                "target_name": target_name,
+                "target_content": target_content,
+                "stage": stage,
+                "mode": mode,
+            }
+        )
+        return self.jobs["job-001"]
+
+    def get_job(self, job_id: str) -> Mapping[str, object]:
+        if job_id not in self.jobs:
+            raise KeyError(job_id)
+        return self.jobs[job_id]
+
+    def record_decision(
+        self, *, job_id: str, suggestion_id: str, decision: str
+    ) -> Mapping[str, object]:
+        if job_id not in self.jobs:
+            raise KeyError(job_id)
+        if suggestion_id != "suggestion-001" or decision not in {"fit", "not_fit"}:
+            raise ValueError("invalid controlled review input")
+        self.decision_calls.append(
+            {"job_id": job_id, "suggestion_id": suggestion_id, "decision": decision}
+        )
+        job = dict(self.jobs[job_id])
+        job.update(status="ready", download_url=f"/api/jobs/{job_id}/result")
+        self.jobs[job_id] = job
+        return job
+
+    def get_result(self, job_id: str) -> tuple[Path, str]:
+        if job_id not in self.jobs or self.jobs[job_id]["status"] != "ready":
+            raise KeyError(job_id)
+        return self.result_path, "optimized-report.xlsx"
+
+
+@pytest.fixture
+def client(tmp_path: Path):
+    result = tmp_path / "private-result.bin"
+    result.write_bytes(b"controlled-result")
+    service = FakeAdminService(result)
+    app = create_app(service=service, workspace_root=tmp_path / "private-workspaces")
+    with TestClient(app) as test_client:
+        yield test_client, service, tmp_path
+
+
+def _files(*, source_name: str = "source.xlsx", target_name: str = "target.xlsx"):
+    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return {
+        "source": (source_name, b"PK\x03\x04source", content_type),
+        "target": (target_name, b"PK\x03\x04target", content_type),
+    }
+
+
+def test_upload_requires_two_xlsx_files_and_keeps_bytes_in_injected_service(client) -> None:
+    test_client, service, _ = client
+    missing = test_client.post("/api/jobs", files={"source": _files()["source"]})
+    invalid = test_client.post("/api/jobs", files=_files(source_name="source.txt"))
+
+    assert missing.status_code == 400
+    assert invalid.status_code == 400
+    assert service.create_calls == []
+
+    created = test_client.post("/api/jobs", files=_files())
+    assert created.status_code == 201
+    assert service.create_calls[0]["source_content"] == b"PK\x03\x04source"
+    assert service.create_calls[0]["target_content"] == b"PK\x03\x04target"
+
+
+def test_default_stage_and_explicit_stage_mode_map_to_service_without_legacy_side_effects(
+    client,
+) -> None:
+    test_client, service, _ = client
+    assert test_client.post("/api/jobs", files=_files()).status_code == 201
+    assert (
+        test_client.post(
+            "/api/jobs", files=_files(), data={"stage": "14.2", "mode": "dry-run"}
+        ).status_code
+        == 201
+    )
+
+    assert [(call["stage"], call["mode"]) for call in service.create_calls] == [
+        ("13.1", "write"),
+        ("14.2", "dry-run"),
+    ]
+
+
+def test_job_payload_uses_controlled_ids_and_never_leaks_private_paths(client) -> None:
+    test_client, _, tmp_path = client
+    response = test_client.get("/api/jobs/job-001")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["job_id"] == "job-001"
+    assert set(payload) >= {"job_id", "stage", "status", "summary", "discrepancies", "suggestions"}
+    assert str(tmp_path) not in response.text
+    assert "private-result.bin" not in response.text
+
+
+def test_review_needs_explicit_fit_or_not_fit_and_download_is_safe(client) -> None:
+    test_client, service, tmp_path = client
+    invalid = test_client.post(
+        "/api/jobs/job-001/decisions",
+        json={"suggestion_id": "suggestion-001", "decision": "approve"},
+    )
+    accepted = test_client.post(
+        "/api/jobs/job-001/decisions",
+        json={"suggestion_id": "suggestion-001", "decision": "fit"},
+    )
+    download = test_client.get("/api/jobs/job-001/result")
+
+    assert invalid.status_code == 400
+    assert accepted.status_code == 200
+    assert service.decision_calls == [
+        {"job_id": "job-001", "suggestion_id": "suggestion-001", "decision": "fit"}
+    ]
+    assert accepted.json()["download_url"] == "/api/jobs/job-001/result"
+    assert download.status_code == 200 and download.content == b"controlled-result"
+    assert "optimized-report.xlsx" in download.headers["content-disposition"]
+    assert str(tmp_path) not in download.headers["content-disposition"]
+    assert "private-result.bin" not in download.headers["content-disposition"]
+
+
+@pytest.mark.parametrize("path", ("/api/jobs/unknown", "/api/jobs/unknown/result"))
+def test_unknown_job_tokens_have_controlled_not_found_responses(client, path: str) -> None:
+    response = client[0].get(path)
+    assert response.status_code == 404
+    assert "traceback" not in response.text.casefold()
+
+
+def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -> None:
+    test_client, _, _ = client
+    page = test_client.get("/")
+    stylesheet = test_client.get("/static/admin.css")
+    html = page.text.casefold()
+    css = stylesheet.text.casefold()
+
+    assert page.status_code == stylesheet.status_code == 200
+    for label in ("source", "target", "stage", "fit", "not fit"):
+        assert label in html
+    assert 'data-decision="fit"' in html and 'data-decision="not_fit"' in html
+    assert "fetch('/api/jobs'" in html
+    assert 'name="viewport"' in html and "focus" in css
+    assert "#0079c2" in css
+    for token in ("unit_conflict", "unchanged_value", "cost_threshold", "manual_review"):
+        assert token in css
+    assert "@media" in css
+    assert "http://" not in html + css and "https://" not in html + css
