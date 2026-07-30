@@ -16,7 +16,7 @@ def _digest(results: tuple[object, ...]) -> str:
         {
             "result_id": item.result_id,
             "status": item.status.value,
-            "selected": item.selected_candidate_id,
+            "selected": item.selected_candidate.candidate_id if item.selected_candidate else None,
             "candidates": [
                 {
                     "id": candidate.candidate_id,
@@ -58,18 +58,18 @@ def test_unique_exact_match_retains_all_signals_provenance_and_is_deterministic(
     assert candidate.confidence == Decimal("1.000000")
     assert candidate.source_provenance["source_row_id"] == source.source_row_id
     assert candidate.target_provenance["row_number"] == target.row_number
-    assert first[0].selected_candidate_id == candidate.candidate_id
+    assert first[0].selected_candidate is candidate
     assert _digest(first) == _digest(second)
 
 
 def test_tie_rule_review_exclude_fuzzy_and_duplicate_identities_are_controlled() -> None:
     target = target_row()
     tie = _match((source_row("a"), source_row("b")), target, rule_set())
-    assert tie[0].status is MatchStatus.AMBIGUOUS and tie[0].selected_candidate_id is None
+    assert tie[0].status is MatchStatus.AMBIGUOUS and tie[0].selected_candidate is None
     review = _match((source_row(),), target, rule_set(action=RuleAction.REVIEW))
-    assert review[0].selected_candidate_id is None
+    assert review[0].selected_candidate is None
     excluded = _match((source_row(),), target, rule_set(action=RuleAction.EXCLUDE))
-    assert excluded[0].selected_candidate_id is None
+    assert excluded[0].selected_candidate is None
     fuzzy = _match((source_row(work_name="pipe install"),), target, rule_set(literal="unrelated"))
     manual = [
         candidate.manual_only
