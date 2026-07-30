@@ -39,8 +39,7 @@ def run_normalize_rows(args: argparse.Namespace) -> int:
         }
         if input_path in output_paths:
             raise ValueError(
-                "Вход блока 8 не должен совпадать с JSONL-результатом "
-                "или его файлом метаданных"
+                "Вход блока 8 не должен совпадать с JSONL-результатом или его файлом метаданных"
             )
         rows = load_training_rows_jsonl(args.input)
         result = normalize_training_rows(rows)

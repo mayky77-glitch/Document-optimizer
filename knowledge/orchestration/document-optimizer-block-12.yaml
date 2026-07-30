@@ -1,0 +1,108 @@
+status: frozen
+work_id: document-optimizer-block-12
+objective: "Детерминированно сопоставить normalized source rows со строками Таблицы 2"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block12"
+planning_parent_sha: 2374e8a40aa34291e765e7f072ee4fc733bb5f4c
+dependency_sha: 2374e8a40aa34291e765e7f072ee4fc733bb5f4c
+published_base_sha_ref: "commit containing this frozen manifest and all three task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 2374e8a40aa34291e765e7f072ee4fc733bb5f4c
+contract_versions:
+  public_api: MatchingEngine-12.0
+  contract: MatchingContract-12.0
+  source_input: NormalizedSourceRow-8.0
+  target_input: TargetReportRow-9.0
+  rules_input: ValidatedRuleSet-10.0
+  candidate_output: MatchCandidate-12.0
+  result_output: MatchResult-12.0
+identity_contracts:
+  target_row_id: "sha256(contract + target_source_id + target_fingerprint + sheet_name + row_number)"
+  candidate_id: "sha256(contract + target_row_id + source_row_id + rule_set_hash)"
+  duplicate_source_row_id: controlled-input-error
+  duplicate_target_location: controlled-input-error
+  result_order: "target_source_id, sheet_name, row_number"
+matching_contracts:
+  strategy_order:
+    - exact_business_key
+    - index_position
+    - object_subobject_position
+    - normalized_name_unit
+    - normalized_name_context
+    - configuration_rule
+    - fuzzy_review
+  confidence:
+    exact_business_key: "1.000000"
+    index_position: "0.980000"
+    object_subobject_position: "0.960000"
+    normalized_name_unit: "0.920000"
+    normalized_name_context: "0.880000"
+    configuration_rule_exact: "0.850000"
+    configuration_rule_prefix: "0.800000"
+    configuration_rule_contains: "0.750000"
+    fuzzy_threshold: "0.750000"
+  conflict_policy: "strategy ordinal wins; confidence never resolves ties"
+  fuzzy_policy: "manual candidate only; never auto-selected"
+  ambiguity_policy: "multiple best auto candidates always AMBIGUOUS with no selected candidate"
+  candidate_policy: "one source-target candidate with every triggered strategy retained"
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv run --extra dev ruff check ."
+  - "RUN_SLOW=1 uv run --extra dev pytest -q"
+baseline_results:
+  - "ruff: pass"
+  - "pytest: 464 passed"
+  - "origin/main CI 30555117765: success"
+shared_paths_owner: integration
+shared_paths:
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - pyproject.toml
+  - uv.lock
+  - knowledge
+production_scope:
+  - src/report_processor/matching
+test_scope:
+  - tests/unit/matching
+  - tests/contract/test_block12_matching_contract.py
+  - tests/integration/test_block12_matching_engine.py
+  - tests/integration/test_block12_real_data.py
+  - tests/fixtures/matching
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+forbidden_paths:
+  - .env
+  - cache
+  - logs
+  - output
+  - src/report_processor/analytics
+  - src/report_processor/normalization
+  - src/report_processor/target_report
+  - src/report_processor/business_rules
+  - src/report_processor/storage
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+acceptance_commands:
+  - "uv run --extra dev ruff check ."
+  - "uv run --extra dev pytest tests/unit/matching tests/contract/test_block12_matching_contract.py tests/integration/test_block12_matching_engine.py"
+  - "RUN_SLOW=1 uv run --extra dev pytest -q"
+  - "uv sync --locked --extra dev"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+real_data_command: "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<target>' uv run --extra dev pytest tests/integration/test_block12_real_data.py -q"
+required_evidence:
+  - all seven strategies and fixed confidence values
+  - every candidate retained with provenance and explanation
+  - deterministic result IDs order and digest under reversed inputs
+  - ties never silently selected
+  - EXCLUDE veto and REVIEW or fuzzy manual-only behavior
+  - duplicate physical identities rejected
+  - no quantity or money calculation
+  - real source and target XLSX SHA-256 size and mtime unchanged
+created_at: "2026-07-30T23:15:00+08:00"

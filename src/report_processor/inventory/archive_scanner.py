@@ -159,9 +159,7 @@ def scan_zip_archive(
                         is_temporary=classification.is_temporary or is_macos_metadata,
                         is_probable_copy=classification.is_probable_copy,
                         is_probably_outdated=classification.is_probably_outdated,
-                        status=(
-                            StatusCode.WARNING.value if warnings else StatusCode.OK.value
-                        ),
+                        status=(StatusCode.WARNING.value if warnings else StatusCode.OK.value),
                         warnings=warnings,
                     )
                 )

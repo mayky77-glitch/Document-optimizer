@@ -125,9 +125,9 @@ def _clear_utf8_filename_flag(zip_bytes: bytes) -> bytes:
                 break
             flag_slice = data[position + flag_offset : position + flag_offset + 2]
             current = int.from_bytes(flag_slice, "little")
-            data[position + flag_offset : position + flag_offset + 2] = (
-                current & ~0x800
-            ).to_bytes(2, "little")
+            data[position + flag_offset : position + flag_offset + 2] = (current & ~0x800).to_bytes(
+                2, "little"
+            )
             position += 4
     return bytes(data)
 
