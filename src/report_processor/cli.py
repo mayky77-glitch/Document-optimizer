@@ -6,13 +6,16 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from report_processor.cli_inspect import add_inspect_workbook_parser, run_inspect_workbook
 from report_processor.domain.exceptions import (
     BrokenArchiveError,
     ManifestWriteError,
+    ReportProcessorError,
     SourceAccessError,
     SourceNotFoundError,
 )
 from report_processor.domain.models import ManifestSummary
+from report_processor.domain.statuses import StatusCode
 from report_processor.identifiers.manifest_enricher import (
     enrich_manifest_with_document_indexes,
 )
@@ -34,6 +37,23 @@ EXIT_BROKEN_ARCHIVE = 4
 EXIT_WRITE_ERROR = 5
 EXIT_SELECTION_AMBIGUOUS = 3
 EXIT_SELECTION_INVALID_REQUEST = 4
+
+_WORKBOOK_EXIT_CODES = {
+    StatusCode.SOURCE_FILE_NOT_FOUND: 2,
+    StatusCode.ARCHIVE_NOT_FOUND: 2,
+    StatusCode.ARCHIVE_ENTRY_NOT_FOUND: 2,
+    StatusCode.UNSUPPORTED_EXCEL_FORMAT: 3,
+    StatusCode.INVALID_XLSX_CONTAINER: 3,
+    StatusCode.UNSAFE_ARCHIVE_PATH: 4,
+    StatusCode.BROKEN_ARCHIVE: 5,
+    StatusCode.CRC_MISMATCH: 5,
+    StatusCode.WORKBOOK_OPEN_FAILED: 6,
+    StatusCode.SHEET_NOT_FOUND: 7,
+    StatusCode.INVALID_CELL_COORDINATE: 7,
+    StatusCode.CELL_READ_FAILED: 7,
+    StatusCode.JSON_WRITE_FAILED: 8,
+    StatusCode.INVALID_ARGUMENTS: 9,
+}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -105,6 +125,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
         default="INFO",
     )
+    add_inspect_workbook_parser(subparsers)
     extract.add_argument(
         "--allow-loose",
         action="store_true",
@@ -162,6 +183,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_logging(args.log_level)
 
     try:
+        if args.command == "inspect-workbook":
+            return run_inspect_workbook(args)
+
         if args.command == "enrich-metadata":
             manifest = load_manifest_json(args.manifest)
             enriched = enrich_manifest_with_document_metadata(
@@ -191,6 +215,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 manifest, use_parent_paths=True, allow_loose=args.allow_loose
             )
         save_manifest_json(manifest, args.output)
+    except ReportProcessorError as exc:
+        logging.error("Ошибка [%s]: %s", exc.status.value, exc)
+        return _WORKBOOK_EXIT_CODES.get(exc.status, 1)
     except SourceNotFoundError as exc:
         logging.error("%s", exc)
         return EXIT_SOURCE_NOT_FOUND
