@@ -55,3 +55,11 @@ train/test split и не обучает модель. Расширенная б�
 - DuckDB schema/validation вынесены из store в отдельный модуль.
 
 CI ветки фиксируется после публикации коммита.
+
+## Блок 8 — бизнес-нормализация (в интеграции)
+
+Frozen contract: `NormalizedSourceRow`, `NormalizedBusinessKey`,
+`NormalizationConfig`, `NormalizationResult`; вход `TrainingDataRow` `7.0`,
+выход JSONL `8.0`, CLI `normalize-rows`. Provenance и `Decimal` сохраняются,
+business `line_id` независим от physical source; exact typo dictionaries —
+data-only. READY не объявляется до интеграции, focused/full tests и CI.

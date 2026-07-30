@@ -226,3 +226,15 @@ output и writable-открытие DuckDB.
 значений, train/test split и обучение моделей. Нормализация здесь нужна только
 для детерминированной классификации и идентичности; расширенная бизнес-
 нормализация остаётся следующим отдельным блоком.
+
+## Блок 8
+
+- **Название:** Бизнес-нормализация подготовленных строк
+- **Статус:** planned / in integration; не READY до интеграции и CI
+- **Вход:** `TrainingDataRow`, JSONL `7.0`
+- **Выход:** `NormalizedSourceRow`, `NormalizedBusinessKey`, `NormalizationConfig`, `NormalizationResult`, JSONL `8.0`
+- **CLI:** `report-processor normalize-rows`
+
+Provenance и `Decimal` сохраняются; business `line_id` не зависит от physical
+source. Exact typo dictionaries — data-only. Междокументное сопоставление,
+пересчёт и изменение исходников не выполняются.
