@@ -1,4 +1,4 @@
-"""Atomic, no-clobber XLSX publication (ExcelWriterEngine-15.0)."""
+"""Atomic, no-clobber XLSX publication (ExcelWriterEngine-15.1)."""
 
 from .engine import write_target_report
 from .exceptions import (
