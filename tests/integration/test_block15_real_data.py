@@ -148,7 +148,10 @@ def test_real_matched_subset_writes_only_d30_to_a_temporary_output(tmp_path: Pat
     assert tuple(
         (cell.sheet_name, cell.coordinate, cell.decimal_text) for cell in result.written_cells
     ) == (("Лист", "D30", "0"),)
-    assert _package_entries(output_path) == _package_entries(target_path)
+    expected_entries = tuple(
+        entry for entry in _package_entries(target_path) if entry != "xl/calcChain.xml"
+    )
+    assert _package_entries(output_path) == expected_entries
     formula_view = load_workbook(output_path, data_only=False, read_only=False)
     values_view = load_workbook(output_path, data_only=True, read_only=False)
     original_formula_cells = _formula_coordinates(target_path)
