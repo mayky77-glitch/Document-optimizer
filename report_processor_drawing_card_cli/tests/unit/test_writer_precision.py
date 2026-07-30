@@ -2,14 +2,15 @@ from decimal import Decimal
 from pathlib import Path
 from zipfile import ZipFile
 
+from report_processor.drawing_card.output.layout import plan_layout
+from report_processor.drawing_card.output.writer import write_card
+from report_processor.drawing_card.output.xlsx_xml import _replace_sheet_values
+
 from report_processor.drawing_card.models import (
     CATEGORY_DISPLAY_NAMES,
     CATEGORY_ORDER,
     DrawingCardResultRow,
 )
-from report_processor.drawing_card.output.layout import plan_layout
-from report_processor.drawing_card.output.writer import write_card
-from report_processor.drawing_card.output.xlsx_xml import _replace_sheet_values
 from report_processor.drawing_card.sources.normalization import build_drawing_code
 from report_processor.drawing_card.statuses import Status
 

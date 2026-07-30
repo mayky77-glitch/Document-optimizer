@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
+from report_processor.drawing_card.output.validator import validate_card
 
 from report_processor.drawing_card.models import WorkflowRequest, WorkflowResult
-from report_processor.drawing_card.output.validator import validate_card
 from report_processor.drawing_card.workflow import _publication_blockers, run_workflow
 
 
