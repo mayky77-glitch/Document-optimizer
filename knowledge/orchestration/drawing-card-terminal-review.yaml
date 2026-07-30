@@ -1,0 +1,43 @@
+status: frozen
+work_id: drawing-card-terminal-review
+objective: "Добавить безопасное интерактивное решение спорных строк перед выпуском карточки"
+project_root: "/Users/x/Documents/Сооотношение документов/report-processor-drawing-card-worktree"
+planning_parent_sha: 2edf6235462c3d1cfab0b31923a04069c98c12e1
+published_base_sha_ref: "commit containing this manifest, both cards and imported subproject"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 2edf6235462c3d1cfab0b31923a04069c98c12e1
+wave: 1
+max_parallel: 2
+max_spawns: 4
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "/Users/x/Downloads/report_processor_drawing_card_cli/.venv/bin/python -m pytest -q"
+  - "/Users/x/Downloads/report_processor_drawing_card_cli/.venv/bin/python -m ruff check ."
+baseline_results:
+  - "pytest: 59 passed"
+  - "ruff: 4 pre-existing import-order errors in tests"
+shared_paths_owner: integration
+shared_paths:
+  - knowledge
+  - report_processor_drawing_card_cli/pyproject.toml
+  - report_processor_drawing_card_cli/uv.lock
+production_scope:
+  - report_processor_drawing_card_cli/src/report_processor/cli.py
+  - report_processor_drawing_card_cli/src/report_processor/terminal_ui.py
+  - report_processor_drawing_card_cli/src/report_processor/terminal_review.py
+test_scope:
+  - report_processor_drawing_card_cli/tests
+data_classification: restricted
+forbidden_paths:
+  - .env
+  - report_processor_drawing_card_cli/work
+  - report_processor_drawing_card_cli/output
+  - "**/*.xlsx"
+  - "**/*.xlsb"
+acceptance_commands:
+  - "/Users/x/Downloads/report_processor_drawing_card_cli/.venv/bin/python -m pytest -q"
+  - "/Users/x/Downloads/report_processor_drawing_card_cli/.venv/bin/python -m ruff check ."
+  - "/Users/x/Downloads/report_processor_drawing_card_cli/.venv/bin/python -m ruff format --check src tests"
+  - "git diff --check"
+created_at: "2026-07-31T02:00:00+08:00"

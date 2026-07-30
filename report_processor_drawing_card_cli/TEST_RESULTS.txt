@@ -1,0 +1,29 @@
+Version: 0.9.0
+
+compileall:
+python -m compileall -q src tests
+OK
+
+pytest:
+PYTHONPATH=src python -m pytest -q
+31 passed
+
+ruff:
+NOT_RUN: python -m ruff check . returned "No module named ruff".
+The configuration remains in pyproject.toml and requirements-dev.txt.
+
+Regression fixes:
+- suspicious 0907 quantity/cost columns replaced from 171/172 to 40/42;
+- shared XLSX formulas translated from their base cell;
+- unit/material markers no longer replace parent drawing codes;
+- exact Decimal values are patched into worksheet XML after openpyxl save;
+- validator detects identical quantity/cost, invalid drawing codes, and binary XML tails.
+
+Representative real create:
+48,129 extracted rows; 3 objects; 1,004 drawings; 8,032 card rows;
+762 nonempty quantities; 777 nonempty costs; 1,270 review rows;
+output validation OK; 0 suspicious quantity=cost pairs; 0 binary XML tails;
+source hashes unchanged.
+
+Manual review:
+1,271 rows including header; 18 columns; ZIP/XML/reopen OK.

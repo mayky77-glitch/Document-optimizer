@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "report-processor"
+version = "0.9.1"
+description = "CLI for audited extraction and drawing-card generation from construction Excel workbooks"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{name = "Document Optimizer project"}]
+dependencies = [
+  "openpyxl>=3.1,<4",
+  "pyxlsb>=1.0,<2",
+  "jsonschema>=4.20,<5",
+  "httpx>=0.27,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.6,<1"]
+
+[project.scripts]
+report-processor = "report_processor.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

@@ -1,0 +1,11 @@
+{
+  "status": "OK",
+  "path": "examples/demo_result.xlsx",
+  "sheets": [
+    "Лист1"
+  ],
+  "objects": 1,
+  "drawings": 4,
+  "errors": [],
+  "warnings": []
+}

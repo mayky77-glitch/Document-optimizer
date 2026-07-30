@@ -1,0 +1,8 @@
+{
+  "base_url": "http://127.0.0.1:1234/v1",
+  "model": "local-small-classifier",
+  "api_key_env": "LOCAL_MODEL_API_KEY",
+  "timeout": 60,
+  "max_tokens": 500,
+  "temperature": 0
+}
