@@ -261,8 +261,8 @@ DuckDB schema v1 выполняет транзакционный idempotent upse
 Модули и границы ответственности описаны в
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-Блоки 9–10 интегрированы в `main`. Блок 11 реализован в integration-ветке;
-PR, CI и merge в `main` являются отдельным release gate.
+Блоки 9–11 интегрированы в `main`. Блок 12 реализован в integration-ветке;
+PR, CI и merge в `main` остаются отдельным release gate.
 
 ## Блок 9: чтение целевого отчёта
 
@@ -309,3 +309,23 @@ warnings, служебную metadata и views `v_source_rows`, `v_target_rows`,
 Real-data gate на исходных XLSX загрузил 382 нормализованные source rows,
 107 target rows и 34 rule clauses. Повторная загрузка дала только unchanged;
 SHA-256, размер и `mtime` обеих книг до/после совпали.
+
+## Блок 12: детерминированное сопоставление строк
+
+`report_processor.matching.match_rows` сопоставляет `NormalizedSourceRow` с
+`TargetReportRow` по семи стратегиям в фиксированном порядке: точный
+бизнес-ключ, индекс и позиция, объект/подобъект/позиция, нормализованное
+наименование и единица, наименование и контекст, подтверждённое правило,
+fuzzy-кандидат для ручной проверки.
+
+API возвращает все `MatchCandidate` с provenance и один `MatchResult` на
+целевую строку. Выбор определяется ordinal стратегии, а не confidence.
+Равенство лучших кандидатов даёт `AMBIGUOUS`; fuzzy-only и `REVIEW` никогда
+не выбираются автоматически, `EXCLUDE` блокирует кандидата. Учитываются только
+правила с `owner_approved=true` и `status=approved`. Денежные вычисления и
+запись Excel в блок не входят.
+
+Real-data gate на двух исходных книгах обработал 382 source rows и 107 target
+rows: 1 matched, 5 ambiguous, 101 unmatched, 35 сохранённых кандидатов.
+Повторный прогон с обратным порядком входов дал тот же SHA-256 результата;
+SHA-256, размер и `mtime` обеих книг не изменились.

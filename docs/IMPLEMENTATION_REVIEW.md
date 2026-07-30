@@ -109,5 +109,26 @@ reviewed КС-2 и целевом отчёте загрузил **382** норм
 **107** target rows и **34** rule clauses; повторная загрузка полностью
 идемпотентна. Diagnostics export содержит **246** строк и воспроизводимый
 SHA-256; исходные XLSX не изменились. Полный локальный suite после интеграции:
-**464 passed**; GitHub Actions остаётся обязательным gate перед merge.
-Matching/business logic следующего блока намеренно отсутствует.
+**464 passed**. Блок принят в `main` через PR #11 после успешного GitHub
+Actions. Matching/business logic не смешана с аналитическим хранилищем.
+
+## Блок 12 — детерминированный matching engine
+
+Реализованы `MatchingContract-12.0` и `MatchingEngine-12.0` в отдельном
+пакете `report_processor.matching`. Движок строит все кандидаты по семи
+замороженным стратегиям, сохраняет provenance, объяснения и blockers.
+Ранжирование использует только ordinal стратегии; confidence остаётся
+`Decimal`-метаданными. Равенство лучших кандидатов не разрешается молча.
+
+Проверены duplicate IDs, стабильность порядка и SHA-идентификаторов, точные и
+структурные стратегии, fuzzy-only manual review, `REVIEW`, `EXCLUDE`,
+игнорирование неподтверждённых правил и невозможность выбрать ambiguous
+кандидата. Focused gate: **6 passed**, Ruff и format PASS.
+
+Real-data gate на reviewed КС-2 и целевом отчёте: **382** source rows,
+**107** target rows, **35** кандидатов; результаты — **1 matched**,
+**5 ambiguous**, **101 unmatched**. SHA-256 канонического результата:
+`ecfc6fedfc2c3797ab84c769ec9ddd32a16efb69f61964e2cf43122e283106d3`.
+Обратный порядок входных строк даёт тот же результат; SHA-256, размер и
+`mtime` обеих XLSX до/после совпадают. Полный suite и GitHub Actions остаются
+release gates integration-ветки.

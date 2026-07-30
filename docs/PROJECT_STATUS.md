@@ -292,7 +292,7 @@ scope, политики количества/стоимости, canonical JSON,
 ## Блок 11
 
 - **Название:** аналитический слой DuckDB
-- **Статус:** реализация завершена; ожидаются финальная интеграция и CI
+- **Статус:** интегрирован в `main`; PR #11 и GitHub Actions успешно пройдены
 - **Контракт:** `AnalyticalStore-11.0`, `AnalyticalSchema-1`
 - **Вход:** `NormalizedSourceRow`, `TargetReportRow` с явным контекстом,
   `ValidatedRuleSet`
@@ -306,4 +306,25 @@ queries используют фиксированные имена, allowlist ф
 полный локальный suite: **464 passed**.
 Real-data gate: **382** source rows, **107** target rows, **34** rule clauses,
 **246** diagnostics; повторная загрузка unchanged, обе исходные книги
-неизменны. GitHub Actions остаётся обязательным gate перед merge.
+неизменны.
+
+## Блок 12
+
+- **Название:** детерминированное сопоставление строк
+- **Статус:** production, tests и real-data gate завершены в integration-ветке;
+  ожидаются полный suite, PR и GitHub Actions
+- **Контракт:** `MatchingContract-12.0`, `MatchingEngine-12.0`
+- **Вход:** `NormalizedSourceRow`, `TargetReportRow`, `ValidatedRuleSet`,
+  явные `target_source_id` и `target_fingerprint`
+- **Выход:** `MatchResult` и полный набор `MatchCandidate`
+
+Реализованы семь стратегий с замороженным ordinal. Confidence хранится в
+`Decimal` и не используется для нарушения приоритета. Tie, fuzzy-only и
+`REVIEW` требуют ручного решения; `EXCLUDE` блокирует кандидата. Неподтверждённые
+правила не участвуют. Все кандидаты и provenance сохраняются детерминированно.
+
+Focused gate: **6 passed**, Ruff/format PASS. Real-data gate: **382** source
+rows, **107** target rows, **35** кандидатов, статусы **1 matched**,
+**5 ambiguous**, **101 unmatched**. Канонический SHA-256:
+`ecfc6fedfc2c3797ab84c769ec9ddd32a16efb69f61964e2cf43122e283106d3`.
+Обе исходные XLSX неизменны.
