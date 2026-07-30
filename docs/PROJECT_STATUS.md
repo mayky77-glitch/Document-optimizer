@@ -246,3 +246,11 @@ source. Exact typo dictionaries — data-only. Междокументное со
 - полный suite: **413 passed, 1 skipped**;
 - отдельный 50k-row performance gate: **1 passed**;
 - `compileall` и `git diff --check`: PASS.
+
+На реальной комбинированной книге 0784 с reviewed-схемой КС-2
+получено **780 → 378 → 378** строк в цепочке extraction → block 7
+→ block 8. Подтверждены неизменность SHA-256 исходника, `Decimal`,
+provenance и детерминизм. **26** collision явно зафиксированы,
+потерь строк нет. Три сложные реальные книги без reviewed-схемы
+детерминированно возвращают `LOW_CONFIDENCE_SCHEMA` и не угадывают
+сомнительные колонки.

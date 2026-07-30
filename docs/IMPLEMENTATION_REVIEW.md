@@ -68,3 +68,12 @@ data-only. Collision evidence сохраняется в `NormalizationResult`; C
 Локальные gates: Ruff PASS; focused **8 passed**; полный suite **413 passed,
 1 skipped**; отдельный 50k-row performance test **1 passed**; `compileall` и
 `git diff --check` PASS. GitHub CI остаётся release gate перед merge в `main`.
+
+Real-data gate на исходной комбинированной книге 0784 и reviewed-схеме
+листа КС-2: **780** канонических строк → **378** `TrainingDataRow` →
+**378** `NormalizedSourceRow`. Все числа остались `Decimal`, provenance
+полон, повторная нормализация детерминирована. **26** совпадений
+business key отражены в collision statistics/warnings; строки не
+отфильтрованы. SHA-256 и размер исходного Excel до/после совпали.
+Автоанализ трёх реальных книг также подтвердил безопасный
+`LOW_CONFIDENCE_SCHEMA` вместо необоснованного угадывания колонок.
