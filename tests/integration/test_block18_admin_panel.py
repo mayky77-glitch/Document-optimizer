@@ -6,8 +6,9 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from report_processor.admin_panel import create_app
 from starlette.testclient import TestClient
+
+from report_processor.admin_panel import create_app
 
 
 class FakeAdminService:

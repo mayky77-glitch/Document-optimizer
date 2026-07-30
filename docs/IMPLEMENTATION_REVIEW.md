@@ -212,6 +212,21 @@ post-merge main CI `30572598426` — success.
 
 Frozen API: `process_report`, `process_reports` и CLI `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без мутаций, dry-run без публикации, write с QC gate; states `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`; exit codes `0`–`6`. Focused **21 passed**; полный real+slow suite **569 passed in 92.84s**. Реальный inspect-контроллер прошёл, обе XLSX неизменны. Принят через PR #17: PR CI `30575326764`, post-merge main CI `30575425467`, main SHA `322cb9ce08f14c017dbdc3bf16c5b91b33238e63`.
 
-## Блок 18 — review scope (в работе)
+## Блок 18 — final implementation review
 
-Pinned RAG: `cointegrated/rubert-tiny2` revision `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae`, 29.4M params, 312 dimensions, Russian; lazy local load, normalized cosine, deterministic top-k. Unavailable dependency/model is controlled; Block 12 authority/manual review remains mandatory. Block 18 tests, model smoke, clean installs, PR and CI are not claimed without evidence.
+Pinned RAG: `cointegrated/rubert-tiny2` revision
+`e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae`, 29.4M params, 312 dimensions,
+Russian; lazy local load, normalized cosine и deterministic top-k. Unavailable
+dependency/model is controlled; Block 12 remains authoritative.
+
+Локальная панель изолирует upload в private workspace, повторно проверяет SHA
+входов, redacts server paths, ограничивает размеры и выдаёт result только после
+явных решений по каждой RAG-связи. Решения имеют effect
+`review_journal_only`; matching молча не меняется. UI поставляется внутри wheel,
+использует `#0079C2` только для панели и отдельные semantic colors.
+
+Evidence: full real+model+slow **603 passed in 119.80s**; real admin
+**1 passed in 4.49s**; desktop/mobile Chrome PASS с `0` console/page/external
+errors; clean base/RAG installs, wheel assets, Ruff, format, compileall,
+JS syntax и diff-check PASS. Реальные XLSX сохранили исходные SHA.
+PR/CI ещё не заявлены.

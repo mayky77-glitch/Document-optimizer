@@ -62,6 +62,9 @@ baseline_results:
   - "pre-admin Block 18 full real+slow+model suite: 592 passed in 95.50s"
   - "pinned RuBERT smoke: 2 passed; Russian top-1 examples correct"
   - "clean locked base and rag-extra installs: pass"
+  - "final Block 18 full real+slow+model suite: 603 passed in 119.80s"
+  - "real admin private-copy workflow: 1 passed in 4.49s"
+  - "desktop/mobile Chrome: 0 console, page and external-request errors"
 shared_paths_owner: integration
 shared_paths:
   - .gitignore
@@ -88,6 +91,7 @@ test_scope:
   - tests/performance/test_block18_release_performance.py
   - tests/unit/admin_panel
   - tests/integration/test_block18_admin_panel.py
+  - tests/integration/test_block18_admin_real_data.py
 documentation_scope:
   - README.md
   - docs/ARCHITECTURE.md

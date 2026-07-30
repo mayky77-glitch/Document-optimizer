@@ -87,14 +87,11 @@
     (items || []).forEach((item) => {
       const fragment = template.content.cloneNode(true);
       const card = fragment.querySelector(".suggestion-card");
-      const candidateText = (item.candidates || [])
-        .map((candidate, index) => {
-          const score = Number(candidate.score || 0).toFixed(3);
-          return `кандидат ${index + 1}: ${score}`;
-        })
-        .join(" · ");
+      card.querySelector(".target-label").textContent =
+        item.target_label || "Целевой этап";
+      const score = Number(item.score || 0).toFixed(3);
       card.querySelector(".candidate-list").textContent =
-        candidateText || "Кандидаты не определены.";
+        `${item.candidate_label || "Предложенный этап"} · уверенность ${score}`;
       card.querySelectorAll("[data-decision]").forEach((button) => {
         button.addEventListener("click", () => {
           decide(item.suggestion_id, button.dataset.decision, card);

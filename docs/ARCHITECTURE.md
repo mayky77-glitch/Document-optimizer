@@ -305,12 +305,24 @@ PR #17 и CI приняты: PR `30575326764`, post-merge main `30575425467`, ma
 `322cb9ce08f14c017dbdc3bf16c5b91b33238e63`; полный real+slow — **569 passed in
 92.84s**.
 
-## Блок 18 — stage-relation RAG (в работе)
+## Блок 18 — stage-relation RAG и локальная панель
 
 Optional local RAG использует `cointegrated/rubert-tiny2`, revision
 `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae` (29.4M параметров, 312 dimensions,
 Russian), lazy local loading без remote API, normalized embeddings/cosine и
 deterministic top-k/tie ordering. Missing dependency/model даёт controlled
 unavailable без silent matching change. Block 12 rules authoritative; semantic-
-only relations требуют manual review. Block 18 tests/model smoke/clean install/
-PR/CI пока не подтверждены.
+only relations требуют manual review.
+
+`admin_panel/` — отдельная локальная presentation boundary. Starlette app
+принимает только `.xlsx/.xlsm` в приватные каталоги `0700`, хранит файлы `0600`
+и запускает публичный `ProcessingContract-17.0`; исходники сверяются по SHA
+после выполнения. Client JSON не содержит серверных путей. Каждая RAG-пара
+показывается отдельной карточкой с названиями целевого и предложенного этапа,
+score и прямыми `fit/not_fit`; запись решения не подменяет Block 12.
+Static assets поставляются внутри wheel, внешних UI-запросов нет. CLI слушает
+только `127.0.0.1`/`localhost`.
+
+Локальный gate: **603 passed in 119.80s**, real admin **1 passed in 4.49s**,
+desktop/mobile browser PASS, clean base/RAG installs и wheel assets PASS.
+PR/CI остаются release gate.

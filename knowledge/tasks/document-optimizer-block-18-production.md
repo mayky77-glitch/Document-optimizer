@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-18-production
-status: in-progress
+status: completed
 version: 1
 work_id: document-optimizer-block-18
 task_id: block-18-production
@@ -10,16 +10,16 @@ agent_role: developer
 owner: "block-18-production"
 profile: L2
 routing_grade: P4
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 1
+state_fingerprint: "rag-4c813a1-full-603-pass"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "New optional model boundary, deterministic retrieval and safe manual-review semantics."
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: completed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 model_fallback: false
 last_verified: 2026-07-31
 updated: 2026-07-31
@@ -54,7 +54,7 @@ acceptance_commands:
   - "uv run python -m compileall -q src/report_processor/stage_rag"
 tags:
   - task/implementation
-  - status/in-progress
+  - status/done
   - layer/backend
   - risk/high
 ---
@@ -64,3 +64,6 @@ tags:
 Implement only the frozen RAG package. Keep Block 12 authoritative; semantic-only
 results are deterministic manual-review suggestions. Do not add dependencies or
 wiring outside `write_scope`.
+
+Accepted locally in integration: pinned model smoke, clean `[rag]` install and
+full real+model+slow suite **603 passed in 119.80s**.

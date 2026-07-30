@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-18-admin-panel
-status: in-progress
+status: completed
 version: 1
 work_id: document-optimizer-block-18
 task_id: block-18-admin-panel
@@ -10,17 +10,17 @@ agent_role: developer
 owner: "block-18-admin-panel"
 profile: L2
 routing_grade: P4
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 3
+state_fingerprint: "admin-abb8a8d-recovery-browser-pass"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Local upload/download lifecycle, private workspaces and accessible review UI."
 assigned_model: gpt-5.6-terra
 reasoning_effort: medium
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
-model_fallback: false
+launch_status: completed
+actual_model: gpt-5.6-sol
+actual_reasoning_effort: high
+model_fallback: true
 last_verified: 2026-07-31
 updated: 2026-07-31
 card_path: knowledge/tasks/document-optimizer-block-18-admin-panel.md
@@ -54,7 +54,7 @@ acceptance_commands:
   - "uv run python -m compileall -q src/report_processor/admin_panel"
 tags:
   - task/implementation
-  - status/in-progress
+  - status/done
   - layer/frontend
   - risk/high
 ---
@@ -66,3 +66,7 @@ stage (default 13.1), runs the pipeline, reviews uncertain semantic relations,
 and downloads output or a controlled-ID review journal. Use Gazprom blue
 `#0079C2` for the interface. Red/yellow/orange/blue are discrepancy semantics.
 No external assets, raw server paths, workbook mutation, or implicit approval.
+
+Accepted after higher-class recovery: strict admin contract PASS, desktop/mobile
+Chrome PASS with zero console/page/external errors, real private-copy workflow
+PASS and packaged wheel assets verified.

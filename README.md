@@ -5,13 +5,10 @@ Python-проект для поэтапной обработки строите�
 
 ## Текущий статус
 
-В integration-ветке реализованы **блоки 1–14 — от инвентаризации источников до
-детерминированного quality-control write gate** (текущая версия пакета `0.8.0`).
-Локальный release-набор блока 14 прошёл: Ruff, format, clean install, compileall
-и **490 pytest-тестов**. Real-data gate использовал две существующие книги Excel
-без изменения их SHA-256, размера и `mtime`; quality-control вернул
-`REQUIRE_MANUAL_REVIEW` без blocking issues. GitHub CI остаётся обязательным
-gate перед merge в `main`.
+В `main` приняты **блоки 1–17** — от безопасной инвентаризации до единого
+processing controller, numeric-only XLSX publication и append-only audit.
+Версия пакета — `1.0.0`. Блок 18 добавляет локальные RuBERT-подсказки,
+финальные release-gates и простую локальную web-панель.
 Проект принимает каталог, отдельный файл или ZIP-архив и строит типизированный
 JSON-манифест без чтения содержимого Excel и без распаковки ZIP. Блок 2
 обогащает готовый `FileManifest` индексами вида `1006 (682)` по имени и
@@ -286,15 +283,35 @@ SHA-256 исходной и целевой XLSX остались
 main SHA `322cb9ce08f14c017dbdc3bf16c5b91b33238e63`. Полный real+slow suite:
 **569 passed in 92.84s**.
 
-## Блок 18: финальная интеграция и локальный RAG (в работе)
+## Блок 18: финальная интеграция, локальный RAG и web-панель
 
 RAG использует `cointegrated/rubert-tiny2`, revision
 `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae` (29.4M параметров, 312 dimensions,
 Russian), lazy local load, normalized cosine retrieval и deterministic top-k.
 Unavailable dependency/model обрабатывается контролируемо и не изменяет
 matching молча. Block 12 authority остаётся primary; semantic-only relations
-требуют manual review. Тесты Block 18, model smoke, clean install, PR и CI
-пока не подтверждены.
+требуют явного manual review и никогда не принимаются автоматически.
+
+Для локального запуска с самой маленькой проверенной моделью:
+
+```bash
+uv sync --extra rag
+uv run hf download cointegrated/rubert-tiny2 \
+  --revision e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae
+uv run report-processor admin
+```
+
+Панель открывается на loopback-адресе, принимает исходный и целевой Excel,
+использует этап `13.1` по умолчанию, показывает расхождения цветом и требует
+прямого решения «подходит / не подходит» для неуверенных RAG-подсказок.
+Основной цвет интерфейса — `#0079C2`; он не меняет оформление Excel-отчёта.
+
+Локальный release-gate: **603 passed in 119.80s** с real XLSX, pinned model и
+slow/performance. Отдельно: реальная admin-обработка — **1 passed in 4.49s**;
+browser desktop/mobile — PASS, console/page/external-request errors — **0**;
+base и `[rag]` clean installs, wheel assets, Ruff, format, compileall,
+JS syntax и `git diff --check` — PASS. SHA-256 обеих реальных книг не изменились.
+PR/CI acceptance фиксируется только после зелёного GitHub Actions.
 
 ## Блок 15.1: numeric-only XLSX output
 
@@ -440,4 +457,5 @@ outputs удаляются; существующий destination не замен
 **547 passed in 89.32s**; 100k — **583.3 B/event**,
 append p95 **0.072 ms**. Реальные файлы не изменились. Block 15 принят: PR #15,
 CI `30569460356`, main CI `30569606304`, 514 passed и real 7 passed. Block 16
-локально готов для PR; GitHub acceptance ещё не подтверждён.
+принят через PR #16: PR CI `30572493480`, post-merge main CI `30572598426`,
+main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`.

@@ -98,9 +98,12 @@ def processing_presentation(
                     "message": "Исходное значение представлено без изменения.",
                 }
             )
+    source_labels = _source_labels(artifacts.get("normalized"))
+    target_labels = _target_labels(artifacts.get("matches"))
     suggestions = [
-        _suggestion_record(suggestion)
+        record
         for suggestion in tuple(artifacts.get("stage_relation_suggestions", ()) or ())
+        for record in _suggestion_records(suggestion, source_labels, target_labels)
     ]
     if artifacts.get("stage_rag_requires_manual_review") is True and not suggestions:
         discrepancies.append(
@@ -157,30 +160,60 @@ def _issue_record(issue: object) -> dict[str, object]:
     }
 
 
-def _suggestion_record(suggestion: object) -> dict[str, object]:
+def _suggestion_records(
+    suggestion: object,
+    source_labels: Mapping[str, str],
+    target_labels: Mapping[str, str],
+) -> list[dict[str, object]]:
     target = _public_text(getattr(suggestion, "target_identity", "target"))
     candidates = tuple(getattr(suggestion, "candidates", ()) or ())
-    suggestion_id = _controlled_id(
-        "suggestion",
-        target,
-        *(getattr(candidate, "source_identity", "") for candidate in candidates),
-    )
-    return {
-        "suggestion_id": suggestion_id,
-        "target_ref": _controlled_id("target", target),
-        "requires_manual_review": True,
-        "auto_accepted": False,
-        "effect": "review_journal_only",
-        "candidates": [
+    records: list[dict[str, object]] = []
+    for candidate in candidates:
+        source = _public_text(getattr(candidate, "source_identity", "source"))
+        candidate_ref = _controlled_id("candidate", source)
+        records.append(
             {
-                "candidate_ref": _controlled_id(
-                    "candidate", getattr(candidate, "source_identity", "")
-                ),
+                "suggestion_id": _controlled_id("suggestion", target, source),
+                "target_ref": _controlled_id("target", target),
+                "target_label": target_labels.get(target, "Целевой этап"),
+                "candidate_ref": candidate_ref,
+                "candidate_label": source_labels.get(source, "Предложенный этап"),
                 "score": _finite_float(getattr(candidate, "score", 0.0)),
+                "requires_manual_review": True,
+                "auto_accepted": False,
+                "effect": "review_journal_only",
             }
-            for candidate in candidates
-        ],
-    }
+        )
+    return records
+
+
+def _source_labels(normalized: object) -> dict[str, str]:
+    rows = tuple(getattr(normalized, "rows", ()) or ())
+    labels: dict[str, str] = {}
+    for row in rows:
+        identity = _public_text(getattr(row, "source_row_id", ""))
+        label = _public_text(
+            getattr(row, "work_name", None)
+            or getattr(row, "position_code", None)
+            or "Предложенный этап"
+        )
+        if identity:
+            labels[identity] = label
+    return labels
+
+
+def _target_labels(matches: object) -> dict[str, str]:
+    rows = tuple(matches or ()) if isinstance(matches, Sequence) else ()
+    labels: dict[str, str] = {}
+    for match in rows:
+        identity = _public_text(getattr(match, "result_id", ""))
+        target = getattr(match, "target_row", None)
+        label = _public_text(
+            getattr(target, "stage", None) or getattr(target, "work_name", None) or "Целевой этап"
+        )
+        if identity:
+            labels[identity] = label
+    return labels
 
 
 def _public_records(value: object) -> list[dict[str, object]]:

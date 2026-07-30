@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-18-tests
-status: in-progress
+status: completed
 version: 1
 work_id: document-optimizer-block-18
 task_id: block-18-tests
@@ -10,16 +10,16 @@ agent_role: tester
 owner: "block-18-tests"
 profile: L1
 routing_grade: P3
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 1
+state_fingerprint: "release-tests-0881afc-full-603-pass"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Independent final-system verification across contracts and real read-only inputs."
 assigned_model: gpt-5.6-terra
 reasoning_effort: medium
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: completed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
 model_fallback: false
 last_verified: 2026-07-31
 updated: 2026-07-31
@@ -55,7 +55,7 @@ acceptance_commands:
   - "uv run pytest -q tests/unit/stage_rag tests/contract/test_block18_release_contract.py tests/integration/test_block18_*.py"
 tags:
   - task/implementation
-  - status/in-progress
+  - status/done
   - layer/test
   - risk/high
 ---
@@ -65,3 +65,6 @@ tags:
 Test the frozen contracts through public APIs. Real workbooks come only from
 environment paths and remain byte-for-byte unchanged. Use a deterministic fake
 encoder for normal CI and an opt-in exact-model smoke test.
+
+Accepted locally: full real+model+slow **603 passed in 119.80s**; real workbook
+SHA/size/mtime unchanged.

@@ -423,7 +423,14 @@ Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 pass
 
 ## Блок 18
 
-- **Статус:** в работе; release evidence отсутствует.
+- **Статус:** локально READY; ожидает PR и GitHub Actions.
 - **RAG:** `cointegrated/rubert-tiny2`, revision `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae`, 29.4M параметров, 312 dimensions, Russian; lazy local optional load.
 - **Поведение:** normalized embeddings, cosine, deterministic top-k/tie ordering; controlled unavailable без silent matching change. Block 12 authority primary; semantic-only relations требуют manual review.
-- **Evidence:** tests/model smoke/clean install/PR/CI — **NOT RUN / не предоставлено**.
+- **Панель:** `report-processor admin`, loopback-only upload/review/download;
+  этап `13.1` по умолчанию, отдельные `fit/not_fit` для каждой RAG-связи,
+  red/yellow/orange/blue расхождения и Gazprom UI `#0079C2`.
+- **Evidence:** full real+model+slow **603 passed in 119.80s**; real admin
+  **1 passed in 4.49s**; desktop/mobile browser PASS без console/page/external
+  errors; base/RAG clean installs, wheel assets, Ruff, format, compileall,
+  JS syntax и diff-check PASS. Реальные XLSX неизменны.
+- **GitHub:** PR/CI ещё не заявлены.

@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-18-docs
-status: in-progress
+status: completed
 version: 1
 work_id: document-optimizer-block-18
 task_id: block-18-docs
@@ -10,16 +10,16 @@ agent_role: documentation-agent
 owner: "block-18-docs"
 profile: L0
 routing_grade: P1
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 1
+state_fingerprint: "release-docs-final-local-evidence"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Bounded factual documentation from frozen contracts and verified evidence."
 assigned_model: gpt-5.6-luna
 reasoning_effort: low
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: completed
+actual_model: gpt-5.6-luna
+actual_reasoning_effort: low
 model_fallback: false
 last_verified: 2026-07-31
 updated: 2026-07-31
@@ -50,7 +50,7 @@ acceptance_commands:
   - "git diff --check -- README.md docs"
 tags:
   - task/implementation
-  - status/in-progress
+  - status/done
   - layer/docs
   - risk/medium
 ---
@@ -59,3 +59,6 @@ tags:
 
 Correct Block 17 to accepted main with PR/CI evidence. Describe Block 18 as in
 progress until final integration; do not claim tests, PR, or CI that have not run.
+
+Completed with verified local evidence: **603 passed in 119.80s**, real admin,
+browser, clean installs and wheel checks. PR/CI remain explicitly pending.
