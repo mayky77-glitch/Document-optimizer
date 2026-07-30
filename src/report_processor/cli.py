@@ -13,6 +13,7 @@ from report_processor.cli_business_rules import (
 from report_processor.cli_extraction import add_extract_rows_parser, run_extract_rows
 from report_processor.cli_inspect import add_inspect_workbook_parser, run_inspect_workbook
 from report_processor.cli_normalization import add_normalize_rows_parser, run_normalize_rows
+from report_processor.cli_process import add_process_parser, run_process
 from report_processor.cli_schema import add_detect_schema_parser, run_detect_schema
 from report_processor.cli_target_report import (
     add_read_target_report_parser,
@@ -147,6 +148,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_normalize_rows_parser(subparsers)
     add_read_target_report_parser(subparsers)
     add_validate_business_rules_parser(subparsers)
+    add_process_parser(subparsers)
     extract.add_argument(
         "--allow-loose",
         action="store_true",
@@ -224,6 +226,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "validate-business-rules":
             return run_validate_business_rules(args)
+
+        if args.command == "process":
+            return run_process(args)
 
         if args.command == "enrich-metadata":
             manifest = load_manifest_json(args.manifest)

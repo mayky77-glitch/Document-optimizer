@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -17,9 +17,31 @@ from report_processor.excel.workbook_session import (
 from report_processor.materialization.materializer import materialize_source
 from report_processor.materialization.models import MaterializationRequest
 from report_processor.materialization.workspace import TemporaryWorkspace
+from report_processor.processing import (
+    ProcessingResult,
+    ProcessReportRequest,
+)
+from report_processor.processing import (
+    process_report as _process_report,
+)
+from report_processor.processing import (
+    process_reports as _process_reports,
+)
 from report_processor.selection.models import SourceCandidate
 
 LOGGER = logging.getLogger(__name__)
+
+
+def process_report(request: ProcessReportRequest) -> ProcessingResult:
+    """Run the frozen Block 17 single-report controller."""
+
+    return _process_report(request)
+
+
+def process_reports(requests: Iterable[ProcessReportRequest]) -> tuple[ProcessingResult, ...]:
+    """Run requests in deterministic caller order with per-request isolation."""
+
+    return _process_reports(requests)
 
 
 @contextmanager

@@ -1,0 +1,161 @@
+status: frozen
+work_id: document-optimizer-block-17
+objective: "Связать Blocks 1-16 тонким контроллером и единым CLI без переноса бизнес-логики"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block17"
+planning_parent_sha: ca6300471b52ba1ef80585b3881cb77e04a6be50
+dependency_sha: ca6300471b52ba1ef80585b3881cb77e04a6be50
+published_base_sha_ref: "commit containing this frozen manifest and all three task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: ca6300471b52ba1ef80585b3881cb77e04a6be50
+contract_versions:
+  request_result: ProcessingContract-17.0
+  engine: ProcessingEngine-17.0
+  state: ProcessingState-17.0
+upstream_contracts:
+  manifest: "FileManifest-2.0 / enriched manifest 3.0"
+  extraction: ExtractionResult-6.0
+  training: TrainingData-7.0
+  normalization: Normalization-8.0
+  target: TargetReport-9.0
+  rules: RuleConfigurationVersion-1.0
+  analytics: "AnalyticalStore-11.0 / AnalyticalSchema-1"
+  matching: MatchingContract-12.0
+  calculation: CalculationContract-13.0
+  quality_control: QualityControlContract-14.0
+  writer: ExcelWriterContract-15.1
+  audit: "AuditEventEnvelope/StageJournal/AuditBundle/RunReport/TraceReport-16.0"
+  bulk_store: DuckDBSchema-1
+public_api:
+  single: "process_report(request: ProcessReportRequest) -> ProcessingResult"
+  bulk: "process_reports(requests: Iterable[ProcessReportRequest]) -> tuple[ProcessingResult, ...]"
+  cli: "report-processor process --mode {inspect,dry-run,write}"
+modes:
+  inspect: "Blocks 1-10 preflight/read contracts; no DuckDB mutation or output XLSX"
+  dry_run: "full calculation through Block 14 plus Block 16 audit; no Block 15 publication"
+  write: "Blocks 1-16; Block 15 publication only after an allowed QC decision"
+strictness:
+  strict: "any warning blocks publication and requires review"
+  non_strict: "warnings permit publication only when QC decision is ALLOW_WRITE or ALLOW_WRITE_WITH_WARNINGS"
+  invariant: "manual-review and blocking decisions are never bypassed"
+states:
+  - PENDING
+  - RUNNING
+  - SUCCEEDED
+  - SUCCEEDED_WITH_WARNINGS
+  - MANUAL_REVIEW_REQUIRED
+  - QUALITY_BLOCKED
+  - FAILED
+exit_codes:
+  success: 0
+  success_with_warnings: 1
+  invalid_input: 2
+  manual_review_required: 3
+  quality_blocked: 4
+  write_or_verification_failed: 5
+  controlled_internal_error: 6
+bulk_contract:
+  ordering: "deterministic request order"
+  isolation: "one ProcessingResult per request; controlled failure does not abort later requests"
+  exit_code: "maximum severity over all results"
+resume_contract:
+  boundaries:
+    - PENDING
+    - DATA_COMMITTED
+    - EXPORT_PREPARED
+    - EXPORT_VERIFIED
+  validation: "verify hashes and complete contract-version map before resume"
+cache_contract:
+  key: "hashes of both inputs, normalized stage/month/options, rule hash and complete contract-version map"
+  payload: "no workbook payload unless required by an upstream contract"
+filesystem_contract:
+  temp: "private per run; cleaned after success and controlled failure"
+  inputs: "source and target are read-only; SHA-256, size and mtime_ns invariant"
+  output: "Block 15 atomic no-clobber publication; inspect and dry-run never create XLSX"
+architecture_contract:
+  controller: "ordering, typed context, state transitions and adapters only"
+  business_logic: "remains in Blocks 1-16"
+  cli: "parser and dispatch only; no stage logic"
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_results:
+  - "Block 16 full real+slow: 547 passed in 89.32s"
+  - "origin/main CI run 30572598426: success"
+  - "origin/main SHA: ca6300471b52ba1ef80585b3881cb77e04a6be50"
+shared_paths_owner: integration
+shared_paths:
+  - .gitignore
+  - knowledge
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - src/report_processor/workflow.py
+  - tests/conftest.py
+  - pyproject.toml
+  - uv.lock
+production_scope:
+  - src/report_processor/processing
+  - src/report_processor/cli_process.py
+test_scope:
+  - tests/unit/processing
+  - tests/fixtures/processing
+  - tests/contract/test_block17_processing_contract.py
+  - tests/integration/test_block17_workflow.py
+  - tests/integration/test_block17_cli.py
+  - tests/integration/test_block17_bulk_resume.py
+  - tests/integration/test_block17_real_data.py
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+forbidden_paths:
+  - ".env*"
+  - cache
+  - logs
+  - output
+  - .github
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - src/report_processor/adapters
+  - src/report_processor/analytics
+  - src/report_processor/audit
+  - src/report_processor/business_rules
+  - src/report_processor/calculation
+  - src/report_processor/domain
+  - src/report_processor/excel
+  - src/report_processor/excel_writer
+  - src/report_processor/extraction
+  - src/report_processor/identifiers
+  - src/report_processor/inventory
+  - src/report_processor/matching
+  - src/report_processor/materialization
+  - src/report_processor/metadata
+  - src/report_processor/normalization
+  - src/report_processor/quality_control
+  - src/report_processor/schema
+  - src/report_processor/selection
+  - src/report_processor/storage
+  - src/report_processor/target_report
+  - src/report_processor/training_data
+acceptance_commands:
+  - "uv sync --locked --extra dev"
+  - "uv run --extra dev ruff check ."
+  - "uv run --extra dev ruff format --check ."
+  - "uv run --extra dev pytest -q tests/unit/processing tests/contract/test_block17_processing_contract.py tests/integration/test_block17_workflow.py tests/integration/test_block17_cli.py tests/integration/test_block17_bulk_resume.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<read-only source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<read-only target>' RUN_SLOW=1 uv run --extra dev pytest -q tests/integration/test_block17_real_data.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<read-only source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<read-only target>' RUN_SLOW=1 uv run --extra dev pytest -q"
+  - "uv run report-processor process --help"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+required_evidence:
+  - inspect and dry-run create no XLSX
+  - write preserves no-clobber and QC gate
+  - strict and non-strict behavior
+  - all seven exit-code groups
+  - repeat and bulk determinism with controlled-failure isolation
+  - resume after each confirmed boundary and hash-mismatch rejection
+  - private temp cleanup
+  - real source and target SHA-256, size and mtime_ns unchanged
+created_at: "2026-07-31T16:00:00+08:00"
