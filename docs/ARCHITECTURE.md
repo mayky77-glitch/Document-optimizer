@@ -229,3 +229,20 @@ sha256(absolute_archive_path + NUL + raw_internal_path + NUL + CRC32 + NUL + siz
 кандидаты и предупреждения; `ManifestSummary` считает подтверждённые,
 неоднозначные и низкоуверенные результаты. JSON-сериализация принимает старые
 манифесты без этих полей, подставляя `INDEX_NOT_PROCESSED` и нулевые счётчики.
+
+## Блок 13: calculation engine
+
+`calculation/` принимает `MatchResult` и `ValidatedRuleSet`; selected-only:
+только `MATCHED` с выбранным кандидатом получает totals. `AMBIGUOUS`/manual
+review и `NO_MATCH` остаются без итогов. `Decimal`-поля `period_quantity` и
+`period_cost` агрегируются, coefficient применяется к стоимости, затем один
+раз выполняется финальный `ROUND_HALF_UP`. Signed negative adjustments
+сохраняются с warning; missing — `None`, explicit zero — zero. Float,
+non-finite values и unit conversion запрещены. Approved `EXCLUDE` побеждает,
+`REVIEW` требует ручного решения, quantity/cost inclusion независимы.
+
+Точные canonical `cost_type_code` дают work/material/service; неизвестный или
+отсутствующий код — `UNCLASSIFIED`, без text inference. Result/contribution/
+trace IDs — детерминированные SHA-256; trace хранит формулы, coefficient,
+quantum, rule IDs, решения, Decimal values, contributing rows и provenance.
+Workbook writes отсутствуют.
