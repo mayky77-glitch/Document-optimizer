@@ -9,7 +9,7 @@
 | Browser UI | PASS | desktop/mobile; 0 console/page/external-request errors |
 | Clean installs | PASS | locked base and `[rag]`; 312-dim model smoke |
 | Wheel contents | PASS | HTML/CSS/JS present; no XLSX/XLSM |
-| Block 18 PR/CI | NOT RUN | Evidence not supplied |
+| Block 18 PR/CI | PASS | PR #18; PR CI `30580440694`; main CI `30580539301`; SHA `d54fcce5a71c85a1812a3b9209a815499c216e9a` |
 
 Block 18 is locally READY. Its optional local RAG pins
 `cointegrated/rubert-tiny2` revision `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae`
@@ -20,4 +20,4 @@ semantic-only relations require manual review.
 
 The local panel binds to loopback, uses private upload workspaces, presents
 each semantic relation as a named `fit/not_fit` card and packages all UI assets
-inside the wheel. GitHub PR and CI remain the only outstanding release gate.
+inside the wheel. Block 18 is accepted in `main`; no release gate remains open.

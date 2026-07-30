@@ -423,7 +423,7 @@ Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 pass
 
 ## Блок 18
 
-- **Статус:** локально READY; ожидает PR и GitHub Actions.
+- **Статус:** принят в `main` через PR #18.
 - **RAG:** `cointegrated/rubert-tiny2`, revision `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae`, 29.4M параметров, 312 dimensions, Russian; lazy local optional load.
 - **Поведение:** normalized embeddings, cosine, deterministic top-k/tie ordering; controlled unavailable без silent matching change. Block 12 authority primary; semantic-only relations требуют manual review.
 - **Панель:** `report-processor admin`, loopback-only upload/review/download;
@@ -433,4 +433,5 @@ Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 pass
   **1 passed in 4.49s**; desktop/mobile browser PASS без console/page/external
   errors; base/RAG clean installs, wheel assets, Ruff, format, compileall,
   JS syntax и diff-check PASS. Реальные XLSX неизменны.
-- **GitHub:** PR/CI ещё не заявлены.
+- **GitHub:** PR CI `30580440694`, post-merge main CI `30580539301` — success;
+  main SHA `d54fcce5a71c85a1812a3b9209a815499c216e9a`.

@@ -65,6 +65,9 @@ baseline_results:
   - "final Block 18 full real+slow+model suite: 603 passed in 119.80s"
   - "real admin private-copy workflow: 1 passed in 4.49s"
   - "desktop/mobile Chrome: 0 console, page and external-request errors"
+  - "Block 18 PR #18 CI run 30580440694: success"
+  - "post-merge main CI run 30580539301: success"
+  - "accepted main SHA: d54fcce5a71c85a1812a3b9209a815499c216e9a"
 shared_paths_owner: integration
 shared_paths:
   - .gitignore

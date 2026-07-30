@@ -5,7 +5,7 @@ Python-проект для поэтапной обработки строите�
 
 ## Текущий статус
 
-В `main` приняты **блоки 1–17** — от безопасной инвентаризации до единого
+В `main` приняты **блоки 1–18** — от безопасной инвентаризации до единого
 processing controller, numeric-only XLSX publication и append-only audit.
 Версия пакета — `1.0.0`. Блок 18 добавляет локальные RuBERT-подсказки,
 финальные release-gates и простую локальную web-панель.
@@ -311,7 +311,8 @@ slow/performance. Отдельно: реальная admin-обработка �
 browser desktop/mobile — PASS, console/page/external-request errors — **0**;
 base и `[rag]` clean installs, wheel assets, Ruff, format, compileall,
 JS syntax и `git diff --check` — PASS. SHA-256 обеих реальных книг не изменились.
-PR/CI acceptance фиксируется только после зелёного GitHub Actions.
+Принят через PR #18: PR CI `30580440694`, post-merge main CI `30580539301`;
+main SHA `d54fcce5a71c85a1812a3b9209a815499c216e9a`.
 
 ## Блок 15.1: numeric-only XLSX output
 
