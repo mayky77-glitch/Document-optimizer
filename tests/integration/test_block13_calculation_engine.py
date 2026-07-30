@@ -8,15 +8,15 @@ from dataclasses import replace
 from decimal import Decimal
 
 import pytest
+
+from fixtures.calculation.builders import calculation_rule_set, calculation_source_row, match_result
+from report_processor.business_rules.models import RuleAction
 from report_processor.calculation import (
     CalculationCategory,
     CalculationInputError,
     CalculationStatus,
     calculate_matches,
 )
-
-from fixtures.calculation.builders import calculation_rule_set, calculation_source_row, match_result
-from report_processor.business_rules.models import RuleAction
 from report_processor.matching import MatchStatus
 
 

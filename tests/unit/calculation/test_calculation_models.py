@@ -4,6 +4,7 @@ from dataclasses import fields
 from decimal import Decimal
 
 import pytest
+
 from report_processor.calculation import (
     CalculationCategory,
     CalculationCategoryTotal,
