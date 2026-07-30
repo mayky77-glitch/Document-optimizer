@@ -53,6 +53,18 @@ def test_hash_chain_tamper_and_sequence_gap_are_detected(tmp_path) -> None:
     assert failure.value.code is AuditErrorCode.HASH_CHAIN_INVALID
 
 
+def test_true_sequence_gap_is_detected_before_hash_validation(tmp_path) -> None:
+    with AuditJournal(tmp_path / "audit.sqlite") as journal:
+        run = _run(journal)
+        journal.append_event(run.run_id, "RUN", "PENDING")
+        journal.append_event(run.run_id, "DATA", "DATA_COMMITTED")
+        journal.connection.execute("DROP TRIGGER events_no_update")
+        journal.connection.execute("UPDATE events SET event_sequence=3 WHERE event_sequence=2")
+        with pytest.raises(AuditIntegrityError) as failure:
+            journal.validate_run(run.run_id)
+    assert failure.value.code is AuditErrorCode.SEQUENCE_GAP
+
+
 def test_events_are_append_only_and_invalid_transitions_are_rejected(tmp_path) -> None:
     with AuditJournal(tmp_path / "audit.sqlite") as journal:
         run = _run(journal)
@@ -64,6 +76,16 @@ def test_events_are_append_only_and_invalid_transitions_are_rejected(tmp_path) -
         with pytest.raises(AuditIntegrityError) as failure:
             journal.append_event(run.run_id, "EXPORT", "EXPORT_VERIFIED")
     assert failure.value.code is AuditErrorCode.INVALID_STAGE_TRANSITION
+
+
+@pytest.mark.parametrize("controlled", ("lowercase", "HAS-DASH", "TOO LONG"))
+def test_uncontrolled_reason_and_warning_codes_are_rejected(tmp_path, controlled: str) -> None:
+    with AuditJournal(tmp_path / "audit.sqlite") as journal:
+        run = _run(journal)
+        with pytest.raises(ValueError, match="controlled code"):
+            journal.append_event(run.run_id, "RUN", "PENDING", reason_code=controlled)
+        with pytest.raises(ValueError, match="controlled code"):
+            journal.append_event(run.run_id, "RUN", "PENDING", warning_code=controlled)
 
 
 def test_concurrent_journals_allocate_one_strict_sequence_per_transition(tmp_path) -> None:

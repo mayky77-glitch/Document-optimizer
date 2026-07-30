@@ -70,6 +70,26 @@ def test_publish_crash_and_concurrent_publishers_leave_no_temp_or_overwrite(
     assert not tuple(tmp_path.glob(".audit-*.tmp"))
 
 
+def test_published_reopen_hash_failure_removes_temporary_and_keeps_existing_bytes(
+    tmp_path, monkeypatch
+) -> None:
+    import report_processor.audit.export as audit_export
+
+    destination = tmp_path / "published.json"
+    original_read = audit_export.Path.read_bytes
+
+    def corrupt_published(path):
+        if path == destination:
+            return b"corrupt"
+        return original_read(path)
+
+    monkeypatch.setattr(audit_export.Path, "read_bytes", corrupt_published)
+    with pytest.raises(AuditExportError, match="EXPORT_HASH_MISMATCH"):
+        export_snapshot(export_rows(), destination, "json")
+    assert not tuple(tmp_path.glob(".audit-*.tmp"))
+    assert destination.exists()
+
+
 def test_leak_canary_never_reaches_serialized_bytes_without_printing_it() -> None:
     canary = "CANARY-SECRET-DO-NOT-LOG"
     with pytest.raises(AuditRedactionError):

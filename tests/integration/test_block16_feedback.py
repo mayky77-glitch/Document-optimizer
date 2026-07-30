@@ -54,3 +54,19 @@ def test_compaction_keeps_active_versions_and_never_rewrites_events(tmp_path) ->
         before = journal.events(run.run_id)
         assert journal.compact_feedback() == 1
         assert journal.events(run.run_id) == before
+        assert journal.connection.execute("SELECT count(*) FROM feedback").fetchone()[0] == 2
+        assert (
+            journal.connection.execute("SELECT count(*) FROM feedback_compactions").fetchone()[0]
+            == 1
+        )
+
+
+def test_feedback_source_event_from_another_run_is_rejected(tmp_path) -> None:
+    with AuditJournal(tmp_path / "audit.sqlite") as journal:
+        first = journal.begin_run(*run_inputs(), nonce_hex="6" * 32)
+        second = journal.begin_run(*run_inputs(), nonce_hex="7" * 32)
+        event = journal.append_event(first.run_id, "RUN", "PENDING")
+        foreign = FeedbackRuleVersion("foreign", second.run_id, event.event_id, "r" * 64, "s" * 64)
+        with pytest.raises(AuditIntegrityError) as failure:
+            journal.add_feedback(foreign)
+    assert failure.value.code is AuditErrorCode.FEEDBACK_DRIFT
