@@ -285,6 +285,25 @@ main SHA `322cb9ce08f14c017dbdc3bf16c5b91b33238e63`. Полный real+slow suit
 
 ## Блок 18: финальная интеграция, локальный RAG и web-панель
 
+### Быстрый запуск панели
+
+Откройте файл в корне проекта, соответствующий вашей системе:
+
+- Windows — `start-admin.cmd`;
+- macOS — `start-admin.command`;
+- Linux — `start-admin.sh`.
+
+Лаунчер сам перейдёт в папку проекта, проверит наличие `uv`, выполнит
+`uv sync --extra rag` и запустит панель. Если `uv` ещё не установлен, откройте
+инструкцию: <https://docs.astral.sh/uv/getting-started/installation/>.
+
+Универсальный запуск из терминала в папке проекта:
+
+```bash
+uv sync --extra rag
+uv run report-processor admin
+```
+
 RAG использует `cointegrated/rubert-tiny2`, revision
 `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae` (29.4M параметров, 312 dimensions,
 Russian), lazy local load, normalized cosine retrieval и deterministic top-k.
