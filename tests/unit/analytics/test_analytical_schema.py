@@ -4,6 +4,7 @@ from pathlib import Path
 
 import duckdb
 import pytest
+
 from report_processor.analytics import ANALYTICAL_SCHEMA_VERSION, AnalyticalError, AnalyticalStore
 
 

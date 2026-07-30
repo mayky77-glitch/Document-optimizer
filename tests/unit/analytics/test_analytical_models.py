@@ -3,8 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from report_processor.analytics import AnalyticalQuery, AnalyticalStore, AnalyticalWriteError
 from tests.fixtures.analytics.builders import normalized_source_row, target_report_row
+
+from report_processor.analytics import AnalyticalQuery, AnalyticalStore, AnalyticalWriteError
 
 
 def test_real_block8_and_9_rows_keep_provenance_classification_status_warnings(tmp_path):

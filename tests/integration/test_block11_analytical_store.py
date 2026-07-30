@@ -6,18 +6,18 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from report_processor.analytics import (
-    AnalyticalQuery,
-    AnalyticalQueryError,
-    AnalyticalStore,
-    AnalyticalWriteError,
-)
 from tests.fixtures.analytics.builders import (
     normalized_source_row,
     target_report_row,
     validated_rule_set,
 )
 
+from report_processor.analytics import (
+    AnalyticalQuery,
+    AnalyticalQueryError,
+    AnalyticalStore,
+    AnalyticalWriteError,
+)
 from report_processor.storage import DuckDBStore
 
 
