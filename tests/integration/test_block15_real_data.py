@@ -1,8 +1,9 @@
-"""Real XLSX safety evidence for ExcelWriterEngine-15.0."""
+"""Real XLSX safety evidence for ExcelWriterEngine-15.1."""
 
 from __future__ import annotations
 
 import os
+from math import isfinite
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -63,6 +64,33 @@ def _package_entries(path: Path) -> tuple[str, ...]:
         return tuple(sorted(package.namelist()))
 
 
+def _formula_count(path: Path) -> int:
+    workbook = load_workbook(path, data_only=False, read_only=True)
+    try:
+        return sum(
+            cell.data_type == "f"
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+        )
+    finally:
+        workbook.close()
+
+
+def _formula_coordinates(path: Path) -> tuple[tuple[str, str], ...]:
+    workbook = load_workbook(path, data_only=False, read_only=True)
+    try:
+        return tuple(
+            (sheet.title, cell.coordinate)
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if cell.data_type == "f"
+        )
+    finally:
+        workbook.close()
+
+
 def _matched_subset(target_path: Path):
     target_result, matches, calculations, rules = _real_pipeline(target_path)
     subset_matches = tuple(match for match in matches if match.selected_candidate is not None)
@@ -121,14 +149,25 @@ def test_real_matched_subset_writes_only_d30_to_a_temporary_output(tmp_path: Pat
         (cell.sheet_name, cell.coordinate, cell.decimal_text) for cell in result.written_cells
     ) == (("Лист", "D30", "0"),)
     assert _package_entries(output_path) == _package_entries(target_path)
-    workbook = load_workbook(output_path, data_only=False, read_only=False)
+    formula_view = load_workbook(output_path, data_only=False, read_only=False)
+    values_view = load_workbook(output_path, data_only=True, read_only=False)
+    original_formula_cells = _formula_coordinates(target_path)
     try:
-        sheet = workbook["Лист"]
+        sheet = formula_view["Лист"]
         assert sheet["D30"].value == 0
-        assert sum(cell.data_type == "f" for row in sheet.iter_rows() for cell in row) == 14
+        assert _formula_count(target_path) == 14
+        assert _formula_count(output_path) == 0
         assert len(sheet.merged_cells.ranges) == 128
+        assert len(original_formula_cells) == 14
+        for sheet_name, coordinate in original_formula_cells:
+            formula_value = formula_view[sheet_name][coordinate].value
+            data_value = values_view[sheet_name][coordinate].value
+            assert isinstance(formula_value, (int, float)) and isfinite(formula_value)
+            assert formula_value == data_value
+        assert formula_view["Лист"]["D30"].value == values_view["Лист"]["D30"].value == 0
     finally:
-        workbook.close()
+        formula_view.close()
+        values_view.close()
     assert (fingerprint(source_path), fingerprint(target_path)) == before
 
 
