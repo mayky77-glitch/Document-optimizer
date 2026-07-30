@@ -11,6 +11,8 @@ from .conflicts import detect_rule_conflicts
 from .defaults import default_payload
 from .models import (
     BusinessRule,
+    CostPolicy,
+    QuantityPolicy,
     RuleAction,
     RuleClause,
     RuleConfigurationVersion,
@@ -31,10 +33,13 @@ from .parsing import (
 _ROOT_KEYS = frozenset({"configuration_version", "rule_set_version", "defaults", "rules"})
 _DEFAULT_KEYS = frozenset(
     {
-        "coefficient",
-        "tolerance",
-        "quantum",
-        "rounding",
+        "default_run_coefficient",
+        "cost_tolerance_ratio",
+        "rounding_quantum",
+        "rounding_mode",
+        "allowed_units",
+        "quantity_policy",
+        "cost_policy",
         "unit_conversion_enabled",
         "source_priority",
     }
@@ -52,7 +57,22 @@ _RULE_KEYS = frozenset(
     }
 )
 _SCOPE_KEYS = frozenset({"object_scopes", "stages", "target_processes", "source_units"})
-_CLAUSE_KEYS = frozenset({"action", "match_kind", "literal", "field", "priority", "hard_exclude"})
+_CLAUSE_KEYS = frozenset(
+    {
+        "action",
+        "match_kind",
+        "literal",
+        "field",
+        "priority",
+        "hard_exclude",
+        "required_substrings",
+        "forbidden_substrings",
+        "source_units",
+        "excluded_units",
+        "include_quantity",
+        "include_cost",
+    }
+)
 _FORBIDDEN_TEXT = (
     "${",
     "{{",
@@ -68,14 +88,6 @@ _FORBIDDEN_TEXT = (
     "import",
     "callable",
     "regex",
-)
-_SOURCE_PRIORITY = (
-    "hard_exclude",
-    "exclusive_ownership",
-    "approved_scoped_exact",
-    "approved_feedback",
-    "baseline_candidate",
-    "manual_review",
 )
 
 
@@ -137,10 +149,19 @@ def _parse_defaults(value: object, issues: list[RuleValidationIssue]) -> RuleDef
         issues.append(_issue("DEFAULTS_TYPE", "defaults должен быть объектом", path))
         return None
     _unknown_keys(value, _DEFAULT_KEYS, path, issues)
-    coefficient = _decimal(value.get("coefficient"), f"{path}.coefficient", issues, positive=True)
-    tolerance = _decimal(value.get("tolerance"), f"{path}.tolerance", issues, positive=False)
-    quantum = _decimal(value.get("quantum"), f"{path}.quantum", issues, positive=True)
-    rounding = value.get("rounding")
+    coefficient = _decimal(
+        value.get("default_run_coefficient"),
+        f"{path}.default_run_coefficient",
+        issues,
+        positive=True,
+    )
+    tolerance = _decimal(
+        value.get("cost_tolerance_ratio"), f"{path}.cost_tolerance_ratio", issues, positive=False
+    )
+    quantum = _decimal(
+        value.get("rounding_quantum"), f"{path}.rounding_quantum", issues, positive=True
+    )
+    rounding = value.get("rounding_mode")
     if rounding != "ROUND_HALF_UP":
         issues.append(_issue("ROUNDING", "Поддерживается только ROUND_HALF_UP", f"{path}.rounding"))
     conversion = value.get("unit_conversion_enabled")
@@ -152,8 +173,15 @@ def _parse_defaults(value: object, issues: list[RuleValidationIssue]) -> RuleDef
                 f"{path}.unit_conversion_enabled",
             )
         )
-    source_priority = value.get("source_priority")
-    if source_priority != list(_SOURCE_PRIORITY):
+    source_priority = _strings(value.get("source_priority"), f"{path}.source_priority", issues)
+    allowed_units = _strings(value.get("allowed_units"), f"{path}.allowed_units", issues)
+    try:
+        quantity_policy = QuantityPolicy(value.get("quantity_policy"))
+        cost_policy = CostPolicy(value.get("cost_policy"))
+    except ValueError:
+        issues.append(_issue("POLICY", "Недопустимая политика количества или стоимости", path))
+        quantity_policy = cost_policy = None
+    if source_priority != ("ks6a",):
         issues.append(
             _issue(
                 "SOURCE_PRIORITY",
@@ -161,12 +189,30 @@ def _parse_defaults(value: object, issues: list[RuleValidationIssue]) -> RuleDef
                 f"{path}.source_priority",
             )
         )
-    if issues or coefficient is None or tolerance is None or quantum is None:
+    if (
+        issues
+        or coefficient is None
+        or tolerance is None
+        or quantum is None
+        or allowed_units is None
+        or quantity_policy is None
+        or cost_policy is None
+    ):
         return None
     if coefficient > Decimal("100") or tolerance > Decimal("1") or quantum > Decimal("1"):
         issues.append(_issue("DEFAULT_RANGE", "Недопустимый диапазон default Decimal", path))
         return None
-    return RuleDefaults(coefficient, tolerance, quantum, str(rounding), False, _SOURCE_PRIORITY)
+    return RuleDefaults(
+        source_priority,
+        allowed_units,
+        coefficient,
+        quantum,
+        str(rounding),
+        tolerance,
+        quantity_policy,
+        cost_policy,
+        False,
+    )
 
 
 def _parse_rules(value: object, issues: list[RuleValidationIssue]) -> list[BusinessRule] | None:
@@ -254,6 +300,20 @@ def _parse_clauses(
         hard_exclude = _boolean(
             item.get("hard_exclude", False), f"{item_path}.hard_exclude", issues
         )
+        required = _strings(
+            item.get("required_substrings", []), f"{item_path}.required_substrings", issues
+        )
+        forbidden = _strings(
+            item.get("forbidden_substrings", []), f"{item_path}.forbidden_substrings", issues
+        )
+        source_units = _strings(item.get("source_units", []), f"{item_path}.source_units", issues)
+        excluded_units = _strings(
+            item.get("excluded_units", []), f"{item_path}.excluded_units", issues
+        )
+        include_quantity = _boolean(
+            item.get("include_quantity", True), f"{item_path}.include_quantity", issues
+        )
+        include_cost = _boolean(item.get("include_cost", True), f"{item_path}.include_cost", issues)
         if field != "source_work_name":
             issues.append(
                 _issue(
@@ -268,8 +328,34 @@ def _parse_clauses(
                     f"{item_path}.literal",
                 )
             )
-        if None not in (literal, field, priority, hard_exclude):
-            result.append(RuleClause(action, kind, literal, field, priority, hard_exclude))
+        if None not in (
+            literal,
+            field,
+            priority,
+            hard_exclude,
+            required,
+            forbidden,
+            source_units,
+            excluded_units,
+            include_quantity,
+            include_cost,
+        ):
+            result.append(
+                RuleClause(
+                    action,
+                    kind,
+                    literal,
+                    field,
+                    priority,
+                    hard_exclude,
+                    required,
+                    forbidden,
+                    source_units,
+                    excluded_units,
+                    include_quantity,
+                    include_cost,
+                )
+            )
     return tuple(result) if result and not issues else None
 
 
@@ -278,10 +364,13 @@ def _canonical_payload(defaults: RuleDefaults, rules: list[BusinessRule]) -> dic
         "configuration_version": "RuleConfigurationVersion-1.0",
         "rule_set_version": "ValidatedRuleSet-10.0",
         "defaults": {
-            "coefficient": str(defaults.coefficient),
-            "tolerance": str(defaults.tolerance),
-            "quantum": str(defaults.quantum),
-            "rounding": defaults.rounding,
+            "default_run_coefficient": str(defaults.default_run_coefficient),
+            "cost_tolerance_ratio": str(defaults.cost_tolerance_ratio),
+            "rounding_quantum": str(defaults.rounding_quantum),
+            "rounding_mode": defaults.rounding_mode,
+            "allowed_units": list(defaults.allowed_units),
+            "quantity_policy": defaults.quantity_policy.value,
+            "cost_policy": defaults.cost_policy.value,
             "unit_conversion_enabled": defaults.unit_conversion_enabled,
             "source_priority": list(defaults.source_priority),
         },
@@ -303,6 +392,12 @@ def _canonical_payload(defaults: RuleDefaults, rules: list[BusinessRule]) -> dic
                         "field": clause.field,
                         "priority": clause.priority,
                         "hard_exclude": clause.hard_exclude,
+                        "required_substrings": list(clause.required_substrings),
+                        "forbidden_substrings": list(clause.forbidden_substrings),
+                        "source_units": list(clause.source_units),
+                        "excluded_units": list(clause.excluded_units),
+                        "include_quantity": clause.include_quantity,
+                        "include_cost": clause.include_cost,
                     }
                     for clause in rule.clauses
                 ],

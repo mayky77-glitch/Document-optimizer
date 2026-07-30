@@ -19,6 +19,23 @@ class RuleMatchKind(StrEnum):
     CONTAINS = "contains"
 
 
+class RulePrecedence(StrEnum):
+    HARD_EXCLUDE = "hard_exclude"
+    EXCLUSIVE_OWNERSHIP = "exclusive_ownership"
+    APPROVED_SCOPED_EXACT = "approved_scoped_exact"
+    APPROVED_FEEDBACK = "approved_feedback"
+    BASELINE_CANDIDATE = "baseline_candidate"
+    MANUAL_REVIEW = "manual_review"
+
+
+class QuantityPolicy(StrEnum):
+    TARGET_UNIT_OR_SINGLE_ALTERNATIVE = "target_unit_or_single_alternative"
+
+
+class CostPolicy(StrEnum):
+    ALL_APPROVED_ROWS = "all_approved_rows"
+
+
 class RuleSeverity(StrEnum):
     ERROR = "error"
     WARNING = "warning"
@@ -51,6 +68,20 @@ class RuleClause:
     field: str = "source_work_name"
     priority: int = 0
     hard_exclude: bool = False
+    required_substrings: tuple[str, ...] = ()
+    forbidden_substrings: tuple[str, ...] = ()
+    source_units: tuple[str, ...] = ()
+    excluded_units: tuple[str, ...] = ()
+    include_quantity: bool = True
+    include_cost: bool = True
+
+    @property
+    def decision(self) -> RuleAction:
+        return self.action
+
+    @property
+    def match_mode(self) -> RuleMatchKind:
+        return self.match_kind
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,16 +94,38 @@ class BusinessRule:
     exclusive_owner: bool = False
     owner_approved: bool = True
     evidence: tuple[str, ...] = ()
+    status: str = "approved"
+    subject: str = "source_work_name"
+    origin: str = "baseline"
 
 
 @dataclass(frozen=True, slots=True)
 class RuleDefaults:
-    coefficient: Decimal
-    tolerance: Decimal
-    quantum: Decimal
-    rounding: str
-    unit_conversion_enabled: bool
     source_priority: tuple[str, ...]
+    allowed_units: tuple[str, ...]
+    default_run_coefficient: Decimal
+    rounding_quantum: Decimal
+    rounding_mode: str
+    cost_tolerance_ratio: Decimal
+    quantity_policy: QuantityPolicy
+    cost_policy: CostPolicy
+    unit_conversion_enabled: bool = False
+
+    @property
+    def coefficient(self) -> Decimal:
+        return self.default_run_coefficient
+
+    @property
+    def tolerance(self) -> Decimal:
+        return self.cost_tolerance_ratio
+
+    @property
+    def quantum(self) -> Decimal:
+        return self.rounding_quantum
+
+    @property
+    def rounding(self) -> str:
+        return self.rounding_mode
 
 
 @dataclass(frozen=True, slots=True)

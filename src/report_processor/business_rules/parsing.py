@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from yaml.nodes import MappingNode, Node
 from yaml.tokens import AliasToken, AnchorToken, TagToken
 
 MAX_CONFIGURATION_BYTES = 1024 * 1024
@@ -62,12 +63,29 @@ def _load_yaml(text: str) -> object:
         for token in yaml.scan(text):
             if isinstance(token, (AliasToken, AnchorToken, TagToken)):
                 raise ConfigurationParseError("YAML tags, anchors и aliases запрещены")
+        document = yaml.compose(text)
+        if document is not None:
+            _reject_duplicate_yaml_keys(document)
         payload = yaml.safe_load(text)
     except yaml.YAMLError as error:
         raise ConfigurationParseError(f"Некорректный YAML: {error}") from error
     if payload is None:
         raise ConfigurationParseError("Конфигурация не должна быть пустой")
     return payload
+
+
+def _reject_duplicate_yaml_keys(node: Node) -> None:
+    if isinstance(node, MappingNode):
+        keys: set[str] = set()
+        for key, value in node.value:
+            if not isinstance(key.value, str) or key.value in keys:
+                raise ConfigurationParseError(f"Повторяющийся YAML-ключ: {key.value}")
+            keys.add(key.value)
+            _reject_duplicate_yaml_keys(value)
+    else:
+        for child in getattr(node, "value", ()):
+            if isinstance(child, Node):
+                _reject_duplicate_yaml_keys(child)
 
 
 def check_depth(value: object, depth: int = 0) -> None:

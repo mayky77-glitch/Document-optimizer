@@ -8,19 +8,15 @@ def default_payload() -> dict[str, object]:
         "configuration_version": "RuleConfigurationVersion-1.0",
         "rule_set_version": "ValidatedRuleSet-10.0",
         "defaults": {
-            "coefficient": "2.7",
-            "tolerance": "0.05",
-            "quantum": "0.01",
-            "rounding": "ROUND_HALF_UP",
+            "default_run_coefficient": "2.7",
+            "cost_tolerance_ratio": "0.05",
+            "rounding_quantum": "0.01",
+            "rounding_mode": "ROUND_HALF_UP",
+            "allowed_units": [],
+            "quantity_policy": "target_unit_or_single_alternative",
+            "cost_policy": "all_approved_rows",
             "unit_conversion_enabled": False,
-            "source_priority": [
-                "hard_exclude",
-                "exclusive_ownership",
-                "approved_scoped_exact",
-                "approved_feedback",
-                "baseline_candidate",
-                "manual_review",
-            ],
+            "source_priority": ["ks6a"],
         },
         "rules": [
             _rule(
@@ -119,6 +115,7 @@ def default_payload() -> dict[str, object]:
                     _prefix("Комплект анкерной концевой опоры"),
                     _exact("Монтаж железобетонных опор ВЛ"),
                 ],
+                source_units=("шт.",),
             ),
             _rule(
                 "M13",
@@ -155,11 +152,16 @@ def _rule(
     targets: tuple[str, ...],
     clauses: list[dict[str, object]],
     exclusive: bool = False,
+    source_units: tuple[str, ...] = (),
 ) -> dict[str, object]:
     return {
         "rule_id": rule_id,
         "rule_version": "1",
-        "scope": {"object_scopes": list(object_scopes), "target_processes": list(targets)},
+        "scope": {
+            "object_scopes": list(object_scopes),
+            "target_processes": list(targets),
+            "source_units": list(source_units),
+        },
         "clauses": clauses,
         "priority": 100,
         "exclusive_owner": exclusive,
