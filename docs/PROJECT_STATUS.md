@@ -351,6 +351,28 @@ digest `c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`;
 Ruff, format, clean install, compileall и `git diff --check` — PASS. READY/main
 требует зелёного Pull Request.
 
+## Блок 15
+
+- **Название:** безопасный атомарный XLSX writer
+- **Статус:** документация обновлена; post-merge pytest и real-data gate pending
+- **Контракт:** `ExcelWriterContract-15.0` / `ExcelWriterEngine-15.0`
+- **API:** `write_target_report(...)`
+- **CLI:** отсутствует
+
+Decision gate пишет только при `ALLOW_WRITE` или `ALLOW_WRITE_WITH_WARNINGS`;
+`REQUIRE_MANUAL_REVIEW` и `BLOCK_WRITE` дают `SKIPPED_DECISION` без output.
+Разрешены только `CURRENT_PERIOD_QUANTITY` и `CURRENT_PERIOD_COST`.
+Используются конечные `Decimal` без float, пересчёта, округления, quantize;
+`None` не очищает ячейку. Targeted OOXML update сохраняет формулы, кэш, стили,
+merged ranges и структуру; `openpyxl.save` не используется. Только `.xlsx`;
+signed OOXML и `.xlsm` отклоняются.
+
+Source identity перепроверяется перед публикацией. Output — отдельный
+несуществующий путь, публикация — atomic hard-link no-clobber; source и
+существующий output не перезаписываются. Production Ruff/format/compileall
+проходят; feature `fcdef7c` имеет Ruff/format/diff-check PASS. Полный pytest и
+real-data gate ещё не запускались; READY/main/CI не присваивается.
+
 ## Блок 13
 
 - **Статус:** интегрирован локально; release-набор пройден, GitHub CI ожидается
