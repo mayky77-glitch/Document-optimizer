@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from openpyxl import Workbook
@@ -14,6 +15,8 @@ from report_processor.processing import (
     ProcessReportRequest,
     StageOutcome,
 )
+
+from report_processor.audit import AuditStage, AuditState
 
 
 class RecordingAdapters:
@@ -184,3 +187,67 @@ def test_default_dry_run_uses_public_upstream_stages_without_internal_error(
         "calculation",
         "quality",
     }
+
+
+def test_persistent_audit_journal_records_boundaries_and_recovers_on_resume(
+    monkeypatch, inputs, tmp_path
+) -> None:
+    source, target = inputs
+    events: list[tuple[object, object]] = []
+    recoveries: list[object] = []
+
+    class SpyJournal:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def begin_run(self, *args, **kwargs):
+            return SimpleNamespace(run_id="run-17")
+
+        def append_event(self, run_id, stage, state, **kwargs):
+            events.append((stage, state))
+            return SimpleNamespace()
+
+        def recover(self, *args, **kwargs):
+            recoveries.append(args)
+            return ()
+
+        def validate_run(self, *args, **kwargs):
+            return ()
+
+    monkeypatch.setattr("report_processor.audit.AuditJournal", SpyJournal)
+    audit_directory = tmp_path / "audit"
+    engine = ProcessingEngine(RecordingAdapters(decision="allow_write"))
+    dry_run = engine.process_report(
+        ProcessReportRequest(source, target, ProcessMode.DRY_RUN, audit_directory=audit_directory)
+    )
+    write = engine.process_report(
+        ProcessReportRequest(
+            source,
+            target,
+            ProcessMode.WRITE,
+            output_path=tmp_path / "published.xlsx",
+            audit_directory=audit_directory,
+        )
+    )
+    resumed = engine.process_report(
+        ProcessReportRequest(
+            source,
+            target,
+            audit_directory=audit_directory,
+            resume=True,
+        )
+    )
+    assert dry_run.exit_code is ProcessingExitCode.SUCCESS
+    assert write.exit_code is ProcessingExitCode.SUCCESS
+    assert resumed.exit_code is not ProcessingExitCode.CONTROLLED_INTERNAL_ERROR
+    assert (AuditStage.RUN, AuditState.PENDING) in events
+    assert (AuditStage.DATA, AuditState.DATA_COMMITTED) in events
+    assert (AuditStage.EXPORT, AuditState.EXPORT_PREPARED) in events
+    assert (AuditStage.EXPORT, AuditState.EXPORT_VERIFIED) in events
+    assert recoveries
