@@ -28,3 +28,4 @@ output/*
 logs/*
 !logs/.gitkeep
 *.duckdb
+.codex/

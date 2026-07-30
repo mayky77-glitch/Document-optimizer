@@ -273,6 +273,30 @@ raw cells, formula text и document content в отчёт не копируют�
 фиксируются только после успешного Pull Request.
 Входные XLSX не изменились. Это не объявляет READY/main или CI.
 
+## Блок 15.1: numeric-only XLSX output
+
+Блок 15.1 реализует `ExcelWriterContract-15.1` / `ExcelWriterEngine-15.1` и
+`write_target_report(...)`. Запись разрешена только для `ALLOW_WRITE` или
+`ALLOW_WRITE_WITH_WARNINGS`; ручная проверка и блокировка возвращают
+`SKIPPED_DECISION` без output. Разрешены только `CURRENT_PERIOD_QUANTITY` и
+`CURRENT_PERIOD_COST`. Используются конечные `Decimal` без float, пересчёта,
+округления или quantize; `None` не очищает ячейку.
+
+Финальный XLSX содержит только числовые значения: worksheet formulas в output
+нет. Формулы остаются в неизменяемом source и внутреннем provenance. Если они
+есть, LibreOffice headless пересчитывает приватную временную копию с
+изолированным профилем; при нулевом числе формул этот шаг пропускается.
+Недоступность, timeout, ошибка, blank, text или non-finite результат отменяют
+публикацию. Исходник не изменяется; output публикуется атомарно через
+hard-link no-clobber и не перезаписывается. CLI в блоке 15.1 нет.
+
+Локальный Block 15.1 gate подтверждён: real-data suite — **7 passed in
+44.38s**; полный suite с real XLSX и slow performance — **514 passed in
+80.22s**. Ruff, format, clean sync, compileall и `git diff --check` — PASS.
+Реальный output: `D30 = 0`, формулы **14 → 0**, merged ranges — **128**;
+SHA-256, size и `mtime` исходных книг не изменились. READY/main/CI фиксируются
+только после зелёного Pull Request.
+
 ## Ограничения блоков 1–7
 
 Намеренно не реализованы:

@@ -1,0 +1,107 @@
+status: frozen
+work_id: document-optimizer-block-15-formula-materialization
+objective: "Материализовать формулы итогового XLSX в числовые значения без изменения оригинала"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block15"
+planning_parent_sha: c8406336211bbabeee9953f6526ba5fde6f0de50
+dependency_sha: c8406336211bbabeee9953f6526ba5fde6f0de50
+published_base_sha_ref: "commit containing this frozen manifest and all three remediation cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: c8406336211bbabeee9953f6526ba5fde6f0de50
+contract_versions:
+  public_api: ExcelWriterEngine-15.1
+  contract: ExcelWriterContract-15.1
+  target_input: TargetReport-9.0
+  calculation_input: CalculationContract-13.0
+  decision_input: QualityControlContract-14.0
+  result_output: WriteResult-15.0
+public_api: "write_target_report(source_path, output_path, decision, calculation_results, target_schema) -> WriteResult"
+formula_contract:
+  output_policy: "final worksheet cells contain no formulas; formula results are finite numeric literals"
+  cache_policy: "cached values may be inspected, but writable output is recalculated after approved changes"
+  recalculation: "LibreOffice headless on a private temporary copy with isolated profile; never shell=True"
+  no_formula_policy: "skip LibreOffice when worksheet formula count is zero"
+  provenance: "formula text remains only in immutable source and internal verification; never written to user output"
+  failure_policy: "unavailable, timeout, error, blank, text or non-finite result aborts publication"
+  calc_chain: "remove obsolete calcChain part, relationship and content-type declarations when present"
+preservation_contract:
+  source: "SHA-256, size, mtime_ns and inode unchanged"
+  output: "approved Decimal targets plus formula-to-number materialization only"
+  formatting: "cell styles, number formats, merged ranges, dimensions and workbook structure preserved"
+  atomicity: "temp, verification, source recheck and hard-link no-clobber publication"
+error_codes:
+  - FORMULA_RECALCULATION_UNAVAILABLE
+  - FORMULA_RECALCULATION_FAILED
+  - FORMULA_RESULT_NOT_NUMERIC
+  - FORMULA_MATERIALIZATION_FAILED
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+shared_paths_owner: integration
+shared_paths:
+  - knowledge
+production_scope:
+  - src/report_processor/excel_writer/__init__.py
+  - src/report_processor/excel_writer/engine.py
+  - src/report_processor/excel_writer/formula_materialization.py
+  - src/report_processor/excel_writer/models.py
+  - src/report_processor/excel_writer/ooxml.py
+test_scope:
+  - tests/unit/excel_writer/test_formula_materialization.py
+  - tests/unit/excel_writer/test_ooxml.py
+  - tests/contract/test_block15_excel_writer_contract.py
+  - tests/integration/test_block15_excel_writer.py
+  - tests/integration/test_block15_real_data.py
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+forbidden_paths:
+  - .env
+  - .github
+  - pyproject.toml
+  - uv.lock
+  - src/report_processor/cli.py
+  - src/report_processor/__init__.py
+  - src/report_processor/target_report
+  - src/report_processor/calculation
+  - src/report_processor/quality_control
+  - src/report_processor/matching
+  - src/report_processor/business_rules
+  - src/report_processor/analytics
+  - src/report_processor/storage
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+acceptance_commands:
+  - "uv sync --locked --extra dev"
+  - "uv run --extra dev ruff check ."
+  - "uv run --extra dev ruff format --check ."
+  - "uv run --extra dev pytest -q tests/unit/excel_writer tests/contract/test_block15_excel_writer_contract.py tests/integration/test_block15_excel_writer.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='/Users/x/Documents/Сооотношение документов/15-31/0784 согл окз/0784_КС-2_КС-3_КС-6а июль 2026 ч.2.xlsx' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='/Users/x/Documents/Сооотношение документов/пример нюанс 1/1ДОПОТЧЕТ  ИЮЛЬ_ИТОГ.xlsx' RUN_SLOW=1 uv run --extra dev pytest -q tests/integration/test_block15_real_data.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='/Users/x/Documents/Сооотношение документов/15-31/0784 согл окз/0784_КС-2_КС-3_КС-6а июль 2026 ч.2.xlsx' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='/Users/x/Documents/Сооотношение документов/пример нюанс 1/1ДОПОТЧЕТ  ИЮЛЬ_ИТОГ.xlsx' RUN_SLOW=1 uv run --extra dev pytest -q"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+real_data_contract:
+  source_sha256: 556454e5c087f1728c994b2888191644f04d29d48fbd2a29e9aa136cf1ab0698
+  target_sha256: 5b38ed6650aa5c1388c2757f3fa7aab54d012f2e54a9b0f6287f4badb1904194
+  target_sheet: "Лист"
+  target_formulas_before: 14
+  target_formulas_after: 0
+  target_merged_ranges: 128
+  matched_subset_coordinate: "Лист!D30"
+  matched_subset_decimal: "0"
+  source_files: "read-only; SHA-256, size and mtime unchanged"
+required_evidence:
+  - workbook without formulas does not launch LibreOffice
+  - formula without cached value is recalculated on temporary copy
+  - stale cache depending on an approved write is not reused
+  - text, blank, Excel error and non-finite formula results abort publication
+  - unavailable, failure and timeout cleanup leaves no output or temp
+  - skip decisions never recalculate or create output
+  - no-clobber and source identity remain enforced
+  - final worksheets contain zero formula elements
+  - former formula cells reopen as identical finite numeric values in both views
+  - real output writes D30 as 0, materializes 14 formulas, preserves 128 merges and both originals
+created_at: "2026-07-31T01:46:58+08:00"

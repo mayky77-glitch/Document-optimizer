@@ -1,0 +1,179 @@
+status: frozen
+work_id: document-optimizer-block-15
+objective: "Создать новый итоговый XLSX атомарно, не изменяя оригинал, формулы и форматирование"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block15"
+planning_parent_sha: 2edf6235462c3d1cfab0b31923a04069c98c12e1
+dependency_sha: 2edf6235462c3d1cfab0b31923a04069c98c12e1
+published_base_sha_ref: "commit containing this frozen manifest and all three task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 2edf6235462c3d1cfab0b31923a04069c98c12e1
+contract_versions:
+  public_api: ExcelWriterEngine-15.0
+  contract: ExcelWriterContract-15.0
+  target_input: TargetReport-9.0
+  calculation_input: CalculationContract-13.0
+  decision_input: QualityControlContract-14.0
+  result_output: WriteResult-15.0
+public_api: "write_target_report(source_path, output_path, decision, calculation_results, target_schema) -> WriteResult"
+public_models:
+  WriteStatus: "WRITTEN, SKIPPED_DECISION"
+  WrittenCell: "calculation_id, target_row_id, sheet_name, row_number, coordinate, logical_column, decimal_text"
+  WriteResult: "write_id, status, decision, source_file_id, source_sha256, output_path, output_sha256, written_cells, calculation_ids, warnings, contract_version"
+decision_contract:
+  ALLOW_WRITE: write
+  ALLOW_WRITE_WITH_WARNINGS: "write and add QUALITY_GATE_WARNINGS_PRESENT"
+  REQUIRE_MANUAL_REVIEW: "return SKIPPED_DECISION; never create or change output"
+  BLOCK_WRITE: "return SKIPPED_DECISION; never create or change output"
+write_contract:
+  allowed_columns:
+    CURRENT_PERIOD_QUANTITY: CalculationResult.quantity
+    CURRENT_PERIOD_COST: CalculationResult.cost
+  calculation_statuses:
+    - calculated
+    - calculated_with_warnings
+  none_policy: "None is not written and never clears a cell"
+  numeric_policy: "finite Decimal only; format(value, 'f'); never float, round, quantize or recalculate"
+  target_policy: "writable row, exact schema binding, matching row/coordinate and raw lexeme, no formula, no merged target, existing style"
+  duplicate_policy: "reject duplicate calculation_id, target_row_id or output coordinate"
+  empty_policy: "reject empty calculations or a plan with no non-None values for writable decisions"
+preservation_contract:
+  method: "targeted OOXML worksheet-cell update; do not use openpyxl.save"
+  package_entries: identical
+  unchanged_parts: byte-identical
+  formulas: "all formula elements, attributes, text, cached lexemes and calc properties unchanged"
+  formatting: "styles, themes, drawings, relationships, comments, merged ranges, filters, panes, dimensions and sheet metadata unchanged"
+  structure: "no rows, columns, sheets, merges or formulas created, deleted or moved"
+  supported_format: ".xlsx only; signed OOXML and .xlsm rejected"
+identity_contract:
+  source: "regular .xlsx; actual SHA-256, size, source_file_id and filename equal TargetReportSchema"
+  output: "different resolved path, .xlsx, absent before publication, never overwritten"
+  source_recheck: "inode/device, size, mtime_ns and SHA-256 unchanged immediately before publish"
+  write_id: "SHA-256 canonical JSON of contract, decision, source identity, sorted calculation IDs, sorted WrittenCell metadata and output SHA-256"
+atomic_contract:
+  - "create temp in output directory"
+  - "write complete package and fsync temp"
+  - "test package, reopen formula view, verify exact values and preservation"
+  - "recheck source identity"
+  - "publish no-clobber through hard link"
+  - "unlink temp and fsync output directory"
+  - "hash and reopen published output"
+  - "on failure remove temp; never touch source or existing output"
+error_codes:
+  - INVALID_SOURCE
+  - INVALID_OUTPUT_EXTENSION
+  - OUTPUT_EXISTS
+  - SOURCE_OUTPUT_IDENTITY
+  - INVALID_SCHEMA_STATUS
+  - SOURCE_FINGERPRINT_MISMATCH
+  - SOURCE_CHANGED_DURING_WRITE
+  - INVALID_CALCULATION_RESULT
+  - UNSUPPORTED_CALCULATION_STATUS
+  - EMPTY_WRITE_SET
+  - DUPLICATE_CALCULATION_ID
+  - DUPLICATE_TARGET_ROW_ID
+  - DUPLICATE_WRITE_COORDINATE
+  - TARGET_NOT_WRITABLE
+  - TARGET_IDENTITY_MISMATCH
+  - TARGET_SHEET_MISSING
+  - TARGET_COLUMN_BINDING_MISSING
+  - TARGET_CELL_MISSING
+  - TARGET_CELL_LEXEME_MISMATCH
+  - TARGET_CELL_IS_FORMULA
+  - TARGET_CELL_IS_MERGED
+  - INVALID_DECIMAL
+  - INVALID_XLSX_PACKAGE
+  - SIGNED_PACKAGE_UNSUPPORTED
+  - PRESERVATION_CHECK_FAILED
+  - REOPEN_FAILED
+  - ATOMIC_PUBLISH_FAILED
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv sync --locked --extra dev"
+  - "uv run --extra dev ruff check ."
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='/Users/x/Documents/Сооотношение документов/15-31/0784 согл окз/0784_КС-2_КС-3_КС-6а июль 2026 ч.2.xlsx' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='/Users/x/Documents/Сооотношение документов/пример нюанс 1/1ДОПОТЧЕТ  ИЮЛЬ_ИТОГ.xlsx' RUN_SLOW=1 uv run --extra dev pytest -q"
+baseline_results:
+  - "clean install: pass"
+  - "ruff: pass"
+  - "pytest: 490 passed"
+  - "origin/main CI 30564073064: success"
+  - "tested integration and origin/main tree SHA: 73e33f3dba94c9f3007d8276a53ce543b5f308f0"
+shared_paths_owner: integration
+shared_paths:
+  - .gitignore
+  - knowledge
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - pyproject.toml
+  - uv.lock
+production_scope:
+  - src/report_processor/excel_writer
+test_scope:
+  - tests/unit/excel_writer
+  - tests/fixtures/excel_writer
+  - tests/contract/test_block15_excel_writer_contract.py
+  - tests/integration/test_block15_excel_writer.py
+  - tests/integration/test_block15_real_data.py
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+forbidden_paths:
+  - .env
+  - cache
+  - logs
+  - output
+  - .github
+  - src/report_processor/target_report
+  - src/report_processor/calculation
+  - src/report_processor/quality_control
+  - src/report_processor/matching
+  - src/report_processor/business_rules
+  - src/report_processor/analytics
+  - src/report_processor/storage
+  - src/report_processor/cli.py
+  - src/report_processor/__init__.py
+  - pyproject.toml
+  - uv.lock
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+acceptance_commands:
+  - "uv sync --locked --extra dev"
+  - "uv run --extra dev ruff check ."
+  - "uv run --extra dev ruff format --check ."
+  - "uv run --extra dev pytest -q tests/unit/excel_writer"
+  - "uv run --extra dev pytest -q tests/contract/test_block15_excel_writer_contract.py"
+  - "uv run --extra dev pytest -q tests/integration/test_block15_excel_writer.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='/Users/x/Documents/Сооотношение документов/15-31/0784 согл окз/0784_КС-2_КС-3_КС-6а июль 2026 ч.2.xlsx' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='/Users/x/Documents/Сооотношение документов/пример нюанс 1/1ДОПОТЧЕТ  ИЮЛЬ_ИТОГ.xlsx' RUN_SLOW=1 uv run --extra dev pytest -q tests/integration/test_block15_real_data.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='/Users/x/Documents/Сооотношение документов/15-31/0784 согл окз/0784_КС-2_КС-3_КС-6а июль 2026 ч.2.xlsx' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='/Users/x/Documents/Сооотношение документов/пример нюанс 1/1ДОПОТЧЕТ  ИЮЛЬ_ИТОГ.xlsx' RUN_SLOW=1 uv run --extra dev pytest -q"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+real_data_contract:
+  source_sha256: 556454e5c087f1728c994b2888191644f04d29d48fbd2a29e9aa136cf1ab0698
+  target_sha256: 5b38ed6650aa5c1388c2757f3fa7aab54d012f2e54a9b0f6287f4badb1904194
+  target_sheet: "Лист"
+  target_cells: 1411
+  target_formulas: 14
+  target_merged_ranges: 128
+  full_decision: REQUIRE_MANUAL_REVIEW
+  full_blocking_issues: 0
+  matched_subset_decision: ALLOW_WRITE
+  matched_subset_coordinate: "Лист!D30"
+  matched_subset_decimal: "0"
+  source_files: "read-only; SHA-256, size and mtime must remain unchanged"
+required_evidence:
+  - all four decisions without output on manual/block
+  - only current-period quantity and cost cells are writable
+  - no recalculation, rounding, float conversion or clearing by None
+  - duplicate, identity, raw-lexeme, formula and merged-cell rejection
+  - formulas, cached lexemes, styles, merged ranges and package structure preserved
+  - temp, verification and publish failure injection leaves no output
+  - existing output is never overwritten
+  - deterministic reverse-order result
+  - real full pipeline skips write and matched subset writes only temporary output
+  - real source and target XLSX SHA-256, size and mtime unchanged
+created_at: "2026-07-31T01:20:00+08:00"

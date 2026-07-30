@@ -130,6 +130,28 @@ digest `c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`, вх�
 не изменились. Полный integration suite: **490 passed**; Ruff, format, clean
 install, compileall и `git diff --check` — PASS. READY/main требует зелёного PR.
 
+## Блок 15.1 — numeric-only formula materialization
+
+`ExcelWriterContract-15.1` допускает запись только для двух allow decisions;
+manual review/block возвращают `SKIPPED_DECISION`. Записываются только
+`CURRENT_PERIOD_QUANTITY` и `CURRENT_PERIOD_COST` из конечных `Decimal`, без
+float, пересчёта, округления, quantize или очистки через `None`.
+
+Реализация использует targeted OOXML update без `openpyxl.save`. Output содержит
+только numeric literals: исходные worksheet formulas остаются в immutable source
+и internal provenance, но не попадают в пользовательский отчёт. При наличии
+формул LibreOffice headless пересчитывает private temp copy с isolated profile;
+при нуле формул запуск пропускается. Unavailable, timeout, error, blank, text и
+non-finite result блокируют publication. Source identity, atomic temp verification
+и hard-link no-clobber сохраняются; CLI нет.
+
+Локальный evidence Block 15.1: real-data suite — **7 passed in 44.38s**;
+полный suite с real XLSX и slow performance — **514 passed in 80.22s**.
+Ruff, format, clean sync, compileall и `git diff --check` — PASS. Реальный
+output содержит `D30 = 0`, формулы **14 → 0**, merged ranges — **128**;
+SHA-256, size и `mtime` обеих исходных книг не изменились. READY/main/CI
+требуют зелёного Pull Request.
+
 ## Блок 12 — детерминированный matching engine
 
 Реализованы `MatchingContract-12.0` и `MatchingEngine-12.0` в отдельном
