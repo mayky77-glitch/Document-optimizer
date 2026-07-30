@@ -1,0 +1,85 @@
+status: frozen
+work_id: document-optimizer-block-11
+objective: "Создать воспроизводимый аналитический слой DuckDB для блоков 8–10"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-duckdb"
+planning_parent_sha: 654c3a4c53971f2e9ae617a36f4089315ef26d36
+dependency_sha: 654c3a4c53971f2e9ae617a36f4089315ef26d36
+published_base_sha_ref: "commit containing this frozen manifest and all three task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 654c3a4c53971f2e9ae617a36f4089315ef26d36
+contract_versions:
+  public_api: AnalyticalStore-11.0
+  database_schema: AnalyticalSchema-1
+  source_input: "NormalizedSourceRow@654c3a4"
+  target_input: TargetReportRow-9.0
+  rules_input: "ValidatedRuleSet-10.0 + RuleConfigurationVersion-1.0"
+  query: AnalyticalQuery-11.0
+  diagnostics: AnalyticalDiagnostics-11.0
+identity_contracts:
+  source_primary_key: source_row_id
+  source_business_group: line_id
+  target_primary_key: "sha256(target_source_id + target_fingerprint + sheet_name + row_number)"
+  rule_set_primary_key: content_hash
+  duplicate_identical: unchanged
+  duplicate_conflicting: controlled-error-and-full-rollback
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv run ruff check ."
+  - "RUN_SLOW=1 uv run pytest -q"
+baseline_results:
+  - "ruff: pass"
+  - "pytest: 442 passed"
+  - "origin/main CI 30550143718: success"
+shared_paths_owner: integration
+shared_paths:
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - pyproject.toml
+  - uv.lock
+  - knowledge
+production_scope:
+  - src/report_processor/analytics
+test_scope:
+  - tests/unit/analytics
+  - tests/contract/test_block11_analytical_contract.py
+  - tests/integration/test_block11_analytical_store.py
+  - tests/fixtures/analytics
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+forbidden_paths:
+  - .env
+  - cache
+  - logs
+  - output
+  - src/report_processor/storage
+  - src/report_processor/normalization
+  - src/report_processor/target_report
+  - src/report_processor/business_rules
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+acceptance_commands:
+  - "uv run ruff check ."
+  - "uv run pytest tests/unit/analytics tests/contract/test_block11_analytical_contract.py tests/integration/test_block11_analytical_store.py"
+  - "uv run pytest tests/unit/storage tests/contract/test_duckdb_storage_contract.py"
+  - "RUN_SLOW=1 uv run pytest -q"
+  - "uv sync --locked"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+required_evidence:
+  - atomic rollback and conflicting-identifier rejection
+  - parameterized SQL injection probes
+  - deterministic load query and diagnostic export
+  - line_id collision preservation
+  - Decimal fidelity without float or implicit rounding
+  - provenance classification status and warning completeness
+  - schema corruption and newer-version rejection
+  - existing DuckDBStore v1 regression
+  - real block 8 and 9 read-only data load with source SHA unchanged
+created_at: "2026-07-30T22:15:00+08:00"

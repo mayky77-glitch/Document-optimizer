@@ -12,6 +12,5 @@ updated: 2026-07-30
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
 - [[../ORCHESTRATION|Orchestration rules]]
-- [[../tasks/document-optimizer-block-09-production|Block 9 production]]
-- [[../tasks/document-optimizer-block-10-production|Block 10 production]]
-- [[../tasks/document-optimizer-blocks-09-10-tests|Blocks 9–10 tests]]
+- [[../tasks/document-optimizer-block-11-production|Block 11 production]]
+- [[../tasks/document-optimizer-block-11-tests|Block 11 tests]]
