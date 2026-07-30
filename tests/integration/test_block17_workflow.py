@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 from openpyxl import Workbook
+
+from report_processor.audit import AuditJournal, AuditStage, AuditState
 from report_processor.processing import (
     DefaultProcessingAdapters,
     ProcessingContext,
@@ -17,8 +19,6 @@ from report_processor.processing import (
     ProcessReportRequest,
     StageOutcome,
 )
-
-from report_processor.audit import AuditJournal, AuditStage, AuditState
 
 
 class RecordingAdapters:

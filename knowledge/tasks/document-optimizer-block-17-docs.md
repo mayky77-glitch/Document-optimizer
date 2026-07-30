@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-17-docs
-status: draft
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-block-17
@@ -12,8 +12,8 @@ agent_role: documentation-agent
 owner: "block-17-docs"
 profile: L0
 routing_grade: P1
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 2
+state_fingerprint: "feature:932920f58146a51350f2de8b5d1f1426e7953678;integration:ee2d06ddd01cbda1925bd73ee452cf0a79786716"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Bounded factual documentation from frozen contracts and accepted Block 16 evidence."
@@ -21,9 +21,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-luna
 reasoning_effort: low
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: completed
+actual_model: gpt-5.6-luna
+actual_reasoning_effort: low
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-31
@@ -66,7 +66,7 @@ acceptance_commands:
   - "git diff --check -- README.md docs/ARCHITECTURE.md docs/IMPLEMENTATION_REVIEW.md docs/PROJECT_STATUS.md"
 tags:
   - "task/implementation"
-  - "status/draft"
+  - "status/done"
   - "layer/backend"
   - "risk/medium"
 links:

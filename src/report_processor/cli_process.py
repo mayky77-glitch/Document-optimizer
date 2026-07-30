@@ -29,6 +29,11 @@ def add_process_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--non-strict", action="store_true")
     parser.add_argument("--cache-directory", type=Path)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--log-level",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        default="INFO",
+    )
 
 
 def run_process(args: argparse.Namespace, adapters: object | None = None) -> int:

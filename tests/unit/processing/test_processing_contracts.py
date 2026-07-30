@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, fields
 
 import pytest
+
 from report_processor.processing import (
     PROCESSING_CONTRACT_VERSION,
     PROCESSING_ENGINE_VERSION,

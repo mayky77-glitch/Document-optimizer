@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-17-tests
-status: draft
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-block-17
@@ -12,8 +12,8 @@ agent_role: tester
 owner: "block-17-tests"
 profile: L1
 routing_grade: P3
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 6
+state_fingerprint: "feature:d4cf41c8e301be5747ead969616e2759763c9d2c;integration:b69c9dd08333e5e05bbd57ce5c195de53b7607f5"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Independent contract, CLI, mode, resume and real-data verification."
@@ -21,9 +21,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: medium
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: completed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-31
@@ -76,7 +76,7 @@ acceptance_commands:
   - "uv run --extra dev pytest -q tests/unit/processing tests/contract/test_block17_processing_contract.py tests/integration/test_block17_workflow.py tests/integration/test_block17_cli.py tests/integration/test_block17_bulk_resume.py"
 tags:
   - "task/implementation"
-  - "status/draft"
+  - "status/done"
   - "layer/backend"
   - "risk/high"
 links:

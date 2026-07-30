@@ -204,9 +204,10 @@ append p95 **0.072 ms**; real files unchanged.
 Проверены append-only chain/transitions, redacted deterministic exports,
 cross-store recovery, feedback только после `EXPORT_VERIFIED`, compaction,
 no-clobber и invalid-output cleanup. Block 15 принят: PR #15, CI `30569460356`,
-main CI `30569606304`, 514 passed/real 7 passed. Block 16 PR/main acceptance
-ещё не заявляются. Block 16 принят: PR #16, PR CI `30572493480`, main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`, post-merge main CI `30572598426` — success.
+main CI `30569606304`, 514 passed/real 7 passed. Block 16 принят: PR #16,
+PR CI `30572493480`, main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`,
+post-merge main CI `30572598426` — success.
 
-## Блок 17 — processing controller (in progress)
+## Блок 17 — processing controller (local READY)
 
-Frozen API: `process_report`, `process_reports` и CLI `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без мутаций, dry-run без публикации, write с QC gate; states `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`; exit codes `0`–`6`. Block 17 tests/PR/CI здесь не заявляются до фактического выполнения.
+Frozen API: `process_report`, `process_reports` и CLI `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без мутаций, dry-run без публикации, write с QC gate; states `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`; exit codes `0`–`6`. Focused **21 passed**; полный real+slow suite **569 passed in 92.84s**. Реальный inspect-контроллер прошёл, обе XLSX неизменны. PR/main/CI ещё не заявляются.

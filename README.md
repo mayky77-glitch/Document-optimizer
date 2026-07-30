@@ -273,9 +273,16 @@ raw cells, formula text и document content в отчёт не копируют�
 фиксируются только после успешного Pull Request.
 Входные XLSX не изменились. Block 16 принят в `main`: PR #16, PR CI run `30572493480` и post-merge main CI `30572598426` успешны; main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`. Полный real+slow suite: **547 passed in 89.32s**.
 
-## Блок 17: processing controller (in progress)
+## Блок 17: processing controller (local READY)
 
-Frozen contracts: `ProcessingContract-17.0`, `ProcessingEngine-17.0`, `ProcessingState-17.0`. API: `process_report(request) -> ProcessingResult`, `process_reports(requests) -> tuple[ProcessingResult, ...]`; CLI: `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без DuckDB/XLSX output, dry-run без Block 15 publication, write с QC-gated публикацией. States: `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`. Exit codes: 0–6 для success, warnings, invalid input, manual review, quality blocked, write/verification failed и controlled internal error. Block 17 in progress до интеграционного принятия.
+Frozen contracts: `ProcessingContract-17.0`, `ProcessingEngine-17.0`, `ProcessingState-17.0`. API: `process_report(request) -> ProcessingResult`, `process_reports(requests) -> tuple[ProcessingResult, ...]`; CLI: `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без DuckDB/XLSX output, dry-run без Block 15 publication, write с QC-gated публикацией. States: `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`. Exit codes: 0–6 для success, warnings, invalid input, manual review, quality blocked, write/verification failed и controlled internal error.
+
+Локальный gate: focused **21 passed**, полный real+slow suite **569 passed in
+92.84s**; реальный `process --mode inspect` прошёл контроллер Blocks 1–16.
+SHA-256 исходной и целевой XLSX остались
+`556454e5c087f1728c994b2888191644f04d29d48fbd2a29e9aa136cf1ab0698` и
+`5b38ed6650aa5c1388c2757f3fa7aab54d012f2e54a9b0f6287f4badb1904194`.
+PR/main/CI фиксируются только после фактического принятия.
 
 ## Блок 15.1: numeric-only XLSX output
 

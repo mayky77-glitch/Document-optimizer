@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-17-production
-status: draft
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-block-17
@@ -12,8 +12,8 @@ agent_role: developer
 owner: "block-17-production"
 profile: L2
 routing_grade: P4
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 3
+state_fingerprint: "feature:37858d9eb300ef7edcd9f6c20c3415cdbdd0a1b4;integration:46eb13c234c677a6ed663b4908fc98080d4bf052"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Difficult multi-module controller, deterministic resume/cache and safe mode boundaries."
@@ -21,11 +21,11 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
-fallback_reason: ""
-model_fallback: false
+launch_status: completed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
+fallback_reason: "Persistent developer role used its configured medium effort; root integration completed focused and full high-risk gates."
+model_fallback: true
 last_verified: 2026-07-31
 updated: 2026-07-31
 card_path: knowledge/tasks/document-optimizer-block-17-production.md
@@ -89,7 +89,7 @@ acceptance_commands:
   - "uv run python -m compileall -q src/report_processor/processing src/report_processor/cli_process.py"
 tags:
   - "task/implementation"
-  - "status/draft"
+  - "status/done"
   - "layer/backend"
   - "risk/high"
 links:

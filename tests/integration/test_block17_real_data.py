@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 
 import pytest
-from report_processor.processing import ProcessingEngine, ProcessReportRequest, StageOutcome
 
 from fixtures.processing.builders import fingerprint
+from report_processor.processing import ProcessingEngine, ProcessReportRequest, StageOutcome
 
 
 class ReadOnlyAdapters:

@@ -414,7 +414,8 @@ Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 pass
 
 ## Блок 17
 
-- **Статус:** in progress; интеграционное принятие не выполнено.
+- **Статус:** local READY; PR/main acceptance ещё не выполнены.
 - **Контракты:** `ProcessingContract-17.0`, `ProcessingEngine-17.0`, `ProcessingState-17.0`.
 - **API/CLI:** `process_report`, `process_reports`; `report-processor process --mode {inspect,dry-run,write}`.
 - **Режимы/состояния/коды:** inspect без output, dry-run без публикации, write с QC gate; states frozen contract; exit codes `0`–`6`.
+- **Evidence:** focused **21 passed**; полный real+slow suite **569 passed in 92.84s**; реальный inspect-контроллер прошёл, SHA обеих XLSX неизменны.

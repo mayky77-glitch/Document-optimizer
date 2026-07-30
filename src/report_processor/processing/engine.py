@@ -322,7 +322,12 @@ def _read_cache(request, run_key, snapshots) -> ProcessingResult | None:
             raise _CacheMismatchError
         if payload["rules_hash"] != _rules_hash(request):
             raise _CacheMismatchError
-        if payload["boundary"] not in {"DATA_COMMITTED", "EXPORT_PREPARED", "EXPORT_VERIFIED"}:
+        if payload["boundary"] not in {
+            "PENDING",
+            "DATA_COMMITTED",
+            "EXPORT_PREPARED",
+            "EXPORT_VERIFIED",
+        }:
             raise _CacheMismatchError
         _validate_audit_resume(request, payload)
         return _result(
