@@ -19,6 +19,8 @@ class AdminJob:
     status: str = "ready"
     output: Path | None = None
     review: list[dict[str, str]] = field(default_factory=list)
+    errors: tuple[str, ...] = ()
+    mode: str = "write"
 
 
 class AdminPanelService:
@@ -28,7 +30,7 @@ class AdminPanelService:
         self, workspace_root: Path, execute: Callable[[AdminJob], Path | None] | None = None
     ):
         self.workspace_root = workspace_root
-        self.execute = execute
+        self.execute = execute or _default_execute
         self.jobs: dict[str, AdminJob] = {}
 
     def create_job(
@@ -44,6 +46,8 @@ class AdminPanelService:
         source_bytes, target_bytes = source_content, target_content
         _validate_upload(source_name, source_bytes)
         _validate_upload(target_name, target_bytes)
+        if not stage.strip() or mode not in {"inspect", "dry-run", "write"}:
+            raise ValueError("invalid request")
         job_id = secrets.token_urlsafe(18)
         directory = self.workspace_root / job_id
         directory.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -51,18 +55,19 @@ class AdminPanelService:
         target = directory / f"target{Path(target_name).suffix.lower()}"
         source.write_bytes(source_bytes)
         target.write_bytes(target_bytes)
-        job = AdminJob(job_id, directory, source, target, stage)
+        job = AdminJob(job_id, directory, source, target, stage, mode=mode)
         self.jobs[job_id] = job
-        return job
+        return self.run(job_id)
 
     def run(self, job_id: str) -> AdminJob:
         job = self.get(job_id)
         job.status = "running"
         try:
             job.output = self.execute(job) if self.execute else None
-            job.status = "review" if job.review else "complete"
+            job.status = "complete" if job.output else "failed"
         except Exception:
             job.status = "failed"
+            job.errors = ("PROCESSING_FAILED",)
         return job
 
     def decide(self, job_id: str, relation_id: str, decision: str) -> AdminJob:
@@ -95,3 +100,25 @@ def _validate_upload(name: str, content: bytes) -> None:
         raise ValueError("only Excel workbooks are accepted")
     if not content:
         raise ValueError("empty upload")
+    if len(content) > 256 * 1024 * 1024:
+        raise ValueError("upload too large")
+
+
+def _default_execute(job: AdminJob) -> Path | None:
+    from report_processor.processing import ProcessMode, ProcessReportRequest, process_report
+
+    output = job.directory / "result.xlsx"
+    request = ProcessReportRequest(
+        source_path=job.source,
+        target_path=job.target,
+        mode=ProcessMode(job.mode),
+        strict=False,
+        output_path=output if job.mode == "write" else None,
+        stage=job.stage,
+        options={"stage_rag": True, "top_k": 3},
+    )
+    result = process_report(request)
+    if result.exit_code.value > 1:
+        job.errors = tuple(result.errors) or ("PROCESSING_FAILED",)
+        return None
+    return output if output.is_file() else None

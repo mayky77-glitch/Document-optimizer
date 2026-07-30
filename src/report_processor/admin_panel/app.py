@@ -59,12 +59,16 @@ def create_app(service: AdminPanelService | None = None, workspace_root: Path | 
 
     async def download(request):
         try:
-            job = panel.get(request.path_params["job_id"])
-            if job.output and job.output.is_file():
+            path, filename = panel.get_result(request.path_params["job_id"])
+            if path.is_file():
                 return Response(
-                    job.output.read_bytes(),
+                    path.read_bytes(),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": "attachment; filename=result.xlsx"},
+                    headers={
+                        "Content-Disposition": f"attachment; filename={filename}",
+                        "X-Content-Type-Options": "nosniff",
+                        "Cache-Control": "no-store",
+                    },
                 )
         except KeyError:
             pass
