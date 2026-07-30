@@ -1,0 +1,56 @@
+status: frozen
+work_id: document-optimizer-blocks-09-10
+objective: "Создать адаптер целевого отчёта и валидируемую конфигурацию бизнес-правил"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-duckdb"
+planning_parent_sha: c04008c51d39996788b0bcb9d6465e280d01938c
+dependency_sha: c04008c51d39996788b0bcb9d6465e280d01938c
+published_base_sha_ref: "commit containing this frozen manifest and all four task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: c04008c51d39996788b0bcb9d6465e280d01938c
+contract_versions:
+  block_9_input: "target-xlsx + accepted WorkbookSchema shape at c04008c"
+  block_9_output: "TargetReportRow-9.0 + TargetReportSchema-9.0"
+  block_9_serialization: target-report-json-9.0
+  block_10_input: business-rules-json-yaml-10.0
+  block_10_output: "ValidatedRuleSet-10.0 + RuleConfigurationVersion-1.0"
+  block_10_canonical: business-rules-json-10.0
+wave: 1
+max_parallel: 3
+max_spawns: 8
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv run ruff check ."
+  - "uv run pytest -q"
+baseline_results:
+  - "ruff: pass"
+  - "pytest: 413 passed, 1 skipped"
+  - "origin/main CI 30546977156: success"
+shared_paths_owner: integration
+shared_paths:
+  - src/report_processor/cli.py
+  - src/report_processor/cli_target_report.py
+  - src/report_processor/cli_business_rules.py
+  - src/report_processor/__init__.py
+  - pyproject.toml
+  - uv.lock
+  - knowledge
+forbidden_paths:
+  - .env
+  - cache
+  - logs
+  - output
+  - src/report_processor/storage
+  - src/report_processor/normalization
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+data_classification: restricted
+acceptance_commands:
+  - "uv run ruff check ."
+  - "uv run pytest tests/unit/target_report tests/unit/business_rules tests/contract/test_block5_to_block9_contract.py tests/contract/test_block10_public_contract.py"
+  - "uv run pytest tests/integration/test_target_report_immutability.py tests/integration/test_read_target_report_cli.py tests/integration/test_validate_business_rules_cli.py"
+  - "uv run pytest -q"
+  - "uv lock --check"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+created_at: "2026-07-30T21:30:00+08:00"

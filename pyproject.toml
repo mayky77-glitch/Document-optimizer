@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Project Team" }]
-dependencies = ["duckdb>=1.2,<2", "openpyxl>=3.1,<4"]
+dependencies = ["duckdb>=1.2,<2", "openpyxl>=3.1,<4", "pyyaml>=6.0.2,<7"]
 
 [project.optional-dependencies]
 dev = [
