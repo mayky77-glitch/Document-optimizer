@@ -267,6 +267,7 @@ def test_default_export_includes_more_than_iter_rows_default_limit(tmp_path: Pat
     with DuckDBStore(tmp_path / "rows.duckdb") as store:
         store.write_rows(rows)
         assert len(list(store.iter_rows())) == 1_000
+        assert len(list(store.iter_all_rows())) == 1_001
         exported = store.export_jsonl(output_path)
 
     lines = output_path.read_text(encoding="utf-8").splitlines()
@@ -487,16 +488,16 @@ def test_nonpristine_metadata_without_schema_version_is_rejected(tmp_path: Path)
 
 
 def _storage_columns() -> tuple[str, ...]:
-    from report_processor.storage.duckdb_store import _ROW_COLUMNS
+    from report_processor.storage.schema import ROW_COLUMNS
 
-    return _ROW_COLUMNS
+    return ROW_COLUMNS
 
 
 def _storage_column_definition(name: str) -> str:
-    from report_processor.storage.duckdb_store import _COLUMN_SPEC
+    from report_processor.storage.schema import COLUMN_SPEC
 
     data_type, nullable = next(
-        (data_type, nullable) for key, data_type, nullable in _COLUMN_SPEC if key == name
+        (data_type, nullable) for key, data_type, nullable in COLUMN_SPEC if key == name
     )
     if name == "row_id":
         return f"{name} {data_type} PRIMARY KEY"

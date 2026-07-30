@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -184,7 +184,13 @@ def _decimal(payload: dict[str, Any], key: str) -> Decimal | None:
         return None
     if not isinstance(value, str):
         raise TypeError(f"{key} должен быть decimal-строкой или null")
-    return Decimal(value)
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{key} содержит некорректное decimal-значение") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"{key} должен содержать конечное decimal-значение")
+    return parsed
 
 
 def _string_tuple(value: Any) -> tuple[str, ...]:
