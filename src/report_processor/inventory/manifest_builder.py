@@ -19,9 +19,7 @@ def _sorted_counter(values: list[str]) -> dict[str, int]:
     return dict(sorted(Counter(values).items()))
 
 
-def build_manifest_summary(
-    entries: list[FileManifestEntry], source_kind: str
-) -> ManifestSummary:
+def build_manifest_summary(entries: list[FileManifestEntry], source_kind: str) -> ManifestSummary:
     """Построить детерминированную агрегированную сводку по записям."""
 
     total_uncompressed = sum(entry.size_bytes or 0 for entry in entries)
@@ -52,8 +50,7 @@ def build_manifest_summary(
         total_uncompressed_size=total_uncompressed if source_kind == "zip" else None,
         compression_ratio=compression_ratio,
         entries_with_document_index=sum(
-            entry.document_index is not None
-            and entry.document_index_status == IndexStatus.OK.value
+            entry.document_index is not None and entry.document_index_status == IndexStatus.OK.value
             for entry in entries
         ),
         entries_without_document_index=sum(
@@ -82,6 +79,18 @@ def build_manifest_summary(
                 if entry.document_index is not None
                 and entry.document_index_status == IndexStatus.OK.value
             ]
+        ),
+        entries_with_period=sum(entry.document_period is not None for entry in entries),
+        entries_without_period=sum(entry.document_period is None for entry in entries),
+        entries_with_ambiguous_period=sum(
+            entry.document_period_status == "MULTIPLE_PERIOD_CANDIDATES" for entry in entries
+        ),
+        entries_with_revision=sum(entry.document_revision is not None for entry in entries),
+        files_by_period=_sorted_counter(
+            [entry.document_period.normalized for entry in entries if entry.document_period]
+        ),
+        files_by_revision_status=_sorted_counter(
+            [entry.document_revision.status for entry in entries if entry.document_revision]
         ),
     )
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from pathlib import PurePosixPath
 
 from report_processor.domain.models import FileManifest
 from report_processor.domain.statuses import IndexStatus, IndexWarning
@@ -41,8 +42,9 @@ def enrich_manifest_with_document_indexes(
             continue
 
         if use_parent_paths:
+            relative = PurePosixPath(entry.relative_path.replace("\\", "/"))
             result = extract_index_from_path(
-                entry.relative_path,
+                str(relative.parent / entry.filename),
                 include_parent_parts=True,
                 allow_loose=allow_loose,
             )
@@ -54,16 +56,15 @@ def enrich_manifest_with_document_indexes(
         entry.document_index_candidates = [
             candidate.document_index for candidate in result.candidates
         ]
-        entry.document_index_confidence = (
-            max((candidate.confidence for candidate in result.candidates), default=None)
+        entry.document_index_confidence = max(
+            (candidate.confidence for candidate in result.candidates), default=None
         )
         entry.document_index_warnings = list(result.warnings)
         LOGGER.debug("Индекс для %s: %s", entry.filename, result.status)
 
     enriched.summary = build_manifest_summary(enriched.entries, enriched.source_kind)
     LOGGER.info(
-        "Обработано: %d; найдено: %d; "
-        "неоднозначно: %d; низкая уверенность: %d",
+        "Обработано: %d; найдено: %d; неоднозначно: %d; низкая уверенность: %d",
         enriched.summary.total_entries,
         enriched.summary.entries_with_document_index,
         enriched.summary.entries_with_ambiguous_index,
