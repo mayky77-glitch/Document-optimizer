@@ -8,17 +8,18 @@ from typing import Any
 from ..models import CachedWorksheet
 from ..normalization import clean_text
 
+
 def _xlsb_cell_value(cell: Any) -> Any:
     """Возвращает значение ячейки pyxlsb с поддержкой API 1.0/1.1."""
     try:
         is_date_formatted = bool(getattr(cell, "is_date_formatted", False))
-    except Exception:
+    except Exception:  # noqa: BLE001 - third-party descriptors may raise arbitrary errors.
         is_date_formatted = False
 
     if is_date_formatted:
         try:
             date_value = getattr(cell, "date_value", None)
-        except Exception:
+        except Exception:  # noqa: BLE001 - third-party descriptors may raise arbitrary errors.
             date_value = None
         if date_value is not None:
             return date_value

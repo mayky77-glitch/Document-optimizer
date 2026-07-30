@@ -5,15 +5,25 @@ from __future__ import annotations
 from typing import Any
 
 from ..constants import (
-    GENERIC_DIGITS_RE, GENERIC_FOOTER_PHRASES, GENERIC_FOOTER_STARTS,
-    GENERIC_HEADER_TERMS, GENERIC_NO_NUMBER_RE, GENERIC_NUMBER_LABEL_RE,
-    GENERIC_NUMBER_WITH_SUFFIX_RE, GENERIC_TITLE_MARKERS,
+    GENERIC_DIGITS_RE,
+    GENERIC_FOOTER_PHRASES,
+    GENERIC_FOOTER_STARTS,
+    GENERIC_HEADER_TERMS,
+    GENERIC_NO_NUMBER_RE,
+    GENERIC_NUMBER_LABEL_RE,
+    GENERIC_NUMBER_WITH_SUFFIX_RE,
+    GENERIC_TITLE_MARKERS,
 )
 from ..dataframe import build_typed_dataframe
 from ..normalization import (
-    clean_text, is_small_integer, is_structural_empty, make_unique_headers,
-    normalized, to_float,
+    clean_text,
+    is_small_integer,
+    is_structural_empty,
+    make_unique_headers,
+    normalized,
+    to_float,
 )
+
 
 def is_number_like(value: Any) -> bool:
     return to_float(value) is not None
@@ -317,13 +327,7 @@ def is_generic_footer_row(values: list[Any]) -> bool:
         return True
 
     # Отдельная строка «М.П.» или «должность / подпись».
-    if len(norms) <= 4 and any(
-        norm in {"м п", "должность", "подпись"}
-        for norm in norms
-    ):
-        return True
-
-    return False
+    return bool(len(norms) <= 4 and any(norm in {"м п", "должность", "подпись"} for norm in norms))
 
 def find_last_nonempty_row_in_columns(
     worksheet: Any,
@@ -372,7 +376,7 @@ def build_generic_trimmed_dataframe(
     min_column = int(detected["min_column"])
     max_column = int(detected["max_column"])
 
-    active_columns = set(int(column) for column in detected["headers"])
+    active_columns = {int(column) for column in detected["headers"]}
     for column_number in range(min_column, max_column + 1):
         for row_number in range(
             header_end + 1,

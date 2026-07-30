@@ -25,8 +25,7 @@ def _load_package() -> None:
 
 
 _load_package()
-from excel_to_tad.__main__ import main  # noqa: E402
-
+from excel_to_tad.__main__ import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

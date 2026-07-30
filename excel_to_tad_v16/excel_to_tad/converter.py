@@ -238,7 +238,7 @@ def convert(args: argparse.Namespace) -> Path:
                 if tad_path is not None:
                     print(f"{prefix} Открывай в Tad: {tad_path.name}")
 
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate failures per worksheet.
                 parquet_path.unlink(missing_ok=True)
                 parquet_path.with_suffix(".tad").unlink(missing_ok=True)
                 if csv_path is not None:

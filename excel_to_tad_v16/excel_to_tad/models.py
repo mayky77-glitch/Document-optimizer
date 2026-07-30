@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
+
 @dataclass(frozen=True, slots=True)
 class CachedCell:
     value: Any
@@ -20,7 +21,7 @@ class CachedWorksheet:
     ячейки с реальными значениями, а не форматированный пустой диапазон.
     """
 
-    __slots__ = ("title", "_rows", "max_row", "max_column")
+    __slots__ = ("_rows", "max_column", "max_row", "title")
 
     def __init__(
         self,

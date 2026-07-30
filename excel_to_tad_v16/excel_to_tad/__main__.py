@@ -27,7 +27,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nОперация отменена.", file=sys.stderr)
         return 130
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI boundary reports unexpected failures.
         message = f"{type(exc).__name__}: {exc}"
         print(f"\nОшибка: {message}", file=sys.stderr)
         return 1

@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from ..models import CachedWorksheet
-from .xlsx_reader import cache_read_only_worksheet
 from .xlsb_reader import cache_xlsb_workbook_sheet, open_xlsb_workbook
+from .xlsx_reader import cache_read_only_worksheet
+
 
 @dataclass(slots=True)
 class WorkbookSource:

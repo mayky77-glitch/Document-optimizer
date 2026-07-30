@@ -7,10 +7,16 @@ from typing import Any
 
 from .models import CachedWorksheet
 from .normalization import (
-    infer_column_role, is_boolean_header, is_text_identifier_header,
-    make_unique_headers, parse_boolean_value, stringify_cell,
-    stringify_identifier_cell, to_float,
+    infer_column_role,
+    is_boolean_header,
+    is_text_identifier_header,
+    make_unique_headers,
+    parse_boolean_value,
+    stringify_cell,
+    stringify_identifier_cell,
+    to_float,
 )
+
 
 def build_typed_dataframe(
     polars: Any,

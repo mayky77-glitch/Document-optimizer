@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .constants import SAFE_FILENAME_INVALID_RE, WHITESPACE_RE
 
+
 def safe_filename(value: str, fallback: str = "sheet") -> str:
     text = unicodedata.normalize("NFKC", str(value)).strip()
     text = SAFE_FILENAME_INVALID_RE.sub("_", text)

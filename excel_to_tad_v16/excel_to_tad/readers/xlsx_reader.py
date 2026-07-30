@@ -8,6 +8,7 @@ from typing import Any
 from ..models import CachedWorksheet
 from ..normalization import clean_text
 
+
 def cache_read_only_worksheet(worksheet: Any) -> CachedWorksheet:
     """
     Читает XML текущего листа один раз.
@@ -43,14 +44,13 @@ def cache_read_only_worksheet(worksheet: Any) -> CachedWorksheet:
 
                     column_number = int(cell["column"])
                     sparse[column_number] = value
-                    if column_number > actual_max_column:
-                        actual_max_column = column_number
+                    actual_max_column = max(actual_max_column, column_number)
 
                 if sparse:
                     rows[int(row_number)] = sparse
                     actual_max_row = int(row_number)
 
-    except Exception as internal_error:
+    except Exception as internal_error:  # noqa: BLE001 - fallback guards private API changes.
         # Совместимый запасной путь на случай изменения внутренних API openpyxl.
         # Он всё равно читает лист только один раз, но может быть тяжелее для
         # файлов с искусственно раздутым используемым диапазоном.

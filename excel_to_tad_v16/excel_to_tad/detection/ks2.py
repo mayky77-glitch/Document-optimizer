@@ -7,13 +7,23 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from ..constants import (
-    ALL_KS2_KEYS, FIELD_MIN_SCORE, HEADER_PROTOTYPES,
-    KS2_EXCLUDED_TITLE_MARKERS, KS2_SHEET_RE, LOGICAL_KEYS, TARGET_HEADERS,
+    ALL_KS2_KEYS,
+    FIELD_MIN_SCORE,
+    HEADER_PROTOTYPES,
+    KS2_EXCLUDED_TITLE_MARKERS,
+    KS2_SHEET_RE,
+    LOGICAL_KEYS,
+    TARGET_HEADERS,
 )
 from ..normalization import (
-    clean_text, compact_normalized, is_small_integer, normalized,
-    positive_integer, to_float,
+    clean_text,
+    compact_normalized,
+    is_small_integer,
+    normalized,
+    positive_integer,
+    to_float,
 )
+
 
 def sheet_name_has_ks2(sheet_name: str) -> bool:
     """Распознаёт кириллические и латинские варианты записи КС-2."""
@@ -166,7 +176,7 @@ def header_match_score(value: Any, field: str) -> int:
     if field == "name" and "наименование" in text and "работ" in text:
         best = max(best, 93.0)
 
-    return int(round(min(best, 100.0)))
+    return round(min(best, 100.0))
 
 def header_kind(value: Any) -> str | None:
     """Совместимый вспомогательный интерфейс: лучший тип заголовка."""

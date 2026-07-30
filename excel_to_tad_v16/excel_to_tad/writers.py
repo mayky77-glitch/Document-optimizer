@@ -84,7 +84,7 @@ def _validate_identifier_columns(
                 .replace(" ", "")
             )
             lowered = compact.lower()
-            if lowered.endswith(".0") or lowered.endswith(",0"):
+            if lowered.endswith((".0", ",0")):
                 integer_part = lowered[:-2]
                 if integer_part.lstrip("+-").isdigit():
                     examples.append(value)

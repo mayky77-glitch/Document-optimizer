@@ -1,7 +1,7 @@
 from excel_to_tad.normalization import (
     infer_column_role,
-    is_text_identifier_header,
     is_structural_empty,
+    is_text_identifier_header,
     stringify_identifier_cell,
     to_float,
 )
