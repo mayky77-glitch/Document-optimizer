@@ -157,6 +157,18 @@ rule IDs, blockers, explanation и provenance обеих сторон. Иден�
 Исполняемая конфигурация, произвольный SQL, расчёт сумм и workbook writes
 отсутствуют.
 
+## Блок 14: deterministic quality-control gate
+
+Quality-control принимает `MatchResult[]`, `CalculationResult[]` и
+`ValidatedRuleSet`, возвращая `QualityControlReport`. Tolerance читается только
+из `rule_set.defaults.cost_tolerance_ratio`; units не конвертируются, floats,
+epsilon и скрытое округление запрещены. Проверяются cardinality/identity,
+required values, writable targets, formula cache/Excel errors, provenance,
+formula/trace/totals и normalized units. Приоритет: `BLOCK_WRITE`,
+`REQUIRE_MANUAL_REVIEW`, `ALLOW_WRITE_WITH_WARNINGS`, `ALLOW_WRITE`.
+Issues и IDs сортируются детерминированно. Отчёт содержит safe evidence без raw
+cell values, formula text и document content; workbook не изменяется.
+
 ## Модель идентификатора
 
 Обычный файл:

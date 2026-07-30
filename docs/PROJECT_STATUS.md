@@ -329,6 +329,26 @@ rows, **107** target rows, **35** кандидатов, статусы **1 match
 `ecfc6fedfc2c3797ab84c769ec9ddd32a16efb69f61964e2cf43122e283106d3`.
 Обе исходные XLSX неизменны.
 
+## Блок 14
+
+- **Название:** deterministic quality-control write gate
+- **Статус:** локальное evidence зафиксировано; integration release gate не объявлен
+- **Контракт:** `QualityControlContract-14.0`, `QualityControlEngine-14.0`
+- **API:** `evaluate_quality_control(match_results, calculation_results, rule_set)`
+- **Выход:** `QualityControlReport` с decision, issues, summary, provenance и IDs
+
+Tolerance берётся только из `ValidatedRuleSet.defaults.cost_tolerance_ratio`.
+Проверяются cardinality/identity, provenance, trace/totals/formula consistency,
+required values, writable target, formula cache/Excel errors, normalized units и
+Decimal tolerance. Precedence: `BLOCK_WRITE` → `REQUIRE_MANUAL_REVIEW` →
+`ALLOW_WRITE_WITH_WARNINGS` → `ALLOW_WRITE`. Raw values, formulas и document
+content не копируются; workbook и входы не изменяются.
+
+Evidence: synthetic **7 PASS**; real-data `REQUIRE_MANUAL_REVIEW`, **0 blocking**,
+digest `c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`;
+размер, SHA-256 и `mtime` входных XLSX совпали. READY/main/CI требуют решения
+интеграционного владельца.
+
 ## Блок 13
 
 - **Статус:** интегрирован локально; release-набор пройден, GitHub CI ожидается

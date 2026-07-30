@@ -253,6 +253,21 @@ provenance. Workbook не изменяется. Focused gate: **11 passed**; п�
 Обе исходные XLSX остались неизменны. Статус `main` и CI фиксируются только
 после успешного Pull Request.
 
+## Блок 14: quality-control write gate
+
+Публичный API блока 14: `evaluate_quality_control(match_results, calculation_results, rule_set) -> QualityControlReport`.
+`ValidatedRuleSet.defaults.cost_tolerance_ratio` — единственный источник tolerance.
+Проверяются cardinality/identity, provenance, trace/totals, formula cache и Excel
+errors, required values, writable targets, normalized units и Decimal tolerance.
+Решения имеют precedence: `BLOCK_WRITE` → `REQUIRE_MANUAL_REVIEW` →
+`ALLOW_WRITE_WITH_WARNINGS` → `ALLOW_WRITE`. IDs и digest детерминированы;
+raw cells, formula text и document content в отчёт не копируются. Workbook read-only.
+
+Проверенное локальное evidence: synthetic set — 7 PASS; real-data —
+`REQUIRE_MANUAL_REVIEW`, 0 blocking issues, digest
+`c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`.
+Входные XLSX не изменились. Это не объявляет READY/main или CI.
+
 ## Ограничения блоков 1–7
 
 Намеренно не реализованы:
