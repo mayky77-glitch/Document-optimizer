@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .duckdb_store import MAX_QUERY_LIMIT, SCHEMA_VERSION, DuckDBStore
+from .duckdb_store import MAX_QUERY_LIMIT, DuckDBStore
 from .exceptions import (
     StorageError,
     StorageExportError,
@@ -10,6 +10,7 @@ from .exceptions import (
     StorageWriteError,
 )
 from .models import StorageExportResult, StorageQuery, StorageWriteResult
+from .schema import SCHEMA_VERSION
 
 __all__ = [
     "MAX_QUERY_LIMIT",

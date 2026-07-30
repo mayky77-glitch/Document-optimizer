@@ -20,53 +20,12 @@ from .exceptions import (
     StorageWriteError,
 )
 from .models import StorageExportResult, StorageQuery, StorageWriteResult
+from .schema import ROW_COLUMNS as _ROW_COLUMNS
+from .schema import application_tables, create_database_schema, validate_existing_database
 from .serialization import canonical_row_from_payload, canonical_row_payload, deterministic_json
 
-SCHEMA_VERSION = 1
 MAX_QUERY_LIMIT = 10_000
 
-_ROW_COLUMNS = (
-    *("row_id", "payload_hash", "source_type", "source_file_id"),
-    *("filename", "sheet_name", "sheet_type", "source_row_number"),
-    *("source_column_number", "source_column_letter", "source_coordinate", "document_index"),
-    *("document_period", "object_code_raw", "object_name_raw", "subobject_code_raw"),
-    *("subobject_name_raw", "position_code_raw", "work_name_raw", "unit_raw"),
-    *("contract_quantity", "current_period_quantity", "cumulative_quantity", "remaining_quantity"),
-    *("unit_price", "contract_cost", "current_period_cost", "cumulative_cost"),
-    *("total_cost", "basis_code_raw", "drawing_code_raw", "cost_type_code_raw"),
-    *("source_values_json", "warnings_json", "status", "payload_json"),
-)
-_NOT_NULL_COLUMNS = frozenset(
-    {
-        "row_id",
-        "payload_hash",
-        "source_type",
-        "source_file_id",
-        "filename",
-        "sheet_name",
-        "sheet_type",
-        "source_row_number",
-        "source_values_json",
-        "warnings_json",
-        "status",
-        "payload_json",
-    }
-)
-_BIGINT_COLUMNS = frozenset(("source_row_number", "source_column_number"))
-_COLUMN_SPEC = tuple(
-    (name, "BIGINT" if name in _BIGINT_COLUMNS else "VARCHAR", name not in _NOT_NULL_COLUMNS)
-    for name in _ROW_COLUMNS
-)
-_FILTER_INDEXES = {
-    "canonical_rows_source_file_id": "[source_file_id]",
-    "canonical_rows_document_index": "[document_index]",
-    "canonical_rows_document_period": "[document_period]",
-    "canonical_rows_source_type": "[source_type]",
-}
-_METADATA_COLUMN_SPEC = (
-    ("metadata_key", "VARCHAR", False),
-    ("metadata_value", "VARCHAR", False),
-)
 _UPDATE_ASSIGNMENTS = ", ".join(f"{name} = excluded.{name}" for name in _ROW_COLUMNS[1:])
 _UPSERT_SQL = (
     f"INSERT INTO canonical_rows ({', '.join(_ROW_COLUMNS)}) "
@@ -79,10 +38,16 @@ _ALL_ROWS_SQL = "SELECT payload_json FROM canonical_rows ORDER BY row_id ASC"
 class DuckDBStore:
     """Primary canonical-row store; use a context manager or call :meth:`close`."""
 
-    def __init__(self, database_path: Path | str, *, create_parent: bool = True) -> None:
+    def __init__(
+        self,
+        database_path: Path | str,
+        *,
+        create_parent: bool = True,
+        read_only: bool = False,
+    ) -> None:
         self.database_path = Path(database_path)
         self._connection: duckdb.DuckDBPyConnection | None = None
-        self._open(create_parent=create_parent)
+        self._open(create_parent=create_parent, read_only=read_only)
 
     def __enter__(self) -> DuckDBStore:
         return self
@@ -153,6 +118,10 @@ class DuckDBStore:
         sql, parameters = self._query_sql(query)
         yield from self._iter_rows_from_sql(sql, parameters)
 
+    def iter_all_rows(self) -> Iterator[CanonicalSourceRow]:
+        """Iterate every canonical row in stable order for downstream pipeline stages."""
+        yield from self._iter_rows_from_sql(_ALL_ROWS_SQL, [])
+
     def _iter_rows_from_sql(self, sql: str, params: list[Any]) -> Iterator[CanonicalSourceRow]:
         try:
             records = self._require_connection().execute(sql, params).fetchall()
@@ -169,11 +138,7 @@ class DuckDBStore:
         query: StorageQuery | None = None,
     ) -> StorageExportResult:
         try:
-            rows = (
-                self._iter_rows_from_sql(_ALL_ROWS_SQL, [])
-                if query is None
-                else self.iter_rows(query)
-            )
+            rows = self.iter_all_rows() if query is None else self.iter_rows(query)
             exported = save_rows_jsonl(rows, Path(output_path))
         except StorageError:
             raise
@@ -186,22 +151,27 @@ class DuckDBStore:
             bytes_written=exported.bytes_written,
         )
 
-    def _open(self, *, create_parent: bool) -> None:
+    def _open(self, *, create_parent: bool, read_only: bool) -> None:
         if self.database_path != Path(":memory:"):
             parent = self.database_path.parent
             try:
-                if create_parent:
+                if read_only and not self.database_path.is_file():
+                    raise FileNotFoundError(self.database_path)
+                if create_parent and not read_only:
                     parent.mkdir(parents=True, exist_ok=True)
                 elif not parent.is_dir():
                     raise FileNotFoundError(parent)
             except OSError as exc:
                 raise StorageError(f"Не удалось подготовить каталог БД {parent}: {exc}") from exc
         try:
-            self._connection = duckdb.connect(str(self.database_path))
+            self._connection = duckdb.connect(str(self.database_path), read_only=read_only)
         except duckdb.Error as exc:
             raise StorageError(f"Не удалось открыть DuckDB {self.database_path}: {exc}") from exc
         try:
-            self._migrate()
+            if read_only:
+                validate_existing_database(self._require_connection())
+            else:
+                self._migrate()
         except Exception:
             self.close()
             raise
@@ -210,29 +180,16 @@ class DuckDBStore:
         connection = self._require_connection()
         try:
             connection.execute("BEGIN TRANSACTION")
-            existing_tables = _application_tables(connection)
+            existing_tables = application_tables(connection)
             if existing_tables and "storage_metadata" not in existing_tables:
                 raise StorageSchemaError(
                     "БД содержит таблицы без metadata schema_version; "
                     "миграция не может быть определена"
                 )
             if not existing_tables:
-                self._create_metadata_schema(connection)
-                self._create_schema(connection)
-                connection.execute(
-                    "INSERT INTO storage_metadata (metadata_key, metadata_value) VALUES (?, ?)",
-                    ["schema_version", str(SCHEMA_VERSION)],
-                )
+                create_database_schema(connection)
             else:
-                self._validate_metadata_schema(connection)
-                version = _schema_version(self._schema_version_value(connection))
-                if version > SCHEMA_VERSION:
-                    raise StorageSchemaError(
-                        f"Версия схемы {version} новее поддерживаемой {SCHEMA_VERSION}"
-                    )
-                if version != SCHEMA_VERSION:
-                    raise StorageMigrationError(f"Не поддерживается миграция схемы {version}")
-                self._validate_schema(connection)
+                validate_existing_database(connection, existing_tables)
             connection.execute("COMMIT")
         except StorageError:
             self._rollback_quietly()
@@ -240,90 +197,6 @@ class DuckDBStore:
         except duckdb.Error as exc:
             self._rollback_quietly()
             raise StorageMigrationError(f"Не удалось применить схему DuckDB: {exc}") from exc
-
-    @staticmethod
-    def _create_metadata_schema(connection: duckdb.DuckDBPyConnection) -> None:
-        connection.execute(
-            "CREATE TABLE storage_metadata "
-            "(metadata_key VARCHAR PRIMARY KEY, metadata_value VARCHAR NOT NULL)"
-        )
-
-    @staticmethod
-    def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS canonical_rows ("
-            "row_id VARCHAR PRIMARY KEY, payload_hash VARCHAR NOT NULL, "
-            "source_type VARCHAR NOT NULL, source_file_id VARCHAR NOT NULL, "
-            "filename VARCHAR NOT NULL, sheet_name VARCHAR NOT NULL, "
-            "sheet_type VARCHAR NOT NULL, source_row_number BIGINT NOT NULL, "
-            "source_column_number BIGINT, "
-            "source_column_letter VARCHAR, source_coordinate VARCHAR, document_index VARCHAR, "
-            "document_period VARCHAR, object_code_raw VARCHAR, object_name_raw VARCHAR, "
-            "subobject_code_raw VARCHAR, subobject_name_raw VARCHAR, position_code_raw VARCHAR, "
-            "work_name_raw VARCHAR, unit_raw VARCHAR, contract_quantity VARCHAR, "
-            "current_period_quantity VARCHAR, cumulative_quantity VARCHAR, "
-            "remaining_quantity VARCHAR, "
-            "unit_price VARCHAR, contract_cost VARCHAR, current_period_cost VARCHAR, "
-            "cumulative_cost VARCHAR, total_cost VARCHAR, basis_code_raw VARCHAR, "
-            "drawing_code_raw VARCHAR, cost_type_code_raw VARCHAR, "
-            "source_values_json VARCHAR NOT NULL, warnings_json VARCHAR NOT NULL, "
-            "status VARCHAR NOT NULL, payload_json VARCHAR NOT NULL)"
-        )
-        for name, column in (
-            ("canonical_rows_source_file_id", "source_file_id"),
-            ("canonical_rows_document_index", "document_index"),
-            ("canonical_rows_document_period", "document_period"),
-            ("canonical_rows_source_type", "source_type"),
-        ):
-            connection.execute(f"CREATE INDEX IF NOT EXISTS {name} ON canonical_rows ({column})")
-
-    @staticmethod
-    def _validate_metadata_schema(connection: duckdb.DuckDBPyConnection) -> None:
-        _validate_table_columns(connection, "storage_metadata", _METADATA_COLUMN_SPEC)
-        primary_keys = connection.execute(
-            "SELECT constraint_column_names FROM duckdb_constraints() "
-            "WHERE table_name = 'storage_metadata' AND constraint_type = 'PRIMARY KEY'"
-        ).fetchall()
-        if primary_keys != [(["metadata_key"],)]:
-            raise StorageSchemaError("В таблице storage_metadata нужен PRIMARY KEY (metadata_key)")
-
-    @staticmethod
-    def _schema_version_value(connection: duckdb.DuckDBPyConnection) -> str:
-        records = connection.execute(
-            "SELECT metadata_value FROM storage_metadata WHERE metadata_key = 'schema_version'"
-        ).fetchall()
-        if len(records) != 1:
-            raise StorageSchemaError(
-                "В storage_metadata должна быть ровно одна запись schema_version"
-            )
-        return records[0][0]
-
-    @staticmethod
-    def _validate_schema(connection: duckdb.DuckDBPyConnection) -> None:
-        table = connection.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = 'main' AND table_name = 'canonical_rows'"
-        ).fetchone()
-        if table is None:
-            raise StorageSchemaError("В схеме версии 1 отсутствует таблица canonical_rows")
-        _validate_table_columns(connection, "canonical_rows", _COLUMN_SPEC)
-        primary_keys = connection.execute(
-            "SELECT constraint_column_names FROM duckdb_constraints() "
-            "WHERE table_name = 'canonical_rows' AND constraint_type = 'PRIMARY KEY'"
-        ).fetchall()
-        if primary_keys != [(["row_id"],)]:
-            raise StorageSchemaError("В таблице canonical_rows нужен PRIMARY KEY (row_id)")
-        indexes = {
-            index_name: expression
-            for index_name, expression in connection.execute(
-                "SELECT index_name, expressions FROM duckdb_indexes() "
-                "WHERE schema_name = 'main' AND table_name = 'canonical_rows'"
-            ).fetchall()
-        }
-        if not all(indexes.get(name) == expression for name, expression in _FILTER_INDEXES.items()):
-            raise StorageSchemaError(
-                "В таблице canonical_rows отсутствуют обязательные filter indexes"
-            )
 
     def _prepare_rows(
         self,
@@ -400,53 +273,6 @@ class DuckDBStore:
         if self._connection is not None:
             with suppress(duckdb.Error):
                 self._connection.execute("ROLLBACK")
-
-
-def _schema_version(value: Any) -> int:
-    if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
-        raise StorageSchemaError("schema_version должен быть неотрицательным целым числом")
-    return int(value)
-
-
-def _application_tables(connection: duckdb.DuckDBPyConnection) -> set[str]:
-    records = connection.execute(
-        "SELECT table_name FROM information_schema.tables "
-        "WHERE table_schema = 'main' AND table_type = 'BASE TABLE'"
-    ).fetchall()
-    return {record[0] for record in records}
-
-
-def _validate_table_columns(
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str,
-    expected_spec: tuple[tuple[str, str, bool], ...],
-) -> None:
-    actual = {
-        row[0]: (row[1], row[2] == "YES")
-        for row in connection.execute(
-            "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
-            "WHERE table_schema = 'main' AND table_name = ?",
-            [table_name],
-        ).fetchall()
-    }
-    expected = {name: (data_type, nullable) for name, data_type, nullable in expected_spec}
-    if actual == expected:
-        return
-    missing = set(expected) - set(actual)
-    unexpected = set(actual) - set(expected)
-    mismatched = sorted(
-        name for name in set(actual) & set(expected) if actual[name] != expected[name]
-    )
-    details = []
-    if missing:
-        details.append(f"отсутствуют: {', '.join(sorted(missing))}")
-    if unexpected:
-        details.append(f"лишние: {', '.join(sorted(unexpected))}")
-    if mismatched:
-        details.append(f"неверные типы/nullability: {', '.join(mismatched)}")
-    raise StorageSchemaError(
-        f"Таблица {table_name} не соответствует схеме v1 (" + "; ".join(details) + ")"
-    )
 
 
 def _row_values(row: CanonicalSourceRow) -> tuple[Any, ...]:

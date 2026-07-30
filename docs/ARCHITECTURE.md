@@ -57,6 +57,20 @@ idempotent upsert по `row_id`. JSONL с `*.meta.json` и JSON остаются
 отказ на ручную проверку, без угадывания. Жизненный цикл чтения остаётся
 read-only для `.xlsx`/`.xlsm` и выбранной ZIP-записи.
 
+Контракт таблиц и schema validation находятся в `storage/schema.py`; операции
+чтения/записи — в `storage/duckdb_store.py`. Downstream-этапы открывают готовую
+DuckDB с `read_only=True`: создание схемы и миграции разрешены только владельцу
+storage на этапе записи блока 6.
+
+Блок 7 является downstream-этапом `CanonicalSourceRow → TrainingDataRow`.
+`prepare-training-data` читает основной DuckDB блока 6 напрямую через
+`DuckDBStore.iter_all_rows()` либо принимает явный JSONL-аудит. Excel повторно
+не открывается. `training_data/` разделяет классификацию, нормализацию,
+качество, идентификаторы, ввод и оркестрацию. Результат записывается существующим
+атомарным JSONL writer вместе с metadata схемы `7.0`. Модель сохраняет все
+числовые поля, включая `total_cost`; не-конечные Decimal отклоняются до
+классификации.
+
 ## Структура пакета
 
 ```text

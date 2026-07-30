@@ -9,6 +9,10 @@ from pathlib import Path
 from report_processor.cli_extraction import add_extract_rows_parser, run_extract_rows
 from report_processor.cli_inspect import add_inspect_workbook_parser, run_inspect_workbook
 from report_processor.cli_schema import add_detect_schema_parser, run_detect_schema
+from report_processor.cli_training_data import (
+    add_prepare_training_data_parser,
+    run_prepare_training_data,
+)
 from report_processor.domain.exceptions import (
     BrokenArchiveError,
     ManifestWriteError,
@@ -130,6 +134,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_inspect_workbook_parser(subparsers)
     add_detect_schema_parser(subparsers)
     add_extract_rows_parser(subparsers)
+    add_prepare_training_data_parser(subparsers)
     extract.add_argument(
         "--allow-loose",
         action="store_true",
@@ -195,6 +200,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "extract-rows":
             return run_extract_rows(args)
+
+        if args.command == "prepare-training-data":
+            return run_prepare_training_data(args)
 
         if args.command == "enrich-metadata":
             manifest = load_manifest_json(args.manifest)
