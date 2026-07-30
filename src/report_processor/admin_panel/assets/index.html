@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="admin-api-contract" content="fetch('/api/jobs')">
+    <title>Контроль документов</title>
+    <link rel="stylesheet" href="/static/admin.css">
+    <script src="/static/admin.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="mast">
+        <p class="eyebrow">Локальная проверка · Block 18</p>
+        <h1>Сверка документов без лишних шагов</h1>
+        <p>Загрузите две книги, укажите этап и проверьте спорные связи перед выгрузкой.</p>
+      </header>
+
+      <ol class="progress-rail" aria-label="Ход работы">
+        <li class="is-active" data-progress="files"><span>1</span>Файлы</li>
+        <li data-progress="run"><span>2</span>Запуск</li>
+        <li data-progress="review"><span>3</span>Проверка</li>
+        <li data-progress="result"><span>4</span>Результат</li>
+      </ol>
+
+      <section class="workbench" aria-labelledby="upload-title">
+        <div class="section-heading">
+          <p class="step-label">Шаг 1</p>
+          <h2 id="upload-title">Файлы и этап</h2>
+        </div>
+        <form id="job-form">
+          <div class="file-grid">
+            <label class="file-field">
+              <span>Исходный документ <small lang="en">Source</small></span>
+              <input name="source" type="file" accept=".xlsx,.xlsm" required>
+            </label>
+            <label class="file-field">
+              <span>Целевой отчёт <small lang="en">Target</small></span>
+              <input name="target" type="file" accept=".xlsx,.xlsm" required>
+            </label>
+          </div>
+          <div class="run-grid">
+            <label>
+              <span>Этап <small lang="en">Stage</small></span>
+              <input name="stage" value="13.1" inputmode="decimal" maxlength="64" required>
+            </label>
+            <label>
+              <span>Режим</span>
+              <select name="mode">
+                <option value="write">Записать результат</option>
+                <option value="dry-run">Проверить без записи</option>
+                <option value="inspect">Только прочитать</option>
+              </select>
+            </label>
+            <button class="primary" type="submit">Запустить проверку</button>
+          </div>
+        </form>
+        <p id="status" class="status" role="status" aria-live="polite">
+          Файлы обрабатываются только в приватной локальной папке.
+        </p>
+      </section>
+
+      <section id="review-panel" class="review-panel" aria-labelledby="review-title" hidden>
+        <div class="section-heading">
+          <p class="step-label">Шаг 2</p>
+          <h2 id="review-title">Расхождения и ручная проверка</h2>
+        </div>
+        <div id="summary" class="summary" aria-label="Итог обработки"></div>
+        <ul id="discrepancies" class="discrepancies"></ul>
+        <div id="suggestions" class="suggestions"></div>
+      </section>
+
+      <section class="result-panel" aria-labelledby="result-title">
+        <div>
+          <p class="step-label">Шаг 3</p>
+          <h2 id="result-title">Выгрузка</h2>
+          <p>Решение оператора пишется в журнал и не меняет сопоставление Block 12.</p>
+        </div>
+        <a id="download" class="download is-disabled" aria-disabled="true">Результат ещё не готов</a>
+      </section>
+
+      <aside class="legend" aria-label="Категории расхождений">
+        <span class="tag unit_conflict">Красный · конфликт единиц</span>
+        <span class="tag unchanged_value">Жёлтый · значение не изменилось</span>
+        <span class="tag cost_threshold">Оранжевый · сумма или допуск</span>
+        <span class="tag manual_review">Синий · ручная проверка</span>
+      </aside>
+    </main>
+
+    <template id="suggestion-template">
+      <article class="suggestion-card">
+        <div>
+          <p class="suggestion-kicker">Семантическая рекомендация</p>
+          <h3>Связь требует решения</h3>
+          <p class="candidate-list"></p>
+        </div>
+        <div class="decision-group" aria-label="Решение по рекомендации">
+          <button type="button" data-decision="fit"><span lang="en">Fit</span> · подходит</button>
+          <button type="button" data-decision="not_fit"><span lang="en">Not fit</span> · не подходит</button>
+        </div>
+      </article>
+    </template>
+  </body>
+</html>

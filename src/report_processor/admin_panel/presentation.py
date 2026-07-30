@@ -1,0 +1,253 @@
+"""Privacy-safe presentation records for jobs and processing artifacts."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import fields, is_dataclass
+from enum import Enum
+from pathlib import Path
+
+_ISSUE_PRESENTATION = {
+    "UNIT_CONFLICT": ("unit_conflict", "red"),
+    "UNCHANGED_VALUE": ("unchanged_value", "yellow"),
+    "VALUE_UNCHANGED": ("unchanged_value", "yellow"),
+    "NO_VALUE_CHANGE": ("unchanged_value", "yellow"),
+    "TOTAL_DISCREPANCY": ("cost_threshold", "orange"),
+    "TOLERANCE_EXCEEDED": ("cost_threshold", "orange"),
+    "QUANTITY_COST_INCONSISTENT": ("cost_threshold", "orange"),
+    "SIGN_CONFLICT": ("cost_threshold", "orange"),
+    "NEGATIVE_VALUE": ("cost_threshold", "orange"),
+    "AMBIGUOUS": ("manual_review", "blue"),
+    "UNMATCHED": ("manual_review", "blue"),
+}
+_DEFAULT_PRESENTATION = ("manual_review", "blue")
+_UNCHANGED_CODES = {"UNCHANGED_VALUE", "VALUE_UNCHANGED", "NO_VALUE_CHANGE"}
+_ABSOLUTE_PATH = re.compile(r"(?<![\w])(?:/[^\s,;]+|[A-Za-z]:\\[^\s,;]+)")
+
+
+def job_payload(job: object) -> dict[str, object]:
+    """Serialize only frozen, client-facing fields from a job or fake mapping."""
+
+    if isinstance(job, Mapping):
+        job_id = _required_text(job.get("job_id"), "job_id")
+        status = _required_text(job.get("status"), "status")
+        output = {
+            "job_id": job_id,
+            "stage": _required_text(job.get("stage"), "stage"),
+            "status": status,
+            "summary": _public_mapping(job.get("summary")),
+            "discrepancies": _public_records(job.get("discrepancies")),
+            "suggestions": _public_records(job.get("suggestions")),
+            "download_url": _download_url(job.get("download_url"), job_id),
+        }
+        if "mode" in job:
+            output["mode"] = _public_text(job.get("mode"))
+        if "decisions" in job:
+            output["decisions"] = _public_records(job.get("decisions"))
+        return output
+
+    job_id = _required_text(getattr(job, "job_id", None), "job_id")
+    return {
+        "job_id": job_id,
+        "stage": _required_text(getattr(job, "stage", None), "stage"),
+        "mode": _public_text(getattr(job, "mode", "")),
+        "status": _required_text(getattr(job, "status", None), "status"),
+        "summary": _public_mapping(getattr(job, "summary", {})),
+        "discrepancies": _public_records(getattr(job, "discrepancies", ())),
+        "suggestions": _public_records(getattr(job, "suggestions", ())),
+        "decisions": _public_records(getattr(job, "decisions", ())),
+        "download_url": (
+            f"/api/jobs/{job_id}/result" if bool(getattr(job, "result_available", False)) else None
+        ),
+    }
+
+
+def processing_presentation(
+    result: object,
+) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
+    """Extract controlled summary, discrepancy and RAG suggestion records."""
+
+    artifacts = getattr(result, "artifacts", {})
+    if not isinstance(artifacts, Mapping):
+        artifacts = {}
+    report = artifacts.get("quality_report")
+    summary = _summary_record(getattr(report, "summary", None))
+    summary.update(
+        {
+            "state": _enum_value(getattr(result, "state", "UNKNOWN")),
+            "exit_code": _integer(getattr(result, "exit_code", -1)),
+            "warning_count": len(tuple(getattr(result, "warnings", ()) or ())),
+            "error_count": len(tuple(getattr(result, "errors", ()) or ())),
+        }
+    )
+    discrepancies = [_issue_record(issue) for issue in tuple(getattr(report, "issues", ()) or ())]
+    existing_codes = {str(item["code"]) for item in discrepancies}
+    for warning in tuple(getattr(result, "warnings", ()) or ()):
+        warning_code = _enum_value(warning).upper()
+        if warning_code in _UNCHANGED_CODES and warning_code not in existing_codes:
+            discrepancies.append(
+                {
+                    "discrepancy_id": _controlled_id("warning", warning_code),
+                    "code": warning_code,
+                    "category": "unchanged_value",
+                    "color": "yellow",
+                    "severity": "warning",
+                    "message": "Исходное значение представлено без изменения.",
+                }
+            )
+    suggestions = [
+        _suggestion_record(suggestion)
+        for suggestion in tuple(artifacts.get("stage_relation_suggestions", ()) or ())
+    ]
+    if artifacts.get("stage_rag_requires_manual_review") is True and not suggestions:
+        discrepancies.append(
+            {
+                "discrepancy_id": _controlled_id("rag-model-unavailable"),
+                "code": "RAG_MODEL_UNAVAILABLE",
+                "category": "manual_review",
+                "color": "blue",
+                "severity": "manual_review",
+                "message": "Семантическая связь требует ручной проверки.",
+            }
+        )
+    return summary, discrepancies, suggestions
+
+
+def journal_payload(job: object) -> bytes:
+    """Build a path-free, controlled-ID review journal."""
+
+    payload = job_payload(job)
+    payload.pop("download_url", None)
+    payload["statement"] = (
+        "Решения оператора записаны отдельно и не изменяют авторитетное сопоставление Block 12."
+    )
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+
+
+def _summary_record(summary: object) -> dict[str, object]:
+    if summary is None:
+        return {}
+    if is_dataclass(summary):
+        return {
+            field.name: _public_scalar(getattr(summary, field.name)) for field in fields(summary)
+        }
+    if isinstance(summary, Mapping):
+        return _public_mapping(summary)
+    return {}
+
+
+def _issue_record(issue: object) -> dict[str, object]:
+    code = _enum_value(getattr(issue, "code", "MANUAL_REVIEW")).upper()
+    category, color = _ISSUE_PRESENTATION.get(code, _DEFAULT_PRESENTATION)
+    issue_id = _public_text(getattr(issue, "issue_id", "")) or _controlled_id(
+        code, getattr(issue, "message", "")
+    )
+    return {
+        "discrepancy_id": _controlled_id(issue_id),
+        "code": code,
+        "category": category,
+        "color": color,
+        "severity": _enum_value(getattr(issue, "severity", "manual_review")),
+        "message": _public_text(getattr(issue, "message", "Требуется проверка.")),
+    }
+
+
+def _suggestion_record(suggestion: object) -> dict[str, object]:
+    target = _public_text(getattr(suggestion, "target_identity", "target"))
+    candidates = tuple(getattr(suggestion, "candidates", ()) or ())
+    suggestion_id = _controlled_id(
+        "suggestion",
+        target,
+        *(getattr(candidate, "source_identity", "") for candidate in candidates),
+    )
+    return {
+        "suggestion_id": suggestion_id,
+        "target_ref": _controlled_id("target", target),
+        "requires_manual_review": True,
+        "auto_accepted": False,
+        "effect": "review_journal_only",
+        "candidates": [
+            {
+                "candidate_ref": _controlled_id(
+                    "candidate", getattr(candidate, "source_identity", "")
+                ),
+                "score": _finite_float(getattr(candidate, "score", 0.0)),
+            }
+            for candidate in candidates
+        ],
+    }
+
+
+def _public_records(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [_public_mapping(item) for item in value if isinstance(item, Mapping)]
+
+
+def _public_mapping(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        _public_text(key): _public_value(item)
+        for key, item in value.items()
+        if isinstance(key, str)
+    }
+
+
+def _public_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _public_mapping(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_public_value(item) for item in value]
+    return _public_scalar(value)
+
+
+def _public_scalar(value: object) -> object:
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return _finite_float(value)
+    if isinstance(value, Path):
+        return "[private]"
+    return _public_text(_enum_value(value))
+
+
+def _public_text(value: object, limit: int = 500) -> str:
+    text = str(value or "").replace("\x00", "").strip()
+    return _ABSOLUTE_PATH.sub("[private]", text)[:limit]
+
+
+def _required_text(value: object, field_name: str) -> str:
+    text = _public_text(value, 200)
+    if not text:
+        raise ValueError(f"{field_name} is required")
+    return text
+
+
+def _download_url(value: object, job_id: str) -> str | None:
+    expected = f"/api/jobs/{job_id}/result"
+    return expected if value == expected else None
+
+
+def _enum_value(value: object) -> str:
+    return str(value.value if isinstance(value, Enum) else value)
+
+
+def _integer(value: object) -> int:
+    raw = value.value if isinstance(value, Enum) else value
+    return int(raw) if isinstance(raw, int) else -1
+
+
+def _finite_float(value: object) -> float:
+    number = float(value)
+    return number if number == number and abs(number) != float("inf") else 0.0
+
+
+def _controlled_id(*parts: object) -> str:
+    encoded = "\x1f".join(str(part) for part in parts).encode("utf-8", "replace")
+    return hashlib.sha256(encoded).hexdigest()[:24]
