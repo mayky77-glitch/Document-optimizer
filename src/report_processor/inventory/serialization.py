@@ -281,6 +281,18 @@ def _entry_from_dict(payload: Mapping[str, Any]) -> FileManifestEntry:
     )
 
 
+def file_manifest_entry_from_dict(payload: Mapping[str, Any]) -> FileManifestEntry:
+    """Восстановить одну запись манифеста из совместимого JSON-представления."""
+
+    return _entry_from_dict(payload)
+
+
+def file_manifest_entry_to_dict(entry: FileManifestEntry) -> dict[str, Any]:
+    """Преобразовать одну запись манифеста в JSON-совместимый словарь."""
+
+    return json.loads(json.dumps(asdict(entry), default=_json_default))
+
+
 def _summary_from_dict(payload: Mapping[str, Any]) -> ManifestSummary:
     payload = {
         "total_size_bytes": 0,

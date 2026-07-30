@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from report_processor.inventory.file_manifest import file_manifest_entry_to_dict
 from report_processor.selection.models import (
     SourceCandidate,
     SourceSelectionRequest,
@@ -69,6 +70,7 @@ def _candidate_to_dict(candidate: SourceCandidate) -> dict[str, Any]:
     entry = candidate.entry
     return {
         "file_id": candidate.file_id,
+        "entry": file_manifest_entry_to_dict(entry),
         "relative_path": entry.relative_path,
         "archive_path": entry.archive_path,
         "document_type": entry.document_type,

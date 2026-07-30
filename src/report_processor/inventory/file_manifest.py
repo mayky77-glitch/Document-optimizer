@@ -9,6 +9,8 @@ from report_processor.inventory.manifest_builder import (
     build_manifest_summary,
 )
 from report_processor.inventory.serialization import (
+    file_manifest_entry_from_dict,
+    file_manifest_entry_to_dict,
     load_manifest_json,
     manifest_from_dict,
     manifest_to_dict,
@@ -18,6 +20,8 @@ from report_processor.inventory.serialization import (
 __all__ = [
     "build_file_manifest",
     "build_manifest_summary",
+    "file_manifest_entry_from_dict",
+    "file_manifest_entry_to_dict",
     "load_manifest_json",
     "manifest_from_dict",
     "manifest_to_dict",

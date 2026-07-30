@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import zipfile
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+from openpyxl import Workbook
 
 from report_processor.domain.models import FileManifest, FileManifestEntry
 from report_processor.inventory.file_classifier import classify_file_by_name
@@ -59,3 +62,81 @@ def make_manifest():
         )
 
     return factory
+
+
+@pytest.fixture
+def workbook_path(tmp_path: Path) -> Path:
+    path = tmp_path / "sample.xlsx"
+    workbook = Workbook()
+    data = workbook.active
+    data.title = "Данные"
+    data["A1"] = 10
+    data["A2"] = 20
+    data["A3"] = "=SUM(A1:A2)"
+    data["B1"] = "т"
+    data["D1"] = "#NAME?"
+    data["D1"].data_type = "s"
+    data["E1"] = "#DIV/0!"
+    data["E1"].data_type = "e"
+    hidden = workbook.create_sheet("Скрытый")
+    hidden.sheet_state = "hidden"
+    very_hidden = workbook.create_sheet("Очень скрытый")
+    very_hidden.sheet_state = "veryHidden"
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def regular_entry(path: Path, **overrides: object) -> FileManifestEntry:
+    entry = make_entry.__wrapped__()(
+        path.name, relative_path=path.name, extension=path.suffix.lower()
+    )
+    entry.source_root = str(path)
+    entry.size_bytes = path.stat().st_size if path.exists() else None
+    for key, value in overrides.items():
+        setattr(entry, key, value)
+    return entry
+
+
+def zip_entry(
+    archive: Path, inner_path: str, size: int, crc: int, **overrides: object
+) -> FileManifestEntry:
+    entry = make_entry.__wrapped__()(
+        Path(inner_path).name,
+        relative_path=inner_path,
+        extension=Path(inner_path).suffix.lower(),
+        is_archive_entry=True,
+    )
+    entry.source_root = str(archive)
+    entry.archive_path = str(archive)
+    entry.size_bytes = size
+    entry.crc32 = crc
+    for key, value in overrides.items():
+        setattr(entry, key, value)
+    return entry
+
+
+def candidate(entry: FileManifestEntry):
+    from report_processor.selection.models import SourceCandidate
+
+    return SourceCandidate(
+        file_id=entry.file_id,
+        entry=entry,
+        score=0,
+        rank=None,
+        accepted=True,
+        rejection_reasons=(),
+        score_components=(),
+        warnings=(),
+    )
+
+
+def create_zip_with_workbook(
+    archive: Path, workbook: Path, inner: str = "nested/sample.xlsx"
+) -> FileManifestEntry:
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+        output.write(workbook, inner)
+        output.writestr("other/ignore.txt", "do not extract")
+    with zipfile.ZipFile(archive) as source:
+        info = source.getinfo(inner)
+    return zip_entry(archive, inner, info.file_size, info.CRC)

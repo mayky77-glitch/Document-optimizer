@@ -1,5 +1,6 @@
-"""Контролируемые исключения блока инвентаризации."""
+"""Контролируемые ошибки инвентаризации и безопасного чтения Excel."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from report_processor.domain.statuses import StatusCode
@@ -51,3 +52,42 @@ class ManifestReadError(InventoryError):
     def __init__(self, path: Path, reason: str) -> None:
         self.path = path
         super().__init__(f"Не удалось прочитать манифест {path}: {reason}")
+
+
+@dataclass(slots=True)
+class ReportProcessorError(Exception):
+    """Базовая ошибка этапов обработки с машинно-читаемым статусом."""
+
+    status: StatusCode
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+class MaterializationError(ReportProcessorError):
+    pass
+
+
+class UnsafeArchiveEntryError(MaterializationError):
+    pass
+
+
+class UnsupportedExcelFormatError(ReportProcessorError):
+    pass
+
+
+class WorkbookOpenError(ReportProcessorError):
+    pass
+
+
+class WorkbookSessionClosedError(ReportProcessorError):
+    pass
+
+
+class WorkbookViewMismatchError(ReportProcessorError):
+    pass
+
+
+class CellReadError(ReportProcessorError):
+    pass

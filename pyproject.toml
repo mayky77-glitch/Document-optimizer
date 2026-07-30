@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "document-optimizer"
-version = "0.3.0"
-description = "Поэтапная обработка строительных отчётов; блоки 1–3 — инвентаризация, индексы и выбор источника"
+version = "0.4.0"
+description = "Поэтапная обработка строительных отчётов; блоки 1–4 — инвентаризация, индексы, выбор и безопасное чтение Excel"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Project Team" }]
-dependencies = []
+dependencies = ["openpyxl>=3.1,<4"]
 
 [project.optional-dependencies]
 dev = [
