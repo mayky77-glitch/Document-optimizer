@@ -1,12 +1,25 @@
-"""Private job lifecycle and a small injectable execution boundary."""
+"""Private job lifecycle and the public processing execution boundary."""
 
 from __future__ import annotations
 
-import json
+import hashlib
+import logging
+import os
+import re
 import secrets
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .presentation import journal_payload, processing_presentation
+
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+_ALLOWED_SUFFIXES = {".xlsx", ".xlsm"}
+_ALLOWED_MODES = {"inspect", "dry-run", "write"}
+_STAGE_PATTERN = re.compile(r"^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё._ -]{0,63}$")
+_ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -16,22 +29,52 @@ class AdminJob:
     source: Path
     target: Path
     stage: str
-    status: str = "ready"
+    mode: str
+    source_digest: str
+    target_digest: str
+    status: str = "pending"
     output: Path | None = None
-    review: list[dict[str, str]] = field(default_factory=list)
+    summary: dict[str, object] = field(default_factory=dict)
+    discrepancies: list[dict[str, object]] = field(default_factory=list)
+    suggestions: list[dict[str, object]] = field(default_factory=list)
+    decisions: list[dict[str, str]] = field(default_factory=list)
     errors: tuple[str, ...] = ()
-    mode: str = "write"
+    result_name: str | None = None
+
+    @property
+    def result_available(self) -> bool:
+        return (
+            self.output is not None
+            and self.output.is_file()
+            and not self.unresolved_suggestion_ids
+            and self.status not in {"pending", "running", "failed"}
+        )
+
+    @property
+    def unresolved_suggestion_ids(self) -> set[str]:
+        decided = {item["suggestion_id"] for item in self.decisions}
+        return {
+            str(item.get("suggestion_id"))
+            for item in self.suggestions
+            if item.get("requires_manual_review") is True
+        } - decided
 
 
 class AdminPanelService:
-    """Owns opaque job IDs and never exposes workspace paths to clients."""
+    """Own opaque job IDs and never exposes private workspace paths."""
 
     def __init__(
-        self, workspace_root: Path, execute: Callable[[AdminJob], Path | None] | None = None
-    ):
-        self.workspace_root = workspace_root
+        self,
+        workspace_root: Path,
+        execute: Callable[[AdminJob], object] | None = None,
+    ) -> None:
+        self.workspace_root = Path(workspace_root)
         self.execute = execute or _default_execute
         self.jobs: dict[str, AdminJob] = {}
+        if self.workspace_root.is_symlink():
+            raise ValueError("workspace root cannot be a symlink")
+        self.workspace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(self.workspace_root, 0o700)
 
     def create_job(
         self,
@@ -43,69 +86,196 @@ class AdminPanelService:
         stage: str,
         mode: str = "write",
     ) -> AdminJob:
-        source_bytes, target_bytes = source_content, target_content
-        _validate_upload(source_name, source_bytes)
-        _validate_upload(target_name, target_bytes)
-        if not stage.strip() or mode not in {"inspect", "dry-run", "write"}:
-            raise ValueError("invalid request")
+        validate_workbook_upload(source_name, source_content)
+        validate_workbook_upload(target_name, target_content)
+        if len(source_content) + len(target_content) > MAX_UPLOAD_BYTES:
+            raise ValueError("combined upload is too large")
+        clean_stage = validate_stage(stage)
+        clean_mode = validate_mode(mode)
         job_id = secrets.token_urlsafe(18)
         directory = self.workspace_root / job_id
-        directory.mkdir(mode=0o700, parents=True, exist_ok=False)
-        source = directory / f"source{Path(source_name).suffix.lower()}"
-        target = directory / f"target{Path(target_name).suffix.lower()}"
-        source.write_bytes(source_bytes)
-        target.write_bytes(target_bytes)
-        job = AdminJob(job_id, directory, source, target, stage, mode=mode)
-        self.jobs[job_id] = job
-        return self.run(job_id)
+        registered = False
+        try:
+            directory.mkdir(mode=0o700, parents=False, exist_ok=False)
+            source = directory / f"source{Path(source_name).suffix.casefold()}"
+            target = directory / f"target{Path(target_name).suffix.casefold()}"
+            _private_write(source, source_content)
+            _private_write(target, target_content)
+            job = AdminJob(
+                job_id=job_id,
+                directory=directory,
+                source=source,
+                target=target,
+                stage=clean_stage,
+                mode=clean_mode,
+                source_digest=_digest(source_content),
+                target_digest=_digest(target_content),
+            )
+            self.jobs[job_id] = job
+            registered = True
+            return self.run(job_id)
+        except (OSError, TypeError, ValueError):
+            if registered:
+                self.jobs.pop(job_id, None)
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
 
     def run(self, job_id: str) -> AdminJob:
-        job = self.get(job_id)
+        job = self.get_job(job_id)
+        if job.status not in {"pending", "failed"}:
+            raise ValueError("job cannot be run from its current state")
         job.status = "running"
         try:
-            job.output = self.execute(job) if self.execute else None
-            job.status = "complete" if job.output else "failed"
-        except Exception:
+            execution_result = self.execute(job)
+            self._apply_execution_result(job, execution_result)
+            _verify_inputs(job)
+        except (OSError, TypeError, ValueError, RuntimeError):
+            _remove_partial_output(job)
             job.status = "failed"
             job.errors = ("PROCESSING_FAILED",)
+        except Exception:
+            LOGGER.exception("Unexpected admin-panel executor failure for job %s", job.job_id)
+            _remove_partial_output(job)
+            job.status = "failed"
+            job.errors = ("PROCESSING_FAILED",)
+        if job.status == "failed":
+            shutil.rmtree(job.directory, ignore_errors=True)
         return job
 
-    def decide(self, job_id: str, relation_id: str, decision: str) -> AdminJob:
-        if decision not in {"fit", "not_fit"}:
-            raise ValueError("invalid decision")
-        job = self.get(job_id)
-        job.review.append({"relation_id": relation_id, "decision": decision, "version": "18.0"})
-        return job
-
-    def record_decision(self, *, job_id: str, suggestion_id: str, decision: str) -> AdminJob:
-        return self.decide(job_id, suggestion_id, decision)
-
-    def get_result(self, job_id: str) -> tuple[Path, str]:
-        job = self.get(job_id)
-        if job.output is None:
-            raise KeyError(job_id)
-        return job.output, "result.xlsx"
-
-    def review_bytes(self, job_id: str) -> bytes:
-        return json.dumps(self.get(job_id).review, ensure_ascii=False, indent=2).encode()
-
-    def get(self, job_id: str) -> AdminJob:
+    def get_job(self, job_id: str) -> AdminJob:
         if job_id not in self.jobs:
             raise KeyError(job_id)
         return self.jobs[job_id]
 
+    def get(self, job_id: str) -> AdminJob:
+        """Backward-compatible alias for the frozen in-process service API."""
 
-def _validate_upload(name: str, content: bytes) -> None:
-    if Path(name).suffix.lower() not in {".xlsx", ".xlsm"}:
-        raise ValueError("only Excel workbooks are accepted")
-    if not content:
+        return self.get_job(job_id)
+
+    def record_decision(self, *, job_id: str, suggestion_id: str, decision: str) -> AdminJob:
+        if decision not in {"fit", "not_fit"}:
+            raise ValueError("decision must be fit or not_fit")
+        job = self.get_job(job_id)
+        available = {
+            str(item.get("suggestion_id"))
+            for item in job.suggestions
+            if item.get("requires_manual_review") is True
+        }
+        if suggestion_id not in available:
+            raise ValueError("unknown suggestion")
+        if any(item["suggestion_id"] == suggestion_id for item in job.decisions):
+            raise ValueError("suggestion already decided")
+        job.decisions.append(
+            {
+                "suggestion_id": suggestion_id,
+                "decision": decision,
+                "effect": "review_journal_only",
+            }
+        )
+        if not job.unresolved_suggestion_ids:
+            if job.output is None:
+                job.output = job.directory / "review-journal.json"
+                _private_write(job.output, journal_payload(job))
+                job.result_name = "review-journal.json"
+                job.status = "review_recorded"
+            elif job.status == "review_required":
+                job.status = "ready"
+        return job
+
+    def get_result(self, job_id: str) -> tuple[Path, str]:
+        job = self.get_job(job_id)
+        if not job.result_available or job.output is None or job.result_name is None:
+            raise KeyError(job_id)
+        return job.output, job.result_name
+
+    def _apply_execution_result(self, job: AdminJob, result: object) -> None:
+        if result is None or isinstance(result, Path):
+            job.output = result
+            if (
+                result is not None
+                and result.is_file()
+                and result.resolve().is_relative_to(job.directory.resolve())
+            ):
+                os.chmod(result, 0o600)
+                job.result_name = "optimized-report.xlsx"
+                job.status = "ready"
+            else:
+                job.output = None
+                job.status = "failed"
+                job.errors = ("PROCESSING_FAILED",)
+            return
+
+        summary, discrepancies, suggestions = processing_presentation(result)
+        job.summary = summary
+        job.discrepancies = discrepancies
+        job.suggestions = suggestions
+        job.errors = tuple(str(item)[:120] for item in getattr(result, "errors", ()) or ())
+        output = job.directory / "result.xlsx"
+        if output.is_file():
+            os.chmod(output, 0o600)
+            job.output = output
+            job.result_name = "optimized-report.xlsx"
+
+        exit_code = _exit_code(result)
+        if exit_code in {0, 1}:
+            job.status = "review_required" if job.unresolved_suggestion_ids else "ready"
+        elif exit_code in {3, 4}:
+            job.status = "review_required" if job.unresolved_suggestion_ids else "blocked"
+        else:
+            job.status = "failed"
+            job.errors = job.errors or ("PROCESSING_FAILED",)
+            _remove_partial_output(job)
+            return
+        if job.output is None and not job.unresolved_suggestion_ids:
+            job.output = job.directory / "review-journal.json"
+            _private_write(job.output, journal_payload(job))
+            job.result_name = "review-journal.json"
+
+
+def validate_workbook_upload(name: str, content: bytes) -> None:
+    if not isinstance(name, str) or not name or "\x00" in name:
+        raise ValueError("invalid filename")
+    if Path(name).suffix.casefold() not in _ALLOWED_SUFFIXES:
+        raise ValueError("only .xlsx and .xlsm workbooks are accepted")
+    if not isinstance(content, bytes) or not content:
         raise ValueError("empty upload")
-    if len(content) > 256 * 1024 * 1024:
+    if len(content) > MAX_UPLOAD_BYTES:
         raise ValueError("upload too large")
+    if not content.startswith(_ZIP_SIGNATURES):
+        raise ValueError("invalid Excel container signature")
 
 
-def _default_execute(job: AdminJob) -> Path | None:
-    from report_processor.processing import ProcessMode, ProcessReportRequest, process_report
+def validate_stage(stage: object) -> str:
+    if not isinstance(stage, str):
+        raise ValueError("invalid stage")
+    clean = stage.strip()
+    if not _STAGE_PATTERN.fullmatch(clean):
+        raise ValueError("invalid stage")
+    return clean
+
+
+def validate_mode(mode: object) -> str:
+    if not isinstance(mode, str) or mode not in _ALLOWED_MODES:
+        raise ValueError("invalid mode")
+    return mode
+
+
+def _private_write(path: Path, content: bytes) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    os.chmod(path, 0o600)
+
+
+def _default_execute(job: AdminJob) -> object:
+    from report_processor.processing import ProcessMode, ProcessReportRequest
+    from report_processor.workflow import process_report
 
     output = job.directory / "result.xlsx"
     request = ProcessReportRequest(
@@ -115,10 +285,37 @@ def _default_execute(job: AdminJob) -> Path | None:
         strict=False,
         output_path=output if job.mode == "write" else None,
         stage=job.stage,
-        options={"stage_rag": True, "top_k": 3},
+        options={"stage_rag": True, "stage_rag_top_k": 3},
     )
-    result = process_report(request)
-    if result.exit_code.value > 1:
-        job.errors = tuple(result.errors) or ("PROCESSING_FAILED",)
-        return None
-    return output if output.is_file() else None
+    return process_report(request)
+
+
+def _verify_inputs(job: AdminJob) -> None:
+    if _file_digest(job.source) != job.source_digest:
+        raise RuntimeError("source upload changed during processing")
+    if _file_digest(job.target) != job.target_digest:
+        raise RuntimeError("target upload changed during processing")
+
+
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _digest(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _exit_code(result: object) -> int:
+    value = getattr(result, "exit_code", -1)
+    return int(value.value if hasattr(value, "value") else value)
+
+
+def _remove_partial_output(job: AdminJob) -> None:
+    candidate = job.directory / "result.xlsx"
+    candidate.unlink(missing_ok=True)
+    job.output = None
+    job.result_name = None
