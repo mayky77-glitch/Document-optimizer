@@ -351,11 +351,11 @@ digest `c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`;
 Ruff, format, clean install, compileall и `git diff --check` — PASS. READY/main
 требует зелёного Pull Request.
 
-## Блок 15
+## Блок 15.1
 
-- **Название:** безопасный атомарный XLSX writer
+- **Название:** numeric-only XLSX output с materialization формул
 - **Статус:** документация обновлена; post-merge pytest и real-data gate pending
-- **Контракт:** `ExcelWriterContract-15.0` / `ExcelWriterEngine-15.0`
+- **Контракт:** `ExcelWriterContract-15.1` / `ExcelWriterEngine-15.1`
 - **API:** `write_target_report(...)`
 - **CLI:** отсутствует
 
@@ -363,15 +363,19 @@ Decision gate пишет только при `ALLOW_WRITE` или `ALLOW_WRITE_W
 `REQUIRE_MANUAL_REVIEW` и `BLOCK_WRITE` дают `SKIPPED_DECISION` без output.
 Разрешены только `CURRENT_PERIOD_QUANTITY` и `CURRENT_PERIOD_COST`.
 Используются конечные `Decimal` без float, пересчёта, округления, quantize;
-`None` не очищает ячейку. Targeted OOXML update сохраняет формулы, кэш, стили,
-merged ranges и структуру; `openpyxl.save` не используется. Только `.xlsx`;
-signed OOXML и `.xlsm` отклоняются.
+`None` не очищает ячейку. Финальный XLSX содержит числовые значения и не содержит
+worksheet formulas. Формулы остаются в immutable source/internal provenance.
+LibreOffice headless пересчитывает private temporary copy с isolated profile,
+только если formulas count > 0; при нуле формул шаг пропускается. Unavailable,
+timeout, error, blank, text или non-finite result блокируют publication. Только
+`.xlsx`; signed OOXML и `.xlsm` отклоняются.
 
 Source identity перепроверяется перед публикацией. Output — отдельный
 несуществующий путь, публикация — atomic hard-link no-clobber; source и
-существующий output не перезаписываются. Production Ruff/format/compileall
-проходят; feature `fcdef7c` имеет Ruff/format/diff-check PASS. Полный pytest и
-real-data gate ещё не запускались; READY/main/CI не присваивается.
+существующий output не перезаписываются. Baseline до remediation: **492 passed,
+11 skipped**; focused real-data **13 passed** относится к историческому Block
+15.0. Post-merge pytest и real-data gate для Block 15.1 ещё не подтверждены;
+READY/main/CI не присваивается.
 
 ## Блок 13
 

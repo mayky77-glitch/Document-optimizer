@@ -273,25 +273,26 @@ raw cells, formula text и document content в отчёт не копируют�
 фиксируются только после успешного Pull Request.
 Входные XLSX не изменились. Это не объявляет READY/main или CI.
 
-## Блок 15: безопасная запись XLSX
+## Блок 15.1: numeric-only XLSX output
 
-Блок 15 реализует `ExcelWriterContract-15.0` / `ExcelWriterEngine-15.0` и
+Блок 15.1 реализует `ExcelWriterContract-15.1` / `ExcelWriterEngine-15.1` и
 `write_target_report(...)`. Запись разрешена только для `ALLOW_WRITE` или
 `ALLOW_WRITE_WITH_WARNINGS`; ручная проверка и блокировка возвращают
 `SKIPPED_DECISION` без output. Разрешены только `CURRENT_PERIOD_QUANTITY` и
 `CURRENT_PERIOD_COST`. Используются конечные `Decimal` без float, пересчёта,
 округления или quantize; `None` не очищает ячейку.
 
-Обновление — targeted OOXML без `openpyxl.save`, с сохранением формул, кэша,
-стилей, merged ranges и структуры. Поддерживается только обычный `.xlsx`;
-signed OOXML и `.xlsm` отклоняются. Source identity перепроверяется перед
-публикацией. Новый output публикуется атомарно через hard-link no-clobber и
-никогда не перезаписывается; при ошибке source и существующий output не трогаются.
-CLI в блоке 15 нет.
+Финальный XLSX содержит только числовые значения: worksheet formulas в output
+нет. Формулы остаются в неизменяемом source и внутреннем provenance. Если они
+есть, LibreOffice headless пересчитывает приватную временную копию с
+изолированным профилем; при нулевом числе формул этот шаг пропускается.
+Недоступность, timeout, ошибка, blank, text или non-finite результат отменяют
+публикацию. Исходник не изменяется; output публикуется атомарно через
+hard-link no-clobber и не перезаписывается. CLI в блоке 15.1 нет.
 
-Production Ruff, format и compileall проходят; feature commit `fcdef7c` имеет
-PASS для Ruff, format и diff-check. Post-merge pytest и real-data gate pending;
-это не READY/main/CI.
+Текущий baseline до remediation: **492 passed, 11 skipped**; focused real-data
+`13 passed` относится только к историческому Block 15.0. Для этой версии
+post-merge pytest и real-data gate ещё не подтверждены; READY/main/CI не заявляются.
 
 ## Ограничения блоков 1–7
 
