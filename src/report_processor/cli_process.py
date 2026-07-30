@@ -24,6 +24,8 @@ def add_process_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--stage")
     parser.add_argument("--month")
+    parser.add_argument("--rules-path", type=Path)
+    parser.add_argument("--audit-directory", type=Path)
     parser.add_argument("--non-strict", action="store_true")
     parser.add_argument("--cache-directory", type=Path)
     parser.add_argument("--resume", action="store_true")
@@ -39,6 +41,8 @@ def run_process(args: argparse.Namespace, adapters: object | None = None) -> int
             output_path=args.output,
             stage=args.stage,
             month=args.month,
+            rules_path=args.rules_path,
+            audit_directory=args.audit_directory,
             cache_directory=args.cache_directory,
             resume=args.resume,
         )

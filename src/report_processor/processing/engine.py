@@ -53,13 +53,26 @@ def _process(request: ProcessReportRequest, adapters: ProcessingAdapters) -> Pro
 
     try:
         _validate_request(request)
-    except (TypeError, ValueError, OSError) as error:
+    except (TypeError, ValueError, OSError):
         return _result(
-            request, ProcessingState.FAILED, ProcessingExitCode.INVALID_INPUT, errors=(str(error),)
+            request,
+            ProcessingState.FAILED,
+            ProcessingExitCode.INVALID_INPUT,
+            errors=("INVALID_INPUT",),
         )
     snapshots = (_snapshot(request.source_path), _snapshot(request.target_path))
     run_key = _run_key(request, snapshots)
-    cached = _read_cache(request, run_key, snapshots)
+    try:
+        cached = _read_cache(request, run_key, snapshots)
+    except _CacheMismatchError:
+        return _result(
+            request,
+            ProcessingState.FAILED,
+            ProcessingExitCode.WRITE_OR_VERIFICATION_FAILED,
+            run_key,
+            errors=("RESUME_VALIDATION_FAILED",),
+            snapshots=snapshots,
+        )
     if cached is not None:
         return cached
     if not _is_adapter(adapters):
@@ -74,15 +87,23 @@ def _process(request: ProcessReportRequest, adapters: ProcessingAdapters) -> Pro
     try:
         with tempfile.TemporaryDirectory(prefix="report-processor-") as temporary_directory:
             context = ProcessingContext(
-                request.mode, request.strict, run_key, temporary_directory, {"request": request}
+                request.mode,
+                request.strict,
+                run_key,
+                temporary_directory,
+                {
+                    "request": request,
+                    "source_sha256": snapshots[0].sha256,
+                    "target_sha256": snapshots[1].sha256,
+                },
             )
-            outcomes = [_outcome(adapters.inspect(context), "inspect")]
+            outcomes = [_run_stage(adapters.inspect, context, "inspect")]
             if request.mode is not ProcessMode.INSPECT:
-                outcomes.append(_outcome(adapters.calculate(context), "calculate"))
-                outcomes.append(_outcome(adapters.audit(context), "audit"))
+                outcomes.append(_run_stage(adapters.calculate, context, "calculate"))
+                outcomes.append(_run_stage(adapters.audit, context, "audit"))
                 decision = _decision(outcomes)
                 if request.mode is ProcessMode.WRITE and _may_write(decision, request.strict):
-                    outcomes.append(_outcome(adapters.write(context), "write"))
+                    outcomes.append(_run_stage(adapters.write, context, "write"))
                 elif request.mode is ProcessMode.WRITE:
                     return _quality_result(request, run_key, snapshots, outcomes, decision)
             _verify_unchanged(snapshots)
@@ -96,13 +117,13 @@ def _process(request: ProcessReportRequest, adapters: ProcessingAdapters) -> Pro
             errors=(str(error),),
             snapshots=snapshots,
         )
-    except Exception as error:  # controlled boundary: a bad adapter cannot stop bulk execution
+    except Exception:  # controlled boundary: a bad adapter cannot stop bulk execution
         result = _result(
             request,
             ProcessingState.FAILED,
             ProcessingExitCode.CONTROLLED_INTERNAL_ERROR,
             run_key,
-            errors=(f"{type(error).__name__}: {error}",),
+            errors=("PROCESSING_STAGE_FAILED",),
             snapshots=snapshots,
         )
     _write_cache(request, result)
@@ -127,6 +148,8 @@ def _validate_request(request: ProcessReportRequest) -> None:
             raise ValueError(f"Входной файл не найден: {path}")
     if request.source_path.resolve() == request.target_path.resolve():
         raise ValueError("source_path и target_path должны различаться")
+    if request.rules_path is not None and not request.rules_path.is_file():
+        raise ValueError("rules_path должен указывать на файл")
     if request.mode is not ProcessMode.WRITE and request.output_path is not None:
         raise ValueError("inspect и dry-run не публикуют XLSX")
 
@@ -155,6 +178,7 @@ def _run_key(request: ProcessReportRequest, snapshots: tuple[FileSnapshot, ...])
         "mode": request.mode.value,
         "strict": request.strict,
         "options": dict(request.options),
+        "rules_hash": _rules_hash(request),
         "versions": _VERSIONS,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
@@ -164,6 +188,12 @@ def _outcome(value: object, stage: str) -> StageOutcome:
     if not isinstance(value, StageOutcome):
         raise TypeError(f"{stage} должен вернуть StageOutcome")
     return value
+
+
+def _run_stage(callback, context: ProcessingContext, name: str) -> StageOutcome:
+    outcome = _outcome(callback(context), name)
+    context.values.update(outcome.artifacts)
+    return outcome
 
 
 def _decision(outcomes: list[StageOutcome]) -> str | None:
@@ -253,9 +283,13 @@ def _read_cache(request, run_key, snapshots) -> ProcessingResult | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload["versions"] != _VERSIONS:
-            return None
+            raise _CacheMismatchError
         if payload["inputs"] != [item.sha256 for item in snapshots]:
-            return None
+            raise _CacheMismatchError
+        if payload["rules_hash"] != _rules_hash(request):
+            raise _CacheMismatchError
+        if payload["boundary"] not in {"DATA_COMMITTED", "EXPORT_PREPARED", "EXPORT_VERIFIED"}:
+            raise _CacheMismatchError
         return _result(
             request,
             ProcessingState(payload["state"]),
@@ -267,8 +301,8 @@ def _read_cache(request, run_key, snapshots) -> ProcessingResult | None:
             payload["artifacts"],
             True,
         )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return None
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise _CacheMismatchError from error
 
 
 def _write_cache(request: ProcessReportRequest, result: ProcessingResult) -> None:
@@ -283,13 +317,32 @@ def _write_cache(request: ProcessReportRequest, result: ProcessingResult) -> Non
         "warnings": result.warnings,
         "errors": result.errors,
         "artifacts": _json_safe(result.artifacts),
+        "rules_hash": _rules_hash(request),
+        "boundary": _boundary(result),
     }
-    path.write_text(json.dumps(payload, sort_keys=True, default=str), encoding="utf-8")
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("x", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True, default=str)
+    temporary.replace(path)
 
 
 def _json_safe(value: Mapping[str, object]) -> Mapping[str, object]:
-    return dict(value)
+    return {key: item for key, item in value.items() if isinstance(item, (str, int, float, bool))}
+
+
+def _rules_hash(request: ProcessReportRequest) -> str:
+    if request.rules_path is None:
+        return "default"
+    return _snapshot(request.rules_path).sha256
+
+
+def _boundary(result: ProcessingResult) -> str:
+    return "EXPORT_VERIFIED" if result.request.mode is ProcessMode.WRITE else "DATA_COMMITTED"
 
 
 class _InputChangedError(RuntimeError):
+    pass
+
+
+class _CacheMismatchError(RuntimeError):
     pass
