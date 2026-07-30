@@ -111,16 +111,21 @@ def _process(request: ProcessReportRequest, adapters: ProcessingAdapters) -> Pro
                 },
             )
             outcomes = [_run_stage(adapters.inspect, context, "inspect")]
+            quality_result = None
             if request.mode is not ProcessMode.INSPECT:
                 outcomes.append(_run_stage(adapters.calculate, context, "calculate"))
                 outcomes.append(_run_stage(adapters.audit, context, "audit"))
                 decision = _decision(outcomes)
                 if request.mode is ProcessMode.WRITE and _may_write(decision, request.strict):
                     outcomes.append(_run_stage(adapters.write, context, "write"))
-                elif request.mode is ProcessMode.WRITE:
-                    return _quality_result(request, run_key, snapshots, outcomes, decision)
+                elif request.mode is ProcessMode.WRITE or _requires_quality_stop(
+                    decision, outcomes, request.strict
+                ):
+                    quality_result = _quality_result(
+                        request, run_key, snapshots, outcomes, decision
+                    )
             _verify_unchanged(snapshots)
-            result = _success_result(request, run_key, snapshots, outcomes)
+            result = quality_result or _success_result(request, run_key, snapshots, outcomes)
     except _InputChangedError:
         result = _result(
             request,
@@ -217,6 +222,14 @@ def _may_write(decision: str | None, strict: bool) -> bool:
     if decision == "allow_write":
         return True
     return decision == "allow_write_with_warnings" and not strict
+
+
+def _requires_quality_stop(
+    decision: str | None, outcomes: Iterable[StageOutcome], strict: bool
+) -> bool:
+    if decision in {"require_manual_review", "block_write"}:
+        return True
+    return strict and any(outcome.warnings for outcome in outcomes)
 
 
 def _quality_result(request, run_key, snapshots, outcomes, decision) -> ProcessingResult:
