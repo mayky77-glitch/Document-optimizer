@@ -96,6 +96,19 @@ skip
 
 Выберите пункт 1. В поле сохранения можно указать полный путь к `.xlsx` **или существующую папку**. При выборе папки программа автоматически добавит имя `карточка_остатков.xlsx`.
 
+Если strict-проверка найдёт спорные строки, меню предложит:
+
+```text
+1. Отклонить все спорные строки и создать карточку
+2. Одобрить все доступные предложения
+3. Решить каждую строку отдельно
+0. Отменить выпуск карточки
+```
+
+Строки без предложенной категории нельзя одобрить молча: выберите категорию,
+отклоните или пропустите строку. Перед выпуском с оставшимися предупреждениями
+программа отдельно запросит разрешение на статус `PARTIALLY_READY`.
+
 Результат по умолчанию:
 
 ```text
@@ -157,6 +170,12 @@ python run_cli.py apply-drawing-review --review "/путь/manual_review.xlsx" -
 
 ```bash
 python run_cli.py build-drawing-card --archive "/путь/данные.zip" --template templates/default_drawing_card_template.xlsx --output output/result_after_review.xlsx --review-decisions output/review_decisions.json --mode create --rag-mode off --strict --work-dir work
+```
+
+Интерактивное решение спорных строк без Excel-review:
+
+```bash
+python run_cli.py build-drawing-card --archive "/путь/данные.zip" --template templates/default_drawing_card_template.xlsx --output output/result.xlsx --mode create --rag-mode off --strict --interactive-review --work-dir work
 ```
 
 ## 5. Почему раньше команды распадались

@@ -1,9 +1,9 @@
 from pathlib import Path
 
 from openpyxl import Workbook
-from report_processor.drawing_card.output.validator import validate_card
 
 from report_processor.drawing_card.models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER
+from report_processor.drawing_card.output.validator import validate_card
 
 
 def test_validator_rejects_categories_out_of_order_and_duplicates(tmp_path: Path) -> None:

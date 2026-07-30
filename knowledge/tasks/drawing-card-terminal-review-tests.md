@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: drawing-card-terminal-review-tests
-status: frozen
+status: done
 version: 1
 supersedes: null
 work_id: drawing-card-terminal-review
@@ -50,3 +50,9 @@ approve/reject, выбора категории при отсутствии пр
 Добавить тест ограниченного агрегированного вывода warnings и интеграционный
 тест повторного workflow после решения. Исправить четыре исходные ошибки
 сортировки импортов в существующих тестах, не меняя их поведение.
+
+## Результат
+
+- Feature commit: `1697b7935c671a61768cf304f01a62d0764b3bab`.
+- Integration commit: `675b5914ea42404396bf1c3a595255344995bf3a`.
+- Итог: 71 тест пройден; Ruff и проверка форматирования пройдены.

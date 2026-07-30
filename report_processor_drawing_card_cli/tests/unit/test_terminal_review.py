@@ -3,11 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-from report_processor.terminal_review import (
-    collect_terminal_review,
-    save_terminal_review_decisions,
-)
-
 from report_processor.drawing_card.matching.matcher import ReviewApproval
 from report_processor.drawing_card.models import (
     DrawingSourceLocation,
@@ -17,6 +12,10 @@ from report_processor.drawing_card.models import (
     WorkflowResult,
 )
 from report_processor.drawing_card.review.io import import_review_approvals
+from report_processor.terminal_review import (
+    collect_terminal_review,
+    save_terminal_review_decisions,
+)
 
 
 def _row(row_id: str, index: int) -> DrawingSourceRow:

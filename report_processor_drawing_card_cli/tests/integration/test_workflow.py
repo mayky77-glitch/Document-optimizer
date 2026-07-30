@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
-from report_processor.drawing_card.output.validator import validate_card
 
 from report_processor.drawing_card.models import WorkflowRequest, WorkflowResult
+from report_processor.drawing_card.output.validator import validate_card
 from report_processor.drawing_card.workflow import _publication_blockers, run_workflow
 
 
@@ -135,12 +135,24 @@ def test_output_cannot_overwrite_publication_base_before_inspection(
 
 @pytest.mark.parametrize(
     "warning",
-    ["INVALID_NUMBER:bad", "EXCEL_ERROR:#VALUE!", "DRAWING_CODE_NOT_FOUND"],
+    [
+        "INVALID_NUMBER:bad",
+        "EXCEL_ERROR:#VALUE!",
+        "DRAWING_CODE_NOT_FOUND",
+        "FORMULA_WITHOUT_CACHED_VALUE",
+    ],
 )
 def test_strict_blockers_include_invalid_source_values(warning: str, tmp_path: Path) -> None:
     result = WorkflowResult(run_id="test", status="OK", work_dir=tmp_path, warnings=[warning])
 
     assert _publication_blockers(result) == [warning]
+
+
+def test_formula_backend_limitation_is_not_a_strict_blocker(tmp_path: Path) -> None:
+    warning = "FORMULA_NOT_AVAILABLE_FOR_BACKEND"
+    result = WorkflowResult(run_id="test", status="OK", work_dir=tmp_path, warnings=[warning])
+
+    assert _publication_blockers(result) == []
 
 
 def test_invalid_review_json_is_blocked_with_error_and_summary(

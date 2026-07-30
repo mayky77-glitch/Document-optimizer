@@ -1,10 +1,9 @@
-from report_processor.drawing_card.output.layout import plan_layout
-
 from report_processor.drawing_card.models import (
     CATEGORY_DISPLAY_NAMES,
     DrawingCardResultRow,
     TargetWorkCategory,
 )
+from report_processor.drawing_card.output.layout import plan_layout
 from report_processor.drawing_card.sources.normalization import build_drawing_code
 
 

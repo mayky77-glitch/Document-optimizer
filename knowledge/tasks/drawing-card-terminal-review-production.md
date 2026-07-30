@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: drawing-card-terminal-review-production
-status: frozen
+status: done
 version: 1
 supersedes: null
 work_id: drawing-card-terminal-review
@@ -58,3 +58,9 @@ acceptance_commands:
 
 Вывод предупреждений агрегировать по кодам и ограничить, не печатать десятки
 тысяч повторов.
+
+## Результат
+
+- Feature commit: `ed3a475b5a3861171cc978b73e5166be9a7a5cbb`.
+- Integration commit: `7458cc8f58b3ed2fa5276214a29ebb3f21c32c38`.
+- Интерактивный review, атомарный JSON и один повторный workflow реализованы.

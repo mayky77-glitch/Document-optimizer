@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from report_processor.terminal_review import TerminalReviewOutcome
-
 from report_processor import cli
 from report_processor.drawing_card.matching.matcher import ReviewApproval
 from report_processor.drawing_card.models import (
     TargetWorkCategory,
     WorkflowResult,
 )
+from report_processor.terminal_review import TerminalReviewOutcome
 
 
 def _result(

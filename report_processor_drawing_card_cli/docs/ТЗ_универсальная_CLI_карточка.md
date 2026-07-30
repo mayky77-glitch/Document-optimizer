@@ -21,7 +21,7 @@
 7. Создаёт или дополняет Excel-карточку по обновлённому шаблону:
 
    ```text
-   карточка 24 остаток 30.07.26(2).xlsx
+   card_template.xlsx
    ```
 8. Работает из командной строки.
 9. Сохраняет полный аудит происхождения каждого результата.
@@ -33,7 +33,7 @@
 ```text
 1. Актуальный полный репозиторий проекта.
 2. Аудит_данных_для_обучения_уточнённый.md.
-3. карточка 24 остаток 30.07.26(2).xlsx.
+3. card_template.xlsx.
 4. тестовые данные, пример того что пойдёт на вход.zip.
 ```
 
@@ -176,7 +176,7 @@ class TargetWorkCategory(str, Enum):
 Актуальный файл:
 
 ```text
-карточка 24 остаток 30.07.26(2).xlsx
+card_template.xlsx
 ```
 
 В книге находится лист:
@@ -1664,7 +1664,7 @@ unit
 ```bash
 python -m report_processor.cli build-drawing-card \
   --inputs "/data/file1.xlsx" "/data/file2.xlsb" \
-  --template "/templates/карточка 24 остаток 30.07.26(2).xlsx" \
+  --template "/templates/card_template.xlsx" \
   --output "/output/карточка_остатков.xlsx" \
   --mode create \
   --rules "/config/drawing_card/rules.json" \
@@ -1677,7 +1677,7 @@ python -m report_processor.cli build-drawing-card \
 ```bash
 python -m report_processor.cli build-drawing-card \
   --archive "/data/тестовые данные.zip" \
-  --template "/templates/карточка 24 остаток 30.07.26(2).xlsx" \
+  --template "/templates/card_template.xlsx" \
   --output "/output/result.xlsx" \
   --period "2026-07" \
   --mode create

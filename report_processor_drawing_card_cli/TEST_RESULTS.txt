@@ -1,29 +1,36 @@
-Version: 0.9.0
+Version: 0.9.2
 
 compileall:
-python -m compileall -q src tests
+PYTHONPATH=src python -m compileall -q src
 OK
 
 pytest:
 PYTHONPATH=src python -m pytest -q
-31 passed
+71 passed
 
 ruff:
-NOT_RUN: python -m ruff check . returned "No module named ruff".
-The configuration remains in pyproject.toml and requirements-dev.txt.
+PYTHONPATH=src python -m ruff check .
+All checks passed
 
-Regression fixes:
-- suspicious 0907 quantity/cost columns replaced from 171/172 to 40/42;
-- shared XLSX formulas translated from their base cell;
-- unit/material markers no longer replace parent drawing codes;
-- exact Decimal values are patched into worksheet XML after openpyxl save;
-- validator detects identical quantity/cost, invalid drawing codes, and binary XML tails.
+format:
+PYTHONPATH=src python -m ruff format --check src tests
+55 files already formatted
 
-Representative real create:
-48,129 extracted rows; 3 objects; 1,004 drawings; 8,032 card rows;
-762 nonempty quantities; 777 nonempty costs; 1,270 review rows;
-output validation OK; 0 suspicious quantity=cost pairs; 0 binary XML tails;
-source hashes unchanged.
+Interactive review regression:
+- reject all and generate;
+- approve available proposals;
+- category required when proposal is absent;
+- item-by-item approve/reject/change/quantity-only/cost-only/skip;
+- reject remaining;
+- invalid input retry;
+- cancel without rerun;
+- atomic JSON round-trip;
+- one audited rerun;
+- warning output bounded and aggregated.
 
-Manual review:
-1,271 rows including header; 18 columns; ZIP/XML/reopen OK.
+Temporary end-to-end run:
+- 1,270 disputed rows rejected;
+- rerun review count 0;
+- result PARTIALLY_READY;
+- output validation OK;
+- source ZIP hash, size and mtime unchanged.

@@ -1,4 +1,4 @@
-status: frozen
+status: completed
 work_id: drawing-card-terminal-review
 objective: "Добавить безопасное интерактивное решение спорных строк перед выпуском карточки"
 project_root: "/Users/x/Documents/Сооотношение документов/report-processor-drawing-card-worktree"
@@ -17,6 +17,12 @@ baseline_commands:
 baseline_results:
   - "pytest: 59 passed"
   - "ruff: 4 pre-existing import-order errors in tests"
+final_results:
+  - "pytest: 71 passed"
+  - "ruff: passed"
+  - "ruff format check: passed"
+  - "compileall: passed"
+  - "real ZIP: PARTIALLY_READY after explicit review; output validation passed"
 shared_paths_owner: integration
 shared_paths:
   - knowledge

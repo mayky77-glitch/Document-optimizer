@@ -51,6 +51,7 @@ _STRICT_BLOCKER_STATUSES = frozenset(
         Status.UNIT_MISMATCH,
         Status.INVALID_NUMBER,
         Status.EXCEL_ERROR,
+        Status.FORMULA_WITHOUT_CACHED_VALUE,
         Status.CONFLICT_REQUIRES_REVIEW,
         Status.UNCONFIRMED_CLASSIFICATION,
         Status.MODEL_DECISION_INVALID,
@@ -279,7 +280,6 @@ def _publication_blockers(result: WorkflowResult) -> list[str]:
             warning
             for warning in candidates
             if warning.partition(":")[0] in _STRICT_BLOCKER_STATUSES
-            or warning.startswith("FORMULA_")
         )
     )
 
