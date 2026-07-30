@@ -1,0 +1,31 @@
+configuration_version: RuleConfigurationVersion-1.0
+rule_set_version: ValidatedRuleSet-10.0
+defaults:
+  default_run_coefficient: "2.7"
+  cost_tolerance_ratio: "0.05"
+  rounding_quantum: "0.01"
+  rounding_mode: ROUND_HALF_UP
+  allowed_units: [шт]
+  quantity_policy: target_unit_or_single_alternative
+  cost_policy: all_approved_rows
+  unit_conversion_enabled: false
+  source_priority: [ks6a]
+rules:
+  - rule_id: M01
+    rule_version: "1"
+    scope:
+      object_scopes: [КГС]
+      stages: []
+      target_processes: [Свайные работы]
+      source_units: [шт]
+    clauses:
+      - action: include
+        match_kind: exact
+        literal: Устройство свай
+        field: source_work_name
+        priority: 0
+        hard_exclude: false
+    priority: 100
+    exclusive_owner: false
+    owner_approved: true
+    evidence: [synthetic-fixture]
