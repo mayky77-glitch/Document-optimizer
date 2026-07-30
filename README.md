@@ -5,12 +5,13 @@ Python-проект для поэтапной обработки строите�
 
 ## Текущий статус
 
-В integration-ветке реализованы **блоки 1–10 — от инвентаризации и выбора источника до
-канонических строк и бизнес-нормализации** (текущая версия пакета `0.8.0`).
-Блок 8 прошёл focused, полный и 50k-row performance gates; GitHub CI проверяется
-в Pull Request перед merge в `main`. Real-data gate на reviewed-схеме
-КС-2 прошёл цепочку **780 → 378 → 378** строк без изменения
-исходного Excel.
+В integration-ветке реализованы **блоки 1–13 — от инвентаризации источников до
+детерминированного расчёта по принятым сопоставлениям** (текущая версия пакета
+`0.8.0`). Локальный release-набор блока 13 прошёл: Ruff, format, clean install,
+compileall и **482 pytest-теста**. Real-data gate использовал две существующие
+книги Excel без изменения их SHA-256, размера и `mtime`; расчёт вернул
+**1 calculated**, **5 manual_review** и **101 no_match**. GitHub CI остаётся
+обязательным gate перед merge в `main`.
 Проект принимает каталог, отдельный файл или ZIP-архив и строит типизированный
 JSON-манифест без чтения содержимого Excel и без распаковки ZIP. Блок 2
 обогащает готовый `FileManifest` индексами вида `1006 (682)` по имени и
@@ -228,6 +229,29 @@ report-processor prepare-training-data \
 конфликтующие строки сохраняются с новым ID и предупреждением. Входной DuckDB
 открывается только для чтения; все числовые поля, включая `total_cost`,
 сохраняются, а `NaN`/`Infinity` отклоняются.
+
+## Блок 13: расчёт по принятым сопоставлениям
+
+Блок 13 публикует `CalculationContract-13.0` и `CalculationEngine-13.0`.
+`calculate_matches(match_results, rule_set)` учитывает только `MATCHED` с
+выбранным кандидатом; `AMBIGUOUS`/manual review и `NO_MATCH` не получают
+итогов. Количество и стоимость — конечные `Decimal` из `period_quantity` и
+`period_cost`; коэффициент применяется к стоимости, затем один раз выполняется
+финальный `ROUND_HALF_UP`. Signed negative adjustments сохраняются с trace
+warning, missing остаётся `None`, explicit zero сохраняется; float, non-finite
+values и unit conversion запрещены.
+
+Только approved rules участвуют: `EXCLUDE` побеждает, `REVIEW` требует ручного
+решения, включение quantity и cost независимо. Категории `work`, `material` и
+`service` определяются только точным canonical `cost_type_code`; неизвестный
+или отсутствующий код остаётся `UNCLASSIFIED`, без вывода по тексту.
+Результаты и вклады имеют детерминированные SHA-256 ID, полный formula trace и
+provenance. Workbook не изменяется. Focused gate: **11 passed**; полный suite:
+**482 passed**. Real-data gate: **1 calculated**, **5 manual_review**,
+**101 no_match**, все рассчитанные вклады — `UNCLASSIFIED`; digest
+`6b814337cb55e574cae7ab42bf9c4d81af99bc163067d76c31d56085c4ee8d54`.
+Обе исходные XLSX остались неизменны. Статус `main` и CI фиксируются только
+после успешного Pull Request.
 
 ## Ограничения блоков 1–7
 

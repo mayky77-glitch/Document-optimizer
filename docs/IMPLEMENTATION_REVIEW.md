@@ -132,3 +132,25 @@ Real-data gate на reviewed КС-2 и целевом отчёте: **382** sour
 Обратный порядок входных строк даёт тот же результат; SHA-256, размер и
 `mtime` обеих XLSX до/после совпадают. Полный suite и GitHub Actions остаются
 release gates integration-ветки.
+
+## Блок 13 — calculation engine
+
+Frozen: `CalculationContract-13.0` / `CalculationEngine-13.0`. Только
+`MATCHED` с выбранным кандидатом получает totals; ambiguous/manual review и
+no-match — нет. `period_quantity`/`period_cost` — `Decimal`; coefficient,
+aggregate-first и одно финальное `ROUND_HALF_UP`. Signed negative adjustments
+сохраняются с trace warning. Approved `EXCLUDE` побеждает, `REVIEW` требует
+ручного решения, quantity/cost независимо. Exact canonical categories
+work/material/service; отсутствующий `cost_type_code` — `UNCLASSIFIED`, без
+text inference. Полный formula/provenance trace, workbook не изменяется. Все
+382 reviewed source rows имеют отсутствующий `cost_type_code`.
+
+Focused calculation gate: **11 passed**, real-XLSX gate: **1 passed**,
+полный suite: **482 passed**; Ruff, format, clean install, compileall и
+`git diff --check` — PASS. Сквозной real-data результат: **382** source rows,
+**107** target rows, **35** кандидатов; calculation-статусы
+**1 calculated**, **5 manual_review**, **101 no_match**. Единственный вклад
+остался `UNCLASSIFIED`. Канонический SHA-256 calculation-результата:
+`6b814337cb55e574cae7ab42bf9c4d81af99bc163067d76c31d56085c4ee8d54`.
+SHA-256, размер и `mtime` обеих исходных XLSX неизменны. GitHub CI и статус
+`main` подтверждаются только после Pull Request.

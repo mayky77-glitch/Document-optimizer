@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-12-docs
-status: claimed
+status: superseded
 version: 1
 supersedes: null
 work_id: document-optimizer-block-12
@@ -12,7 +12,7 @@ agent_role: documentation-agent
 owner: block-12-docs
 profile: L0
 routing_grade: P1
-progress_revision: 0
+progress_revision: 4
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -62,7 +62,7 @@ acceptance_commands:
   - "git diff --check"
 tags:
   - task/documentation
-  - status/claimed
+  - status/superseded
   - layer/docs
   - risk/low
 ---
