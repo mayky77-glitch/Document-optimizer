@@ -5,13 +5,13 @@ Python-проект для поэтапной обработки строите�
 
 ## Текущий статус
 
-В integration-ветке реализованы **блоки 1–13 — от инвентаризации источников до
-детерминированного расчёта по принятым сопоставлениям** (текущая версия пакета
-`0.8.0`). Локальный release-набор блока 13 прошёл: Ruff, format, clean install,
-compileall и **482 pytest-теста**. Real-data gate использовал две существующие
-книги Excel без изменения их SHA-256, размера и `mtime`; расчёт вернул
-**1 calculated**, **5 manual_review** и **101 no_match**. GitHub CI остаётся
-обязательным gate перед merge в `main`.
+В integration-ветке реализованы **блоки 1–14 — от инвентаризации источников до
+детерминированного quality-control write gate** (текущая версия пакета `0.8.0`).
+Локальный release-набор блока 14 прошёл: Ruff, format, clean install, compileall
+и **490 pytest-тестов**. Real-data gate использовал две существующие книги Excel
+без изменения их SHA-256, размера и `mtime`; quality-control вернул
+`REQUIRE_MANUAL_REVIEW` без blocking issues. GitHub CI остаётся обязательным
+gate перед merge в `main`.
 Проект принимает каталог, отдельный файл или ZIP-архив и строит типизированный
 JSON-манифест без чтения содержимого Excel и без распаковки ZIP. Блок 2
 обогащает готовый `FileManifest` индексами вида `1006 (682)` по имени и
@@ -252,6 +252,26 @@ provenance. Workbook не изменяется. Focused gate: **11 passed**; п�
 `6b814337cb55e574cae7ab42bf9c4d81af99bc163067d76c31d56085c4ee8d54`.
 Обе исходные XLSX остались неизменны. Статус `main` и CI фиксируются только
 после успешного Pull Request.
+
+## Блок 14: quality-control write gate
+
+Публичный API блока 14: `evaluate_quality_control(match_results, calculation_results, rule_set) -> QualityControlReport`.
+Публичные типы решений и находок: `WriteDecision`, `QualityIssueSeverity`,
+`QualityIssueCode`, `QualityLocation`, `QualityIssue` и `QualityControlSummary`.
+`ValidatedRuleSet.defaults.cost_tolerance_ratio` — единственный источник tolerance.
+Проверяются cardinality/identity, provenance, trace/totals, formula cache и Excel
+errors, required values, writable targets, normalized units и Decimal tolerance.
+Решения имеют precedence: `BLOCK_WRITE` → `REQUIRE_MANUAL_REVIEW` →
+`ALLOW_WRITE_WITH_WARNINGS` → `ALLOW_WRITE`. IDs и digest детерминированы;
+raw cells, formula text и document content в отчёт не копируются. Workbook read-only.
+
+Проверенное локальное evidence: synthetic set — 7 PASS; real-data —
+`REQUIRE_MANUAL_REVIEW`, 0 blocking issues, digest
+`c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`.
+Полный release-suite: **490 passed**; Ruff, format, clean install, compileall и
+`git diff --check` — PASS. Обе исходные XLSX неизменны. Статус `main` и CI
+фиксируются только после успешного Pull Request.
+Входные XLSX не изменились. Это не объявляет READY/main или CI.
 
 ## Ограничения блоков 1–7
 
