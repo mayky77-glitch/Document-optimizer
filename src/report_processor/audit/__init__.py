@@ -21,7 +21,7 @@ from .models import (
     RunReport,
     TraceReport,
 )
-from .reports import run_report, trace_report
+from .reports import audit_bundle, run_report, trace_report
 from .serialization import EXPORT_ALLOWLIST, AuditRedactionError, canonical_json, digest, redact
 
 __all__ = (
@@ -48,6 +48,7 @@ __all__ = (
     "FeedbackRuleVersion",
     "RunReport",
     "TraceReport",
+    "audit_bundle",
     "canonical_json",
     "deterministic_bytes",
     "digest",

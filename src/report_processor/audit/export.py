@@ -82,6 +82,8 @@ def export_snapshot(
             os.link(temporary, destination)
         except FileExistsError as exc:
             raise AuditExportError(AuditErrorCode.EXPORT_DESTINATION_EXISTS.value) from exc
+        published = destination.read_bytes()
+        validate_bytes(published, format, len(materialized), content_hash)
         directory_fd = os.open(destination.parent, os.O_RDONLY)
         try:
             os.fsync(directory_fd)

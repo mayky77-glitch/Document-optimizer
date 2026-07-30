@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 import sqlite3
 from collections.abc import Iterator, Mapping
@@ -13,6 +14,7 @@ from .models import (
     AUDIT_EVENT_VERSION,
     AUDIT_IDENTITY_VERSION,
     GENESIS_EVENT_HASH,
+    AuditBundle,
     AuditErrorCode,
     AuditEvent,
     AuditRun,
@@ -28,6 +30,8 @@ _TRANSITIONS = {
     AuditState.DATA_COMMITTED.value: AuditState.EXPORT_PREPARED.value,
     AuditState.EXPORT_PREPARED.value: AuditState.EXPORT_VERIFIED.value,
 }
+_CONTROLLED_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_CONTRACT_VALUE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 
 
 class AuditJournalError(RuntimeError):
@@ -82,6 +86,14 @@ class AuditJournal:
         nonce_hex: str | None = None,
     ) -> AuditRun:
         safe_options = redact(options)
+        if any(
+            not isinstance(key, str)
+            or not _CONTRACT_VALUE.fullmatch(key)
+            or not isinstance(value, str)
+            or not _CONTRACT_VALUE.fullmatch(value)
+            for key, value in contract_versions.items()
+        ):
+            raise ValueError("contract_versions must contain controlled version identifiers")
         run_key = digest(
             {
                 "inputs": sorted(set(input_ref_hashes)),
@@ -155,6 +167,8 @@ class AuditJournal:
             )
         if attempt_number < 1:
             raise ValueError("attempt_number must be positive")
+        self._validate_controlled_code(reason_code, "reason_code")
+        self._validate_controlled_code(warning_code, "warning_code")
         safe_fields = redact(fields or {})
         timestamp = timestamp_utc or datetime.now(UTC).isoformat(timespec="microseconds")
         with self._transaction():
@@ -270,8 +284,40 @@ class AuditJournal:
         self.connection.execute("PRAGMA wal_checkpoint(FULL)")
         return self.get_run(run_id)
 
+    def bundle(self, run_id: str, artifact_hashes: Mapping[str, str]) -> AuditBundle:
+        """Build a value-free bundle after validating the durable event chain."""
+        if any(not isinstance(value, str) or not value for value in artifact_hashes.values()):
+            raise ValueError("artifact hashes must be controlled identifiers")
+        return AuditBundle(self.get_run(run_id), self.validate_run(run_id), dict(artifact_hashes))
+
+    def verify_export(
+        self, run_id: str, *, snapshot_hash: str, published_hash: str, attempt_number: int = 1
+    ) -> AuditEvent:
+        """Advance the export saga only after the published bytes match the snapshot."""
+        if snapshot_hash != published_hash:
+            raise AuditIntegrityError(
+                AuditErrorCode.EXPORT_HASH_MISMATCH, "published export hash differs"
+            )
+        return self.append_event(
+            run_id,
+            AuditStage.EXPORT,
+            AuditState.EXPORT_VERIFIED,
+            fields={"artifact_sha256": snapshot_hash},
+            attempt_number=attempt_number,
+        )
+
     def add_feedback(self, version: FeedbackRuleVersion) -> None:
+        if not version.rule_content_hash or not version.source_hash:
+            raise ValueError("feedback hashes must not be empty")
         with self._transaction():
+            source = self.connection.execute(
+                "SELECT run_id FROM events WHERE event_id=?", (version.source_event_id,)
+            ).fetchone()
+            if source is None or source["run_id"] != version.run_id:
+                raise AuditIntegrityError(
+                    AuditErrorCode.FEEDBACK_DRIFT,
+                    "feedback source event does not belong to its run",
+                )
             self.connection.execute(
                 "INSERT INTO feedback VALUES (?, ?, ?, ?, ?, 0)",
                 (
@@ -306,7 +352,8 @@ class AuditJournal:
                     AuditErrorCode.FEEDBACK_DRIFT, "feedback source or rule changed"
                 )
             self.connection.execute(
-                "UPDATE feedback SET active=1 WHERE rule_version_id=?", (rule_version_id,)
+                "INSERT OR IGNORE INTO feedback_activations VALUES (?, ?, ?)",
+                (rule_version_id, current_rule_hash, current_source_hash),
             )
         return FeedbackRuleVersion(
             row["rule_version_id"],
@@ -319,8 +366,24 @@ class AuditJournal:
 
     def compact_feedback(self) -> int:
         with self._transaction():
-            result = self.connection.execute("DELETE FROM feedback WHERE active=0")
-        return result.rowcount
+            inactive = self.connection.execute(
+                "SELECT * FROM feedback WHERE rule_version_id NOT IN "
+                "(SELECT rule_version_id FROM feedback_activations) ORDER BY rule_version_id"
+            ).fetchall()
+            if inactive:
+                lineage_hash = digest(tuple(tuple(row) for row in inactive))
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO feedback_compactions VALUES (?, ?, ?)",
+                    (lineage_hash, len(inactive), lineage_hash),
+                )
+        return len(inactive)
+
+    @staticmethod
+    def _validate_controlled_code(value: str | None, field_name: str) -> None:
+        if value is not None and (
+            not isinstance(value, str) or not _CONTROLLED_CODE.fullmatch(value)
+        ):
+            raise ValueError(f"{field_name} must be an uppercase controlled code")
 
     def _migrate(self) -> None:
         self.connection.executescript(
@@ -342,6 +405,14 @@ class AuditJournal:
                 rule_version_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
                 source_event_id TEXT NOT NULL REFERENCES events(event_id), rule_hash TEXT NOT NULL,
                 source_hash TEXT NOT NULL, active INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS feedback_compactions(
+                lineage_hash TEXT PRIMARY KEY, inactive_count INTEGER NOT NULL,
+                compacted_hash TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS feedback_activations(
+                rule_version_id TEXT PRIMARY KEY REFERENCES feedback(rule_version_id),
+                rule_hash TEXT NOT NULL, source_hash TEXT NOT NULL
             );
             CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
             BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;

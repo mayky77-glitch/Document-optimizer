@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-from .models import AuditEvent, AuditRun, RunReport, TraceReport
+from .models import AuditBundle, AuditEvent, AuditRun, RunReport, TraceReport
 from .serialization import redact
 
 _TRACE_KEYS = frozenset(
@@ -40,4 +40,13 @@ def trace_report(run_id: str, links: Iterable[Mapping[str, object]]) -> TraceRep
                 key=lambda item: tuple(str(item.get(key, "")) for key in sorted(_TRACE_KEYS)),
             )
         ),
+    )
+
+
+def audit_bundle(
+    run: AuditRun, events: Iterable[AuditEvent], artifact_hashes: Mapping[str, str]
+) -> AuditBundle:
+    """Assemble a deterministic, value-free audit bundle for reporting."""
+    return AuditBundle(
+        run, tuple(sorted(events, key=lambda event: event.event_sequence)), artifact_hashes
     )
