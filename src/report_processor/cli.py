@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from report_processor.cli_extraction import add_extract_rows_parser, run_extract_rows
 from report_processor.cli_inspect import add_inspect_workbook_parser, run_inspect_workbook
 from report_processor.cli_schema import add_detect_schema_parser, run_detect_schema
 from report_processor.domain.exceptions import (
@@ -128,6 +129,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     add_inspect_workbook_parser(subparsers)
     add_detect_schema_parser(subparsers)
+    add_extract_rows_parser(subparsers)
     extract.add_argument(
         "--allow-loose",
         action="store_true",
@@ -191,6 +193,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "detect-schema":
             return run_detect_schema(args)
 
+        if args.command == "extract-rows":
+            return run_extract_rows(args)
+
         if args.command == "enrich-metadata":
             manifest = load_manifest_json(args.manifest)
             enriched = enrich_manifest_with_document_metadata(
@@ -235,6 +240,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ManifestWriteError as exc:
         logging.error("%s", exc)
         return EXIT_WRITE_ERROR
+    except (ValueError, OSError) as exc:
+        logging.error("Ошибка аргументов или ввода: %s", exc)
+        return _WORKBOOK_EXIT_CODES[StatusCode.INVALID_ARGUMENTS]
 
     _print_summary(args.source, args.output, manifest.summary, manifest.source_kind)
     return EXIT_OK

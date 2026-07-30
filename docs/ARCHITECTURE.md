@@ -36,6 +36,21 @@ ManifestSummary + FileManifest
 Модули `schema/` разделяют scan, merged cells, классификацию, заголовки,
 столбцы, confidence, validation и JSON; данные строк не извлекаются.
 
+Блок 6 использует цепочку `inventory → selection → materialization/session →
+schema → adapters/extraction → serialization/CLI`. Готовая схема блока 5
+управляет извлечением; новые Excel-фикстуры для этого блока не добавляются.
+Адаптеры КС-2, КС-6а и СВВР строят канонические строки с raw/cached/formula
+значениями и provenance источника/ячейки. Неразрешённые и не-OK столбцы
+пропускаются, malformed schema обрабатывается контролируемо; формулы не
+вычисляются, а `ArrayFormula` нормализуется.
+
+`extract-rows` принимает manifest или selection, schema и output, поддерживает
+sheet/type, limits и форматы JSON/JSONL. Потоковый JSONL с `*.meta.json` и JSON
+записываются атомарно и допускают восстановление. Неопределённая схема или
+отсутствие поддерживаемого листа дают контролируемый нулевой результат либо
+отказ на ручную проверку, без угадывания. Жизненный цикл чтения остаётся
+read-only для `.xlsx`/`.xlsm` и выбранной ZIP-записи.
+
 ## Структура пакета
 
 ```text

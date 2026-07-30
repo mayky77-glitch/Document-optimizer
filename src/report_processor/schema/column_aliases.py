@@ -184,6 +184,15 @@ DEFAULT_COLUMN_ALIASES: tuple[ColumnAliasRule, ...] = (
         100,
     ),
     ColumnAliasRule(
+        LogicalColumn.CONTRACT_COST,
+        ("договорная стоимость", "стоимость по договору", "сметная стоимость"),
+        ("договор",),
+        ("стоимость", "смет"),
+        ("единицу", "отчетный", "начала", "накоп"),
+        _WORK,
+        96,
+    ),
+    ColumnAliasRule(
         LogicalColumn.UNIT_PRICE,
         ("расценка",),
         ("расценка",),
