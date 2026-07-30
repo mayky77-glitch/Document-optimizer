@@ -87,6 +87,29 @@ def workbook_path(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def schema_workbook_path(tmp_path: Path) -> Path:
+    path = tmp_path / "1006 (682)_КС-6а.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "КС-6а"
+    worksheet["A5"] = "№ п/п"
+    worksheet["B5"] = "Наименование этапа выполнения работ"
+    worksheet["C5"] = "Ед. изм."
+    worksheet.merge_cells("D5:E5")
+    worksheet["D5"] = "Выполнено за отчетный период"
+    worksheet["D6"] = "Количество"
+    worksheet["E6"] = "Стоимость"
+    worksheet["A7"] = 1
+    worksheet["B7"] = "Монтаж трубопровода"
+    worksheet["C7"] = "м"
+    worksheet["D7"] = 12.5
+    worksheet["E7"] = 1000
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
 def regular_entry(path: Path, **overrides: object) -> FileManifestEntry:
     entry = make_entry.__wrapped__()(
         path.name, relative_path=path.name, extension=path.suffix.lower()
@@ -129,6 +152,10 @@ def candidate(entry: FileManifestEntry):
         score_components=(),
         warnings=(),
     )
+
+
+def schema_candidate(path: Path):
+    return candidate(regular_entry(path))
 
 
 def create_zip_with_workbook(

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from report_processor.cli_inspect import add_inspect_workbook_parser, run_inspect_workbook
+from report_processor.cli_schema import add_detect_schema_parser, run_detect_schema
 from report_processor.domain.exceptions import (
     BrokenArchiveError,
     ManifestWriteError,
@@ -126,6 +127,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="INFO",
     )
     add_inspect_workbook_parser(subparsers)
+    add_detect_schema_parser(subparsers)
     extract.add_argument(
         "--allow-loose",
         action="store_true",
@@ -185,6 +187,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "inspect-workbook":
             return run_inspect_workbook(args)
+
+        if args.command == "detect-schema":
+            return run_detect_schema(args)
 
         if args.command == "enrich-metadata":
             manifest = load_manifest_json(args.manifest)

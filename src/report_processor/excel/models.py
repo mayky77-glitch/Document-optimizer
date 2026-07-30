@@ -88,6 +88,7 @@ class DualWorkbookSession:
     format_result: ExcelFormatResult
     keep_vba: bool
     metadata: WorkbookMetadata | None = None
+    structure_cache: dict[str, object] = field(default_factory=dict)
     closed: bool = False
     formula_source_path: Path = field(init=False)
     value_source_path: Path = field(init=False)
@@ -95,6 +96,12 @@ class DualWorkbookSession:
     def __post_init__(self) -> None:
         self.formula_source_path = self.source.local_path
         self.value_source_path = self.source.local_path
+
+    @property
+    def sheet_names(self) -> tuple[str, ...]:
+        """Return the validated shared sheet order for both read-only views."""
+
+        return tuple(self.formula_workbook.sheetnames)
 
     @staticmethod
     def _close_workbook(workbook: Any) -> None:

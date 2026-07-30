@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "document-optimizer"
-version = "0.4.0"
-description = "Поэтапная обработка строительных отчётов; блоки 1–4 — инвентаризация, индексы, выбор и безопасное чтение Excel"
+version = "0.5.0"
+description = "Поэтапная обработка строительных отчётов; блоки 1–5 — от инвентаризации до распознавания структуры Excel"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
