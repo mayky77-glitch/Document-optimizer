@@ -181,7 +181,7 @@ def _period(
 
 
 def _decimal(lexeme: str | None, cell_type: str | None) -> tuple[Decimal | None, str]:
-    if lexeme is None or cell_type not in {None, "n"}:
+    if lexeme is None or cell_type not in {None, "n", "inlineStr", "str"}:
         return None, "NOT_NUMERIC_OOXML_CELL"
     try:
         result = Decimal(lexeme)

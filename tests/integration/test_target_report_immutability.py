@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from hashlib import sha256
 
-from report_processor.target_report import TargetReportReadRequest, read_target_report
-
 from report_processor.schema import LogicalColumn, SheetType, WorkbookSchema
+from report_processor.target_report import TargetReportReadRequest, read_target_report
 
 
 def test_read_target_report_keeps_source_sha_and_stat_unchanged(

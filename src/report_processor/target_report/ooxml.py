@@ -53,7 +53,7 @@ def worksheet_parts(path: Path) -> dict[str, str]:
         relation = sheet.attrib.get(f"{{{_REL_NS}}}id")
         target = targets.get(relation or "")
         if name and target:
-            parts[name] = posixpath.normpath(posixpath.join("xl", target))
+            parts[name] = posixpath.normpath(posixpath.join("xl", target)).lstrip("/")
     return parts
 
 
@@ -90,6 +90,9 @@ def read_sheet_lexemes(path: Path, sheet_name: str) -> dict[str, RawCellLexemes]
         if not coordinate:
             continue
         value = cell.findtext(_Q("v"))
+        if value is None and cell.attrib.get("t") == "inlineStr":
+            inline_string = cell.find(_Q("is"))
+            value = "".join(inline_string.itertext()) if inline_string is not None else None
         formula = cell.findtext(_Q("f"))
         result[coordinate] = RawCellLexemes(value, formula, cell.attrib.get("t"))
     return result
@@ -110,7 +113,11 @@ def read_sheet_structure(path: Path, sheet_name: str) -> SheetStructure:
     auto_filter = root.find(_Q("autoFilter"))
     return SheetStructure(
         dimension.attrib.get("ref") if dimension is not None else None,
-        tuple(item.attrib["ref"] for item in merged or () if "ref" in item.attrib),
+        tuple(
+            item.attrib["ref"]
+            for item in (() if merged is None else merged)
+            if "ref" in item.attrib
+        ),
         auto_filter.attrib.get("ref") if auto_filter is not None else None,
         panes[0].attrib.get("topLeftCell") if panes else None,
     )
@@ -137,7 +144,9 @@ def read_sheet_comments(path: Path, sheet_name: str) -> tuple[tuple[str, str], .
         )
         if not target:
             return ()
-        comment_part = posixpath.normpath(posixpath.join(posixpath.dirname(part), target))
+        comment_part = posixpath.normpath(posixpath.join(posixpath.dirname(part), target)).lstrip(
+            "/"
+        )
         root = ElementTree.fromstring(archive.read(comment_part))
     return tuple(
         (comment.attrib["ref"], "".join(comment.itertext()))

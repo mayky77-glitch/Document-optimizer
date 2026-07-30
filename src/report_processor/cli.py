@@ -6,10 +6,18 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from report_processor.cli_business_rules import (
+    add_validate_business_rules_parser,
+    run_validate_business_rules,
+)
 from report_processor.cli_extraction import add_extract_rows_parser, run_extract_rows
 from report_processor.cli_inspect import add_inspect_workbook_parser, run_inspect_workbook
 from report_processor.cli_normalization import add_normalize_rows_parser, run_normalize_rows
 from report_processor.cli_schema import add_detect_schema_parser, run_detect_schema
+from report_processor.cli_target_report import (
+    add_read_target_report_parser,
+    run_read_target_report,
+)
 from report_processor.cli_training_data import (
     add_prepare_training_data_parser,
     run_prepare_training_data,
@@ -137,6 +145,8 @@ def _build_parser() -> argparse.ArgumentParser:
     add_extract_rows_parser(subparsers)
     add_prepare_training_data_parser(subparsers)
     add_normalize_rows_parser(subparsers)
+    add_read_target_report_parser(subparsers)
+    add_validate_business_rules_parser(subparsers)
     extract.add_argument(
         "--allow-loose",
         action="store_true",
@@ -208,6 +218,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "normalize-rows":
             return run_normalize_rows(args)
+
+        if args.command == "read-target-report":
+            return run_read_target_report(args)
+
+        if args.command == "validate-business-rules":
+            return run_validate_business_rules(args)
 
         if args.command == "enrich-metadata":
             manifest = load_manifest_json(args.manifest)

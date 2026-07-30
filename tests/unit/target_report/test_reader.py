@@ -7,11 +7,11 @@ from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
-from report_processor.target_report import TargetReportReadRequest, read_target_report
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.materialization.models import MaterializedSource
 from report_processor.schema import LogicalColumn, SheetType, WorkbookSchema
+from report_processor.target_report import TargetReportReadRequest, read_target_report
 
 
 def _schema(schema_factory, worksheet) -> WorkbookSchema:
@@ -80,10 +80,10 @@ def test_reader_preserves_leading_zeroes_decimal_lexemes_and_formula_state(
     assert current.raw_lexeme == "001.250"
     assert str(current.numeric_value) == "1.250"
     assert cumulative.formula.formula == "=D2"
-    assert cumulative.formula.cache_state == "FORMULA_WITHOUT_CACHED_VALUE"
+    assert cumulative.formula.cache_state == "CACHE_UNTRUSTED"
 
 
-def test_generic_unknown_sheet_is_semantically_recovered_when_shape_is_unambiguous(
+def test_generic_unknown_sheet_requires_explicit_override(
     workbook_session_factory, schema_factory
 ) -> None:
     columns = (
@@ -105,9 +105,9 @@ def test_generic_unknown_sheet_is_semantically_recovered_when_shape_is_unambiguo
             session, _schema(schema_factory, worksheet), TargetReportReadRequest()
         )
 
-    assert result.status == "OK"
-    assert result.rows[0].object_code == "0007"
-    assert result.schema.period_identity.status == "OK"
+    assert result.status == "AMBIGUOUS_TARGET_SHEET_REQUIRES_OVERRIDE"
+    assert result.rows == ()
+    assert result.schema.period_identity.status == "PERIOD_UNRESOLVED"
 
 
 def test_reader_retains_structural_metadata_and_source_bytes(
@@ -129,8 +129,9 @@ def test_reader_retains_structural_metadata_and_source_bytes(
     assert before == after
     assert result.schema.source_fingerprint.digest == sha256(before).hexdigest()
     assert result.schema.source_fingerprint.size_bytes == len(before)
+    assert result.writable_cell_plans == ()
     assert (
-        result.writable_cell_plans[0].expected_source_fingerprint
+        result.structural_mutation_plan.expected_source_fingerprint
         == result.schema.source_fingerprint.value
     )
 

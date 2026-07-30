@@ -26,4 +26,4 @@ class MaterializedSource:
     size_bytes: int
     extension: str
     cleanup_required: bool
-    warnings: tuple[str, ...]
+    warnings: tuple[str, ...] = ()

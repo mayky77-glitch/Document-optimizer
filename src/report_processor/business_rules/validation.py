@@ -431,8 +431,11 @@ def _decimal(
 
 
 def _string(value: object, path: str, issues: list[RuleValidationIssue]) -> str | None:
-    if not isinstance(value, str) or not value.strip() or _unsafe_text(value):
+    if not isinstance(value, str) or not value.strip():
         issues.append(_issue("STRING", "Требуется безопасная непустая строка", path))
+        return None
+    if _unsafe_text(value):
+        issues.append(_issue("UNSAFE_TEXT", "Исполняемые/внешние конструкции запрещены", path))
         return None
     return value
 
