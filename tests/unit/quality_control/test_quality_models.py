@@ -3,6 +3,7 @@
 from dataclasses import fields
 
 import pytest
+
 from report_processor.quality_control import (
     QualityControlReport,
     QualityControlSummary,

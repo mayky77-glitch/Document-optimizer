@@ -9,15 +9,15 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+
+from report_processor.business_rules import load_default_rule_set
+from report_processor.calculation import calculate_matches
+from report_processor.matching import match_rows
 from report_processor.quality_control import (
     QualityIssueCode,
     WriteDecision,
     evaluate_quality_control,
 )
-
-from report_processor.business_rules import load_default_rule_set
-from report_processor.calculation import calculate_matches
-from report_processor.matching import match_rows
 
 
 def _block12_helpers():

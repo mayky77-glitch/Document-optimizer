@@ -112,6 +112,23 @@ SHA-256; исходные XLSX не изменились. Полный лока�
 **464 passed**. Блок принят в `main` через PR #11 после успешного GitHub
 Actions. Matching/business logic не смешана с аналитическим хранилищем.
 
+## Блок 14 — quality-control write gate
+
+Контракт: `QualityControlContract-14.0` / `QualityControlEngine-14.0`.
+API: `evaluate_quality_control(match_results, calculation_results, rule_set) -> QualityControlReport`.
+Решения и находки типизированы через `WriteDecision`, `QualityIssueSeverity` и
+`QualityIssueCode`.
+`ValidatedRuleSet.defaults.cost_tolerance_ratio` — единственный источник
+tolerance. Проверяются identity/cardinality, required values, writable targets,
+formula cache/Excel errors, provenance, trace/totals/formula consistency,
+normalized units и Decimal tolerance; precedence решений —
+`BLOCK_WRITE > REQUIRE_MANUAL_REVIEW > ALLOW_WRITE_WITH_WARNINGS > ALLOW_WRITE`.
+Raw cells, formulas и document content не попадают в отчёт; workbook read-only.
+
+Evidence: synthetic set — 7 PASS; real-data — `REQUIRE_MANUAL_REVIEW`, 0 blocking,
+digest `c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`, входы
+не изменились. READY/main/CI здесь не заявляются.
+
 ## Блок 12 — детерминированный matching engine
 
 Реализованы `MatchingContract-12.0` и `MatchingEngine-12.0` в отдельном

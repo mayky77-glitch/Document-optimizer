@@ -5,15 +5,14 @@ from __future__ import annotations
 from dataclasses import replace
 from decimal import Decimal
 
+from fixtures.quality_control.builders import calculated_match, calculated_result, quality_rule_set
+from report_processor.calculation import CalculationStatus
+from report_processor.matching import MatchStatus
 from report_processor.quality_control import (
     QualityIssueCode,
     WriteDecision,
     evaluate_quality_control,
 )
-
-from fixtures.quality_control.builders import calculated_match, calculated_result, quality_rule_set
-from report_processor.calculation import CalculationStatus
-from report_processor.matching import MatchStatus
 from report_processor.target_report.models import TargetNumericCell
 
 
