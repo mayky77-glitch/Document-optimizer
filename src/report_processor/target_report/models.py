@@ -69,6 +69,9 @@ class TargetReportReadRequest:
     sheet_names: tuple[str, ...] | None = None
     override: TargetReportOverride | None = None
     include_empty_rows: bool = False
+    selected_stage: str | None = None
+    selected_period_identity: TargetPeriodIdentity | None = None
+    max_rows: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +97,14 @@ class TargetCellSnapshot:
     formula: TargetFormulaSnapshot | None
     status: str
     warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TargetNumericCell:
+    value: Decimal | None
+    raw_lexeme: str | None
+    cache_state: str
+    status: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +143,19 @@ class TargetReportRow:
     cells: tuple[tuple[LogicalColumn, TargetCellSnapshot], ...]
     status: str
     warnings: tuple[str, ...] = ()
+    row_kind: str = "UNKNOWN"
+    scope: str = "UNSCOPED"
+    document_index_raw: str | None = None
+    document_index_normalized: str | None = None
+    stage: str | None = None
+    subobject_code: str | None = None
+    subobject_name: str | None = None
+    unit: str | None = None
+    document_quantity: TargetNumericCell | None = None
+    selected_quantity: TargetNumericCell | None = None
+    document_cost: TargetNumericCell | None = None
+    selected_cost: TargetNumericCell | None = None
+    writable: bool = False
 
     def cell_for(self, logical_column: LogicalColumn) -> TargetCellSnapshot | None:
         return next((cell for key, cell in self.cells if key == logical_column), None)
@@ -175,6 +199,11 @@ class TargetReportSchema:
     object_blocks: tuple[TargetObjectBlock, ...]
     status: str
     diagnostics: tuple[TargetDiagnostic, ...] = ()
+    source_file_id: str = ""
+    filename: str = ""
+    source_sha256: str = ""
+    pair_cardinality: str = "0"
+    previous_period_identity: TargetPeriodIdentity | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -20,6 +20,7 @@ from .models import (
     TargetColumnBinding,
     TargetDiagnostic,
     TargetFormulaSnapshot,
+    TargetNumericCell,
     TargetObjectBlock,
     TargetPeriodIdentity,
     TargetReportOverride,
@@ -33,6 +34,7 @@ from .models import (
 )
 from .ooxml import (
     RawCellLexemes,
+    formula_caches_trusted,
     package_entries,
     read_sheet_comments,
     read_sheet_lexemes,
@@ -116,6 +118,49 @@ def _bindings(
     return tuple(result)
 
 
+def _semantic_recovery(
+    session: DualWorkbookSession, schema: WorksheetSchema
+) -> tuple[tuple[TargetColumnBinding, ...], int] | None:
+    """Recognize only the documented additional-report table, never a generic UNKNOWN."""
+
+    if schema.sheet_type != SheetType.UNKNOWN:
+        return None
+    sheet = session.formula_workbook[schema.sheet_name]
+    for row_number in range(1, min(int(sheet.max_row or 0), 30) + 1):
+        values = [
+            str(getattr(sheet.cell(row_number, column), "value", "") or "").casefold()
+            for column in range(1, 12)
+        ]
+        if not ("№ п/п" in values and any("наименование этапа" in item for item in values)):
+            continue
+        if not any("оперативная отчетность" in item for item in values):
+            continue
+        if not any("документальная отчетность" in item for item in values):
+            continue
+        return (
+            (
+                TargetColumnBinding(
+                    LogicalColumn.ROW_NUMBER, 1, "A", values[0], "SEMANTIC_RECOVERY"
+                ),
+                TargetColumnBinding(
+                    LogicalColumn.WORK_NAME, 2, "B", values[1], "SEMANTIC_RECOVERY"
+                ),
+                TargetColumnBinding(LogicalColumn.UNIT, 3, "C", values[2], "SEMANTIC_RECOVERY"),
+                TargetColumnBinding(
+                    LogicalColumn.CURRENT_PERIOD_QUANTITY, 4, "D", values[3], "SEMANTIC_RECOVERY"
+                ),
+                TargetColumnBinding(
+                    LogicalColumn.CUMULATIVE_QUANTITY, 5, "E", values[4], "SEMANTIC_RECOVERY"
+                ),
+                TargetColumnBinding(
+                    LogicalColumn.CUMULATIVE_COST, 6, "F", values[5], "SEMANTIC_RECOVERY"
+                ),
+            ),
+            row_number + 2,
+        )
+    return None
+
+
 def _period(
     bindings: Iterable[TargetColumnBinding], override: TargetReportOverride | None
 ) -> TargetPeriodIdentity:
@@ -151,6 +196,7 @@ def _cell_snapshot(
     value_cell,
     lexemes: RawCellLexemes | None,
     comment_text: str | None,
+    caches_trusted: bool,
 ) -> TargetCellSnapshot:
     formula_value = getattr(formula_cell, "value", None)
     cached_value = getattr(value_cell, "value", None)
@@ -166,9 +212,13 @@ def _cell_snapshot(
             cached_value=cached_value,
             formula_data_type=getattr(formula_cell, "data_type", None),
             cached_data_type=getattr(value_cell, "data_type", None),
-            cache_state="FORMULA_WITH_CACHED_VALUE"
-            if cached_value is not None
-            else "FORMULA_WITHOUT_CACHED_VALUE",
+            cache_state=(
+                "CACHE_UNTRUSTED"
+                if not caches_trusted
+                else "FORMULA_WITH_CACHED_VALUE"
+                if cached_value is not None
+                else "FORMULA_WITHOUT_CACHED_VALUE"
+            ),
             raw_formula_lexeme=lexemes.formula if lexemes else None,
             raw_cached_lexeme=raw_lexeme,
         )
@@ -207,15 +257,21 @@ def _rows_for_sheet(
     bindings: tuple[TargetColumnBinding, ...],
     session: DualWorkbookSession,
     include_empty_rows: bool,
+    data_start_row: int | None = None,
+    max_rows: int | None = None,
+    caches_trusted: bool = True,
 ) -> tuple[TargetReportRow, ...]:
-    if schema.data_start_row is None or not bindings:
+    start_row = data_start_row or schema.data_start_row
+    if start_row is None or not bindings:
         return ()
     formula_sheet = session.formula_workbook[schema.sheet_name]
     value_sheet = session.value_workbook[schema.sheet_name]
     lexemes = read_sheet_lexemes(session.source.local_path, schema.sheet_name)
     comments = dict(read_sheet_comments(session.source.local_path, schema.sheet_name))
     rows: list[TargetReportRow] = []
-    for row_number in range(schema.data_start_row, int(formula_sheet.max_row or 0) + 1):
+    for row_number in range(start_row, int(formula_sheet.max_row or 0) + 1):
+        if max_rows is not None and len(rows) >= max_rows:
+            break
         cells = tuple(
             (
                 binding.logical_column,
@@ -225,6 +281,7 @@ def _rows_for_sheet(
                     value_sheet.cell(row_number, binding.column_index),
                     lexemes.get(f"{binding.column_letter}{row_number}"),
                     comments.get(f"{binding.column_letter}{row_number}"),
+                    caches_trusted,
                 ),
             )
             for binding in bindings
@@ -232,6 +289,18 @@ def _rows_for_sheet(
         if not include_empty_rows and all(item.raw_value is None for _, item in cells):
             continue
         values = {key: item.raw_value for key, item in cells}
+        numeric = {
+            key: TargetNumericCell(
+                cell.numeric_value,
+                cell.raw_lexeme,
+                cell.formula.cache_state if cell.formula else "NOT_FORMULA",
+                cell.status,
+            )
+            for key, cell in cells
+        }
+        row_kind = (
+            "OBJECT_PROCESS" if values.get(LogicalColumn.ROW_NUMBER) is not None else "SUMMARY"
+        )
         rows.append(
             TargetReportRow(
                 _ROW_VERSION,
@@ -244,6 +313,19 @@ def _rows_for_sheet(
                 _text(values.get(LogicalColumn.WORK_NAME)),
                 cells,
                 "OK",
+                row_kind=row_kind,
+                scope="SELECTED_STAGE" if values.get(LogicalColumn.STAGE) else "UNSCOPED",
+                document_index_raw=_text(values.get(LogicalColumn.DOCUMENT_INDEX)),
+                document_index_normalized=_text(values.get(LogicalColumn.DOCUMENT_INDEX)),
+                stage=_text(values.get(LogicalColumn.STAGE)),
+                subobject_code=_text(values.get(LogicalColumn.SUBOBJECT_CODE)),
+                subobject_name=_text(values.get(LogicalColumn.SUBOBJECT_NAME)),
+                unit=_text(values.get(LogicalColumn.UNIT)),
+                document_quantity=numeric.get(LogicalColumn.CUMULATIVE_QUANTITY),
+                selected_quantity=numeric.get(LogicalColumn.CURRENT_PERIOD_QUANTITY),
+                document_cost=numeric.get(LogicalColumn.CUMULATIVE_COST),
+                selected_cost=numeric.get(LogicalColumn.CURRENT_PERIOD_COST),
+                writable=row_kind == "OBJECT_PROCESS" and caches_trusted,
             )
         )
     return tuple(rows)
@@ -285,34 +367,93 @@ def read_target_report(
     """Build TargetReport-9.0 from validated read-only workbook projections."""
 
     validate_dual_workbook_session(session)
+    stat_before = session.source.local_path.stat()
     fingerprint = _fingerprint(session.source.local_path, session.source.original_file_id)
     selected, diagnostics = _selected_schemas(workbook_schema, request, fingerprint)
+    if (
+        not selected
+        and diagnostics
+        and diagnostics[0].code == "AMBIGUOUS_TARGET_SHEET_REQUIRES_OVERRIDE"
+    ):
+        recovered = tuple(
+            item
+            for item in workbook_schema.worksheets
+            if _semantic_recovery(session, item) is not None
+        )
+        if len(recovered) == 1:
+            selected, diagnostics = recovered, ()
     snapshots = tuple(
         _worksheet_snapshot(
             session.formula_workbook[item.sheet_name], item, session.source.local_path
         )
         for item in selected
     )
-    bindings = tuple(binding for item in selected for binding in _bindings(item, request.override))
-    period = _period(bindings, request.override)
+    resolved = []
+    for item in selected:
+        recovered = _semantic_recovery(session, item)
+        item_bindings = _bindings(item, request.override)
+        if not item_bindings and recovered:
+            item_bindings, start_row = recovered
+        else:
+            start_row = item.data_start_row
+        resolved.append((item, item_bindings, start_row))
+    bindings = tuple(binding for _, item_bindings, _ in resolved for binding in item_bindings)
+    period = request.selected_period_identity or _period(bindings, request.override)
+    caches_trusted = formula_caches_trusted(session.source.local_path)
     rows = tuple(
         row
-        for item in selected
+        for item, item_bindings, start_row in resolved
         for row in _rows_for_sheet(
-            item, _bindings(item, request.override), session, request.include_empty_rows
+            item,
+            item_bindings,
+            session,
+            request.include_empty_rows,
+            start_row,
+            request.max_rows,
+            caches_trusted,
         )
     )
     blocks = _object_blocks(rows)
+    stat_after = session.source.local_path.stat()
+    if (stat_before.st_size, stat_before.st_mtime_ns) != (
+        stat_after.st_size,
+        stat_after.st_mtime_ns,
+    ):
+        diagnostics += (
+            _diagnostic("SOURCE_CHANGED_DURING_READ", "Source bytes changed during read"),
+        )
     status = "OK" if not diagnostics else diagnostics[0].code
     schema = TargetReportSchema(
-        _VERSION, fingerprint, period, bindings, snapshots, blocks, status, diagnostics
+        _VERSION,
+        fingerprint,
+        period,
+        bindings,
+        snapshots,
+        blocks,
+        status,
+        diagnostics,
+        session.source.original_file_id,
+        session.filename,
+        fingerprint.digest,
+        "1" if period.status == "OK" else "0",
     )
     cell_plans = tuple(
         WritableCellPlan(
             _WRITE_VERSION, row.sheet_name, cell.coordinate, fingerprint.value, cell.raw_lexeme
         )
         for row in rows
-        for _, cell in row.cells
+        for logical_column, cell in row.cells
+        if not diagnostics
+        and caches_trusted
+        and (
+            (row.writable and cell.numeric_value is not None)
+            or (row.row_kind == "SUMMARY" and cell.formula is not None)
+        )
+        and (
+            logical_column
+            in {LogicalColumn.CURRENT_PERIOD_QUANTITY, LogicalColumn.CURRENT_PERIOD_COST}
+            or row.row_kind == "SUMMARY"
+        )
     )
     return TargetReportResult(
         schema,

@@ -57,6 +57,21 @@ def worksheet_parts(path: Path) -> dict[str, str]:
     return parts
 
 
+def formula_caches_trusted(path: Path) -> bool:
+    """Cached formulas are unsafe when Excel requests a full/manual recalculation."""
+
+    with zipfile.ZipFile(path, "r") as archive:
+        root = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+    properties = root.find(_Q("calcPr"))
+    if properties is None:
+        return True
+    return not (
+        properties.attrib.get("fullCalcOnLoad") in {"1", "true"}
+        or properties.attrib.get("forceFullCalc") in {"1", "true"}
+        or properties.attrib.get("calcMode") == "manual"
+    )
+
+
 def read_sheet_lexemes(path: Path, sheet_name: str) -> dict[str, RawCellLexemes]:
     """Read ``<v>`` and ``<f>`` text exactly as represented in worksheet XML."""
 
