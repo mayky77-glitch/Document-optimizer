@@ -229,4 +229,5 @@ Evidence: full real+model+slow **603 passed in 119.80s**; real admin
 **1 passed in 4.49s**; desktop/mobile Chrome PASS с `0` console/page/external
 errors; clean base/RAG installs, wheel assets, Ruff, format, compileall,
 JS syntax и diff-check PASS. Реальные XLSX сохранили исходные SHA.
-PR/CI ещё не заявлены.
+PR #18 принят: PR CI `30580440694`, post-merge main CI `30580539301` — success;
+main SHA `d54fcce5a71c85a1812a3b9209a815499c216e9a`.

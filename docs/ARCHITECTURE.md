@@ -325,4 +325,5 @@ Static assets поставляются внутри wheel, внешних UI-з�
 
 Локальный gate: **603 passed in 119.80s**, real admin **1 passed in 4.49s**,
 desktop/mobile browser PASS, clean base/RAG installs и wheel assets PASS.
-PR/CI остаются release gate.
+Принят через PR #18: PR CI `30580440694`, post-merge main CI `30580539301`,
+main SHA `d54fcce5a71c85a1812a3b9209a815499c216e9a`.
