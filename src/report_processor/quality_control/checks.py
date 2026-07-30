@@ -12,6 +12,7 @@ from report_processor.matching import MatchResult, MatchStatus
 from report_processor.normalization.models import TypoDictionaries
 from report_processor.normalization.normalizers import normalize_unit
 
+from .models import QualityIssueCode, QualityIssueSeverity
 from .serialization import finite_decimal, issue, sum_optional
 
 _FORMULA_TOKENS = (
@@ -33,8 +34,8 @@ def check_duplicates(
         for duplicate in sorted(value for value, count in Counter(values).items() if count > 1):
             issue(
                 issues,
-                "DUPLICATE_IDENTITY",
-                "blocking",
+                QualityIssueCode.DUPLICATE_IDENTITY,
+                QualityIssueSeverity.BLOCKING,
                 "обнаружена дублирующаяся identity",
                 evidence={"identity_kind": label, "duplicate": duplicate},
             )
@@ -43,24 +44,48 @@ def check_duplicates(
 def check_match(match: MatchResult, issues: list) -> None:
     target = match.target_row
     if match.status is MatchStatus.UNMATCHED:
-        issue(issues, "UNMATCHED", "manual_review", "строка не сопоставлена", match=match)
+        issue(
+            issues,
+            QualityIssueCode.UNMATCHED,
+            QualityIssueSeverity.MANUAL_REVIEW,
+            "строка не сопоставлена",
+            match=match,
+        )
     elif match.status is MatchStatus.AMBIGUOUS:
-        issue(issues, "AMBIGUOUS", "manual_review", "строка неоднозначна", match=match)
+        issue(
+            issues,
+            QualityIssueCode.AMBIGUOUS,
+            QualityIssueSeverity.MANUAL_REVIEW,
+            "строка неоднозначна",
+            match=match,
+        )
     if match.status is MatchStatus.MATCHED and not getattr(target, "writable", False):
         issue(
             issues,
-            "TARGET_NOT_WRITABLE",
-            "blocking",
+            QualityIssueCode.TARGET_NOT_WRITABLE,
+            QualityIssueSeverity.BLOCKING,
             "target row недоступен для записи",
             match=match,
         )
     if not getattr(target, "work_name", None):
-        issue(issues, "MISSING_WORK_NAME", "manual_review", "у target нет work name", match=match)
+        issue(
+            issues,
+            QualityIssueCode.MISSING_WORK_NAME,
+            QualityIssueSeverity.MANUAL_REVIEW,
+            "у target нет work name",
+            match=match,
+        )
     candidate = match.selected_candidate
     if candidate is None:
         return
     if not getattr(candidate.source_row, "work_name", None):
-        issue(issues, "MISSING_WORK_NAME", "manual_review", "у source нет work name", match=match)
+        issue(
+            issues,
+            QualityIssueCode.MISSING_WORK_NAME,
+            QualityIssueSeverity.MANUAL_REVIEW,
+            "у source нет work name",
+            match=match,
+        )
     _check_provenance(match, candidate, issues)
     _check_units(match, candidate, issues)
 
@@ -74,8 +99,8 @@ def check_calculation(
     ):
         issue(
             issues,
-            "IDENTITY_MISMATCH",
-            "blocking",
+            QualityIssueCode.IDENTITY_MISMATCH,
+            QualityIssueSeverity.BLOCKING,
             "calculation identity не совпадает с match",
             match=match,
             calculation=calculation,
@@ -100,14 +125,26 @@ def _check_provenance(match: MatchResult, candidate: object, issues: list) -> No
     )
     target_required = ("target_source_id", "sheet_name", "row_number", "target_row_id")
     if not isinstance(source, Mapping) or any(not source.get(key) for key in source_required):
-        issue(issues, "MISSING_PROVENANCE", "blocking", "source provenance неполный", match=match)
+        issue(
+            issues,
+            QualityIssueCode.MISSING_PROVENANCE,
+            QualityIssueSeverity.BLOCKING,
+            "source provenance неполный",
+            match=match,
+        )
     if not isinstance(target, Mapping) or any(not target.get(key) for key in target_required):
-        issue(issues, "MISSING_PROVENANCE", "blocking", "target provenance неполный", match=match)
+        issue(
+            issues,
+            QualityIssueCode.MISSING_PROVENANCE,
+            QualityIssueSeverity.BLOCKING,
+            "target provenance неполный",
+            match=match,
+        )
     elif target["target_row_id"] != match.target_row_id:
         issue(
             issues,
-            "PROVENANCE_CONFLICT",
-            "blocking",
+            QualityIssueCode.PROVENANCE_CONFLICT,
+            QualityIssueSeverity.BLOCKING,
             "target provenance конфликтует с match",
             match=match,
         )
@@ -118,12 +155,18 @@ def _check_units(match: MatchResult, candidate: object, issues: list) -> None:
     source_unit = normalize_unit(getattr(candidate.source_row, "unit", None), dictionaries)
     target_unit = normalize_unit(getattr(match.target_row, "unit", None), dictionaries)
     if source_unit is None or target_unit is None:
-        issue(issues, "MISSING_UNIT", "manual_review", "единица измерения отсутствует", match=match)
+        issue(
+            issues,
+            QualityIssueCode.MISSING_UNIT,
+            QualityIssueSeverity.MANUAL_REVIEW,
+            "единица измерения отсутствует",
+            match=match,
+        )
     elif source_unit != target_unit:
         issue(
             issues,
-            "UNIT_CONFLICT",
-            "manual_review",
+            QualityIssueCode.UNIT_CONFLICT,
+            QualityIssueSeverity.MANUAL_REVIEW,
             "нормализованные units различаются",
             match=match,
         )
@@ -133,8 +176,8 @@ def _check_status(match: MatchResult, calculation: CalculationResult, issues: li
     if calculation.status is CalculationStatus.NO_VALUES:
         issue(
             issues,
-            "NO_VALUES",
-            "blocking",
+            QualityIssueCode.NO_VALUES,
+            QualityIssueSeverity.BLOCKING,
             "calculation не содержит значений",
             match=match,
             calculation=calculation,
@@ -142,8 +185,8 @@ def _check_status(match: MatchResult, calculation: CalculationResult, issues: li
     elif calculation.status is CalculationStatus.MANUAL_REVIEW:
         issue(
             issues,
-            "AMBIGUOUS",
-            "manual_review",
+            QualityIssueCode.AMBIGUOUS,
+            QualityIssueSeverity.MANUAL_REVIEW,
             "calculation требует ручной проверки",
             match=match,
             calculation=calculation,
@@ -151,8 +194,8 @@ def _check_status(match: MatchResult, calculation: CalculationResult, issues: li
     elif calculation.status is CalculationStatus.NO_MATCH:
         issue(
             issues,
-            "UNMATCHED",
-            "manual_review",
+            QualityIssueCode.UNMATCHED,
+            QualityIssueSeverity.MANUAL_REVIEW,
             "calculation не имеет match",
             match=match,
             calculation=calculation,
@@ -160,8 +203,8 @@ def _check_status(match: MatchResult, calculation: CalculationResult, issues: li
     if calculation.warnings:
         issue(
             issues,
-            "UPSTREAM_WARNING",
-            "warning",
+            QualityIssueCode.UPSTREAM_WARNING,
+            QualityIssueSeverity.WARNING,
             "upstream calculation содержит warning",
             match=match,
             calculation=calculation,
@@ -173,8 +216,8 @@ def _check_trace(match: MatchResult, calculation: CalculationResult, issues: lis
     if trace.match_result_id != match.result_id or trace.target_row_id != match.target_row_id:
         issue(
             issues,
-            "TRACE_MISMATCH",
-            "blocking",
+            QualityIssueCode.TRACE_MISMATCH,
+            QualityIssueSeverity.BLOCKING,
             "trace identity не совпадает",
             match=match,
             calculation=calculation,
@@ -182,8 +225,8 @@ def _check_trace(match: MatchResult, calculation: CalculationResult, issues: lis
     if trace.rule_set_hash == "" or trace.category_totals != calculation.category_totals:
         issue(
             issues,
-            "TRACE_MISMATCH",
-            "blocking",
+            QualityIssueCode.TRACE_MISMATCH,
+            QualityIssueSeverity.BLOCKING,
             "trace totals не совпадают",
             match=match,
             calculation=calculation,
@@ -191,8 +234,8 @@ def _check_trace(match: MatchResult, calculation: CalculationResult, issues: lis
     if trace.formula_tokens != _FORMULA_TOKENS:
         issue(
             issues,
-            "FORMULA_MISMATCH",
-            "blocking",
+            QualityIssueCode.FORMULA_MISMATCH,
+            QualityIssueSeverity.BLOCKING,
             "formula tokens не совпадают",
             match=match,
             calculation=calculation,
@@ -210,8 +253,8 @@ def _check_totals(match: MatchResult, calculation: CalculationResult, issues: li
     if actual != expected or any(item.coefficient != calculation.coefficient for item in totals):
         issue(
             issues,
-            "TOTAL_DISCREPANCY",
-            "blocking",
+            QualityIssueCode.TOTAL_DISCREPANCY,
+            QualityIssueSeverity.BLOCKING,
             "category totals не совпадают",
             match=match,
             calculation=calculation,
@@ -226,8 +269,8 @@ def _check_numeric_cells(match: MatchResult, calculation: CalculationResult, iss
         if "FORMULA_WITHOUT_CACH" in status or "FORMULA_WITHOUT_CACH" in cache:
             issue(
                 issues,
-                "FORMULA_WITHOUT_CACHE",
-                "blocking",
+                QualityIssueCode.FORMULA_WITHOUT_CACHE,
+                QualityIssueSeverity.BLOCKING,
                 "formula cache отсутствует",
                 match=match,
                 calculation=calculation,
@@ -235,8 +278,8 @@ def _check_numeric_cells(match: MatchResult, calculation: CalculationResult, iss
         elif "EXCEL_ERROR" in status or "EXCEL_ERROR" in cache:
             issue(
                 issues,
-                "EXCEL_ERROR",
-                "blocking",
+                QualityIssueCode.EXCEL_ERROR,
+                QualityIssueSeverity.BLOCKING,
                 "Excel error в target",
                 match=match,
                 calculation=calculation,
@@ -244,8 +287,8 @@ def _check_numeric_cells(match: MatchResult, calculation: CalculationResult, iss
         elif "VALUE_READ_FAILED" in status or "VALUE_READ_FAILED" in cache:
             issue(
                 issues,
-                "VALUE_READ_FAILED",
-                "blocking",
+                QualityIssueCode.VALUE_READ_FAILED,
+                QualityIssueSeverity.BLOCKING,
                 "target value не прочитан",
                 match=match,
                 calculation=calculation,
@@ -253,8 +296,8 @@ def _check_numeric_cells(match: MatchResult, calculation: CalculationResult, iss
         elif "FORMULA" in status and "CACHED" not in cache:
             issue(
                 issues,
-                "UNTRUSTED_FORMULA_CACHE",
-                "blocking",
+                QualityIssueCode.UNTRUSTED_FORMULA_CACHE,
+                QualityIssueSeverity.BLOCKING,
                 "formula cache не подтверждён",
                 match=match,
                 calculation=calculation,
@@ -271,8 +314,8 @@ def _check_tolerance(
     if calculation.cost is None:
         issue(
             issues,
-            "MISSING_REQUIRED_VALUE",
-            "blocking",
+            QualityIssueCode.MISSING_REQUIRED_VALUE,
+            QualityIssueSeverity.BLOCKING,
             "calculated cost отсутствует",
             match=match,
             calculation=calculation,
@@ -288,8 +331,8 @@ def _check_tolerance(
     if exceeds:
         issue(
             issues,
-            "TOLERANCE_EXCEEDED",
-            "manual_review",
+            QualityIssueCode.TOLERANCE_EXCEEDED,
+            QualityIssueSeverity.MANUAL_REVIEW,
             "cost tolerance превышен",
             match=match,
             calculation=calculation,
@@ -301,8 +344,8 @@ def _check_contributions(match: MatchResult, calculation: CalculationResult, iss
         if _negative(contribution.raw_quantity) or _negative(contribution.raw_cost):
             issue(
                 issues,
-                "NEGATIVE_VALUE",
-                "warning",
+                QualityIssueCode.NEGATIVE_VALUE,
+                QualityIssueSeverity.WARNING,
                 "обнаружено отрицательное значение",
                 match=match,
                 calculation=calculation,
@@ -315,8 +358,8 @@ def _check_contributions(match: MatchResult, calculation: CalculationResult, iss
         ):
             issue(
                 issues,
-                "SIGN_CONFLICT",
-                "manual_review",
+                QualityIssueCode.SIGN_CONFLICT,
+                QualityIssueSeverity.MANUAL_REVIEW,
                 "quantity и cost имеют разные знаки",
                 match=match,
                 calculation=calculation,
@@ -325,8 +368,8 @@ def _check_contributions(match: MatchResult, calculation: CalculationResult, iss
         if not contribution.source_provenance or not contribution.target_provenance:
             issue(
                 issues,
-                "MISSING_PROVENANCE",
-                "blocking",
+                QualityIssueCode.MISSING_PROVENANCE,
+                QualityIssueSeverity.BLOCKING,
                 "contribution provenance неполный",
                 match=match,
                 calculation=calculation,

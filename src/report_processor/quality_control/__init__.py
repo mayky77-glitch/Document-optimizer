@@ -7,10 +7,11 @@ from .models import (
     QUALITY_CONTROL_ENGINE_VERSION,
     QualityControlReport,
     QualityControlSummary,
-    QualityDecision,
     QualityIssue,
+    QualityIssueCode,
+    QualityIssueSeverity,
     QualityLocation,
-    QualitySeverity,
+    WriteDecision,
 )
 
 __all__ = (
@@ -20,9 +21,10 @@ __all__ = (
     "QualityControlInputError",
     "QualityControlReport",
     "QualityControlSummary",
-    "QualityDecision",
     "QualityIssue",
+    "QualityIssueCode",
+    "QualityIssueSeverity",
     "QualityLocation",
-    "QualitySeverity",
+    "WriteDecision",
     "evaluate_quality_control",
 )

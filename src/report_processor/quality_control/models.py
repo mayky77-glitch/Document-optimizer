@@ -11,17 +11,47 @@ QUALITY_CONTROL_CONTRACT_VERSION = "QualityControlContract-14.0"
 QUALITY_CONTROL_ENGINE_VERSION = "QualityControlEngine-14.0"
 
 
-class QualityDecision(StrEnum):
+class WriteDecision(StrEnum):
     ALLOW_WRITE = "allow_write"
     ALLOW_WRITE_WITH_WARNINGS = "allow_write_with_warnings"
     REQUIRE_MANUAL_REVIEW = "require_manual_review"
     BLOCK_WRITE = "block_write"
 
 
-class QualitySeverity(StrEnum):
+class QualityIssueSeverity(StrEnum):
     WARNING = "warning"
     MANUAL_REVIEW = "manual_review"
     BLOCKING = "blocking"
+
+
+class QualityIssueCode(StrEnum):
+    INPUT_EMPTY = "INPUT_EMPTY"
+    DUPLICATE_IDENTITY = "DUPLICATE_IDENTITY"
+    CARDINALITY_MISMATCH = "CARDINALITY_MISMATCH"
+    IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
+    MISSING_REQUIRED_VALUE = "MISSING_REQUIRED_VALUE"
+    TARGET_NOT_WRITABLE = "TARGET_NOT_WRITABLE"
+    FORMULA_WITHOUT_CACHE = "FORMULA_WITHOUT_CACHE"
+    UNTRUSTED_FORMULA_CACHE = "UNTRUSTED_FORMULA_CACHE"
+    EXCEL_ERROR = "EXCEL_ERROR"
+    VALUE_READ_FAILED = "VALUE_READ_FAILED"
+    MISSING_PROVENANCE = "MISSING_PROVENANCE"
+    PROVENANCE_CONFLICT = "PROVENANCE_CONFLICT"
+    TOTAL_DISCREPANCY = "TOTAL_DISCREPANCY"
+    TRACE_MISMATCH = "TRACE_MISMATCH"
+    FORMULA_MISMATCH = "FORMULA_MISMATCH"
+    NO_VALUES = "NO_VALUES"
+    UNMATCHED = "UNMATCHED"
+    AMBIGUOUS = "AMBIGUOUS"
+    MISSING_WORK_NAME = "MISSING_WORK_NAME"
+    MISSING_UNIT = "MISSING_UNIT"
+    UNIT_CONFLICT = "UNIT_CONFLICT"
+    TOLERANCE_EXCEEDED = "TOLERANCE_EXCEEDED"
+    SOURCE_ROW_REUSED = "SOURCE_ROW_REUSED"
+    QUANTITY_COST_INCONSISTENT = "QUANTITY_COST_INCONSISTENT"
+    SIGN_CONFLICT = "SIGN_CONFLICT"
+    NEGATIVE_VALUE = "NEGATIVE_VALUE"
+    UPSTREAM_WARNING = "UPSTREAM_WARNING"
 
 
 def _freeze_safe_mapping(values: Mapping[str, object]) -> Mapping[str, object]:
@@ -43,8 +73,8 @@ class QualityLocation:
 @dataclass(frozen=True, slots=True)
 class QualityIssue:
     issue_id: str
-    code: str
-    severity: QualitySeverity
+    code: QualityIssueCode
+    severity: QualityIssueSeverity
     message: str
     target_row_id: str | None
     match_result_id: str | None
@@ -79,7 +109,7 @@ class QualityControlReport:
     report_id: str
     input_digest: str
     rule_set_hash: str
-    decision: QualityDecision
+    decision: WriteDecision
     issues: tuple[QualityIssue, ...]
     summary: QualityControlSummary
     match_result_ids: tuple[str, ...]

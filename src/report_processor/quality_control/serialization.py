@@ -17,10 +17,11 @@ from .exceptions import QualityControlInputError
 from .models import (
     QUALITY_CONTROL_CONTRACT_VERSION,
     QualityControlSummary,
-    QualityDecision,
     QualityIssue,
+    QualityIssueCode,
+    QualityIssueSeverity,
     QualityLocation,
-    QualitySeverity,
+    WriteDecision,
 )
 
 _SENSITIVE_FIELDS = frozenset(
@@ -35,9 +36,9 @@ _SENSITIVE_FIELDS = frozenset(
     }
 )
 _SEVERITY_ORDER = {
-    QualitySeverity.BLOCKING: 0,
-    QualitySeverity.MANUAL_REVIEW: 1,
-    QualitySeverity.WARNING: 2,
+    QualityIssueSeverity.BLOCKING: 0,
+    QualityIssueSeverity.MANUAL_REVIEW: 1,
+    QualityIssueSeverity.WARNING: 2,
 }
 
 
@@ -51,8 +52,8 @@ def finite_decimal(value: object, field_name: str) -> Decimal:
 
 def issue(
     issues: list[QualityIssue],
-    code: str,
-    severity: str,
+    code: QualityIssueCode,
+    severity: QualityIssueSeverity,
     message: str,
     *,
     match: MatchResult | None = None,
@@ -60,7 +61,6 @@ def issue(
     source_row_ids: tuple[str, ...] = (),
     evidence: Mapping[str, object] | None = None,
 ) -> None:
-    quality_severity = QualitySeverity(severity)
     target_row_id = (
         match.target_row_id if match else (calculation.target_row_id if calculation else None)
     )
@@ -72,7 +72,7 @@ def issue(
     safe_evidence = dict(evidence or {})
     issue_id = _hash(
         QUALITY_CONTROL_CONTRACT_VERSION,
-        code,
+        code.value,
         target_row_id,
         match_result_id,
         calculation_id,
@@ -84,7 +84,7 @@ def issue(
         QualityIssue(
             issue_id,
             code,
-            quality_severity,
+            severity,
             message,
             target_row_id,
             match_result_id,
@@ -96,15 +96,15 @@ def issue(
     )
 
 
-def decision(issues: tuple[QualityIssue, ...]) -> QualityDecision:
+def decision(issues: tuple[QualityIssue, ...]) -> WriteDecision:
     for severity, result in (
-        (QualitySeverity.BLOCKING, QualityDecision.BLOCK_WRITE),
-        (QualitySeverity.MANUAL_REVIEW, QualityDecision.REQUIRE_MANUAL_REVIEW),
-        (QualitySeverity.WARNING, QualityDecision.ALLOW_WRITE_WITH_WARNINGS),
+        (QualityIssueSeverity.BLOCKING, WriteDecision.BLOCK_WRITE),
+        (QualityIssueSeverity.MANUAL_REVIEW, WriteDecision.REQUIRE_MANUAL_REVIEW),
+        (QualityIssueSeverity.WARNING, WriteDecision.ALLOW_WRITE_WITH_WARNINGS),
     ):
         if any(item.severity is severity for item in issues):
             return result
-    return QualityDecision.ALLOW_WRITE
+    return WriteDecision.ALLOW_WRITE
 
 
 def summary(
@@ -122,9 +122,9 @@ def summary(
             x.status in {CalculationStatus.CALCULATED, CalculationStatus.CALCULATED_WITH_WARNINGS}
             for x in calculations
         ),
-        sum(x.severity is QualitySeverity.WARNING for x in issues),
-        sum(x.severity is QualitySeverity.MANUAL_REVIEW for x in issues),
-        sum(x.severity is QualitySeverity.BLOCKING for x in issues),
+        sum(x.severity is QualityIssueSeverity.WARNING for x in issues),
+        sum(x.severity is QualityIssueSeverity.MANUAL_REVIEW for x in issues),
+        sum(x.severity is QualityIssueSeverity.BLOCKING for x in issues),
     )
 
 
@@ -141,7 +141,7 @@ def digest(matches: Iterable[object], calculations: Iterable[object], rule_set: 
 
 def report_identity(
     input_digest: str,
-    result_decision: QualityDecision,
+    result_decision: WriteDecision,
     issue_ids: tuple[str, ...],
 ) -> str:
     return _hash(
@@ -155,7 +155,7 @@ def report_identity(
 def issue_sort_key(issue_value: QualityIssue) -> tuple[object, ...]:
     return (
         _SEVERITY_ORDER[issue_value.severity],
-        issue_value.code,
+        issue_value.code.value,
         issue_value.target_row_id or "",
         issue_value.match_result_id or "",
         issue_value.calculation_id or "",

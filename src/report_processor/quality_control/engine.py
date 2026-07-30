@@ -12,7 +12,7 @@ from report_processor.matching import MatchResult
 
 from .checks import check_calculation, check_duplicates, check_match
 from .exceptions import QualityControlInputError
-from .models import QualityControlReport
+from .models import QualityControlReport, QualityIssueCode, QualityIssueSeverity
 from .serialization import (
     decision,
     digest,
@@ -45,8 +45,8 @@ def evaluate_quality_control(
         if len(linked) != 1:
             issue(
                 issues,
-                "CARDINALITY_MISMATCH",
-                "blocking",
+                QualityIssueCode.CARDINALITY_MISMATCH,
+                QualityIssueSeverity.BLOCKING,
                 "для match result нужен ровно один calculation result",
                 match=match,
                 evidence={"calculation_count": len(linked)},
@@ -58,8 +58,8 @@ def evaluate_quality_control(
         if calculation.match_result_id not in match_ids:
             issue(
                 issues,
-                "CARDINALITY_MISMATCH",
-                "blocking",
+                QualityIssueCode.CARDINALITY_MISMATCH,
+                QualityIssueSeverity.BLOCKING,
                 "calculation не связан с match result",
                 calculation=calculation,
             )
@@ -113,8 +113,8 @@ def _check_source_reuse(matches: tuple[MatchResult, ...], issues: list) -> None:
             for match in linked:
                 issue(
                     issues,
-                    "SOURCE_ROW_REUSED",
-                    "manual_review",
+                    QualityIssueCode.SOURCE_ROW_REUSED,
+                    QualityIssueSeverity.MANUAL_REVIEW,
                     "source row выбран более одного раза",
                     match=match,
                     source_row_ids=(source_row_id,),
