@@ -2,7 +2,7 @@
 type: map
 tags:
   - knowledge/map
-  - status/complete
+  - status/in-progress
 last_verified: 2026-07-30
 updated: 2026-07-30
 ---
@@ -12,3 +12,6 @@ updated: 2026-07-30
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
 - [[../ORCHESTRATION|Orchestration rules]]
+- [[../tasks/document-optimizer-block-14-production]]
+- [[../tasks/document-optimizer-block-14-tests]]
+- [[../tasks/document-optimizer-block-14-docs]]

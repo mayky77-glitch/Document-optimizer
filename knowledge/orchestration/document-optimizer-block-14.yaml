@@ -1,0 +1,182 @@
+status: frozen
+work_id: document-optimizer-block-14
+objective: "До записи детерминированно решить, безопасно ли формировать итоговый Excel"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block14"
+planning_parent_sha: d8a55a82997d8f97a14f9287a32900f942ea2229
+dependency_sha: d8a55a82997d8f97a14f9287a32900f942ea2229
+published_base_sha_ref: "commit containing this frozen manifest and all three task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: d8a55a82997d8f97a14f9287a32900f942ea2229
+contract_versions:
+  public_api: QualityControlEngine-14.0
+  contract: QualityControlContract-14.0
+  matching_input: MatchingContract-12.0
+  calculation_input: CalculationContract-13.0
+  rules_input: ValidatedRuleSet-10.0
+  report_output: QualityControlReport-14.0
+quality_control_contracts:
+  public_api: "evaluate_quality_control(match_results, calculation_results, rule_set) -> QualityControlReport"
+  cardinality: "exactly one CalculationResult for each MatchResult by result_id == match_result_id"
+  tolerance_source: "rule_set.defaults.cost_tolerance_ratio; never hardcode or accept a second independent value"
+  decision_precedence:
+    - BLOCK_WRITE
+    - REQUIRE_MANUAL_REVIEW
+    - ALLOW_WRITE_WITH_WARNINGS
+    - ALLOW_WRITE
+  tolerance_formula: "abs(calculated_cost - selected_cost) / abs(selected_cost)"
+  zero_tolerance_policy: "when selected_cost is zero, only calculated zero passes"
+  tolerance_missing_policy: "missing target selected cost is an empty destination and skips comparison"
+  totals_policy: "category sums and trace totals must exactly equal CalculationResult totals"
+  numeric_policy: "finite Decimal only; no float, epsilon or hidden rounding"
+  unit_policy: "compare normalized units; no conversion"
+  order_policy: "input order ignored; multiplicity preserved; results and issues deterministically sorted"
+  privacy_policy: "do not copy raw cell values, formula text or document content into the report"
+write_decisions:
+  ALLOW_WRITE:
+    severity: none
+  ALLOW_WRITE_WITH_WARNINGS:
+    severity: warning
+  REQUIRE_MANUAL_REVIEW:
+    severity: manual_review
+  BLOCK_WRITE:
+    severity: blocking
+issue_codes:
+  blocking:
+    - INPUT_EMPTY
+    - DUPLICATE_IDENTITY
+    - CARDINALITY_MISMATCH
+    - IDENTITY_MISMATCH
+    - MISSING_REQUIRED_VALUE
+    - TARGET_NOT_WRITABLE
+    - FORMULA_WITHOUT_CACHE
+    - UNTRUSTED_FORMULA_CACHE
+    - EXCEL_ERROR
+    - VALUE_READ_FAILED
+    - MISSING_PROVENANCE
+    - PROVENANCE_CONFLICT
+    - TOTAL_DISCREPANCY
+    - TRACE_MISMATCH
+    - FORMULA_MISMATCH
+    - NO_VALUES
+  manual_review:
+    - UNMATCHED
+    - AMBIGUOUS
+    - MISSING_WORK_NAME
+    - MISSING_UNIT
+    - UNIT_CONFLICT
+    - TOLERANCE_EXCEEDED
+    - SOURCE_ROW_REUSED
+    - QUANTITY_COST_INCONSISTENT
+    - SIGN_CONFLICT
+  warning:
+    - NEGATIVE_VALUE
+    - UPSTREAM_WARNING
+public_models:
+  QualityLocation: "source_kind, source_id, sheet_name, row_number, coordinate"
+  QualityIssue: "issue_id, code, severity, message, target_row_id, match_result_id, calculation_id, source_row_ids, locations, evidence"
+  QualityControlSummary: "match_count, calculation_count, matched_count, ambiguous_count, unmatched_count, calculated_count, warning_issue_count, manual_review_issue_count, blocking_issue_count"
+  QualityControlReport: "report_id, input_digest, rule_set_hash, decision, issues, summary, match_result_ids, calculation_ids, contract_version"
+identity_contracts:
+  input_digest: "sha256 canonical JSON of every checked field plus rule-set hash; sorted keys and compact separators"
+  issue_id: "sha256 contract version, code, identities, ordered locations and safe evidence"
+  report_id: "sha256 contract version, input digest, decision and ordered issue IDs"
+  decimal_encoding: "canonical finite Decimal string"
+  enum_encoding: "enum value"
+provenance_contracts:
+  required_source:
+    - source_file_id
+    - source_filename
+    - source_sheet
+    - source_row
+    - source_row_id
+  required_target:
+    - target_source_id
+    - sheet_name
+    - row_number
+    - target_row_id
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv sync --locked --extra dev"
+  - "uv run --extra dev ruff check ."
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<target>' RUN_SLOW=1 uv run --extra dev pytest -q"
+baseline_results:
+  - "clean install: pass"
+  - "ruff: pass"
+  - "pytest: 482 passed"
+  - "origin/main CI 30561072108: success"
+shared_paths_owner: integration
+shared_paths:
+  - knowledge
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - pyproject.toml
+  - uv.lock
+production_scope:
+  - src/report_processor/quality_control
+test_scope:
+  - tests/unit/quality_control
+  - tests/fixtures/quality_control
+  - tests/contract/test_block14_quality_control_contract.py
+  - tests/integration/test_block14_quality_control.py
+  - tests/integration/test_block14_real_data.py
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+forbidden_paths:
+  - .env
+  - cache
+  - logs
+  - output
+  - .github
+  - src/report_processor/matching
+  - src/report_processor/calculation
+  - src/report_processor/business_rules
+  - src/report_processor/target_report
+  - src/report_processor/normalization
+  - src/report_processor/analytics
+  - src/report_processor/storage
+  - src/report_processor/cli.py
+  - pyproject.toml
+  - uv.lock
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+acceptance_commands:
+  - "uv run --extra dev ruff check ."
+  - "uv run --extra dev ruff format --check ."
+  - "uv run --extra dev pytest -q tests/unit/quality_control"
+  - "uv run --extra dev pytest -q tests/contract/test_block14_quality_control_contract.py"
+  - "uv run --extra dev pytest -q tests/integration/test_block14_quality_control.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<target>' RUN_SLOW=1 uv run --extra dev pytest -q tests/integration/test_block14_real_data.py"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<target>' RUN_SLOW=1 uv run --extra dev pytest -q"
+  - "uv sync --locked --extra dev"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+real_data_contract:
+  match_results: 107
+  calculation_results: 107
+  unmatched: 101
+  ambiguous: 5
+  calculated: 1
+  contributions: 1
+  expected_decision: REQUIRE_MANUAL_REVIEW
+  expected_blocking_issues: 0
+  tolerance_policy: "selected cost is empty for calculated row; comparison skipped"
+  unit_policy: "raw units differ but normalized units match"
+  source_files: "read-only; SHA-256, size and mtime must remain unchanged"
+required_evidence:
+  - all four write decisions and strict precedence
+  - duplicate and cardinality rejection
+  - identity, trace, total and formula consistency
+  - normalized-unit conflict handling without conversion
+  - Decimal tolerance boundary including zero denominator
+  - formula cache and Excel error handling
+  - complete but non-sensitive provenance
+  - deterministic IDs, reverse-order stability and digest
+  - real source and target XLSX SHA-256, size and mtime unchanged
+created_at: "2026-07-31T00:30:06+08:00"
