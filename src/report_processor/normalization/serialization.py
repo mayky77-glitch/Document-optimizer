@@ -23,6 +23,7 @@ def build_normalization_metadata(result: NormalizationResult) -> dict[str, objec
         "schema_version": SCHEMA_VERSION,
         "created_at": datetime.now(UTC).isoformat(),
         "statistics": asdict(result.statistics),
+        "warnings": list(result.warnings),
     }
 
 

@@ -9,10 +9,11 @@ from report_processor.normalization import (
     NormalizedSourceRow,
     normalize_training_rows,
 )
-from tests.unit.normalization.test_normalize_training_rows import make_training_row
 
 
-def test_block7_rows_are_lossless_block8_input_and_public_models_are_exported() -> None:
+def test_block7_rows_are_lossless_block8_input_and_public_models_are_exported(
+    make_training_row,
+) -> None:
     source = make_training_row()
 
     result = normalize_training_rows((source,), config=NormalizationConfig())

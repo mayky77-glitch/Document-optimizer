@@ -174,9 +174,11 @@ class NormalizedSourceRow:
 class NormalizationStatistics:
     input_rows: int
     output_rows: int
+    line_id_collisions: int
 
 
 @dataclass(frozen=True, slots=True)
 class NormalizationResult:
     rows: tuple[NormalizedSourceRow, ...]
     statistics: NormalizationStatistics
+    warnings: tuple[str, ...] = ()

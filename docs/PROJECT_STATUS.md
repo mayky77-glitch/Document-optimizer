@@ -230,7 +230,7 @@ output и writable-открытие DuckDB.
 ## Блок 8
 
 - **Название:** Бизнес-нормализация подготовленных строк
-- **Статус:** planned / in integration; не READY до интеграции и CI
+- **Статус:** integration-ready; локальные gates пройдены, GitHub CI ожидается
 - **Вход:** `TrainingDataRow`, JSONL `7.0`
 - **Выход:** `NormalizedSourceRow`, `NormalizedBusinessKey`, `NormalizationConfig`, `NormalizationResult`, JSONL `8.0`
 - **CLI:** `report-processor normalize-rows`
@@ -238,3 +238,11 @@ output и writable-открытие DuckDB.
 Provenance и `Decimal` сохраняются; business `line_id` не зависит от physical
 source. Exact typo dictionaries — data-only. Междокументное сопоставление,
 пересчёт и изменение исходников не выполняются.
+
+### Проверки блока 8
+
+- Ruff: PASS;
+- focused unit/contract/CLI: **8 passed**;
+- полный suite: **413 passed, 1 skipped**;
+- отдельный 50k-row performance gate: **1 passed**;
+- `compileall` и `git diff --check`: PASS.

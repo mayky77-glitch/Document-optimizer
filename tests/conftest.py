@@ -3,6 +3,7 @@ from __future__ import annotations
 import zipfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,62 @@ from openpyxl.utils.cell import get_column_letter
 from report_processor.domain.models import FileManifest, FileManifestEntry
 from report_processor.inventory.file_classifier import classify_file_by_name
 from report_processor.inventory.file_manifest import build_manifest_summary
+from report_processor.training_data import (
+    DataQualityStatus,
+    FormulaErrorCode,
+    TrainingDataRow,
+)
+
+
+@pytest.fixture
+def make_training_row():
+    def factory(
+        *,
+        source_file_id: str = "source-a",
+        source_row_id: str = "source-a:17",
+        object_code: str = "0007",
+        work_name: str = "Монтаж трубопровда",
+        unit: str = "пог. м",
+        period_cost: Decimal = Decimal("1234.50"),
+        warnings: tuple[str, ...] = ("SOURCE_WARNING",),
+    ) -> TrainingDataRow:
+        return TrainingDataRow(
+            document_type="ks2",
+            document_period="2026-06",
+            source_file_id=source_file_id,
+            source_filename="КС-2 № 01.xlsx",
+            source_sheet="Лист １",
+            source_row=17,
+            source_row_id=source_row_id,
+            object_code=object_code,
+            subobject_code="0003",
+            position_code="000042",
+            cost_type_code="СМР",
+            drawing_code="Ч-007",
+            basis_code="ГЭСН 01-01",
+            work_name_raw=work_name,
+            work_name_normalized=work_name.casefold(),
+            unit_raw=unit,
+            unit_normalized=unit.casefold(),
+            contract_quantity=Decimal("001.250"),
+            period_quantity=Decimal("2.50"),
+            cumulative_quantity=None,
+            remaining_quantity=None,
+            unit_price=Decimal("10.00"),
+            contract_cost=None,
+            period_cost=period_cost,
+            cumulative_cost=None,
+            total_cost=Decimal("1234.50"),
+            is_detail=True,
+            is_total=False,
+            is_outdated=False,
+            formula_error=FormulaErrorCode.NONE,
+            data_quality_status=DataQualityStatus.WARNING,
+            line_id="block-7-source-dependent-id",
+            warnings=warnings,
+        )
+
+    return factory
 
 
 @pytest.fixture

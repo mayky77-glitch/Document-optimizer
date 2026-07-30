@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 
 from report_processor.training_data.models import TrainingDataRow
@@ -76,11 +77,21 @@ def normalize_training_data(
     normalized_rows = tuple(
         normalize_training_row(row, typo_dictionaries=typo_dictionaries) for row in rows
     )
+    line_id_counts = Counter(row.line_id for row in normalized_rows)
+    collisions = sum(count - 1 for count in line_id_counts.values())
+    warnings = tuple(
+        f"LINE_ID_COLLISION:{line_id}"
+        for line_id, count in sorted(line_id_counts.items())
+        if count > 1
+    )
     return NormalizationResult(
         rows=normalized_rows,
         statistics=NormalizationStatistics(
-            input_rows=len(normalized_rows), output_rows=len(normalized_rows)
+            input_rows=len(normalized_rows),
+            output_rows=len(normalized_rows),
+            line_id_collisions=collisions,
         ),
+        warnings=warnings,
     )
 
 

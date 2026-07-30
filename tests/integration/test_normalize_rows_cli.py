@@ -4,18 +4,17 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from report_processor.cli import main
 from report_processor.normalization import (
     load_normalized_rows_jsonl,
     normalize_training_rows,
     save_normalized_rows_jsonl,
 )
-from tests.unit.normalization.test_normalize_training_rows import make_training_row
-
-from report_processor.cli import main
 
 
 def test_jsonl_round_trip_preserves_nested_source_decimal_and_schema_8_metadata(
     tmp_path: Path,
+    make_training_row,
 ) -> None:
     result = normalize_training_rows((make_training_row(),))
     output = tmp_path / "normalized.jsonl"
@@ -30,12 +29,14 @@ def test_jsonl_round_trip_preserves_nested_source_decimal_and_schema_8_metadata(
     assert payload["source_row"]["source_row_id"] == "source-a:17"
     assert metadata["schema_version"] == "8.0"
     assert metadata["total_rows"] == 1
+    assert metadata["warnings"] == []
     assert asdict(restored[0]) == asdict(result.rows[0])
     assert restored[0].provenance["source_row_id"] == "source-a:17"
 
 
 def test_normalize_rows_cli_reads_block7_jsonl_writes_schema_8_and_keeps_input_unchanged(
     tmp_path: Path,
+    make_training_row,
 ) -> None:
     source = tmp_path / "training.jsonl"
     output = tmp_path / "normalized.jsonl"

@@ -56,10 +56,15 @@ train/test split и не обучает модель. Расширенная б�
 
 CI ветки фиксируется после публикации коммита.
 
-## Блок 8 — бизнес-нормализация (в интеграции)
+## Блок 8 — бизнес-нормализация
 
 Frozen contract: `NormalizedSourceRow`, `NormalizedBusinessKey`,
 `NormalizationConfig`, `NormalizationResult`; вход `TrainingDataRow` `7.0`,
 выход JSONL `8.0`, CLI `normalize-rows`. Provenance и `Decimal` сохраняются,
 business `line_id` независим от physical source; exact typo dictionaries —
-data-only. READY не объявляется до интеграции, focused/full tests и CI.
+data-only. Collision evidence сохраняется в `NormalizationResult`; CLI строго
+разделяет input, output и metadata paths.
+
+Локальные gates: Ruff PASS; focused **8 passed**; полный suite **413 passed,
+1 skipped**; отдельный 50k-row performance test **1 passed**; `compileall` и
+`git diff --check` PASS. GitHub CI остаётся release gate перед merge в `main`.
