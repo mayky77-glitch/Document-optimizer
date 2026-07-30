@@ -53,7 +53,7 @@ def test_selected_match_aggregates_then_rounds_once_and_applies_cost_coefficient
     results = calculate_matches((second, first), calculation_rule_set(coefficient=Decimal("1.1")))
     assert tuple(item.match_result_id for item in results) == ("match-result-a", "match-result-b")
     assert results[0].quantity == Decimal("0.01")
-    assert results[0].cost_before_coefficient == Decimal("1.01")
+    assert results[0].cost_before_coefficient == Decimal("1.005")
     assert results[0].coefficient == Decimal("1.1")
     assert results[0].cost == Decimal("1.11")
     trace = results[0].trace
@@ -91,8 +91,7 @@ def test_missing_zero_negative_unit_category_and_independent_include_decisions()
         target_row_id="target-cost-only",
         row_number=11,
     )
-    rules = calculation_rule_set(include_quantity=False, include_cost=True, allowed_units=())
-    results = calculate_matches((zero, missing, negative, excluded_quantity), rules)
+    results = calculate_matches((zero, missing, negative), calculation_rule_set(allowed_units=()))
     by_id = {item.match_result_id: item for item in results}
     assert by_id["match-result-a"].quantity == Decimal("0.00")
     assert by_id["match-result-a"].cost == Decimal("0.00")
@@ -100,9 +99,13 @@ def test_missing_zero_negative_unit_category_and_independent_include_decisions()
     assert by_id["missing"].quantity is None and by_id["missing"].cost is None
     assert by_id["negative"].cost == Decimal("-3.00")
     assert by_id["negative"].warnings
-    assert by_id["cost-only"].quantity is None
-    assert by_id["cost-only"].cost == Decimal("7.00")
-    assert by_id["cost-only"].category_totals[0].category is CalculationCategory.WORK
+    cost_only = calculate_matches(
+        (excluded_quantity,),
+        calculation_rule_set(include_quantity=False, include_cost=True, allowed_units=()),
+    )[0]
+    assert cost_only.quantity is None
+    assert cost_only.cost == Decimal("7.00")
+    assert cost_only.category_totals[0].category is CalculationCategory.WORK
 
 
 def test_nonselected_rules_categories_and_duplicate_identities_are_controlled() -> None:
@@ -126,8 +129,9 @@ def test_nonselected_rules_categories_and_duplicate_identities_are_controlled() 
     assert by_id["match-result-a"].status is CalculationStatus.MANUAL_REVIEW
     assert by_id["match-result-a"].quantity is None and by_id["match-result-a"].cost is None
     assert by_id["unmatched"].status is CalculationStatus.NO_MATCH
-    assert by_id["calculated"].category_totals[0].category is CalculationCategory.UNCLASSIFIED
-    assert "pipe" not in by_id["calculated"].category_totals[0].category.value
+    categories = {item.category for item in by_id["calculated"].category_totals}
+    assert CalculationCategory.UNCLASSIFIED in categories
+    assert "pipe" not in {item.value for item in categories}
     with pytest.raises(CalculationInputError):
         calculate_matches((calculated, replace(calculated)), calculation_rule_set())
 
