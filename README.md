@@ -261,8 +261,8 @@ DuckDB schema v1 выполняет транзакционный idempotent upse
 Модули и границы ответственности описаны в
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-Блоки 9–11 реализованы в integration-ветке; PR, CI и merge в `main` являются
-отдельным release gate.
+Блоки 9–10 интегрированы в `main`. Блок 11 реализован в integration-ветке;
+PR, CI и merge в `main` являются отдельным release gate.
 
 ## Блок 9: чтение целевого отчёта
 
@@ -305,3 +305,7 @@ warnings, служебную metadata и views `v_source_rows`, `v_target_rows`,
 фиксированным allowlist и параметризованными значениями. Диагностика
 экспортируется детерминированно в JSONL атомарной заменой файла. Сопоставление
 и бизнес-логика блока 12 сюда не входят.
+
+Real-data gate на исходных XLSX загрузил 382 нормализованные source rows,
+107 target rows и 34 rule clauses. Повторная загрузка дала только unchanged;
+SHA-256, размер и `mtime` обеих книг до/после совпали.

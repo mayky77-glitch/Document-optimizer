@@ -3,8 +3,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from tests.fixtures.analytics.builders import normalized_source_row, target_report_row
 
+from fixtures.analytics.builders import normalized_source_row, target_report_row
 from report_processor.analytics import AnalyticalQuery, AnalyticalStore, AnalyticalWriteError
 
 

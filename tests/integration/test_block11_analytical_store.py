@@ -7,12 +7,12 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from tests.fixtures.analytics.builders import (
+
+from fixtures.analytics.builders import (
     normalized_source_row,
     target_report_row,
     validated_rule_set,
 )
-
 from report_processor.analytics import (
     AnalyticalQuery,
     AnalyticalQueryError,

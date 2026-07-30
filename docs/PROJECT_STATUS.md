@@ -258,7 +258,7 @@ provenance и детерминизм. **26** collision явно зафиксир
 ## Блок 9
 
 - **Название:** чтение целевого отчёта и безопасный write-plan
-- **Статус:** реализован в integration-ветке; PR/CI и merge в `main` ещё не завершены
+- **Статус:** интегрирован в `main`; PR и GitHub Actions успешно пройдены
 - **Контракт:** `TargetReportSchema-9.0`, `TargetReportResult`, `TargetReportRow`
 - **CLI:** `read-target-report --source --schema --output`
 
@@ -273,7 +273,7 @@ SHA-256, размер и статистика исходника до/после
 ## Блок 10
 
 - **Название:** безопасная валидация бизнес-правил
-- **Статус:** реализован в integration-ветке; PR/CI и merge в `main` ещё не завершены
+- **Статус:** интегрирован в `main`; PR и GitHub Actions успешно пройдены
 - **Контракт:** `RuleConfigurationVersion-1.0`, `ValidatedRuleSet`, `RuleValidationResult`
 - **CLI:** `validate-business-rules --config --output`
 
@@ -302,5 +302,8 @@ scope, политики количества/стоимости, canonical JSON,
 Хранилище изолировано от `DuckDBStore` блока 6. Загрузки идемпотентны и
 детерминированы; конфликт payload приводит к полной отмене транзакции. Named
 queries используют фиксированные имена, allowlist фильтров и параметры.
-Фокусированный набор блока 11: **46 passed**. Полный suite, real-data gate и
-GitHub Actions ещё не заявляются до финальной интеграции.
+Фокусированный набор блока 11 и regression storage v1: **47 passed**;
+полный локальный suite: **464 passed**.
+Real-data gate: **382** source rows, **107** target rows, **34** rule clauses,
+**246** diagnostics; повторная загрузка unchanged, обе исходные книги
+неизменны. GitHub Actions остаётся обязательным gate перед merge.
