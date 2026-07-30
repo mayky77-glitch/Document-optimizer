@@ -205,4 +205,8 @@ append p95 **0.072 ms**; real files unchanged.
 cross-store recovery, feedback только после `EXPORT_VERIFIED`, compaction,
 no-clobber и invalid-output cleanup. Block 15 принят: PR #15, CI `30569460356`,
 main CI `30569606304`, 514 passed/real 7 passed. Block 16 PR/main acceptance
-ещё не заявляются.
+ещё не заявляются. Block 16 принят: PR #16, PR CI `30572493480`, main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`, post-merge main CI `30572598426` — success.
+
+## Блок 17 — processing controller (in progress)
+
+Frozen API: `process_report`, `process_reports` и CLI `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без мутаций, dry-run без публикации, write с QC gate; states `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`; exit codes `0`–`6`. Block 17 tests/PR/CI здесь не заявляются до фактического выполнения.

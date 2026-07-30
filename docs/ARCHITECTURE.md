@@ -293,4 +293,8 @@ compaction не переписывает events.
 
 Локальный gate: focused **33 passed**, полный real+slow suite
 **547 passed in 89.32s**, **583.3 B/event**, append p95 **0.072 ms**;
-реальные файлы неизменны. PR CI/main acceptance Block 16 ещё отсутствуют.
+реальные файлы неизменны. Block 16 принят: PR #16, PR CI `30572493480`, main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`, post-merge main CI `30572598426` — success.
+
+## Блок 17 — processing controller (in progress)
+
+Контроллер отвечает за порядок этапов, типизированный контекст, переходы состояний и адаптеры; бизнес-логика остаётся в Blocks 1–16. API — `process_report` и `process_reports`; CLI — `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без мутаций, dry-run без публикации, write с QC gate. States: `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`; exit codes `0`–`6`. Resume boundaries: `PENDING`, `DATA_COMMITTED`, `EXPORT_PREPARED`, `EXPORT_VERIFIED` с проверкой хешей и версий контрактов.
