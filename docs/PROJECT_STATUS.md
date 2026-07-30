@@ -414,8 +414,16 @@ Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 pass
 
 ## Блок 17
 
-- **Статус:** local READY; PR/main acceptance ещё не выполнены.
+- **Статус:** принят в main через PR #17.
 - **Контракты:** `ProcessingContract-17.0`, `ProcessingEngine-17.0`, `ProcessingState-17.0`.
 - **API/CLI:** `process_report`, `process_reports`; `report-processor process --mode {inspect,dry-run,write}`.
 - **Режимы/состояния/коды:** inspect без output, dry-run без публикации, write с QC gate; states frozen contract; exit codes `0`–`6`.
 - **Evidence:** focused **21 passed**; полный real+slow suite **569 passed in 92.84s**; реальный inspect-контроллер прошёл, SHA обеих XLSX неизменны.
+- **Acceptance:** PR CI `30575326764`; post-merge main CI `30575425467`; main SHA `322cb9ce08f14c017dbdc3bf16c5b91b33238e63`.
+
+## Блок 18
+
+- **Статус:** в работе; release evidence отсутствует.
+- **RAG:** `cointegrated/rubert-tiny2`, revision `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae`, 29.4M параметров, 312 dimensions, Russian; lazy local optional load.
+- **Поведение:** normalized embeddings, cosine, deterministic top-k/tie ordering; controlled unavailable без silent matching change. Block 12 authority primary; semantic-only relations требуют manual review.
+- **Evidence:** tests/model smoke/clean install/PR/CI — **NOT RUN / не предоставлено**.

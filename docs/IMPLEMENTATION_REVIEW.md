@@ -208,6 +208,10 @@ main CI `30569606304`, 514 passed/real 7 passed. Block 16 принят: PR #16,
 PR CI `30572493480`, main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`,
 post-merge main CI `30572598426` — success.
 
-## Блок 17 — processing controller (local READY)
+## Блок 17 — processing controller (принят в main)
 
-Frozen API: `process_report`, `process_reports` и CLI `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без мутаций, dry-run без публикации, write с QC gate; states `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`; exit codes `0`–`6`. Focused **21 passed**; полный real+slow suite **569 passed in 92.84s**. Реальный inspect-контроллер прошёл, обе XLSX неизменны. PR/main/CI ещё не заявляются.
+Frozen API: `process_report`, `process_reports` и CLI `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без мутаций, dry-run без публикации, write с QC gate; states `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`; exit codes `0`–`6`. Focused **21 passed**; полный real+slow suite **569 passed in 92.84s**. Реальный inspect-контроллер прошёл, обе XLSX неизменны. Принят через PR #17: PR CI `30575326764`, post-merge main CI `30575425467`, main SHA `322cb9ce08f14c017dbdc3bf16c5b91b33238e63`.
+
+## Блок 18 — review scope (в работе)
+
+Pinned RAG: `cointegrated/rubert-tiny2` revision `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae`, 29.4M params, 312 dimensions, Russian; lazy local load, normalized cosine, deterministic top-k. Unavailable dependency/model is controlled; Block 12 authority/manual review remains mandatory. Block 18 tests, model smoke, clean installs, PR and CI are not claimed without evidence.
