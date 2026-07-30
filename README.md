@@ -273,6 +273,26 @@ raw cells, formula text и document content в отчёт не копируют�
 фиксируются только после успешного Pull Request.
 Входные XLSX не изменились. Это не объявляет READY/main или CI.
 
+## Блок 15: безопасная запись XLSX
+
+Блок 15 реализует `ExcelWriterContract-15.0` / `ExcelWriterEngine-15.0` и
+`write_target_report(...)`. Запись разрешена только для `ALLOW_WRITE` или
+`ALLOW_WRITE_WITH_WARNINGS`; ручная проверка и блокировка возвращают
+`SKIPPED_DECISION` без output. Разрешены только `CURRENT_PERIOD_QUANTITY` и
+`CURRENT_PERIOD_COST`. Используются конечные `Decimal` без float, пересчёта,
+округления или quantize; `None` не очищает ячейку.
+
+Обновление — targeted OOXML без `openpyxl.save`, с сохранением формул, кэша,
+стилей, merged ranges и структуры. Поддерживается только обычный `.xlsx`;
+signed OOXML и `.xlsm` отклоняются. Source identity перепроверяется перед
+публикацией. Новый output публикуется атомарно через hard-link no-clobber и
+никогда не перезаписывается; при ошибке source и существующий output не трогаются.
+CLI в блоке 15 нет.
+
+Production Ruff, format и compileall проходят; feature commit `fcdef7c` имеет
+PASS для Ruff, format и diff-check. Post-merge pytest и real-data gate pending;
+это не READY/main/CI.
+
 ## Ограничения блоков 1–7
 
 Намеренно не реализованы:

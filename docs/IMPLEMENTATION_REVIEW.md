@@ -130,6 +130,23 @@ digest `c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`, вх�
 не изменились. Полный integration suite: **490 passed**; Ruff, format, clean
 install, compileall и `git diff --check` — PASS. READY/main требует зелёного PR.
 
+## Блок 15 — безопасный Excel writer
+
+`ExcelWriterContract-15.0` допускает запись только для двух allow decisions;
+manual review/block возвращают `SKIPPED_DECISION`. Записываются только
+`CURRENT_PERIOD_QUANTITY` и `CURRENT_PERIOD_COST` из конечных `Decimal`, без
+float, пересчёта, округления, quantize или очистки через `None`.
+
+Реализация использует targeted OOXML update без `openpyxl.save`, сохраняя
+формулы, кэш, форматирование и структуру пакета. Поддерживается только `.xlsx`;
+signed OOXML и `.xlsm` отклоняются. Source identity перепроверяется, output
+должен быть отдельным и отсутствующим, а публикация выполняется атомарно через
+hard-link no-clobber. CLI нет.
+
+Evidence: production Ruff, format и compileall — PASS; feature `fcdef7c` —
+Ruff, format и diff-check — PASS. Post-merge pytest и real-data gate pending;
+READY/main/CI не заявляются.
+
 ## Блок 12 — детерминированный matching engine
 
 Реализованы `MatchingContract-12.0` и `MatchingEngine-12.0` в отдельном
