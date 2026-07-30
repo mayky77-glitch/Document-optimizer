@@ -27,10 +27,13 @@ from .exceptions import (
     ExcelWriterIntegrityError,
     ExcelWriterSafetyError,
 )
+from .formula_materialization import recalculate_and_materialize
 from .models import EXCEL_WRITER_CONTRACT_VERSION, WriteResult, WriteStatus, WrittenCell
 from .ooxml import (
     inspect_cell,
+    package_has_formulas,
     reject_unsupported_package,
+    verify_formula_free_package,
     worksheet_part_map,
 )
 from .ooxml import (
@@ -102,8 +105,11 @@ def write_target_report(
     temp_path = _temp_path(output)
     published = False
     try:
-        _write_temp_package(source, temp_path, changes_by_part)
-        _verify_temp_package(source, temp_path, changes_by_part)
+        _write_temp_package(source, temp_path, changes_by_part, remove_calc_chain=True)
+        _verify_temp_package(source, temp_path, changes_by_part, remove_calc_chain=True)
+        if package_has_formulas(temp_path, parts):
+            recalculate_and_materialize(temp_path)
+        verify_formula_free_package(temp_path, parts)
         _assert_source_unchanged(source, source_identity)
         _publish_no_clobber(temp_path, output)
         published = True

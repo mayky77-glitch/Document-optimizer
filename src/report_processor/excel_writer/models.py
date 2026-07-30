@@ -1,4 +1,4 @@
-"""Frozen public data contract for ExcelWriter-15.0."""
+"""Frozen public data contract for ExcelWriter-15.1."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from enum import StrEnum
 from report_processor.quality_control import WriteDecision
 from report_processor.schema import LogicalColumn
 
-EXCEL_WRITER_CONTRACT_VERSION = "ExcelWriterContract-15.0"
-EXCEL_WRITER_ENGINE_VERSION = "ExcelWriterEngine-15.0"
+EXCEL_WRITER_CONTRACT_VERSION = "ExcelWriterContract-15.1"
+EXCEL_WRITER_ENGINE_VERSION = "ExcelWriterEngine-15.1"
 
 
 class WriteStatus(StrEnum):
