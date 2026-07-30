@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import pytest
+
 from report_processor.stage_rag import (
     EMBEDDING_DIMENSIONS,
     RUBERT_TINY2_MODEL_ID,

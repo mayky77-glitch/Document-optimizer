@@ -7,9 +7,9 @@ import os
 from pathlib import Path
 
 import pytest
-from report_processor.stage_rag import StageRelationRAG, StageText
 
 from fixtures.stage_rag.builders import FakeEncoder
+from report_processor.stage_rag import StageRelationRAG, StageText
 
 
 def _fingerprint(path: Path) -> tuple[str, int, int]:

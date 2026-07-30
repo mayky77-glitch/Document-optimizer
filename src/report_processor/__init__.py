@@ -38,4 +38,4 @@ __all__ = [
     "scan_directory",
     "scan_zip_archive",
 ]
-__version__ = "0.7.0"
+__version__ = "1.0.0"

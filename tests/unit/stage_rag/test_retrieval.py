@@ -5,14 +5,14 @@ from __future__ import annotations
 import math
 
 import pytest
+
+from fixtures.stage_rag.builders import FakeEncoder
 from report_processor.stage_rag import (
     StageRAGInputError,
     StageRelationRAG,
     StageText,
     retrieve_stage_relations,
 )
-
-from fixtures.stage_rag.builders import FakeEncoder
 
 
 def _stage(identity: str) -> StageText:

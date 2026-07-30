@@ -30,6 +30,12 @@ def add_process_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--cache-directory", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
+        "--stage-rag",
+        action="store_true",
+        help="Добавить локальные RuBERT-подсказки для ручного сопоставления этапов",
+    )
+    parser.add_argument("--stage-rag-top-k", type=int, default=3)
+    parser.add_argument(
         "--log-level",
         choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
         default="INFO",
@@ -37,6 +43,12 @@ def add_process_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def run_process(args: argparse.Namespace, adapters: object | None = None) -> int:
+    options = {}
+    if getattr(args, "stage_rag", False):
+        options = {
+            "stage_rag": True,
+            "stage_rag_top_k": getattr(args, "stage_rag_top_k", 3),
+        }
     try:
         request = ProcessReportRequest(
             source_path=args.source,
@@ -50,6 +62,7 @@ def run_process(args: argparse.Namespace, adapters: object | None = None) -> int
             audit_directory=args.audit_directory,
             cache_directory=args.cache_directory,
             resume=args.resume,
+            options=options,
         )
     except ValueError:
         return int(ProcessingExitCode.INVALID_INPUT)

@@ -5,6 +5,9 @@ from __future__ import annotations
 import os
 
 import pytest
+
+from report_processor.matching import MatchStatus
+from report_processor.processing import DefaultProcessingAdapters, ProcessReportRequest
 from report_processor.stage_rag import (
     EMBEDDING_DIMENSIONS,
     RUBERT_TINY2_MODEL_ID,
@@ -12,9 +15,6 @@ from report_processor.stage_rag import (
     RuBERTTiny2Encoder,
     StageRAGModelUnavailableError,
 )
-
-from report_processor.matching import MatchStatus
-from report_processor.processing import DefaultProcessingAdapters, ProcessReportRequest
 
 
 @pytest.mark.skipif(os.getenv("RUN_RAG_MODEL") != "1", reason="set RUN_RAG_MODEL=1")

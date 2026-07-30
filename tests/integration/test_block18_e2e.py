@@ -6,8 +6,6 @@ import argparse
 from pathlib import Path
 from types import SimpleNamespace
 
-from report_processor.stage_rag import StageRelationRAG, StageText
-
 from fixtures.matching.builders import rule_set, source_row, target_row
 from fixtures.stage_rag.builders import FakeEncoder
 from report_processor.cli_process import add_process_parser, run_process
@@ -19,6 +17,7 @@ from report_processor.processing import (
     ProcessingState,
     ProcessReportRequest,
 )
+from report_processor.stage_rag import StageRelationRAG, StageText
 
 
 def test_semantic_suggestions_remain_manual_review_only_alongside_block12_result() -> None:

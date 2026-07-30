@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "document-optimizer"
-version = "0.8.0"
-description = "Поэтапная обработка строительных отчётов; блоки 1–8 — от инвентаризации до нормализации"
+version = "1.0.0"
+description = "Детерминированная обработка, сопоставление и аудит строительных отчётов"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
@@ -16,6 +16,11 @@ dependencies = ["duckdb>=1.2,<2", "openpyxl>=3.1,<4", "pyyaml>=6.0.2,<7"]
 dev = [
   "pytest>=8.3",
   "ruff>=0.9",
+]
+rag = [
+  "sentencepiece>=0.2,<1",
+  "torch>=2.6,<3",
+  "transformers>=4.48,<5",
 ]
 
 [project.scripts]

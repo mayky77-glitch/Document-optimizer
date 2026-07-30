@@ -6,6 +6,7 @@ import os
 import time
 
 import pytest
+
 from report_processor.stage_rag import StageRelationRAG, StageText
 
 pytestmark = pytest.mark.skipif(os.getenv("RUN_SLOW") != "1", reason="set RUN_SLOW=1")

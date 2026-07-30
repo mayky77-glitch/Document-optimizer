@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from report_processor.stage_rag import StageRelationRAG, StageText
-
 from fixtures.stage_rag.builders import FakeEncoder
+from report_processor.stage_rag import StageRelationRAG, StageText
 
 
 def test_sanitized_versioned_golden_ranking_is_stable() -> None:
