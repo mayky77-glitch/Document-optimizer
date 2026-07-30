@@ -9,7 +9,11 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-from report_processor.quality_control import QualityDecision, evaluate_quality_control
+from report_processor.quality_control import (
+    QualityIssueCode,
+    WriteDecision,
+    evaluate_quality_control,
+)
 
 from report_processor.business_rules import load_default_rule_set
 from report_processor.calculation import calculate_matches
@@ -65,8 +69,12 @@ def test_real_workbooks_pass_quality_gate_without_mutating_either_input() -> Non
     assert len(source_rows) == 382
     assert len(target_result.rows) == len(matches) == len(calculations) == 107
     assert statuses == {"unmatched": 101, "ambiguous": 5, "matched": 1}
-    assert first.decision is QualityDecision.REQUIRE_MANUAL_REVIEW
+    assert first.decision is WriteDecision.REQUIRE_MANUAL_REVIEW
     assert first.summary.blocking_issue_count == 0
+    assert first.report_id == "a49889f3228004ef753e84f16a7fbaee9a6432ec6554bb517b32260c69d2d816"
+    assert first.input_digest == "043ad2dfa48b5b31efdc59153f66637aa9ecc21351a1796cfc071b7de087f5a9"
+    assert len(first.issues) == 328
+    assert all(isinstance(issue.code, QualityIssueCode) for issue in first.issues)
     assert first.report_id == second.report_id
     assert first.input_digest == second.input_digest
     print(json.dumps({"digest": _digest(first), "issues": len(first.issues)}, sort_keys=True))

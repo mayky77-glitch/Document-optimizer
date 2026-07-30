@@ -6,10 +6,11 @@ import pytest
 from report_processor.quality_control import (
     QualityControlReport,
     QualityControlSummary,
-    QualityDecision,
     QualityIssue,
+    QualityIssueCode,
+    QualityIssueSeverity,
     QualityLocation,
-    QualitySeverity,
+    WriteDecision,
 )
 
 
@@ -17,8 +18,8 @@ def test_quality_models_are_frozen_and_issue_evidence_is_immutable() -> None:
     location = QualityLocation("target", "target", "Table 2", 8, "H8")
     issue = QualityIssue(
         "issue",
-        "UPSTREAM_WARNING",
-        QualitySeverity.WARNING,
+        QualityIssueCode.UPSTREAM_WARNING,
+        QualityIssueSeverity.WARNING,
         "safe",
         "target",
         "match",
@@ -28,6 +29,8 @@ def test_quality_models_are_frozen_and_issue_evidence_is_immutable() -> None:
         {"code": "SOURCE_WARNING"},
     )
     assert issue.source_row_ids == ("source-a", "source-b")
+    assert issue.code is QualityIssueCode.UPSTREAM_WARNING
+    assert isinstance(issue.code, QualityIssueCode)
     assert dict(issue.evidence) == {"code": "SOURCE_WARNING"}
     with pytest.raises((AttributeError, TypeError)):
         issue.evidence["raw_formula"] = "=SECRET()"  # type: ignore[index]
@@ -41,7 +44,7 @@ def test_report_canonicalizes_identity_order_without_dropping_multiplicity() -> 
         "report",
         "digest",
         "rules",
-        QualityDecision.ALLOW_WRITE,
+        WriteDecision.ALLOW_WRITE,
         (),
         summary,
         ("match-b", "match-a", "match-a"),
