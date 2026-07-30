@@ -1,0 +1,124 @@
+status: frozen
+work_id: document-optimizer-block-13
+objective: "Рассчитать итоговые количество и стоимость по принятым сопоставлениям"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block13"
+planning_parent_sha: 60df82430d430ff865ebfe6677ec974dd3b734e2
+dependency_sha: 60df82430d430ff865ebfe6677ec974dd3b734e2
+published_base_sha_ref: "commit containing this frozen manifest and all three task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 60df82430d430ff865ebfe6677ec974dd3b734e2
+contract_versions:
+  public_api: CalculationEngine-13.0
+  contract: CalculationContract-13.0
+  matching_input: MatchingContract-12.0
+  rules_input: ValidatedRuleSet-10.0
+  result_output: CalculationResult-13.0
+  trace_output: CalculationTrace-13.0
+calculation_contracts:
+  public_api: "calculate_matches(match_results, rule_set) -> tuple[CalculationResult, ...]"
+  selected_source_policy: "only MatchStatus.MATCHED selected_candidate contributes"
+  ambiguous_policy: "MANUAL_REVIEW with no totals"
+  unmatched_policy: "NO_MATCH with no totals"
+  quantity_source: period_quantity
+  cost_source: period_cost
+  quantity_formula: "quantize(sum(included period_quantity), rounding_quantum, ROUND_HALF_UP)"
+  cost_formula: "quantize(sum(included period_cost) * default_run_coefficient, rounding_quantum, ROUND_HALF_UP)"
+  rounding_policy: "aggregate first and round once at final/category boundary"
+  missing_policy: "all values missing -> None; explicit zero remains zero"
+  negative_policy: "retain signed adjustment and emit trace warning"
+  numeric_policy: "finite Decimal only; reject float and non-finite values"
+  unit_policy: "target-unit equality; absent target allows one unambiguous source unit; no conversion"
+  allowed_units_policy: "empty means unrestricted"
+  source_priority_policy: "ordering metadata, never an allowlist after matching"
+  rule_policy: "approved rules only; EXCLUDE wins; REVIEW requires manual review; INCLUDE flags control quantity and cost independently"
+  category_policy: "only exact canonical work/material/service codes map; unknown or missing cost_type_code -> UNCLASSIFIED"
+  category_inference_policy: "never infer category from work-name text"
+  result_order: target_row_id
+  contribution_order: "source_row_id, candidate_id"
+identity_contracts:
+  contribution_id: "sha256(contract + match_result_id + candidate_id + rule_hash + raw values + decisions)"
+  trace_id: "sha256(contract + result identity + ordered contribution IDs + formula metadata)"
+  calculation_id: "sha256(contract + target_row_id + match_result_id + trace_id + rule_hash)"
+trace_contracts:
+  - formula tokens are descriptive data and never executable
+  - preserve coefficient, quantum and rounding mode
+  - preserve rule IDs and inclusion decisions
+  - preserve raw and included Decimal values
+  - preserve source and target provenance
+  - preserve contributing source rows
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv run --extra dev ruff check ."
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<target>' RUN_SLOW=1 uv run --extra dev pytest -q"
+baseline_results:
+  - "ruff: pass"
+  - "pytest: 470 passed"
+  - "origin/main CI 30558130170: success"
+shared_paths_owner: integration
+shared_paths:
+  - knowledge
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - pyproject.toml
+  - uv.lock
+production_scope:
+  - src/report_processor/calculation
+test_scope:
+  - tests/unit/calculation
+  - tests/fixtures/calculation
+  - tests/contract/test_block13_calculation_contract.py
+  - tests/integration/test_block13_calculation_engine.py
+  - tests/integration/test_block13_real_data.py
+documentation_scope:
+  - README.md
+  - docs/ARCHITECTURE.md
+  - docs/IMPLEMENTATION_REVIEW.md
+  - docs/PROJECT_STATUS.md
+forbidden_paths:
+  - .env
+  - cache
+  - logs
+  - output
+  - src/report_processor/business_rules
+  - src/report_processor/matching
+  - src/report_processor/normalization
+  - src/report_processor/target_report
+  - src/report_processor/analytics
+  - src/report_processor/storage
+  - src/report_processor/cli.py
+  - pyproject.toml
+  - uv.lock
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+acceptance_commands:
+  - "uv run --extra dev ruff check ."
+  - "uv run --extra dev ruff format --check ."
+  - "uv run --extra dev pytest tests/unit/calculation -q"
+  - "uv run --extra dev pytest tests/contract/test_block13_calculation_contract.py -q"
+  - "uv run --extra dev pytest tests/integration/test_block13_calculation_engine.py -q"
+  - "DOCUMENT_OPTIMIZER_REAL_SOURCE_XLSX='<source>' DOCUMENT_OPTIMIZER_REAL_TARGET_XLSX='<target>' uv run --extra dev pytest tests/integration/test_block13_real_data.py -q"
+  - "RUN_SLOW=1 uv run --extra dev pytest -q"
+  - "uv sync --locked --extra dev"
+  - "uv run python -m compileall -q src"
+  - "git diff --check"
+real_data_contract:
+  source_rows: 382
+  target_rows: 107
+  selected_matches: 1
+  source_cost_type_code: "all missing; must remain UNCLASSIFIED"
+  source_files: "read-only; SHA-256, size and mtime must remain unchanged"
+required_evidence:
+  - Decimal-only aggregation and single final rounding
+  - configured coefficient and inclusion flags
+  - signed negative adjustments
+  - selected-only and no ambiguous/unmatched calculation
+  - quantity unit policy and no unit conversion
+  - work/material/service/unclassified category totals without text inference
+  - deterministic IDs order and digest
+  - complete formula and provenance trace
+  - real source and target XLSX SHA-256 size and mtime unchanged
+created_at: "2026-07-30T23:50:00+08:00"
