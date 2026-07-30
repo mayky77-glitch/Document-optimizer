@@ -93,3 +93,21 @@ M01–M15 представлены структурированными issues/c
 Проверки: focused **28 passed**, полный suite **441 passed, 1 skipped**,
 Ruff PASS. До отдельного PR/CI gate блоки не считаются опубликованными в
 `main`.
+
+## Блок 11 — аналитический DuckDB
+
+Реализован `AnalyticalStore-11.0` на схеме `AnalyticalSchema-1` в отдельном
+пакете `report_processor.analytics`. API принимает нормализованные строки,
+целевые строки с явным fingerprint/source context и проверенный набор правил.
+Схема инициализируется транзакционно и не затрагивает storage v1.
+
+Проверены provenance, строгие Decimal-типы, идемпотентная загрузка,
+deduplication, конфликт payload с rollback, parameterized SQL для bounded named
+queries, фиксированный allowlist фильтров и атомарный diagnostics JSONL export.
+Focused Block 11 с regression storage v1: **47 passed**. Real-data gate на
+reviewed КС-2 и целевом отчёте загрузил **382** нормализованные source rows,
+**107** target rows и **34** rule clauses; повторная загрузка полностью
+идемпотентна. Diagnostics export содержит **246** строк и воспроизводимый
+SHA-256; исходные XLSX не изменились. Полный локальный suite после интеграции:
+**464 passed**; GitHub Actions остаётся обязательным gate перед merge.
+Matching/business logic следующего блока намеренно отсутствует.

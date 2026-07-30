@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-09-production
-status: claimed
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-blocks-09-10
@@ -21,9 +21,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: medium
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-30
@@ -65,7 +65,7 @@ acceptance_commands:
   - "uv run pytest tests/unit/target_report tests/contract/test_block5_to_block9_contract.py tests/integration/test_target_report_immutability.py"
 tags:
   - task/implementation
-  - status/claimed
+  - status/done
   - layer/backend
   - risk/high
 ---
