@@ -105,9 +105,13 @@ def test_resume_cache_does_not_store_a_workbook_payload(tmp_path) -> None:
 
 def test_corrupt_partial_resume_cache_is_rejected_and_leaves_no_temporary_files(tmp_path) -> None:
     cache = tmp_path / "cache"
-    request = _request(tmp_path, "corrupt", cache_directory=cache, resume=True)
-    cache.mkdir()
-    (cache / "partial.json").write_text("{broken", encoding="utf-8")
+    original = _request(tmp_path, "corrupt", cache_directory=cache)
+    ProcessingEngine(CountingAdapters()).process_report(original)
+    payload = next(cache.glob("*.json"))
+    payload.write_text("{broken", encoding="utf-8")
+    request = ProcessReportRequest(
+        original.source_path, original.target_path, cache_directory=cache, resume=True
+    )
     result = ProcessingEngine(CountingAdapters()).process_report(request)
     assert result.exit_code in {
         ProcessingExitCode.INVALID_INPUT,

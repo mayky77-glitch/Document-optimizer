@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from openpyxl import Workbook
 from report_processor.processing import (
     ProcessingEngine,
     ProcessingExitCode,
@@ -141,3 +142,45 @@ def test_adapter_fault_is_contained_as_controlled_internal_error(inputs) -> None
     assert result.state is ProcessingState.FAILED
     assert result.exit_code is ProcessingExitCode.CONTROLLED_INTERNAL_ERROR
     assert result.errors
+
+
+def test_default_dry_run_uses_public_upstream_stages_without_internal_error(
+    monkeypatch, tmp_path
+) -> None:
+    source, target = tmp_path / "source.xlsx", tmp_path / "target.xlsx"
+    for path in (source, target):
+        workbook = Workbook()
+        workbook.save(path)
+        workbook.close()
+    calls: list[str] = []
+    stage_functions = (
+        ("report_processor.schema", "analyze_workbook_schema", "schema"),
+        ("report_processor.extraction", "extract_supported_workbook_rows", "extraction"),
+        ("report_processor.training_data", "prepare_training_data", "training"),
+        ("report_processor.normalization", "normalize_training_rows", "normalization"),
+        ("report_processor.matching", "match_rows", "matching"),
+        ("report_processor.calculation", "calculate_matches", "calculation"),
+        ("report_processor.quality_control", "evaluate_quality_control", "quality"),
+    )
+    for module_path, attribute, stage in stage_functions:
+        module = __import__(module_path, fromlist=[attribute])
+        original = getattr(module, attribute)
+
+        def traced(*args, _original=original, _stage=stage, **kwargs):
+            calls.append(_stage)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(module, attribute, traced)
+    result = ProcessingEngine().process_report(
+        ProcessReportRequest(source, target, ProcessMode.DRY_RUN)
+    )
+    assert result.exit_code is not ProcessingExitCode.CONTROLLED_INTERNAL_ERROR
+    assert set(calls) >= {
+        "schema",
+        "extraction",
+        "training",
+        "normalization",
+        "matching",
+        "calculation",
+        "quality",
+    }

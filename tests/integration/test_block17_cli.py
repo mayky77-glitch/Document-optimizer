@@ -28,7 +28,7 @@ def test_process_parser_exposes_only_frozen_modes_and_strictness() -> None:
             "--mode",
             "dry-run",
             "--non-strict",
-            "--rules",
+            "--rules-path",
             "rules.yaml",
             "--audit-directory",
             "audit",
@@ -40,7 +40,7 @@ def test_process_parser_exposes_only_frozen_modes_and_strictness() -> None:
         True,
         None,
     )
-    assert (args.rules, args.audit_directory) == ("rules.yaml", "audit")
+    assert (args.rules_path, args.audit_directory) == ("rules.yaml", "audit")
 
 
 def test_dispatch_maps_arguments_to_request_and_returns_contract_exit_code(
@@ -63,7 +63,7 @@ def test_dispatch_maps_arguments_to_request_and_returns_contract_exit_code(
         output=tmp_path / "out.xlsx",
         stage="stage",
         month="2026-07",
-        rules=tmp_path / "rules.yaml",
+        rules_path=tmp_path / "rules.yaml",
         audit_directory=tmp_path / "audit",
         cache_directory=tmp_path / "cache",
         resume=True,
@@ -78,7 +78,7 @@ def test_dispatch_maps_arguments_to_request_and_returns_contract_exit_code(
             output_path=args.output,
             stage="stage",
             month="2026-07",
-            rules_path=args.rules,
+            rules_path=args.rules_path,
             audit_directory=args.audit_directory,
             cache_directory=args.cache_directory,
             resume=True,
