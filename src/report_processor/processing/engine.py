@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -25,6 +26,18 @@ _VERSIONS = {
     "request_result": PROCESSING_CONTRACT_VERSION,
     "engine": PROCESSING_ENGINE_VERSION,
     "state": PROCESSING_STATE_VERSION,
+    "manifest": "FileManifest-2.0/enriched-3.0",
+    "extraction": "ExtractionResult-6.0",
+    "training": "TrainingData-7.0",
+    "normalization": "Normalization-8.0",
+    "target": "TargetReport-9.0",
+    "rules": "RuleConfigurationVersion-1.0",
+    "analytics": "AnalyticalStore-11.0/AnalyticalSchema-1",
+    "matching": "MatchingContract-12.0",
+    "calculation": "CalculationContract-13.0",
+    "quality_control": "QualityControlContract-14.0",
+    "writer": "ExcelWriterContract-15.1",
+    "audit": "StageJournal-16.0",
 }
 
 
@@ -108,13 +121,13 @@ def _process(request: ProcessReportRequest, adapters: ProcessingAdapters) -> Pro
                     return _quality_result(request, run_key, snapshots, outcomes, decision)
             _verify_unchanged(snapshots)
             result = _success_result(request, run_key, snapshots, outcomes)
-    except _InputChangedError as error:
+    except _InputChangedError:
         result = _result(
             request,
             ProcessingState.FAILED,
             ProcessingExitCode.WRITE_OR_VERIFICATION_FAILED,
             run_key,
-            errors=(str(error),),
+            errors=("INPUT_SNAPSHOT_CHANGED",),
             snapshots=snapshots,
         )
     except Exception:  # controlled boundary: a bad adapter cannot stop bulk execution
@@ -274,12 +287,20 @@ def _is_adapter(value: object) -> bool:
 
 
 def _cache_path(request: ProcessReportRequest, run_key: str) -> Path | None:
-    return request.cache_directory / f"{run_key}.json" if request.cache_directory else None
+    del run_key
+    return (
+        request.cache_directory / f"{_cache_identity(request)}.json"
+        if request.cache_directory
+        else None
+    )
 
 
 def _read_cache(request, run_key, snapshots) -> ProcessingResult | None:
-    if not request.resume or (path := _cache_path(request, run_key)) is None or not path.is_file():
+    if not request.resume:
         return None
+    path = _cache_path(request, run_key)
+    if path is None or not path.is_file():
+        raise _CacheMismatchError
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload["versions"] != _VERSIONS:
@@ -290,6 +311,7 @@ def _read_cache(request, run_key, snapshots) -> ProcessingResult | None:
             raise _CacheMismatchError
         if payload["boundary"] not in {"DATA_COMMITTED", "EXPORT_PREPARED", "EXPORT_VERIFIED"}:
             raise _CacheMismatchError
+        _validate_audit_resume(request, payload)
         return _result(
             request,
             ProcessingState(payload["state"]),
@@ -320,10 +342,23 @@ def _write_cache(request: ProcessReportRequest, result: ProcessingResult) -> Non
         "rules_hash": _rules_hash(request),
         "boundary": _boundary(result),
     }
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("x", encoding="utf-8") as stream:
-        json.dump(payload, stream, sort_keys=True, default=str)
-    temporary.replace(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, sort_keys=True, default=str)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _json_safe(value: Mapping[str, object]) -> Mapping[str, object]:
@@ -332,12 +367,53 @@ def _json_safe(value: Mapping[str, object]) -> Mapping[str, object]:
 
 def _rules_hash(request: ProcessReportRequest) -> str:
     if request.rules_path is None:
-        return "default"
+        from report_processor.business_rules import load_default_rule_set
+
+        result = load_default_rule_set()
+        if not result.valid or result.rule_set is None:
+            raise _CacheMismatchError
+        return result.rule_set.content_hash
     return _snapshot(request.rules_path).sha256
 
 
 def _boundary(result: ProcessingResult) -> str:
-    return "EXPORT_VERIFIED" if result.request.mode is ProcessMode.WRITE else "DATA_COMMITTED"
+    boundary = result.artifacts.get("audit_boundary")
+    if boundary in {"PENDING", "DATA_COMMITTED", "EXPORT_PREPARED", "EXPORT_VERIFIED"}:
+        return str(boundary)
+    return "PENDING" if result.request.mode is ProcessMode.INSPECT else "DATA_COMMITTED"
+
+
+def _cache_identity(request: ProcessReportRequest) -> str:
+    payload = {
+        "source_ref": hashlib.sha256(str(request.source_path.resolve()).encode()).hexdigest(),
+        "target_ref": hashlib.sha256(str(request.target_path.resolve()).encode()).hexdigest(),
+        "mode": request.mode.value,
+        "strict": request.strict,
+        "stage": request.stage,
+        "month": request.month,
+        "options": dict(request.options),
+        "versions": _VERSIONS,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _validate_audit_resume(request: ProcessReportRequest, payload: Mapping[str, object]) -> None:
+    run_id = payload.get("artifacts", {}).get("audit_run_id")
+    if run_id is None:
+        return
+    if not isinstance(run_id, str) or request.audit_directory is None:
+        raise _CacheMismatchError
+    from report_processor.audit import AuditJournal
+
+    try:
+        with AuditJournal(request.audit_directory / "journal.sqlite3") as journal:
+            events = journal.validate_run(run_id)
+    except Exception as error:
+        raise _CacheMismatchError from error
+    if not events or events[-1].controlled_state_code != payload["boundary"]:
+        raise _CacheMismatchError
 
 
 class _InputChangedError(RuntimeError):

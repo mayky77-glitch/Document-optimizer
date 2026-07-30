@@ -4,9 +4,27 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 from .contracts import ProcessMode
+
+_UPSTREAM_CONTRACTS = {
+    "manifest": "FileManifest-2.0",
+    "manifest_enriched": "FileManifest-3.0",
+    "extraction": "ExtractionResult-6.0",
+    "training": "TrainingData-7.0",
+    "normalization": "Normalization-8.0",
+    "target": "TargetReport-9.0",
+    "rules": "RuleConfigurationVersion-1.0",
+    "analytics": "AnalyticalStore-11.0",
+    "analytics_schema": "AnalyticalSchema-1",
+    "matching": "MatchingContract-12.0",
+    "calculation": "CalculationContract-13.0",
+    "quality_control": "QualityControlContract-14.0",
+    "writer": "ExcelWriterContract-15.1",
+    "audit": "StageJournal-16.0",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,11 +67,24 @@ class DefaultProcessingAdapters:
     def inspect(self, context: ProcessingContext) -> StageOutcome:
         from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
         from report_processor.extraction import extract_supported_workbook_rows
+        from report_processor.identifiers.manifest_enricher import (
+            enrich_manifest_with_document_indexes,
+        )
+        from report_processor.inventory import build_file_manifest
         from report_processor.schema import analyze_workbook_schema
+        from report_processor.selection.manifest_enricher import (
+            enrich_manifest_with_document_metadata,
+        )
         from report_processor.target_report import TargetReportReadRequest, read_target_report
         from report_processor.training_data import prepare_training_data
 
         request = _request(context)
+        source_manifest = enrich_manifest_with_document_metadata(
+            enrich_manifest_with_document_indexes(build_file_manifest(request.source_path))
+        )
+        target_manifest = enrich_manifest_with_document_metadata(
+            enrich_manifest_with_document_indexes(build_file_manifest(request.target_path))
+        )
         source_id = f"source:{context.values['source_sha256']}"
         target_id = f"target:{context.values['target_sha256']}"
         source = _materialized(request.source_path, source_id)
@@ -73,6 +104,9 @@ class DefaultProcessingAdapters:
         training = prepare_training_data(source_rows)
         return StageOutcome(
             artifacts={
+                "source_manifest": source_manifest,
+                "target_manifest": target_manifest,
+                "source_selection": "EXPLICIT_SOURCE",
                 "source_schema": source_schema,
                 "target_report": target_report,
                 "training": training,
@@ -81,6 +115,7 @@ class DefaultProcessingAdapters:
         )
 
     def calculate(self, context: ProcessingContext) -> StageOutcome:
+        from report_processor.analytics import AnalyticalStore
         from report_processor.business_rules import load_default_rule_set, load_rule_configuration
         from report_processor.calculation import calculate_matches
         from report_processor.matching import match_rows
@@ -96,6 +131,15 @@ class DefaultProcessingAdapters:
             raise ValueError("RULE_CONFIGURATION_INVALID")
         target_report = context.values["target_report"]
         normalized = normalize_training_rows(context.values["training"].rows)
+        analytics_path = Path(context.temporary_directory) / "analytics.duckdb"
+        with AnalyticalStore(analytics_path) as store:
+            source_load = store.load_source_rows(normalized.rows)
+            target_load = store.load_target_rows(
+                target_report.rows,
+                target_source_id=target_report.schema.source_file_id,
+                target_fingerprint=target_report.schema.source_fingerprint.value,
+            )
+            rule_load = store.load_rule_set(validation.rule_set)
         matches = match_rows(
             normalized.rows,
             target_report.rows,
@@ -108,6 +152,9 @@ class DefaultProcessingAdapters:
             artifacts={
                 "rule_set": validation.rule_set,
                 "normalized": normalized,
+                "analytics_source_count": source_load.received_count,
+                "analytics_target_count": target_load.received_count,
+                "analytics_rule_count": rule_load.received_count,
                 "matches": matches,
                 "calculations": calculations,
             },
@@ -115,32 +162,122 @@ class DefaultProcessingAdapters:
         )
 
     def audit(self, context: ProcessingContext) -> StageOutcome:
+        from report_processor.audit import AuditJournal, AuditStage, AuditState, export_snapshot
+        from report_processor.audit.serialization import event_payload
         from report_processor.quality_control import evaluate_quality_control
 
+        request = _request(context)
         report = evaluate_quality_control(
             context.values["matches"], context.values["calculations"], context.values["rule_set"]
         )
+        audit_directory = _audit_directory(context)
+        with AuditJournal(audit_directory / "journal.sqlite3") as journal:
+            run = journal.begin_run(
+                (
+                    str(context.values["source_sha256"]),
+                    str(context.values["target_sha256"]),
+                ),
+                {
+                    "boolean_flag": request.strict,
+                    "controlled_stage_code": request.stage or "ALL",
+                },
+                _UPSTREAM_CONTRACTS,
+                context.values["rule_set"].content_hash,
+            )
+            journal.append_event(run.run_id, AuditStage.RUN, AuditState.PENDING)
+            journal.append_event(
+                run.run_id,
+                AuditStage.DATA,
+                AuditState.DATA_COMMITTED,
+                fields={
+                    "artifact_sha256": report.input_digest,
+                    "count": report.summary.calculation_count,
+                },
+            )
+            export_hash = None
+            if request.mode is ProcessMode.DRY_RUN:
+                journal.append_event(
+                    run.run_id,
+                    AuditStage.EXPORT,
+                    AuditState.EXPORT_PREPARED,
+                    fields={"artifact_sha256": report.report_id},
+                )
+                export_hash = export_snapshot(
+                    (event_payload(event) for event in journal.events(run.run_id)),
+                    audit_directory / f"{run.run_id}.json",
+                    "json",
+                )
+                journal.verify_export(
+                    run.run_id,
+                    snapshot_hash=export_hash,
+                    published_hash=export_hash,
+                )
+                journal.record_cross_store_hashes(
+                    run.run_id,
+                    data_hash=report.input_digest,
+                    export_hash=export_hash,
+                )
+            events = journal.validate_run(run.run_id)
         return StageOutcome(
-            artifacts={"quality_report": report, "audit_boundary": "DATA_COMMITTED"},
+            artifacts={
+                "quality_report": report,
+                "audit_run_id": run.run_id,
+                "audit_boundary": events[-1].controlled_state_code,
+                "audit_export_hash": export_hash or "",
+            },
             warnings=tuple(issue.code.value for issue in report.issues),
             decision=report.decision.value,
         )
 
     def write(self, context: ProcessingContext) -> StageOutcome:
+        from report_processor.audit import AuditJournal, AuditStage, AuditState, export_snapshot
+        from report_processor.audit.serialization import event_payload
         from report_processor.excel_writer import write_target_report
 
         request = _request(context)
         report = context.values["quality_report"]
         target_report = context.values["target_report"]
-        written = write_target_report(
-            request.target_path,
-            request.output_path,
-            report.decision,
-            context.values["calculations"],
-            target_report.schema,
-        )
+        with AuditJournal(_audit_directory(context) / "journal.sqlite3") as journal:
+            run_id = context.values["audit_run_id"]
+            journal.recover(run_id)
+            journal.append_event(
+                run_id,
+                AuditStage.EXPORT,
+                AuditState.EXPORT_PREPARED,
+                fields={"artifact_sha256": report.report_id},
+            )
+            audit_export_hash = export_snapshot(
+                (event_payload(event) for event in journal.events(run_id)),
+                _audit_directory(context) / f"{run_id}.json",
+                "json",
+            )
+            written = write_target_report(
+                request.target_path,
+                request.output_path,
+                report.decision,
+                context.values["calculations"],
+                target_report.schema,
+            )
+            if written.output_sha256 is None:
+                raise RuntimeError("WRITE_OUTPUT_NOT_VERIFIED")
+            journal.verify_export(
+                run_id,
+                snapshot_hash=written.output_sha256,
+                published_hash=written.output_sha256,
+            )
+            journal.record_cross_store_hashes(
+                run_id,
+                data_hash=report.input_digest,
+                export_hash=written.output_sha256,
+            )
+            boundary = journal.validate_run(run_id)[-1].controlled_state_code
         return StageOutcome(
-            artifacts={"write": written, "audit_boundary": "EXPORT_VERIFIED"},
+            artifacts={
+                "write": written,
+                "audit_run_id": run_id,
+                "audit_boundary": boundary,
+                "audit_export_hash": audit_export_hash,
+            },
             warnings=written.warnings,
             decision=report.decision.value,
         )
@@ -167,3 +304,10 @@ def _materialized(path, source_id):
         cleanup_required=False,
         warnings=(),
     )
+
+
+def _audit_directory(context: ProcessingContext) -> Path:
+    request = _request(context)
+    directory = request.audit_directory or Path(context.temporary_directory) / "audit"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
