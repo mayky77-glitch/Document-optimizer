@@ -6,6 +6,8 @@ import argparse
 import json
 import logging
 import sys
+from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 from report_processor.drawing_card.audit import atomic_write_json
@@ -28,6 +30,10 @@ from report_processor.drawing_card.workflow import (
     default_rules_path,
     default_template_path,
     run_workflow,
+)
+from report_processor.terminal_review import (
+    collect_terminal_review,
+    save_terminal_review_decisions,
 )
 
 
@@ -102,7 +108,37 @@ def _request_from_args(
 
 
 def _build_command(args: argparse.Namespace) -> int:
-    result = run_workflow(_request_from_args(args))
+    request = _request_from_args(args)
+    result = run_workflow(request)
+    _print_workflow_result(result)
+    if not args.interactive_review or result.status != "BLOCKED" or result.manual_review_count == 0:
+        return _workflow_exit_code(result.status)
+
+    outcome = collect_terminal_review(result)
+    decisions_path = result.work_dir / "terminal_review_decisions.json"
+    combined_decisions = {
+        **import_review_approvals(request.review_decisions),
+        **outcome.decisions,
+    }
+    if combined_decisions:
+        save_terminal_review_decisions(decisions_path, combined_decisions)
+        print(f"Review decisions: {decisions_path}")
+    if not outcome.proceed:
+        print("Card generation cancelled. Source files were not changed.")
+        return 3
+
+    reviewed_request = replace(
+        request,
+        review_decisions=decisions_path,
+        strict=request.strict and not outcome.allow_partial,
+    )
+    reviewed = run_workflow(reviewed_request)
+    print("\nResult after terminal review:")
+    _print_workflow_result(reviewed)
+    return _workflow_exit_code(reviewed.status)
+
+
+def _print_workflow_result(result) -> None:
     print(f"Run ID: {result.run_id}")
     print(f"Status: {result.status}")
     print(f"Audit: {result.work_dir}")
@@ -114,10 +150,15 @@ def _build_command(args: argparse.Namespace) -> int:
         print(f"Result: {result.output_path}")
     if result.warnings:
         print(f"Warnings: {len(result.warnings)}")
-        for warning in result.warnings:
-            print(f"  - {warning}")
+        counts = Counter(warning.partition(":")[0] for warning in result.warnings)
+        for code, count in counts.most_common(12):
+            print(f"  - {code}: {count}")
+        hidden = len(counts) - 12
+        if hidden > 0:
+            print(f"  - Other warning types: {hidden}")
+        if result.manual_review_count:
+            print(f"Review file: {result.work_dir / 'manual_review.xlsx'}")
         print(f"Details: {result.work_dir / 'source_selections.json'}")
-    return _workflow_exit_code(result.status)
 
 
 def _workflow_exit_code(status: str) -> int:
@@ -244,6 +285,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="fill_empty_only",
     )
     build.add_argument("--dry-run", action="store_true")
+    build.add_argument(
+        "--interactive-review",
+        action="store_true",
+        help="Resolve disputed rows in terminal and rerun once",
+    )
     build.set_defaults(handler=_build_command)
 
     inspect = subparsers.add_parser(

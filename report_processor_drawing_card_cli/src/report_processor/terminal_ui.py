@@ -213,6 +213,7 @@ def _build(cli_main: CliMain, *, dry_run: bool, update: bool = False) -> None:
     if dry_run:
         args.append("--dry-run")
     else:
+        args.append("--interactive-review")
         default_output = (
             "output/карточка_остатков_обновленная.xlsx"
             if update
