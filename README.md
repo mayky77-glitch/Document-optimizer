@@ -271,7 +271,11 @@ raw cells, formula text и document content в отчёт не копируют�
 Полный release-suite: **490 passed**; Ruff, format, clean install, compileall и
 `git diff --check` — PASS. Обе исходные XLSX неизменны. Статус `main` и CI
 фиксируются только после успешного Pull Request.
-Входные XLSX не изменились. Это не объявляет READY/main или CI.
+Входные XLSX не изменились. Block 16 принят в `main`: PR #16, PR CI run `30572493480` и post-merge main CI `30572598426` успешны; main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`. Полный real+slow suite: **547 passed in 89.32s**.
+
+## Блок 17: processing controller (in progress)
+
+Frozen contracts: `ProcessingContract-17.0`, `ProcessingEngine-17.0`, `ProcessingState-17.0`. API: `process_report(request) -> ProcessingResult`, `process_reports(requests) -> tuple[ProcessingResult, ...]`; CLI: `report-processor process --mode {inspect,dry-run,write}`. Modes: inspect без DuckDB/XLSX output, dry-run без Block 15 publication, write с QC-gated публикацией. States: `PENDING`, `RUNNING`, `SUCCEEDED`, `SUCCEEDED_WITH_WARNINGS`, `MANUAL_REVIEW_REQUIRED`, `QUALITY_BLOCKED`, `FAILED`. Exit codes: 0–6 для success, warnings, invalid input, manual review, quality blocked, write/verification failed и controlled internal error. Block 17 in progress до интеграционного принятия.
 
 ## Блок 15.1: numeric-only XLSX output
 

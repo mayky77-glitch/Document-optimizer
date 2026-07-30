@@ -405,9 +405,16 @@ Ruff, format, clean install, compileall и `git diff --check` прошли; SHA-
 
 ## Блок 16
 
-- **Статус:** локально integration-ready; ожидает PR CI и main acceptance.
+- **Статус:** принят в `main`; PR #16 и CI подтверждены.
 - **Контракты:** AuditIdentity/EventEnvelope/StageJournal/AuditBundle/RunReport/TraceReport/FeedbackRuleVersion 16.0.
 - **Поведение:** append-only SQLite hash chain (`PENDING → DATA_COMMITTED → EXPORT_PREPARED → EXPORT_VERIFIED`); deterministic redacted JSON/JSONL/CSV exports с SHA/count validation, no-clobber и cleanup invalid outputs; cross-store recovery; feedback activation только после `EXPORT_VERIFIED`; compaction не переписывает events.
 - **Evidence:** focused+slow+real **33 passed**; полный real+slow suite **547 passed in 89.32s**; 100k **583.3 B/event**, append p95 **0.072 ms**; реальные файлы не изменились.
 
-Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 passed и real 7 passed. Для Block 16 PR CI и main acceptance ещё не подтверждены.
+Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 passed и real 7 passed. Block 16: PR #16, PR CI `30572493480`, main SHA `ca6300471b52ba1ef80585b3881cb77e04a6be50`, post-merge main CI `30572598426` — success.
+
+## Блок 17
+
+- **Статус:** in progress; интеграционное принятие не выполнено.
+- **Контракты:** `ProcessingContract-17.0`, `ProcessingEngine-17.0`, `ProcessingState-17.0`.
+- **API/CLI:** `process_report`, `process_reports`; `report-processor process --mode {inspect,dry-run,write}`.
+- **Режимы/состояния/коды:** inspect без output, dry-run без публикации, write с QC gate; states frozen contract; exit codes `0`–`6`.
