@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from report_processor.cli_admin import add_admin_parser, run_admin
 from report_processor.cli_business_rules import (
     add_validate_business_rules_parser,
     run_validate_business_rules,
@@ -149,6 +150,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_read_target_report_parser(subparsers)
     add_validate_business_rules_parser(subparsers)
     add_process_parser(subparsers)
+    add_admin_parser(subparsers)
     extract.add_argument(
         "--allow-loose",
         action="store_true",
@@ -229,6 +231,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "process":
             return run_process(args)
+
+        if args.command == "admin":
+            return run_admin(args)
 
         if args.command == "enrich-metadata":
             manifest = load_manifest_json(args.manifest)
