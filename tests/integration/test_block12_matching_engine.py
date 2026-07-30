@@ -5,10 +5,10 @@ import json
 from decimal import Decimal
 
 import pytest
-from report_processor.matching import MatchingInputError, MatchStatus, MatchStrategy, match_rows
 
 from fixtures.matching.builders import rule_set, source_row, target_row
 from report_processor.business_rules.models import RuleAction
+from report_processor.matching import MatchingInputError, MatchStatus, MatchStrategy, match_rows
 
 
 def _digest(results: tuple[object, ...]) -> str:
@@ -70,12 +70,21 @@ def test_tie_rule_review_exclude_fuzzy_and_duplicate_identities_are_controlled()
     assert review[0].selected_candidate is None
     excluded = _match((source_row(),), target, rule_set(action=RuleAction.EXCLUDE))
     assert excluded[0].selected_candidate is None
-    fuzzy = _match((source_row(work_name="pipe install"),), target, rule_set(literal="unrelated"))
-    manual = [
-        candidate.manual_only
+    fuzzy_source = source_row(
+        work_name="pipe install",
+        object_code=None,
+        subobject_code=None,
+        position_code=None,
+        unit=None,
+    )
+    fuzzy = _match((fuzzy_source,), target, rule_set(literal="unrelated"))
+    fuzzy_candidates = [
+        candidate
         for candidate in fuzzy[0].candidates
         if candidate.strategy is MatchStrategy.FUZZY_REVIEW
     ]
-    assert all(manual)
+    assert fuzzy[0].status is MatchStatus.AMBIGUOUS
+    assert fuzzy[0].selected_candidate is None
+    assert fuzzy_candidates and all(not candidate.auto_selectable for candidate in fuzzy_candidates)
     with pytest.raises(MatchingInputError):
         _match((source_row(), source_row()), target, rule_set())

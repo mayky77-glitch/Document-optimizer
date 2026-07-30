@@ -216,9 +216,10 @@ def _candidate_for_pair(
         explanations.append("configuration_rule:" + ",".join(rule_ids))
     fuzzy_confidence = _fuzzy_similarity(source.work_name, target.work_name)
     if fuzzy_confidence is not None and fuzzy_confidence >= policy.fuzzy_threshold:
+        fuzzy_only = not strategies
         strategies.append(MatchStrategy.FUZZY_REVIEW)
         explanations.append("fuzzy_review")
-        manual = True
+        manual = manual or fuzzy_only
     if not strategies:
         return None
     ordered = tuple(sorted(set(strategies), key=strategy_ordinal))

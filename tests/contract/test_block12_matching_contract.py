@@ -3,6 +3,7 @@
 from decimal import Decimal
 
 import pytest
+
 from report_processor.matching import (
     MATCHING_CONTRACT_VERSION,
     MATCHING_ENGINE_VERSION,
@@ -43,6 +44,7 @@ def test_result_rejects_nonselected_ambiguous_candidate() -> None:
         source_row=object(),
         strategies=(MatchStrategy.EXACT_BUSINESS_KEY,),
         confidence=Decimal("1"),
+        rule_ids=(),
         source_provenance={"source_row": 1},
         target_provenance={"row_number": 2},
         explanation=("exact",),
