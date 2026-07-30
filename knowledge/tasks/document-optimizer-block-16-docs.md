@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-16-docs
-status: draft
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-block-16
@@ -12,8 +12,8 @@ agent_role: documentation-agent
 owner: "block-16-docs"
 profile: L0
 routing_grade: P1
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 2
+state_fingerprint: "feature:97142b32cceec59eed9c9168b2bd648a05f7fa8b;integration:6f799ccee896275f196c64020894cf61095fcba1"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Bounded factual documentation from frozen contracts and verified Block 15 evidence."
@@ -21,9 +21,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-luna
 reasoning_effort: low
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-luna
+actual_reasoning_effort: low
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-31
@@ -68,7 +68,7 @@ acceptance_commands:
   - "git diff --check -- README.md docs/ARCHITECTURE.md docs/IMPLEMENTATION_REVIEW.md docs/PROJECT_STATUS.md"
 tags:
   - "task/implementation"
-  - "status/in-progress"
+  - "status/done"
   - "layer/backend"
   - "risk/medium"
 links:
@@ -91,10 +91,12 @@ Block 15 PR #15 merged, CI 30569460356 и post-merge main CI 30569606304 success
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: `README.md`, `docs/ARCHITECTURE.md`,
+  `docs/IMPLEMENTATION_REVIEW.md`, `docs/PROJECT_STATUS.md`.
+- Commands and tests run: `git diff --check`; factual integration review.
+- Result: feature `97142b32cceec59eed9c9168b2bd648a05f7fa8b`,
+  accepted as `6f799ccee896275f196c64020894cf61095fcba1`.
+- Risks or follow-up: GitHub PR/main evidence is added only after CI and merge.
 
 ## Handoff
 

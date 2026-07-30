@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-16-production
-status: draft
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-block-16
@@ -12,8 +12,8 @@ agent_role: developer
 owner: "block-16-production"
 profile: L2
 routing_grade: P4
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 6
+state_fingerprint: "feature:19fbb6d6012031be66088a347157676ca6f9642c;integration:9f80c432e5d8d611e5e4fbe9603db4df76baaa96"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Append-only SQLite hash chain, crash-safe exports, strict allowlist redaction and feedback activation require difficult multi-file implementation."
@@ -21,11 +21,11 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
-fallback_reason: ""
-model_fallback: false
+launch_status: inherited
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
+fallback_reason: "Persistent developer role used its configured medium effort; verification and integration gates covered the P4 risk."
+model_fallback: true
 last_verified: 2026-07-31
 updated: 2026-07-31
 card_path: knowledge/tasks/document-optimizer-block-16-production.md
@@ -89,7 +89,7 @@ acceptance_commands:
   - "uv run python -m compileall -q src/report_processor/audit"
 tags:
   - "task/implementation"
-  - "status/in-progress"
+  - "status/done"
   - "layer/backend"
   - "risk/high"
 links:
@@ -115,10 +115,12 @@ validation выполняются транзакционно. Corrections тол
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: `src/report_processor/audit/**`
+- Commands and tests run: scoped Ruff/format/compileall, durability smoke,
+  100k decision benchmark, integrated focused/full pytest.
+- Result: feature `19fbb6d6012031be66088a347157676ca6f9642c`,
+  accepted as `9f80c432e5d8d611e5e4fbe9603db4df76baaa96`.
+- Risks or follow-up: none for Block 16 acceptance.
 
 ## Handoff
 
