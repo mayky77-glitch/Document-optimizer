@@ -21,6 +21,14 @@ class AuditExportError(RuntimeError):
     pass
 
 
+def _fsync_directory(path: Path) -> None:
+    directory_fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def deterministic_bytes(rows: Iterable[Mapping[str, object]], format: ExportFormat) -> bytes:
     safe_rows = sorted((redact(row) for row in rows), key=canonical_json)
     if format == "json":
@@ -71,6 +79,7 @@ def export_snapshot(
     content_hash = sha256(data).hexdigest()
     fd, temp_name = tempfile.mkstemp(prefix=".audit-", suffix=".tmp", dir=destination.parent)
     temporary = Path(temp_name)
+    linked_by_us = False
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -80,15 +89,17 @@ def export_snapshot(
         validate_bytes(reopened, format, len(materialized), content_hash)
         try:
             os.link(temporary, destination)
+            linked_by_us = True
         except FileExistsError as exc:
             raise AuditExportError(AuditErrorCode.EXPORT_DESTINATION_EXISTS.value) from exc
         published = destination.read_bytes()
         validate_bytes(published, format, len(materialized), content_hash)
-        directory_fd = os.open(destination.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        _fsync_directory(destination.parent)
         return content_hash
+    except BaseException:
+        if linked_by_us:
+            destination.unlink(missing_ok=True)
+            _fsync_directory(destination.parent)
+        raise
     finally:
         temporary.unlink(missing_ok=True)
