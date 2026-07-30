@@ -59,6 +59,9 @@ baseline_results:
   - "Block 17 PR CI run 30575326764: success"
   - "origin/main CI run 30575425467: success"
   - "origin/main SHA: 322cb9ce08f14c017dbdc3bf16c5b91b33238e63"
+  - "pre-admin Block 18 full real+slow+model suite: 592 passed in 95.50s"
+  - "pinned RuBERT smoke: 2 passed; Russian top-1 examples correct"
+  - "clean locked base and rag-extra installs: pass"
 shared_paths_owner: integration
 shared_paths:
   - .gitignore
