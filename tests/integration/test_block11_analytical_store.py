@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -18,7 +19,39 @@ from report_processor.analytics import (
     AnalyticalStore,
     AnalyticalWriteError,
 )
+from report_processor.schema import LogicalColumn
 from report_processor.storage import DuckDBStore
+from report_processor.target_report import TargetCellSnapshot
+
+
+def test_target_raw_float_provenance_is_tagged_without_json_float(tmp_path: Path):
+    cell = TargetCellSnapshot(
+        coordinate="A8",
+        raw_value=1.25,
+        raw_lexeme="1.25",
+        numeric_value=Decimal("1.25"),
+        style_id=1,
+        number_format="0.00",
+        comment_text=None,
+        formula=None,
+        status="OK",
+    )
+    row = replace(
+        target_report_row(),
+        cells=((LogicalColumn.CURRENT_PERIOD_COST, cell),),
+    )
+
+    with AnalyticalStore(tmp_path / "analytics.duckdb") as store:
+        store.load_target_rows(
+            (row,),
+            target_source_id="target-a",
+            target_fingerprint="sha256:" + "a" * 64,
+        )
+        payload = json.loads(
+            store.query(AnalyticalQuery(name="target_rows", limit=1)).rows[0]["payload_json"]
+        )
+
+    assert payload["cells"][0][1]["raw_value"] == {"__raw_float_hex__": "0x1.4000000000000p+0"}
 
 
 def test_analytics_database_is_isolated_from_storage_v1(tmp_path: Path):

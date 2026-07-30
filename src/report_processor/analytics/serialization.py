@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -74,7 +75,9 @@ def to_json_value(value: Any) -> Any:
             raise AnalyticalWriteError("JSON payload допускает только строковые ключи")
         return {key: to_json_value(item) for key, item in value.items()}
     if isinstance(value, float):
-        raise AnalyticalWriteError("float запрещён в analytical payload")
+        if not math.isfinite(value):
+            raise AnalyticalWriteError("raw float provenance должен быть конечным")
+        return {"__raw_float_hex__": value.hex()}
     if value is None or isinstance(value, str | int | bool):
         return value
     raise AnalyticalWriteError(
