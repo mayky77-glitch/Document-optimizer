@@ -402,3 +402,12 @@ Focused: **11 passed**, real XLSX: **1 passed**, полный suite: **482 passe
 Ruff, format, clean install, compileall и `git diff --check` прошли; SHA-256,
 размер и `mtime` обеих книг не изменились. READY/main фиксируется после
 зелёного Pull Request.
+
+## Блок 16
+
+- **Статус:** локально integration-ready; ожидает PR CI и main acceptance.
+- **Контракты:** AuditIdentity/EventEnvelope/StageJournal/AuditBundle/RunReport/TraceReport/FeedbackRuleVersion 16.0.
+- **Поведение:** append-only SQLite hash chain (`PENDING → DATA_COMMITTED → EXPORT_PREPARED → EXPORT_VERIFIED`); deterministic redacted JSON/JSONL/CSV exports с SHA/count validation, no-clobber и cleanup invalid outputs; cross-store recovery; feedback activation только после `EXPORT_VERIFIED`; compaction не переписывает events.
+- **Evidence:** focused+slow+real **33 passed**; 100k **583.3 B/event**, append p95 **0.072 ms**; реальные файлы не изменились.
+
+Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 passed и real 7 passed. Для Block 16 PR CI и main acceptance ещё не подтверждены.

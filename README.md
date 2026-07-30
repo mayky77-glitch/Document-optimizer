@@ -397,3 +397,23 @@ Real-data gate на двух исходных книгах обработал 38
 rows: 1 matched, 5 ambiguous, 101 unmatched, 35 сохранённых кандидатов.
 Повторный прогон с обратным порядком входов дал тот же SHA-256 результата;
 SHA-256, размер и `mtime` обеих книг не изменились.
+
+## Блок 16: audit journal и проверяемые экспорты
+
+Block 16 добавляет контракты `AuditIdentity-16.0`, `AuditEventEnvelope-16.0`,
+`StageJournal-16.0`, `AuditBundle-16.0`, `RunReport-16.0`, `TraceReport-16.0`
+и `FeedbackRuleVersion-16.0`. SQLite-журнал хранит append-only hash chain с
+переходами `PENDING → DATA_COMMITTED → EXPORT_PREPARED → EXPORT_VERIFIED`;
+изменение или удаление событий запрещено. Run, report и trace IDs детерминированы,
+а экспортные поля redacted и allowlisted.
+
+JSON/JSONL/CSV snapshots сортируются канонически, проверяются по count и SHA-256,
+публикуются через fsync и atomic hard-link no-clobber. Ошибочные временные
+outputs удаляются; существующий destination не заменяется. Cross-store recovery
+сверяет data/export hashes и state. Feedback активируется только после
+`EXPORT_VERIFIED`; compaction не переписывает events и сохраняет active versions.
+
+Локальный focused+slow+real gate: **33 passed**; 100k — **583.3 B/event**,
+append p95 **0.072 ms**. Реальные файлы не изменились. Block 15 принят: PR #15,
+CI `30569460356`, main CI `30569606304`, 514 passed и real 7 passed. Block 16
+локально готов для PR; GitHub acceptance ещё не подтверждён.
