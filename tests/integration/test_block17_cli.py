@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from report_processor.cli_process import add_process_parser, run_process
 from report_processor.processing import (
@@ -40,7 +41,7 @@ def test_process_parser_exposes_only_frozen_modes_and_strictness() -> None:
         True,
         None,
     )
-    assert (args.rules_path, args.audit_directory) == ("rules.yaml", "audit")
+    assert (args.rules_path, args.audit_directory) == (Path("rules.yaml"), Path("audit"))
 
 
 def test_dispatch_maps_arguments_to_request_and_returns_contract_exit_code(
