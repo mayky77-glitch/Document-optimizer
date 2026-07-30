@@ -174,12 +174,13 @@ class AuditJournal:
         with self._transaction():
             self.get_run(run_id)
             previous = self.connection.execute(
-                "SELECT event_sequence, event_hash, controlled_state FROM events "
+                "SELECT event_sequence, event_hash, controlled_stage, controlled_state FROM events "
                 "WHERE run_id=? ORDER BY event_sequence DESC LIMIT 1",
                 (run_id,),
             ).fetchone()
+            previous_stage = previous["controlled_stage"] if previous else None
             previous_state = previous["controlled_state"] if previous else None
-            if _TRANSITIONS.get(previous_state) != state_value:
+            if not self._valid_transition(previous_stage, previous_state, stage_value, state_value):
                 raise AuditIntegrityError(
                     AuditErrorCode.INVALID_STAGE_TRANSITION,
                     f"{previous_state!r} cannot transition to {state_value}",
@@ -279,10 +280,64 @@ class AuditJournal:
             previous = event.event_hash
         return events
 
-    def recover(self, run_id: str) -> AuditRun:
+    def recover(
+        self, run_id: str, *, data_hash: str | None = None, export_hash: str | None = None
+    ) -> AuditRun:
         self.validate_run(run_id)
+        if data_hash is not None or export_hash is not None:
+            self.reconcile_cross_store(run_id, data_hash=data_hash, export_hash=export_hash)
         self.connection.execute("PRAGMA wal_checkpoint(FULL)")
         return self.get_run(run_id)
+
+    def record_cross_store_hashes(
+        self, run_id: str, *, data_hash: str, export_hash: str | None = None
+    ) -> None:
+        """Persist the value-free external-store identity at a durable saga boundary."""
+        if not data_hash or (export_hash is not None and not export_hash):
+            raise ValueError("cross-store hashes must be non-empty")
+        with self._transaction():
+            state = self._current_state(run_id)
+            if state not in {
+                AuditState.DATA_COMMITTED.value,
+                AuditState.EXPORT_PREPARED.value,
+                AuditState.EXPORT_VERIFIED.value,
+            }:
+                raise AuditIntegrityError(
+                    AuditErrorCode.INVALID_STAGE_TRANSITION,
+                    "cross-store hashes require a durable data state",
+                )
+            prior = self.connection.execute(
+                "SELECT data_hash, export_hash FROM cross_store_hashes WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if prior is not None and (prior["data_hash"], prior["export_hash"]) != (
+                data_hash,
+                export_hash,
+            ):
+                raise AuditIntegrityError(
+                    AuditErrorCode.SNAPSHOT_CHANGED, "cross-store hashes changed"
+                )
+            self.connection.execute(
+                "INSERT OR IGNORE INTO cross_store_hashes VALUES (?, ?, ?, ?)",
+                (run_id, data_hash, export_hash, state),
+            )
+
+    def reconcile_cross_store(
+        self, run_id: str, *, data_hash: str | None, export_hash: str | None = None
+    ) -> None:
+        """Block recovery when an external committed-data/export snapshot has drifted."""
+        row = self.connection.execute(
+            "SELECT data_hash, export_hash, state FROM cross_store_hashes WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is None or data_hash is None or row["data_hash"] != data_hash:
+            raise AuditIntegrityError(
+                AuditErrorCode.SNAPSHOT_CHANGED, "data-store snapshot changed"
+            )
+        if export_hash is not None and row["export_hash"] != export_hash:
+            raise AuditIntegrityError(
+                AuditErrorCode.EXPORT_HASH_MISMATCH, "export snapshot changed"
+            )
+        if self._current_state(run_id) != row["state"]:
+            raise AuditIntegrityError(AuditErrorCode.SNAPSHOT_CHANGED, "saga state changed")
 
     def bundle(self, run_id: str, artifact_hashes: Mapping[str, str]) -> AuditBundle:
         """Build a value-free bundle after validating the durable event chain."""
@@ -385,6 +440,36 @@ class AuditJournal:
         ):
             raise ValueError(f"{field_name} must be an uppercase controlled code")
 
+    @staticmethod
+    def _valid_transition(
+        previous_stage: str | None, previous_state: str | None, stage: str, state: str
+    ) -> bool:
+        expected = {
+            None: (AuditStage.RUN.value, AuditState.PENDING.value),
+            AuditState.PENDING.value: (AuditStage.DATA.value, AuditState.DATA_COMMITTED.value),
+            AuditState.DATA_COMMITTED.value: (
+                AuditStage.EXPORT.value,
+                AuditState.EXPORT_PREPARED.value,
+            ),
+            AuditState.EXPORT_PREPARED.value: (
+                AuditStage.EXPORT.value,
+                AuditState.EXPORT_VERIFIED.value,
+            ),
+        }.get(previous_state)
+        if expected == (stage, state):
+            return True
+        return previous_stage == stage == AuditStage.DATA.value and previous_state == state == (
+            AuditState.DATA_COMMITTED.value
+        )
+
+    def _current_state(self, run_id: str) -> str | None:
+        row = self.connection.execute(
+            "SELECT controlled_state FROM events WHERE run_id=? "
+            "ORDER BY event_sequence DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+        return row["controlled_state"] if row is not None else None
+
     def _migrate(self) -> None:
         self.connection.executescript(
             """
@@ -413,6 +498,10 @@ class AuditJournal:
             CREATE TABLE IF NOT EXISTS feedback_activations(
                 rule_version_id TEXT PRIMARY KEY REFERENCES feedback(rule_version_id),
                 rule_hash TEXT NOT NULL, source_hash TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS cross_store_hashes(
+                run_id TEXT PRIMARY KEY REFERENCES runs(run_id), data_hash TEXT NOT NULL,
+                export_hash TEXT, state TEXT NOT NULL
             );
             CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
             BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
