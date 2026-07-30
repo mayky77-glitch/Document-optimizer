@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "document-optimizer"
-version = "0.5.0"
-description = "Поэтапная обработка строительных отчётов; блоки 1–5 — от инвентаризации до распознавания структуры Excel"
+version = "0.6.0"
+description = "Поэтапная обработка строительных отчётов; блоки 1–6 — от инвентаризации до извлечения канонических строк"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
@@ -34,6 +34,7 @@ pythonpath = ["src"]
 markers = [
   "contract: public API and serialization contract tests",
   "integration: multi-component integration tests",
+  "slow: resource-intensive performance tests",
 ]
 
 [tool.ruff]

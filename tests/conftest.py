@@ -1,15 +1,121 @@
 from __future__ import annotations
 
 import zipfile
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils.cell import get_column_letter
 
 from report_processor.domain.models import FileManifest, FileManifestEntry
 from report_processor.inventory.file_classifier import classify_file_by_name
 from report_processor.inventory.file_manifest import build_manifest_summary
+
+
+@pytest.fixture
+def workbook_session_factory(tmp_path: Path):
+    @contextmanager
+    def factory(
+        rows_by_sheet: dict[str, list[list[object]]],
+        *,
+        filename: str = "source.xlsx",
+        formulas: dict[tuple[str, str], str] | None = None,
+    ):
+        from report_processor.excel import DualWorkbookSession, ExcelFormatResult
+        from report_processor.materialization.models import MaterializedSource
+
+        path = tmp_path / filename
+        workbook = Workbook()
+        for index, (sheet_name, rows) in enumerate(rows_by_sheet.items()):
+            sheet = workbook.active if index == 0 else workbook.create_sheet()
+            sheet.title = sheet_name
+            for row in rows:
+                sheet.append(row)
+        for (sheet_name, coordinate), formula in (formulas or {}).items():
+            workbook[sheet_name][coordinate] = formula
+        workbook.save(path)
+        workbook.close()
+        formula_book = load_workbook(path, read_only=True, data_only=False)
+        values_book = load_workbook(path, read_only=True, data_only=True)
+        source = MaterializedSource(
+            local_path=path,
+            original_file_id="file-001",
+            original_relative_path=filename,
+            source_kind="file",
+            archive_path=None,
+            was_extracted=False,
+            temporary=False,
+            size_bytes=path.stat().st_size,
+            extension=".xlsx",
+            cleanup_required=False,
+            warnings=(),
+        )
+        session = DualWorkbookSession(
+            formula_book,
+            values_book,
+            source,
+            ExcelFormatResult(".xlsx", "xlsx", True, False),
+            False,
+        )
+        try:
+            yield session, path
+        finally:
+            session.close()
+
+    return factory
+
+
+@pytest.fixture
+def schema_factory():
+    def factory(
+        sheet_name,
+        sheet_type,
+        logical_columns,
+        *,
+        data_start_row=2,
+        headers=None,
+        physical_columns=None,
+    ):
+        from report_processor.schema import ColumnResolution, WorksheetSchema
+
+        headers = headers or [item.value for item in logical_columns]
+        physical_columns = physical_columns or list(range(1, len(logical_columns) + 1))
+        columns = tuple(
+            ColumnResolution(
+                logical,
+                physical,
+                get_column_letter(physical),
+                header,
+                1.0,
+                "fixture",
+                (),
+                "OK",
+            )
+            for logical, physical, header in zip(
+                logical_columns,
+                physical_columns,
+                headers,
+                strict=True,
+            )
+        )
+        return WorksheetSchema(
+            sheet_name=sheet_name,
+            sheet_type=sheet_type,
+            classification=None,
+            header_start_row=1,
+            header_end_row=1,
+            data_start_row=data_start_row,
+            first_table_column=None,
+            last_table_column=None,
+            headers=(),
+            columns=columns,
+            confidence=1.0,
+            status="OK",
+        )
+
+    return factory
 
 
 @pytest.fixture

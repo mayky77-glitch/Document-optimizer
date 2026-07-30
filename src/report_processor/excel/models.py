@@ -103,6 +103,24 @@ class DualWorkbookSession:
 
         return tuple(self.formula_workbook.sheetnames)
 
+    @property
+    def source_file_id(self) -> str:
+        """Return the immutable manifest identifier of the materialized source."""
+
+        return self.source.original_file_id
+
+    @property
+    def filename(self) -> str:
+        """Return the original source filename, including for ZIP entries."""
+
+        return Path(self.source.original_relative_path).name
+
+    @property
+    def values_workbook(self) -> Any:
+        """Compatibility alias for the data-only workbook view."""
+
+        return self.value_workbook
+
     @staticmethod
     def _close_workbook(workbook: Any) -> None:
         try:

@@ -39,6 +39,7 @@ class LogicalColumn(StrEnum):
     CUMULATIVE_QUANTITY = "cumulative_quantity"
     REMAINING_QUANTITY = "remaining_quantity"
     UNIT_PRICE = "unit_price"
+    CONTRACT_COST = "contract_cost"
     CURRENT_PERIOD_COST = "current_period_cost"
     CUMULATIVE_COST = "cumulative_cost"
     TOTAL_COST = "total_cost"
