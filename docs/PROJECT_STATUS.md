@@ -328,3 +328,22 @@ rows, **107** target rows, **35** кандидатов, статусы **1 match
 **5 ambiguous**, **101 unmatched**. Канонический SHA-256:
 `ecfc6fedfc2c3797ab84c769ec9ddd32a16efb69f61964e2cf43122e283106d3`.
 Обе исходные XLSX неизменны.
+
+## Блок 13
+
+- **Статус:** contract frozen; integration evidence ожидается
+- **Контракты:** `CalculationContract-13.0`, `CalculationEngine-13.0`
+- **API:** `calculate_matches(match_results, rule_set)`
+
+Selected-only: только `MATCHED` с выбранным кандидатом получает totals;
+ambiguous/manual review и no-match — без итогов. `Decimal` quantity/cost,
+coefficient, aggregate-first и одно `ROUND_HALF_UP`; signed negative adjustments
+сохраняются. Approved `EXCLUDE` побеждает, `REVIEW` требует ручного решения,
+quantity/cost flags независимы. Категории только по canonical `cost_type_code`:
+work/material/service; отсутствующий или неизвестный код — `UNCLASSIFIED`, без
+угадывания по тексту. Trace хранит formula, coefficient, quantum, rule IDs,
+decisions, Decimal values, contributing rows и provenance. Workbook read-only.
+
+На reviewed real input все **382** source rows имеют отсутствующий
+`cost_type_code` и ожидаются как **UNCLASSIFIED**. READY/main, тесты, digest,
+PR и CI добавятся после подтверждения integration owner.

@@ -5,7 +5,7 @@ Python-проект для поэтапной обработки строите�
 
 ## Текущий статус
 
-В integration-ветке реализованы **блоки 1–10 — от инвентаризации и выбора источника до
+В integration-ветке реализованы **блоки 1–12 — от инвентаризации и выбора источника до
 канонических строк и бизнес-нормализации** (текущая версия пакета `0.8.0`).
 Блок 8 прошёл focused, полный и 50k-row performance gates; GitHub CI проверяется
 в Pull Request перед merge в `main`. Real-data gate на reviewed-схеме
@@ -228,6 +228,25 @@ report-processor prepare-training-data \
 конфликтующие строки сохраняются с новым ID и предупреждением. Входной DuckDB
 открывается только для чтения; все числовые поля, включая `total_cost`,
 сохраняются, а `NaN`/`Infinity` отклоняются.
+
+## Блок 13: расчёт по принятым сопоставлениям
+
+Блок 13 публикует `CalculationContract-13.0` и `CalculationEngine-13.0`.
+`calculate_matches(match_results, rule_set)` учитывает только `MATCHED` с
+выбранным кандидатом; `AMBIGUOUS`/manual review и `NO_MATCH` не получают
+итогов. Количество и стоимость — конечные `Decimal` из `period_quantity` и
+`period_cost`; коэффициент применяется к стоимости, затем один раз выполняется
+финальный `ROUND_HALF_UP`. Signed negative adjustments сохраняются с trace
+warning, missing остаётся `None`, explicit zero сохраняется; float, non-finite
+values и unit conversion запрещены.
+
+Только approved rules участвуют: `EXCLUDE` побеждает, `REVIEW` требует ручного
+решения, включение quantity и cost независимо. Категории `work`, `material` и
+`service` определяются только точным canonical `cost_type_code`; неизвестный
+или отсутствующий код остаётся `UNCLASSIFIED`, без вывода по тексту.
+Результаты и вклады имеют детерминированные SHA-256 ID, полный formula trace и
+provenance. Workbook не изменяется. READY/main, тесты, real-data digest, PR и
+CI добавляются только после evidence integration owner.
 
 ## Ограничения блоков 1–7
 

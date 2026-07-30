@@ -132,3 +132,16 @@ Real-data gate на reviewed КС-2 и целевом отчёте: **382** sour
 Обратный порядок входных строк даёт тот же результат; SHA-256, размер и
 `mtime` обеих XLSX до/после совпадают. Полный suite и GitHub Actions остаются
 release gates integration-ветки.
+
+## Блок 13 — calculation engine
+
+Frozen: `CalculationContract-13.0` / `CalculationEngine-13.0`. Только
+`MATCHED` с выбранным кандидатом получает totals; ambiguous/manual review и
+no-match — нет. `period_quantity`/`period_cost` — `Decimal`; coefficient,
+aggregate-first и одно финальное `ROUND_HALF_UP`. Signed negative adjustments
+сохраняются с trace warning. Approved `EXCLUDE` побеждает, `REVIEW` требует
+ручного решения, quantity/cost независимо. Exact canonical categories
+work/material/service; отсутствующий `cost_type_code` — `UNCLASSIFIED`, без
+text inference. Полный formula/provenance trace, workbook не изменяется.
+Интеграционные результаты и READY/main не заявляются до evidence owner. Все
+382 reviewed source rows имеют отсутствующий `cost_type_code`.
