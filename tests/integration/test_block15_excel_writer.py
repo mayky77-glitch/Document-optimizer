@@ -7,6 +7,7 @@ from zipfile import ZipFile
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
+
 from report_processor.excel_writer.ooxml import (
     verify_temp_package,
     worksheet_part_map,

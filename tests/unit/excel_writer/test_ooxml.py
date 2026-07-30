@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from report_processor.excel_writer import ExcelWriterIntegrityError, ExcelWriterSafetyError
 from report_processor.excel_writer.ooxml import inspect_cell, publish_no_clobber, replace_cell_value
 

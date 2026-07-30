@@ -16,7 +16,6 @@ from report_processor.excel_writer import (
     WrittenCell,
     write_target_report,
 )
-
 from report_processor.quality_control import WriteDecision
 from report_processor.schema import LogicalColumn
 

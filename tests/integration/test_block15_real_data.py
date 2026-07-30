@@ -8,15 +8,15 @@ from zipfile import ZipFile
 
 import pytest
 from openpyxl import load_workbook
+
+from report_processor.business_rules import load_default_rule_set
+from report_processor.calculation import calculate_matches
 from report_processor.excel_writer import (
     ExcelWriterAtomicError,
     ExcelWriterSafetyError,
     WriteStatus,
     write_target_report,
 )
-
-from report_processor.business_rules import load_default_rule_set
-from report_processor.calculation import calculate_matches
 from report_processor.matching import match_rows
 from report_processor.quality_control import WriteDecision, evaluate_quality_control
 
@@ -121,11 +121,14 @@ def test_real_matched_subset_writes_only_d30_to_a_temporary_output(tmp_path: Pat
         (cell.sheet_name, cell.coordinate, cell.decimal_text) for cell in result.written_cells
     ) == (("Лист", "D30", "0"),)
     assert _package_entries(output_path) == _package_entries(target_path)
-    with load_workbook(output_path, data_only=False, read_only=False) as workbook:
+    workbook = load_workbook(output_path, data_only=False, read_only=False)
+    try:
         sheet = workbook["Лист"]
         assert sheet["D30"].value == 0
         assert sum(cell.data_type == "f" for row in sheet.iter_rows() for cell in row) == 14
         assert len(sheet.merged_cells.ranges) == 128
+    finally:
+        workbook.close()
     assert (fingerprint(source_path), fingerprint(target_path)) == before
 
 
