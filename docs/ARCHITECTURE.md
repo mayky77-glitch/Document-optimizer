@@ -71,6 +71,16 @@ storage на этапе записи блока 6.
 числовые поля, включая `total_cost`; не-конечные Decimal отклоняются до
 классификации.
 
+## Блок 8: бизнес-нормализация
+
+Поток блока 8: `TrainingDataRow (7.0) → NormalizedSourceRow (8.0)`. Публичные
+модели — `NormalizedSourceRow`, `NormalizedBusinessKey`, `NormalizationConfig`
+и `NormalizationResult`; CLI — `normalize-rows`. Business `line_id` строится
+из бизнес-ключа и не зависит от физического источника. Provenance и `Decimal`
+переносятся без потери. Exact typo dictionaries задаются только данными
+конфигурации. Междокументный merge, пересчёт и изменение исходников не входят
+в scope.
+
 ## Структура пакета
 
 ```text

@@ -7,6 +7,7 @@ Python-проект для поэтапной обработки строите�
 
 Интегрированы **блоки 1–7 — от инвентаризации и выбора источника до схемы книги,
 канонических строк и подготовки обучающих данных** (текущая версия пакета `0.7.0`).
+Блок 8 находится **в интеграции** и добавляет бизнес-нормализацию и JSONL-схему `8.0`.
 Проект принимает каталог, отдельный файл или ZIP-архив и строит типизированный
 JSON-манифест без чтения содержимого Excel и без распаковки ZIP. Блок 2
 обогащает готовый `FileManifest` индексами вида `1006 (682)` по имени и
@@ -128,6 +129,12 @@ index = extract_document_index("1006 (682)_КС-2.xlsx")
 ```
 
 Основные модели:
+
+Блок 8 публикует `NormalizedSourceRow`, `NormalizedBusinessKey`,
+`NormalizationConfig` и `NormalizationResult`. Вход — `TrainingDataRow` схемы
+`7.0`; CLI — `report-processor normalize-rows`; выход — JSONL схемы `8.0`.
+Provenance и `Decimal` сохраняются, business `line_id` не зависит от physical
+source. Exact typo dictionaries являются data-only конфигурацией.
 
 - `FileManifestEntry` — provenance и классификация одного файла;
 - `ManifestSummary` — агрегированная статистика;
