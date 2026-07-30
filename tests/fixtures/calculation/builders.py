@@ -99,14 +99,16 @@ def match_result(
     result_id: str = "match-result-a",
     status: MatchStatus = MatchStatus.MATCHED,
     candidate_id: str = "candidate-a",
+    target_row_id: str = "target-a",
+    row_number: int = 8,
     target_unit: str | None = "m",
 ) -> MatchResult:
     """Build a selected or non-selected immutable matching result."""
 
-    target = target_row(unit=target_unit)
+    target = target_row(row_number=row_number, unit=target_unit)
     candidate = MatchCandidate(
         candidate_id=candidate_id,
-        target_row_id="target-a",
+        target_row_id=target_row_id,
         source_row_id=source.source_row_id,
         source_row=source,
         strategies=(MatchStrategy.EXACT_BUSINESS_KEY,),
@@ -114,12 +116,17 @@ def match_result(
         rule_ids=("C13",),
         explanation=("fixture",),
         source_provenance=dict(source.provenance),
-        target_provenance={"target_source_id": "target", "sheet_name": "Table 2", "row_number": 8},
+        target_provenance={
+            "target_source_id": "target",
+            "sheet_name": "Table 2",
+            "row_number": row_number,
+            "target_row_id": target_row_id,
+        },
     )
     selected = candidate if status is MatchStatus.MATCHED else None
     return MatchResult(
         result_id=result_id,
-        target_row_id="target-a",
+        target_row_id=target_row_id,
         target_row=target,
         status=status,
         selected_candidate=selected,

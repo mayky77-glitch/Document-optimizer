@@ -47,6 +47,8 @@ def test_selected_match_aggregates_then_rounds_once_and_applies_cost_coefficient
         calculation_source_row("source-b", quantity=Decimal("0.005"), cost=Decimal("1.005")),
         result_id="match-result-b",
         candidate_id="candidate-b",
+        target_row_id="target-b",
+        row_number=9,
     )
     results = calculate_matches((second, first), calculation_rule_set(coefficient=Decimal("1.1")))
     assert tuple(item.match_result_id for item in results) == ("match-result-a", "match-result-b")
@@ -72,16 +74,22 @@ def test_missing_zero_negative_unit_category_and_independent_include_decisions()
         calculation_source_row("missing", quantity=None, cost=None),
         result_id="missing",
         candidate_id="missing",
+        target_row_id="target-missing",
+        row_number=9,
     )
     negative = match_result(
         calculation_source_row("negative", quantity=Decimal("-2"), cost=Decimal("-3")),
         result_id="negative",
         candidate_id="negative",
+        target_row_id="target-negative",
+        row_number=10,
     )
     excluded_quantity = match_result(
         calculation_source_row("cost-only", quantity=Decimal("5"), cost=Decimal("7")),
         result_id="cost-only",
         candidate_id="cost-only",
+        target_row_id="target-cost-only",
+        row_number=11,
     )
     rules = calculation_rule_set(include_quantity=False, include_cost=True, allowed_units=())
     results = calculate_matches((zero, missing, negative, excluded_quantity), rules)
@@ -100,8 +108,19 @@ def test_missing_zero_negative_unit_category_and_independent_include_decisions()
 def test_nonselected_rules_categories_and_duplicate_identities_are_controlled() -> None:
     source = calculation_source_row("source-a", cost_type_code="UNKNOWN")
     ambiguous = match_result(source, status=MatchStatus.AMBIGUOUS)
-    unmatched = match_result(source, status=MatchStatus.UNMATCHED, result_id="unmatched")
-    calculated = match_result(source, result_id="calculated")
+    unmatched = match_result(
+        source,
+        status=MatchStatus.UNMATCHED,
+        result_id="unmatched",
+        target_row_id="target-unmatched",
+        row_number=9,
+    )
+    calculated = match_result(
+        source,
+        result_id="calculated",
+        target_row_id="target-calculated",
+        row_number=10,
+    )
     results = calculate_matches((calculated, ambiguous, unmatched), calculation_rule_set())
     by_id = {item.match_result_id: item for item in results}
     assert by_id["match-result-a"].status is CalculationStatus.MANUAL_REVIEW
@@ -116,7 +135,7 @@ def test_nonselected_rules_categories_and_duplicate_identities_are_controlled() 
 @pytest.mark.parametrize(
     ("action", "owner_approved", "status", "expected"),
     (
-        (RuleAction.EXCLUDE, True, "approved", CalculationStatus.NO_VALUES),
+        (RuleAction.EXCLUDE, True, "approved", CalculationStatus.MANUAL_REVIEW),
         (RuleAction.REVIEW, True, "approved", CalculationStatus.MANUAL_REVIEW),
         (RuleAction.EXCLUDE, False, "draft", CalculationStatus.CALCULATED),
     ),
@@ -125,6 +144,9 @@ def test_approved_rules_only_control_exclude_and_review(
     action: RuleAction, owner_approved: bool, status: str, expected: CalculationStatus
 ) -> None:
     result = match_result(calculation_source_row())
+    if not owner_approved or status != "approved":
+        candidate = replace(result.selected_candidate, rule_ids=())
+        result = replace(result, selected_candidate=candidate, candidates=(candidate,))
     actual = calculate_matches(
         (result,),
         calculation_rule_set(action=action, owner_approved=owner_approved, status=status),
