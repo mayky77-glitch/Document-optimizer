@@ -23,6 +23,7 @@ from report_processor.extraction.exceptions import (
     ExtractionSerializationError,
 )
 from report_processor.schema import SheetType
+from report_processor.storage import DuckDBStore, StorageError
 from report_processor.workflow import prepared_workbook_session
 
 LOGGER = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def add_extract_rows_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--sheet")
     parser.add_argument("--sheet-type", choices=tuple(item.value for item in SheetType))
-    parser.add_argument("--format", choices=("json", "jsonl"), default="jsonl")
+    parser.add_argument("--format", choices=("duckdb", "jsonl", "json"), default="duckdb")
     parser.add_argument("--max-rows", type=int, default=200_000)
     parser.add_argument("--empty-row-limit", type=int, default=20)
     parser.add_argument("--include-empty-rows", action="store_true")
@@ -75,7 +76,7 @@ def run_extract_rows(args: argparse.Namespace) -> int:
         with prepared_workbook_session(
             candidate, max_file_size_bytes=args.max_file_size_mb * 1024**2
         ) as session:
-            if args.format == "jsonl":
+            if args.format in {"duckdb", "jsonl"}:
                 stream = create_workbook_extraction_stream(
                     session,
                     schema,
@@ -83,11 +84,17 @@ def run_extract_rows(args: argparse.Namespace) -> int:
                     document_period=period.normalized if period else None,
                     config=config,
                 )
-                saved = save_rows_jsonl(
-                    stream,
-                    args.output,
-                    metadata_factory=lambda _count: build_extraction_metadata(stream.sheet_results),
-                )
+                if args.format == "duckdb":
+                    with DuckDBStore(args.output) as store:
+                        store.write_rows(stream)
+                else:
+                    save_rows_jsonl(
+                        stream,
+                        args.output,
+                        metadata_factory=lambda _count: build_extraction_metadata(
+                            stream.sheet_results
+                        ),
+                    )
                 results = stream.sheet_results
             else:
                 results = extract_supported_workbook_rows(
@@ -98,10 +105,9 @@ def run_extract_rows(args: argparse.Namespace) -> int:
                     config=config,
                 )
                 save_extraction_results_json(results, args.output)
-                saved = None
-    except ExtractionSerializationError as exc:
+    except (ExtractionSerializationError, StorageError) as exc:
         print(f"Ошибка записи извлечения: {exc}", file=sys.stderr)
         return 8
     print(f"Извлечено: {sum(item.extracted_row_count for item in results)}")
-    print(f"Результат: {saved.output_path if saved else args.output}")
+    print(f"Результат: {args.output}")
     return 0

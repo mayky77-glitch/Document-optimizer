@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
+import duckdb
 import pytest
 from openpyxl import Workbook
 
@@ -17,7 +19,7 @@ def _write_manifest(workbook_path: Path) -> tuple[Path, str]:
     return path, manifest.entries[0].file_id
 
 
-def test_cli_extract_rows_jsonl(tmp_path: Path, capsys):
+def _write_workbook_schema(tmp_path: Path) -> tuple[Path, Path, str]:
     workbook_path = tmp_path / "source.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -27,7 +29,7 @@ def test_cli_extract_rows_jsonl(tmp_path: Path, capsys):
     workbook.save(workbook_path)
     workbook.close()
 
-    manifest_path, file_id = _write_manifest(workbook_path)
+    _, file_id = _write_manifest(workbook_path)
     schema = {
         "source_file_id": file_id,
         "filename": workbook_path.name,
@@ -63,20 +65,72 @@ def test_cli_extract_rows_jsonl(tmp_path: Path, capsys):
     }
     schema_path = tmp_path / "schema.json"
     schema_path.write_text(json.dumps(schema, ensure_ascii=False), encoding="utf-8")
+    return workbook_path, schema_path, file_id
+
+
+def _extract_rows_args(
+    manifest_path: Path,
+    file_id: str,
+    schema_path: Path,
+    output: Path,
+    *extra: str,
+) -> list[str]:
+    return [
+        "extract-rows",
+        "--manifest",
+        str(manifest_path),
+        "--file-id",
+        file_id,
+        "--schema",
+        str(schema_path),
+        "--output",
+        str(output),
+        *extra,
+    ]
+
+
+def test_cli_extract_rows_defaults_to_duckdb_with_idempotent_provenance(tmp_path: Path, capsys):
+    workbook_path, schema_path, file_id = _write_workbook_schema(tmp_path)
+    manifest_path, manifest_file_id = _write_manifest(workbook_path)
+    assert manifest_file_id == file_id
+    output = tmp_path / "extracted_rows.duckdb"
+    source_hash = sha256(workbook_path.read_bytes()).hexdigest()
+
+    exit_code = main(_extract_rows_args(manifest_path, file_id, schema_path, output))
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert output.exists()
+    connection = duckdb.connect(str(output), read_only=True)
+    try:
+        row = connection.execute(
+            "SELECT work_name_raw, current_period_quantity, payload_json FROM canonical_rows"
+        ).fetchone()
+        assert row is not None
+        assert row[0:2] == ("Работа", "2.5")
+        assert json.loads(row[2])["source_values"]
+        assert connection.execute("SELECT COUNT(*) FROM canonical_rows").fetchone() == (1,)
+    finally:
+        connection.close()
+    assert "Извлечено: 1" in captured.out
+    assert f"Результат: {output}" in captured.out
+    assert sha256(workbook_path.read_bytes()).hexdigest() == source_hash
+
+    assert main(_extract_rows_args(manifest_path, file_id, schema_path, output)) == 0
+    connection = duckdb.connect(str(output), read_only=True)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM canonical_rows").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_cli_extract_rows_jsonl_remains_explicit_compatibility_format(tmp_path: Path, capsys):
+    workbook_path, schema_path, file_id = _write_workbook_schema(tmp_path)
+    manifest_path, manifest_file_id = _write_manifest(workbook_path)
+    assert manifest_file_id == file_id
     output = tmp_path / "extracted_rows.jsonl"
 
     exit_code = main(
-        [
-            "extract-rows",
-            "--manifest",
-            str(manifest_path),
-            "--file-id",
-            file_id,
-            "--schema",
-            str(schema_path),
-            "--output",
-            str(output),
-        ]
+        _extract_rows_args(manifest_path, file_id, schema_path, output, "--format", "jsonl")
     )
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -88,6 +142,33 @@ def test_cli_extract_rows_jsonl(tmp_path: Path, capsys):
     assert row["document_index"] is None
     assert row["document_period"] is None
     assert "Извлечено: 1" in captured.out
+
+
+@pytest.mark.parametrize("database_kind", ("corrupt", "newer"))
+def test_cli_controls_duckdb_open_failures(tmp_path: Path, capsys, database_kind: str):
+    workbook_path, schema_path, file_id = _write_workbook_schema(tmp_path)
+    manifest_path, manifest_file_id = _write_manifest(workbook_path)
+    assert manifest_file_id == file_id
+    output = tmp_path / f"{database_kind}.duckdb"
+    if database_kind == "corrupt":
+        output.write_text("not a duckdb database", encoding="utf-8")
+    else:
+        connection = duckdb.connect(str(output))
+        try:
+            connection.execute(
+                "CREATE TABLE storage_metadata ("
+                "metadata_key VARCHAR PRIMARY KEY, metadata_value VARCHAR)"
+            )
+            connection.execute("INSERT INTO storage_metadata VALUES ('schema_version', '2')")
+        finally:
+            connection.close()
+
+    exit_code = main(_extract_rows_args(manifest_path, file_id, schema_path, output))
+
+    captured = capsys.readouterr()
+    assert exit_code == 8
+    assert "Ошибка записи извлечения" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_cli_requires_file_id_with_manifest(tmp_path: Path, capsys):
