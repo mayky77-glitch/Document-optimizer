@@ -46,7 +46,7 @@ def check_match(match: MatchResult, issues: list) -> None:
         issue(issues, "UNMATCHED", "manual_review", "строка не сопоставлена", match=match)
     elif match.status is MatchStatus.AMBIGUOUS:
         issue(issues, "AMBIGUOUS", "manual_review", "строка неоднозначна", match=match)
-    if not getattr(target, "writable", False):
+    if match.status is MatchStatus.MATCHED and not getattr(target, "writable", False):
         issue(
             issues,
             "TARGET_NOT_WRITABLE",
