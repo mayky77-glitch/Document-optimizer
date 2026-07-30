@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-18-production
-status: draft
+status: in-progress
 version: 1
 work_id: document-optimizer-block-18
 task_id: block-18-production
@@ -24,11 +24,13 @@ model_fallback: false
 last_verified: 2026-07-31
 updated: 2026-07-31
 card_path: knowledge/tasks/document-optimizer-block-18-production.md
+card_commit_sha_ref: launch-envelope
 base_sha_ref: card_commit_sha_ref
 dependency_shas:
   - 322cb9ce08f14c017dbdc3bf16c5b91b33238e63
 branch: codex/block-18-rag-production
 worktree: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block18-production"
+branch_base_sha_ref: card_commit_sha_ref
 write_scope:
   - src/report_processor/stage_rag
 forbidden_paths:
@@ -52,7 +54,7 @@ acceptance_commands:
   - "uv run python -m compileall -q src/report_processor/stage_rag"
 tags:
   - task/implementation
-  - status/draft
+  - status/in-progress
   - layer/backend
   - risk/high
 ---

@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-18-docs
-status: draft
+status: in-progress
 version: 1
 work_id: document-optimizer-block-18
 task_id: block-18-docs
@@ -24,11 +24,13 @@ model_fallback: false
 last_verified: 2026-07-31
 updated: 2026-07-31
 card_path: knowledge/tasks/document-optimizer-block-18-docs.md
+card_commit_sha_ref: launch-envelope
 base_sha_ref: card_commit_sha_ref
 dependency_shas:
   - 322cb9ce08f14c017dbdc3bf16c5b91b33238e63
 branch: codex/block-18-release-docs
 worktree: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block18-docs"
+branch_base_sha_ref: card_commit_sha_ref
 write_scope:
   - README.md
   - docs/ARCHITECTURE.md
@@ -48,7 +50,7 @@ acceptance_commands:
   - "git diff --check -- README.md docs"
 tags:
   - task/implementation
-  - status/draft
+  - status/in-progress
   - layer/docs
   - risk/medium
 ---

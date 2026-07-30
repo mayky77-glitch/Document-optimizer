@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-18-tests
-status: draft
+status: in-progress
 version: 1
 work_id: document-optimizer-block-18
 task_id: block-18-tests
@@ -24,11 +24,13 @@ model_fallback: false
 last_verified: 2026-07-31
 updated: 2026-07-31
 card_path: knowledge/tasks/document-optimizer-block-18-tests.md
+card_commit_sha_ref: launch-envelope
 base_sha_ref: card_commit_sha_ref
 dependency_shas:
   - 322cb9ce08f14c017dbdc3bf16c5b91b33238e63
 branch: codex/block-18-release-tests
 worktree: "/Users/x/Documents/Сооотношение документов/Document-optimizer-block18-tests"
+branch_base_sha_ref: card_commit_sha_ref
 write_scope:
   - tests/unit/stage_rag
   - tests/fixtures/stage_rag
@@ -53,7 +55,7 @@ acceptance_commands:
   - "uv run pytest -q tests/unit/stage_rag tests/contract/test_block18_release_contract.py tests/integration/test_block18_*.py"
 tags:
   - task/implementation
-  - status/draft
+  - status/in-progress
   - layer/test
   - risk/high
 ---
