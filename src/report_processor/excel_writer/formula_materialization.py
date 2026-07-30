@@ -2,26 +2,29 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 from .exceptions import ExcelWriterAtomicError
 from .ooxml import (
+    formula_coordinates,
     materialize_formula_package,
+    numeric_formula_values,
     verify_materialized_package,
     worksheet_part_map,
 )
 
-_RECALCULATION_TIMEOUT_SECONDS = 60
+_RECALCULATION_TIMEOUT_SECONDS = 120
 
 
 def recalculate_and_materialize(path: Path) -> None:
     """Recalculate a private copy, then replace all formulas with numeric literals."""
 
-    parts = worksheet_part_map(path)
+    authoritative_parts = worksheet_part_map(path)
+    coordinates_by_part = _formula_coordinates(path, authoritative_parts)
     with tempfile.TemporaryDirectory(prefix="excel-writer-recalc-") as directory:
         workspace = Path(directory)
         profile = workspace / "profile"
@@ -36,12 +39,42 @@ def recalculate_and_materialize(path: Path) -> None:
             raise ExcelWriterAtomicError(
                 "FORMULA_RECALCULATION_FAILED", "LibreOffice produced no XLSX"
             )
-        try:
-            os.replace(recalculated, path)
-        except OSError as error:
-            raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", str(error)) from error
-    values_by_part = materialize_formula_package(path, parts)
+        values_by_part = _recalculated_values(
+            recalculated, authoritative_parts, coordinates_by_part
+        )
+    materialize_formula_package(path, authoritative_parts, values_by_part)
     verify_materialized_package(path, values_by_part)
+
+
+def _formula_coordinates(path: Path, parts: dict[str, str]) -> dict[str, tuple[str, ...]]:
+    try:
+        with zipfile.ZipFile(path) as package:
+            return {part: formula_coordinates(package.read(part)) for part in parts.values()}
+    except (OSError, zipfile.BadZipFile, KeyError) as error:
+        raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", str(error)) from error
+
+
+def _recalculated_values(
+    recalculated: Path,
+    authoritative_parts: dict[str, str],
+    coordinates_by_part: dict[str, tuple[str, ...]],
+) -> dict[str, dict[str, str]]:
+    recalculated_parts = worksheet_part_map(recalculated)
+    values_by_part: dict[str, dict[str, str]] = {}
+    try:
+        with zipfile.ZipFile(recalculated) as package:
+            for sheet_name, authoritative_part in authoritative_parts.items():
+                recalculated_part = recalculated_parts.get(sheet_name)
+                if recalculated_part is None:
+                    raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", sheet_name)
+                values_by_part[authoritative_part] = numeric_formula_values(
+                    package.read(recalculated_part), coordinates_by_part[authoritative_part]
+                )
+    except ExcelWriterAtomicError:
+        raise
+    except (OSError, zipfile.BadZipFile, KeyError) as error:
+        raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", str(error)) from error
+    return values_by_part
 
 
 def _run_libreoffice(input_path: Path, output_directory: Path, profile: Path) -> None:

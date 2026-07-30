@@ -6,6 +6,7 @@ import os
 import re
 import zipfile
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -18,7 +19,7 @@ _CELL = re.compile(rb"<c\b[^>]*(?:/>|>.*?</c>)", re.DOTALL)
 _REFERENCE = re.compile(rb"\br\s*=\s*([\"'])([^\"']+)\1")
 _STYLE = re.compile(rb"\bs\s*=\s*([\"'])([^\"']+)\1")
 _TYPE = re.compile(rb"\bt\s*=\s*([\"'])([^\"']+)\1")
-_FORMULA = re.compile(rb"<f(?:\s[^>]*)?(?:/>|>.*?</f>)", re.DOTALL)
+_FORMULA = re.compile(rb"<f\b[^>]*?(?:/>|>.*?</f>)", re.DOTALL)
 _VALUE = re.compile(rb"<v(?:\s[^>]*)?(?:/>|>(.*?)</v>)", re.DOTALL)
 _SELF_CLOSING = re.compile(rb"/>$")
 _CALC_CHAIN_CONTENT_TYPE = re.compile(
@@ -124,12 +125,48 @@ def formula_count(xml: bytes) -> int:
     return len(_FORMULA.findall(xml))
 
 
-def materialize_formula_cells(xml: bytes) -> tuple[bytes, dict[str, str]]:
-    """Replace every worksheet formula with its finite numeric cached value."""
+def formula_coordinates(xml: bytes) -> tuple[str, ...]:
+    """Return formula coordinates from one authoritative worksheet XML part."""
+
+    coordinates: list[str] = []
+    for match in _CELL.finditer(xml):
+        cell = match.group(0)
+        if _FORMULA.search(cell) is None:
+            continue
+        reference = _REFERENCE.search(cell)
+        if reference is None:
+            raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "formula without ref")
+        coordinates.append(reference.group(2).decode("ascii"))
+    if len(coordinates) != len(set(coordinates)):
+        raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "duplicate formula ref")
+    return tuple(coordinates)
+
+
+def numeric_formula_values(xml: bytes, coordinates: tuple[str, ...]) -> dict[str, str]:
+    """Extract validated numeric values for requested coordinates from LibreOffice XML."""
+
+    requested = set(coordinates)
+    values: dict[str, str] = {}
+    for match in _CELL.finditer(xml):
+        cell = match.group(0)
+        reference = _REFERENCE.search(cell)
+        if reference is None:
+            continue
+        coordinate = reference.group(2).decode("ascii")
+        if coordinate not in requested:
+            continue
+        values[coordinate] = _finite_numeric_lexeme(cell, coordinate)
+    if set(values) != requested:
+        missing = next(iter(requested.difference(values)), "unknown")
+        raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", missing)
+    return values
+
+
+def materialize_formula_cells(xml: bytes, values: Mapping[str, str]) -> bytes:
+    """Replace authoritative worksheet formulas using LibreOffice numeric results."""
 
     pieces: list[bytes] = []
     cursor = 0
-    values: dict[str, str] = {}
     for match in _CELL.finditer(xml):
         cell = match.group(0)
         if _FORMULA.search(cell) is None:
@@ -138,30 +175,16 @@ def materialize_formula_cells(xml: bytes) -> tuple[bytes, dict[str, str]]:
         if reference is None:
             raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "formula without ref")
         coordinate = reference.group(2).decode("ascii")
-        cell_type = _TYPE.search(cell)
-        if cell_type is not None and cell_type.group(2) not in {b"n"}:
+        decimal_text = values.get(coordinate)
+        if decimal_text is None:
             raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
-        value = _VALUE.search(cell)
-        if value is None or value.group(1) is None:
-            raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
-        decimal_text = value.group(1).decode("ascii")
-        try:
-            from decimal import Decimal
-
-            numeric = Decimal(decimal_text)
-        except Exception as error:
-            raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate) from error
-        if not numeric.is_finite():
-            raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
-        if coordinate in values:
-            raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", coordinate)
         updated = _FORMULA.sub(b"", cell)
         updated = _TYPE.sub(b"", updated)
+        updated = replace_cell_value(updated, coordinate, decimal_text)
         pieces.extend((xml[cursor : match.start()], updated))
         cursor = match.end()
-        values[coordinate] = decimal_text
     pieces.append(xml[cursor:])
-    return b"".join(pieces), values
+    return b"".join(pieces)
 
 
 def write_temp_package(
@@ -205,12 +228,16 @@ def verify_temp_package(
     try:
         with zipfile.ZipFile(source_path) as source, zipfile.ZipFile(temp_path) as output:
             source_names = tuple(source.namelist())
-            expected_names = tuple(name for name in source_names if name != "xl/calcChain.xml")
+            expected_names = tuple(
+                name for name in source_names if not remove_calc_chain or name != "xl/calcChain.xml"
+            )
             if expected_names != tuple(output.namelist()) or output.testzip() is not None:
                 raise ExcelWriterIntegrityError(
                     "PRESERVATION_CHECK_FAILED", "package structure changed"
                 )
             for name in source_names:
+                if remove_calc_chain and name == "xl/calcChain.xml":
+                    continue
                 original = source.read(name)
                 updated = output.read(name)
                 expected = original
@@ -236,12 +263,13 @@ def verify_temp_package(
 
 
 def materialize_formula_package(
-    path: Path, worksheet_parts: Mapping[str, str]
-) -> dict[str, dict[str, str]]:
+    path: Path,
+    worksheet_parts: Mapping[str, str],
+    values_by_part: Mapping[str, Mapping[str, str]],
+) -> None:
     """Materialize every formula in-place and remove obsolete calculation-chain metadata."""
 
     temporary = path.with_suffix(".materializing.xlsx")
-    values_by_part: dict[str, dict[str, str]] = {}
     try:
         with (
             zipfile.ZipFile(path, "r") as source,
@@ -253,8 +281,9 @@ def materialize_formula_package(
                     continue
                 payload = source.read(info.filename)
                 if info.filename in worksheet_parts.values():
-                    payload, values = materialize_formula_cells(payload)
-                    values_by_part[info.filename] = values
+                    payload = materialize_formula_cells(
+                        payload, values_by_part.get(info.filename, {})
+                    )
                 payload = _remove_calc_chain_metadata(info.filename, payload)
                 output.writestr(info, payload)
         _fsync_file(temporary)
@@ -266,7 +295,7 @@ def materialize_formula_package(
     except (OSError, zipfile.BadZipFile, ValueError) as error:
         temporary.unlink(missing_ok=True)
         raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", str(error)) from error
-    return values_by_part
+    return None
 
 
 def verify_materialized_package(
@@ -327,6 +356,23 @@ def _remove_calc_chain_metadata(name: str, payload: bytes) -> bytes:
     if name == "xl/_rels/workbook.xml.rels":
         return _CALC_CHAIN_RELATIONSHIP.sub(b"", payload)
     return payload
+
+
+def _finite_numeric_lexeme(cell: bytes, coordinate: str) -> str:
+    cell_type = _TYPE.search(cell)
+    if cell_type is not None and cell_type.group(2) not in {b"n"}:
+        raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
+    value = _VALUE.search(cell)
+    if value is None or value.group(1) is None:
+        raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
+    decimal_text = value.group(1).decode("ascii")
+    try:
+        numeric = Decimal(decimal_text)
+    except (InvalidOperation, ValueError) as error:
+        raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate) from error
+    if not numeric.is_finite():
+        raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
+    return decimal_text
 
 
 def publish_no_clobber(temp_path: Path, output_path: Path) -> None:
