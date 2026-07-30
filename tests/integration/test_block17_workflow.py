@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import Workbook
 from report_processor.processing import (
+    DefaultProcessingAdapters,
+    ProcessingContext,
     ProcessingEngine,
     ProcessingExitCode,
     ProcessingState,
@@ -16,7 +18,7 @@ from report_processor.processing import (
     StageOutcome,
 )
 
-from report_processor.audit import AuditStage, AuditState
+from report_processor.audit import AuditJournal, AuditStage, AuditState
 
 
 class RecordingAdapters:
@@ -189,65 +191,69 @@ def test_default_dry_run_uses_public_upstream_stages_without_internal_error(
     }
 
 
-def test_persistent_audit_journal_records_boundaries_and_recovers_on_resume(
+def test_default_audit_and_write_record_persistent_block16_lifecycle(
     monkeypatch, inputs, tmp_path
 ) -> None:
     source, target = inputs
-    events: list[tuple[object, object]] = []
-    recoveries: list[object] = []
-
-    class SpyJournal:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args) -> None:
-            return None
-
-        def begin_run(self, *args, **kwargs):
-            return SimpleNamespace(run_id="run-17")
-
-        def append_event(self, run_id, stage, state, **kwargs):
-            events.append((stage, state))
-            return SimpleNamespace()
-
-        def recover(self, *args, **kwargs):
-            recoveries.append(args)
-            return ()
-
-        def validate_run(self, *args, **kwargs):
-            return ()
-
-    monkeypatch.setattr("report_processor.audit.AuditJournal", SpyJournal)
     audit_directory = tmp_path / "audit"
-    engine = ProcessingEngine(RecordingAdapters(decision="allow_write"))
-    dry_run = engine.process_report(
-        ProcessReportRequest(source, target, ProcessMode.DRY_RUN, audit_directory=audit_directory)
+    request = ProcessReportRequest(
+        source,
+        target,
+        ProcessMode.WRITE,
+        output_path=tmp_path / "published.xlsx",
+        audit_directory=audit_directory,
     )
-    write = engine.process_report(
-        ProcessReportRequest(
-            source,
-            target,
-            ProcessMode.WRITE,
-            output_path=tmp_path / "published.xlsx",
-            audit_directory=audit_directory,
-        )
+    quality_report = SimpleNamespace(
+        issues=(),
+        decision=SimpleNamespace(value="allow_write"),
+        input_digest="d" * 64,
+        summary=SimpleNamespace(calculation_count=0),
+        report_id="r" * 64,
     )
-    resumed = engine.process_report(
-        ProcessReportRequest(
-            source,
-            target,
-            audit_directory=audit_directory,
-            resume=True,
-        )
+    monkeypatch.setattr(
+        "report_processor.quality_control.evaluate_quality_control", lambda *args: quality_report
     )
-    assert dry_run.exit_code is ProcessingExitCode.SUCCESS
-    assert write.exit_code is ProcessingExitCode.SUCCESS
-    assert resumed.exit_code is not ProcessingExitCode.CONTROLLED_INTERNAL_ERROR
-    assert (AuditStage.RUN, AuditState.PENDING) in events
-    assert (AuditStage.DATA, AuditState.DATA_COMMITTED) in events
-    assert (AuditStage.EXPORT, AuditState.EXPORT_PREPARED) in events
-    assert (AuditStage.EXPORT, AuditState.EXPORT_VERIFIED) in events
-    assert recoveries
+    monkeypatch.setattr(
+        "report_processor.excel_writer.write_target_report",
+        lambda *args: SimpleNamespace(output_sha256="e" * 64, warnings=()),
+    )
+    recoveries: list[str] = []
+    original_recover = AuditJournal.recover
+
+    def traced_recover(self, run_id, *args, **kwargs):
+        recoveries.append(run_id)
+        return original_recover(self, run_id, *args, **kwargs)
+
+    monkeypatch.setattr(AuditJournal, "recover", traced_recover)
+    context = ProcessingContext(
+        ProcessMode.WRITE,
+        True,
+        "run-key",
+        tmp_path,
+        {
+            "request": request,
+            "source_sha256": "a" * 64,
+            "target_sha256": "b" * 64,
+            "matches": (),
+            "calculations": (),
+            "rule_set": SimpleNamespace(content_hash="c" * 64),
+            "target_report": SimpleNamespace(schema=SimpleNamespace()),
+        },
+    )
+    adapters = DefaultProcessingAdapters()
+    audited = adapters.audit(context)
+    context.values.update(audited.artifacts)
+    written = adapters.write(context)
+    run_id = str(audited.artifacts["audit_run_id"])
+    with AuditJournal(audit_directory / "journal.sqlite3") as journal:
+        events = journal.validate_run(run_id)
+    assert audited.artifacts["audit_boundary"] == AuditState.DATA_COMMITTED
+    assert written.artifacts["audit_boundary"] == AuditState.EXPORT_VERIFIED
+    assert [(event.controlled_stage_code, event.controlled_state_code) for event in events] == [
+        (AuditStage.RUN, AuditState.PENDING),
+        (AuditStage.DATA, AuditState.DATA_COMMITTED),
+        (AuditStage.EXPORT, AuditState.EXPORT_PREPARED),
+        (AuditStage.EXPORT, AuditState.EXPORT_VERIFIED),
+    ]
+    assert recoveries == [run_id]
+    assert (audit_directory / f"{run_id}.json").is_file()
