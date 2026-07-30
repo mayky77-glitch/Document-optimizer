@@ -171,6 +171,20 @@ formula/trace/totals и normalized units. Приоритет: `BLOCK_WRITE`,
 Issues и IDs сортируются детерминированно. Отчёт содержит safe evidence без raw
 cell values, formula text и document content; workbook не изменяется.
 
+## Блок 15: Excel writer boundary
+
+`excel_writer/` — отдельная граница записи. Decision gate пропускает только
+`ALLOW_WRITE` и `ALLOW_WRITE_WITH_WARNINGS`; остальные решения дают
+`SKIPPED_DECISION` без output. Writable bindings ровно две: текущие quantity и
+cost. Значения — finite `Decimal` без пересчёта, а `None` не очищает ячейку.
+
+Writer выполняет targeted OOXML cell update, не используя `openpyxl.save`;
+формулы, кэш, стили, merged ranges и остальные package entries сохраняются.
+Поддерживается только `.xlsx`; signed OOXML и `.xlsm` отклоняются. Source
+identity и fingerprint перепроверяются перед публикацией. Output должен быть
+отдельным отсутствующим путём и публикуется атомарно через hard-link
+no-clobber; source и существующий output не перезаписываются. CLI отсутствует.
+
 ## Модель идентификатора
 
 Обычный файл:
