@@ -34,6 +34,21 @@ def _freeze_mapping(values: Mapping[str, object]) -> Mapping[str, object]:
     return MappingProxyType(dict(sorted(values.items())))
 
 
+def _decimal_or_none(value: Decimal | None, field_name: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, Decimal):
+        raise TypeError(f"{field_name} должен быть Decimal или None")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} должен быть конечным Decimal")
+
+
+def _positive_decimal(value: Decimal, field_name: str) -> None:
+    _decimal_or_none(value, field_name)
+    if value is None or value <= Decimal("0"):
+        raise ValueError(f"{field_name} должен быть положительным Decimal")
+
+
 @dataclass(frozen=True, slots=True)
 class CalculationContribution:
     contribution_id: str
@@ -54,6 +69,12 @@ class CalculationContribution:
     target_provenance: Mapping[str, object]
 
     def __post_init__(self) -> None:
+        _decimal_or_none(self.raw_quantity, "raw_quantity")
+        _decimal_or_none(self.raw_cost, "raw_cost")
+        _decimal_or_none(self.included_quantity, "included_quantity")
+        _decimal_or_none(self.included_cost, "included_cost")
+        if not isinstance(self.include_quantity, bool) or not isinstance(self.include_cost, bool):
+            raise TypeError("include flags должны быть bool")
         object.__setattr__(self, "rule_ids", tuple(sorted(set(self.rule_ids))))
         object.__setattr__(self, "decisions", tuple(self.decisions))
         object.__setattr__(self, "warnings", tuple(self.warnings))
@@ -68,6 +89,12 @@ class CalculationCategoryTotal:
     cost_before_coefficient: Decimal | None
     coefficient: Decimal
     cost: Decimal | None
+
+    def __post_init__(self) -> None:
+        _decimal_or_none(self.quantity, "quantity")
+        _decimal_or_none(self.cost_before_coefficient, "cost_before_coefficient")
+        _decimal_or_none(self.cost, "cost")
+        _positive_decimal(self.coefficient, "coefficient")
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +112,16 @@ class CalculationTrace:
     warnings: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        _positive_decimal(self.coefficient, "coefficient")
+        _positive_decimal(self.rounding_quantum, "rounding_quantum")
+        if self.rounding_mode != "ROUND_HALF_UP":
+            raise ValueError("rounding_mode должен быть ROUND_HALF_UP")
+        if not isinstance(self.contributions, tuple) or not isinstance(self.category_totals, tuple):
+            raise TypeError("trace collections должны быть tuple")
+        if any(not isinstance(item, CalculationContribution) for item in self.contributions):
+            raise TypeError("contributions содержит недопустимый элемент")
+        if any(not isinstance(item, CalculationCategoryTotal) for item in self.category_totals):
+            raise TypeError("category_totals содержит недопустимый элемент")
         object.__setattr__(self, "formula_tokens", tuple(self.formula_tokens))
         object.__setattr__(self, "contributions", tuple(self.contributions))
         object.__setattr__(self, "category_totals", tuple(self.category_totals))
@@ -102,14 +139,32 @@ class CalculationResult:
     cost_before_coefficient: Decimal | None
     coefficient: Decimal
     cost: Decimal | None
-    category_totals: tuple[CalculationCategoryTotal, ...] | None
-    trace: CalculationTrace | None
+    category_totals: tuple[CalculationCategoryTotal, ...]
+    trace: CalculationTrace
     warnings: tuple[str, ...]
     explanation: tuple[str, ...]
     contract_version: str = field(init=False, default=CALCULATION_CONTRACT_VERSION)
 
     def __post_init__(self) -> None:
-        if self.category_totals is not None:
-            object.__setattr__(self, "category_totals", tuple(self.category_totals))
+        _decimal_or_none(self.quantity, "quantity")
+        _decimal_or_none(self.cost_before_coefficient, "cost_before_coefficient")
+        _decimal_or_none(self.cost, "cost")
+        _positive_decimal(self.coefficient, "coefficient")
+        if not isinstance(self.category_totals, tuple):
+            raise TypeError("category_totals должен быть tuple")
+        if any(not isinstance(item, CalculationCategoryTotal) for item in self.category_totals):
+            raise TypeError("category_totals содержит недопустимый элемент")
+        if not isinstance(self.trace, CalculationTrace):
+            raise TypeError("trace должен быть CalculationTrace")
+        if (
+            self.trace.target_row_id != self.target_row_id
+            or self.trace.match_result_id != self.match_result_id
+        ):
+            raise ValueError("trace не соответствует result identity")
+        if (
+            self.trace.coefficient != self.coefficient
+            or self.trace.category_totals != self.category_totals
+        ):
+            raise ValueError("trace не соответствует calculation totals")
         object.__setattr__(self, "warnings", tuple(self.warnings))
         object.__setattr__(self, "explanation", tuple(self.explanation))

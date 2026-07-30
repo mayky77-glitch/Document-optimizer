@@ -6,7 +6,7 @@ import json
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from hashlib import sha256
 
 from report_processor.business_rules import RuleAction, RuleMatchKind, ValidatedRuleSet
@@ -74,6 +74,10 @@ def _numeric_defaults(rule_set: ValidatedRuleSet) -> tuple[Decimal, Decimal]:
         raise CalculationInputError(
             "INVALID_ROUNDING_QUANTUM", "rounding_quantum должен быть больше нуля"
         )
+    if coefficient <= Decimal("0"):
+        raise CalculationInputError(
+            "INVALID_COEFFICIENT", "default_run_coefficient должен быть больше нуля"
+        )
     if rule_set.defaults.rounding_mode != ROUND_HALF_UP:
         raise CalculationInputError("INVALID_ROUNDING_MODE", "поддерживается только ROUND_HALF_UP")
     if rule_set.defaults.unit_conversion_enabled:
@@ -85,18 +89,29 @@ def _calculate_result(
     match: MatchResult, rule_set: ValidatedRuleSet, coefficient: Decimal, quantum: Decimal
 ) -> CalculationResult:
     if match.status is MatchStatus.AMBIGUOUS:
-        return _empty_result(match, coefficient, CalculationStatus.MANUAL_REVIEW, "MATCH_AMBIGUOUS")
+        return _empty_result(
+            match,
+            rule_set,
+            coefficient,
+            quantum,
+            CalculationStatus.MANUAL_REVIEW,
+            "MATCH_AMBIGUOUS",
+        )
     if match.status is MatchStatus.UNMATCHED:
-        return _empty_result(match, coefficient, CalculationStatus.NO_MATCH, "MATCH_UNMATCHED")
+        return _empty_result(
+            match, rule_set, coefficient, quantum, CalculationStatus.NO_MATCH, "MATCH_UNMATCHED"
+        )
     if match.status is not MatchStatus.MATCHED or match.selected_candidate is None:
-        raise CalculationInputError("INVALID_MATCH_STATUS", match.match_result_id)
+        raise CalculationInputError("INVALID_MATCH_STATUS", match.result_id)
     candidate = match.selected_candidate
     if candidate.target_row_id != match.target_row_id:
         raise CalculationInputError("CANDIDATE_TARGET_MISMATCH", candidate.candidate_id)
     decision = _rule_decision(candidate, match, rule_set)
     if decision.manual_review or decision.excluded:
         reason = "RULE_EXCLUDE" if decision.excluded else "RULE_REVIEW"
-        return _empty_result(match, coefficient, CalculationStatus.MANUAL_REVIEW, reason)
+        return _empty_result(
+            match, rule_set, coefficient, quantum, CalculationStatus.MANUAL_REVIEW, reason
+        )
     contribution = _contribution(candidate, match, rule_set, decision)
     totals = _category_totals((contribution,), coefficient, quantum)
     quantity = _round_sum((contribution.included_quantity,), quantum)
@@ -135,13 +150,22 @@ def _calculate_result(
 
 
 def _empty_result(
-    match: MatchResult, coefficient: Decimal, status: CalculationStatus, reason: str
+    match: MatchResult,
+    rule_set: ValidatedRuleSet,
+    coefficient: Decimal,
+    quantum: Decimal,
+    status: CalculationStatus,
+    reason: str,
 ) -> CalculationResult:
+    warnings = (reason,)
+    trace = _trace(match, rule_set, coefficient, quantum, (), (), warnings)
     calculation_id = _hash(
         "calculation-empty",
         CALCULATION_CONTRACT_VERSION,
         match.target_row_id,
         match.result_id,
+        trace.trace_id,
+        rule_set.content_hash,
         status,
     )
     return CalculationResult(
@@ -154,9 +178,9 @@ def _empty_result(
         cost_before_coefficient=None,
         coefficient=coefficient,
         cost=None,
-        category_totals=None,
-        trace=None,
-        warnings=(reason,),
+        category_totals=(),
+        trace=trace,
+        warnings=warnings,
         explanation=(reason.lower(),),
     )
 
@@ -388,13 +412,31 @@ def _trace(
 
 def _round_sum(values: tuple[Decimal | None, ...], quantum: Decimal) -> Decimal | None:
     value = _sum_optional(values)
-    return None if value is None else value.quantize(quantum, rounding=ROUND_HALF_UP)
+    return None if value is None else _round_to_quantum(value, quantum)
 
 
 def _round_cost(value: Decimal | None, coefficient: Decimal, quantum: Decimal) -> Decimal | None:
-    return (
-        None if value is None else (value * coefficient).quantize(quantum, rounding=ROUND_HALF_UP)
-    )
+    return None if value is None else _round_to_quantum(value * coefficient, quantum)
+
+
+def _round_to_quantum(value: Decimal, quantum: Decimal) -> Decimal:
+    """Round to a quantum multiple, not merely to its decimal exponent."""
+
+    try:
+        required_precision = max(
+            64,
+            len(value.as_tuple().digits)
+            + len(quantum.as_tuple().digits)
+            + abs(value.adjusted())
+            + abs(quantum.adjusted())
+            + 12,
+        )
+        with localcontext() as context:
+            context.prec = required_precision
+            multiples = (value / quantum).to_integral_value(rounding=ROUND_HALF_UP)
+            return multiples * quantum
+    except (InvalidOperation, ValueError) as error:
+        raise CalculationInputError("ROUNDING_ERROR", str(error)) from error
 
 
 def _sum_optional(values: tuple[Decimal | None, ...]) -> Decimal | None:
