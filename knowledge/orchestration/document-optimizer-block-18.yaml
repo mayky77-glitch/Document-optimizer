@@ -11,6 +11,7 @@ contract_versions:
   release: FinalIntegration-18.0
   rag: StageRelationRAG-18.0
   model: RuBERTTiny2Embedding-18.0
+  admin_panel: LocalAdminPanel-18.0
 upstream_contracts:
   processing: "ProcessingContract/Engine/State-17.0"
   matching: MatchingContract-12.0
@@ -34,6 +35,20 @@ release_contract:
   golden: "versioned deterministic expected results without copying sensitive workbook content"
   performance: "master-plan thresholds with RUN_SLOW=1"
   public_api: "all frozen contracts importable without optional rag dependencies"
+admin_panel_contract:
+  network: "local-only 127.0.0.1 by default; no external assets or remote inference API"
+  workflow: "upload source and target, choose stage, run, review uncertain relations, download result/review"
+  default_stage: "13.1"
+  review: "semantic suggestions require explicit fit/not-fit decision; decisions are versioned and downloadable"
+  discrepancy_colors:
+    unit_conflict: red
+    unchanged_value: yellow
+    cost_threshold: orange
+    manual_review: blue
+  brand:
+    primary: "#0079C2"
+    source: "Gazprom Pantone 300 C / RGB 0 121 194"
+  safety: "uploads live in private per-job workspaces; original client files are never modified"
 wave: 1
 max_parallel: 3
 max_spawns: 6
@@ -54,9 +69,11 @@ shared_paths:
   - src/report_processor/processing/adapters.py
   - src/report_processor/cli.py
   - src/report_processor/cli_process.py
+  - src/report_processor/cli_admin.py
   - tests/conftest.py
 production_scope:
   - src/report_processor/stage_rag
+  - src/report_processor/admin_panel
 test_scope:
   - tests/unit/stage_rag
   - tests/fixtures/stage_rag
@@ -66,6 +83,8 @@ test_scope:
   - tests/integration/test_block18_rag.py
   - tests/integration/test_block18_real_data.py
   - tests/performance/test_block18_release_performance.py
+  - tests/unit/admin_panel
+  - tests/integration/test_block18_admin_panel.py
 documentation_scope:
   - README.md
   - docs/ARCHITECTURE.md
@@ -111,6 +130,8 @@ acceptance_commands:
   - "clean install base and rag extras in private temporary environments"
   - "uv run python -m compileall -q src tests"
   - "git diff --check"
+  - "uv run pytest -q tests/unit/admin_panel tests/integration/test_block18_admin_panel.py"
+  - "Playwright local UI: upload, stage 13.1, review controls, color tokens, download, keyboard and mobile"
 required_evidence:
   - deterministic reverse-order E2E and golden outputs
   - semantic stage relation ranking and manual-review safety
@@ -119,4 +140,7 @@ required_evidence:
   - real source and target SHA-256, size and mtime_ns unchanged
   - no input overwrite, temp residue, sensitive golden payload or circular imports
   - full and performance suites
+  - local-only admin server and no external asset requests
+  - Gazprom UI token #0079C2 plus red/yellow/orange/manual-review color semantics
+  - review decisions round-trip and output/review download behavior
 created_at: "2026-07-31T03:40:00+08:00"

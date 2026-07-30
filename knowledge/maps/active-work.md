@@ -15,3 +15,5 @@ Link only active task cards here. Remove or move links after orchestration accep
 - [[../tasks/document-optimizer-block-18-production|Block 18 production]]
 - [[../tasks/document-optimizer-block-18-tests|Block 18 tests]]
 - [[../tasks/document-optimizer-block-18-docs|Block 18 docs]]
+- [[../tasks/document-optimizer-block-18-admin-panel|Block 18 admin panel]]
+- [[../tasks/document-optimizer-block-18-admin-tests|Block 18 admin tests]]
