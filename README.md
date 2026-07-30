@@ -1,0 +1,143 @@
+# Document Optimizer
+
+Python-проект для поэтапной обработки строительных отчётов КС-2, КС-3, КС-6а,
+СВВР, допотчётов и связанных документов.
+
+## Текущий статус
+
+Интегрирован **блок 1 — «Каркас проекта и инвентаризация источников»**.
+Проект принимает каталог, отдельный файл или ZIP-архив и строит типизированный
+JSON-манифест без чтения содержимого Excel и без распаковки ZIP.
+
+Состояние следующих блоков не реализовано заранее. Подробности приведены в
+[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md).
+
+## Требования
+
+- Python 3.12 или новее;
+- стандартная библиотека для работы приложения;
+- `pytest` и `ruff` только для разработки.
+
+## Установка
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+```
+
+В Windows активация окружения выполняется командой:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+## Запуск инвентаризации
+
+Каталог:
+
+```bash
+python -m report_processor.cli inventory \
+  --source "/path/to/folder" \
+  --output "cache/file_manifest.json"
+```
+
+ZIP-архив:
+
+```bash
+python -m report_processor.cli inventory \
+  --source "/path/to/archive.zip" \
+  --output "cache/archive_manifest.json"
+```
+
+Нерекурсивный обход каталога:
+
+```bash
+python -m report_processor.cli inventory \
+  --source "/path/to/folder" \
+  --no-recursive
+```
+
+Поддерживаемые параметры:
+
+- `--source` — каталог, файл или ZIP;
+- `--output` — путь JSON-манифеста;
+- `--recursive` / `--no-recursive` — режим обхода каталога;
+- `--log-level` — `DEBUG`, `INFO`, `WARNING`, `ERROR` или `CRITICAL`.
+
+## Публичный Python API
+
+```python
+from pathlib import Path
+
+from report_processor import (
+    build_file_manifest,
+    classify_file_by_name,
+    load_manifest_json,
+    save_manifest_json,
+    scan_directory,
+    scan_zip_archive,
+)
+
+manifest = build_file_manifest(Path("/path/to/source"))
+save_manifest_json(manifest, Path("cache/file_manifest.json"))
+restored = load_manifest_json(Path("cache/file_manifest.json"))
+```
+
+Основные модели:
+
+- `FileManifestEntry` — provenance и классификация одного файла;
+- `ManifestSummary` — агрегированная статистика;
+- `FileManifest` — источник, записи, сводка и версия схемы;
+- `StatusCode` — единый набор статусов и предупреждений.
+
+## Формат манифеста
+
+JSON сохраняется в UTF-8, содержит ISO 8601 даты и записывается атомарно через
+временный файл и `os.replace`. Для каждой записи сохраняются:
+
+- стабильный технический `file_id`;
+- корень источника и относительный путь;
+- размер, дата изменения и ZIP-метаданные;
+- тип документа и все обнаруженные маркеры;
+- признаки временного файла, копии и устаревшей версии;
+- статус и машинно-читаемые предупреждения.
+
+ZIP читается только через центральный каталог `ZipFile.infolist()`. Содержимое
+записей не читается и не извлекается. Определяются ZIP Slip, подозрительное
+сжатие, очень большие записи и устаревшие ZIP-имена, где UTF-8-байты были
+записаны без UTF-8-флага.
+
+## Проверки
+
+```bash
+ruff check .
+pytest
+pytest tests/unit
+pytest tests/contract
+pytest tests/integration
+```
+
+CI выполняет `ruff check .` и полный `pytest` на Python 3.12.
+
+## Ограничения блока 1
+
+Намеренно не реализованы:
+
+- открытие Excel-книг;
+- чтение листов и ячеек;
+- извлечение индексов документов в отдельные поля;
+- сопоставление документов и работ;
+- расчёты количества и стоимости;
+- DuckDB, Parquet, pandas и openpyxl;
+- изменение или полная распаковка исходных файлов;
+- код следующих блоков.
+
+Архивные даты ZIP не содержат часовой пояс по формату ZIP, поэтому сохраняются
+как локальные наивные значения. Полный хеш содержимого больших файлов не
+вычисляется: `file_id` является техническим идентификатором метаданных.
+
+## Архитектура
+
+Модули и границы ответственности описаны в
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
