@@ -226,3 +226,31 @@ output и writable-открытие DuckDB.
 значений, train/test split и обучение моделей. Нормализация здесь нужна только
 для детерминированной классификации и идентичности; расширенная бизнес-
 нормализация остаётся следующим отдельным блоком.
+
+## Блок 8
+
+- **Название:** Бизнес-нормализация подготовленных строк
+- **Статус:** integration-ready; локальные gates пройдены, GitHub CI ожидается
+- **Вход:** `TrainingDataRow`, JSONL `7.0`
+- **Выход:** `NormalizedSourceRow`, `NormalizedBusinessKey`, `NormalizationConfig`, `NormalizationResult`, JSONL `8.0`
+- **CLI:** `report-processor normalize-rows`
+
+Provenance и `Decimal` сохраняются; business `line_id` не зависит от physical
+source. Exact typo dictionaries — data-only. Междокументное сопоставление,
+пересчёт и изменение исходников не выполняются.
+
+### Проверки блока 8
+
+- Ruff: PASS;
+- focused unit/contract/CLI: **8 passed**;
+- полный suite: **413 passed, 1 skipped**;
+- отдельный 50k-row performance gate: **1 passed**;
+- `compileall` и `git diff --check`: PASS.
+
+На реальной комбинированной книге 0784 с reviewed-схемой КС-2
+получено **780 → 378 → 378** строк в цепочке extraction → block 7
+→ block 8. Подтверждены неизменность SHA-256 исходника, `Decimal`,
+provenance и детерминизм. **26** collision явно зафиксированы,
+потерь строк нет. Три сложные реальные книги без reviewed-схемы
+детерминированно возвращают `LOW_CONFIDENCE_SCHEMA` и не угадывают
+сомнительные колонки.

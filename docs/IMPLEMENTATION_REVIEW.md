@@ -55,3 +55,25 @@ train/test split и не обучает модель. Расширенная б�
 - DuckDB schema/validation вынесены из store в отдельный модуль.
 
 CI ветки фиксируется после публикации коммита.
+
+## Блок 8 — бизнес-нормализация
+
+Frozen contract: `NormalizedSourceRow`, `NormalizedBusinessKey`,
+`NormalizationConfig`, `NormalizationResult`; вход `TrainingDataRow` `7.0`,
+выход JSONL `8.0`, CLI `normalize-rows`. Provenance и `Decimal` сохраняются,
+business `line_id` независим от physical source; exact typo dictionaries —
+data-only. Collision evidence сохраняется в `NormalizationResult`; CLI строго
+разделяет input, output и metadata paths.
+
+Локальные gates: Ruff PASS; focused **8 passed**; полный suite **413 passed,
+1 skipped**; отдельный 50k-row performance test **1 passed**; `compileall` и
+`git diff --check` PASS. GitHub CI остаётся release gate перед merge в `main`.
+
+Real-data gate на исходной комбинированной книге 0784 и reviewed-схеме
+листа КС-2: **780** канонических строк → **378** `TrainingDataRow` →
+**378** `NormalizedSourceRow`. Все числа остались `Decimal`, provenance
+полон, повторная нормализация детерминирована. **26** совпадений
+business key отражены в collision statistics/warnings; строки не
+отфильтрованы. SHA-256 и размер исходного Excel до/после совпали.
+Автоанализ трёх реальных книг также подтвердил безопасный
+`LOW_CONFIDENCE_SCHEMA` вместо необоснованного угадывания колонок.
