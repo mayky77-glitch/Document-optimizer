@@ -38,6 +38,36 @@ select {
   padding: 44px 0 56px;
 }
 
+.product-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: fit-content;
+  margin: 0 0 28px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.product-nav a {
+  min-height: 40px;
+  padding: 9px 13px;
+  color: var(--gazprom-dark);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.product-nav a:hover,
+.product-nav a.is-current {
+  background: #e9f4fa;
+  color: var(--ink);
+}
+
+.product-nav a:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .mast {
   max-width: 780px;
   margin-bottom: 28px;
