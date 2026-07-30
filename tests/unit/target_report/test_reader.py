@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from pathlib import Path
 
+from openpyxl import Workbook
+from openpyxl.comments import Comment
 from report_processor.target_report import TargetReportReadRequest, read_target_report
 
+from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
+from report_processor.materialization.models import MaterializedSource
 from report_processor.schema import LogicalColumn, SheetType, WorkbookSchema
 
 
@@ -19,6 +24,22 @@ def _schema(schema_factory, worksheet) -> WorkbookSchema:
         1.0,
         "OK",
     )
+
+
+def _open_synthetic_session(path: Path):
+    source = MaterializedSource(
+        local_path=path,
+        original_file_id="target-fixture-001",
+        original_relative_path=path.name,
+        source_kind="file",
+        archive_path=None,
+        was_extracted=False,
+        temporary=False,
+        size_bytes=path.stat().st_size,
+        extension=".xlsx",
+        cleanup_required=False,
+    )
+    return open_dual_workbook(WorkbookOpenRequest(source))
 
 
 def test_reader_preserves_leading_zeroes_decimal_lexemes_and_formula_state(
@@ -112,3 +133,40 @@ def test_reader_retains_structural_metadata_and_source_bytes(
         result.writable_cell_plans[0].expected_source_fingerprint
         == result.schema.source_fingerprint.value
     )
+
+
+def test_reader_preserves_merged_filter_style_comment_and_dimensions(
+    tmp_path: Path, schema_factory
+) -> None:
+    path = tmp_path / "synthetic-target.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Целевой"
+    sheet.merge_cells("A1:B1")
+    sheet["A1"] = "Объект"
+    sheet["A2"] = "0007"
+    sheet["B2"] = "Монтаж"
+    sheet["B2"].number_format = "@"
+    sheet["B2"].comment = Comment("synthetic note", "test")
+    sheet.auto_filter.ref = "A1:B2"
+    sheet.freeze_panes = "A2"
+    book.save(path)
+    book.close()
+
+    with _open_synthetic_session(path) as session:
+        worksheet = schema_factory(
+            "Целевой", SheetType.KS6A, (LogicalColumn.OBJECT_CODE, LogicalColumn.WORK_NAME)
+        )
+        result = read_target_report(
+            session, _schema(schema_factory, worksheet), TargetReportReadRequest()
+        )
+
+    snapshot = result.schema.worksheets[0]
+    work_name = result.rows[0].cell_for(LogicalColumn.WORK_NAME)
+    assert snapshot.dimensions == "A1:B2"
+    assert snapshot.merged_ranges == ("A1:B1",)
+    assert snapshot.auto_filter_ref == "A1:B2"
+    assert snapshot.freeze_panes == "A2"
+    assert snapshot.comments == (("B2", "synthetic note"),)
+    assert work_name.number_format == "@"
+    assert work_name.comment_text == "synthetic note"
