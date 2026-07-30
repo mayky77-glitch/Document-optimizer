@@ -203,11 +203,7 @@ def extract_document_index(
     return IndexExtractionResult(
         value=None if low_confidence else candidate.document_index,
         candidates=candidates,
-        status=(
-            IndexStatus.LOW_CONFIDENCE_INDEX.value
-            if low_confidence
-            else IndexStatus.OK.value
-        ),
+        status=(IndexStatus.LOW_CONFIDENCE_INDEX.value if low_confidence else IndexStatus.OK.value),
         warnings=tuple(warnings),
         source_text=text,
     )

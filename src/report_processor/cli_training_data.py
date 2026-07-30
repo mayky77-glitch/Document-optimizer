@@ -54,8 +54,7 @@ def run_prepare_training_data(args: argparse.Namespace) -> int:
         }
         if input_path in output_paths:
             raise ValueError(
-                "Вход блока 7 не должен совпадать с JSONL-результатом "
-                "или его файлом метаданных"
+                "Вход блока 7 не должен совпадать с JSONL-результатом или его файлом метаданных"
             )
         rows = load_canonical_rows(args.input, input_format=args.input_format)
         result = prepare_training_data(

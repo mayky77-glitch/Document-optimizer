@@ -129,9 +129,7 @@ def _schema_version_value(connection: duckdb.DuckDBPyConnection) -> str:
         "SELECT metadata_value FROM storage_metadata WHERE metadata_key = 'schema_version'"
     ).fetchall()
     if len(records) != 1:
-        raise StorageSchemaError(
-            "В storage_metadata должна быть ровно одна запись schema_version"
-        )
+        raise StorageSchemaError("В storage_metadata должна быть ровно одна запись schema_version")
     return records[0][0]
 
 

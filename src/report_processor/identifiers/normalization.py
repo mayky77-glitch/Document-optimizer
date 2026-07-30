@@ -12,9 +12,7 @@ _EXPLICIT_SPACES = str.maketrans({"\u00a0": " ", "\u202f": " "})
 def is_supported_identifier_input(value: object) -> bool:
     """Return whether *value* can be normalized without guessing its semantics."""
 
-    return value is None or (
-        not isinstance(value, bool) and isinstance(value, (str, int, float))
-    )
+    return value is None or (not isinstance(value, bool) and isinstance(value, (str, int, float)))
 
 
 def normalize_identifier_text(value: object) -> str | None:
