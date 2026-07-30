@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="drawing-card-api-contract" content="POST /api/drawing-card/jobs">
+    <title>Карточка остатков</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/drawing-card.css">
+    <script src="/static/drawing-card.js" defer></script>
+  </head>
+  <body>
+    <main class="drawing-shell">
+      <nav class="product-nav" aria-label="Разделы контроля документов">
+        <a href="/">Сверка документов</a>
+        <a class="is-current" href="/drawing-card" aria-current="page">Карточка остатков</a>
+      </nav>
+
+      <header class="page-heading">
+        <p class="eyebrow">Исполнительная документация</p>
+        <h1>Карточка остатков</h1>
+        <p>Выберите исходные документы, проверьте замечания при необходимости и скачайте готовую карточку.</p>
+      </header>
+
+      <ol class="progress-rail" aria-label="Готовность карточки">
+        <li class="is-active" data-progress="sources"><span>01</span><b>Источники</b><small>Выберите файлы</small></li>
+        <li data-progress="review"><span>02</span><b>Проверка</b><small>Устраните замечания</small></li>
+        <li data-progress="card"><span>03</span><b>Карточка</b><small>Скачайте файл</small></li>
+      </ol>
+
+      <section class="ledger-card" aria-labelledby="source-title">
+        <div class="ledger-tab" aria-hidden="true"><span>РЕЕСТР</span><span>ОСТАТКИ</span><span>ВЫПУСК</span></div>
+        <div class="section-heading">
+          <p class="step-label">Шаг 1 · подготовка</p>
+          <h2 id="source-title">Какие документы использовать?</h2>
+          <p>Можно выбрать несколько Excel-файлов. Период указывать необязательно.</p>
+        </div>
+
+        <form id="drawing-card-form" novalidate>
+          <label class="file-field" for="sources">
+            <span>Исходные документы <em>обязательно</em></span>
+            <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm,.xls" multiple required aria-describedby="sources-help">
+            <small id="sources-help">КС-2, накопительные ведомости и другие источники в Excel.</small>
+          </label>
+
+          <div class="fields-row">
+            <label for="period">
+              <span>Период <em>необязательно</em></span>
+              <input id="period" name="period" type="text" maxlength="64" placeholder="Например, июль 2026">
+            </label>
+          </div>
+
+          <fieldset class="operation-choice">
+            <legend>Что сделать с карточкой?</legend>
+            <input id="operation" name="operation" type="hidden" value="create">
+            <div class="operation-buttons" role="group" aria-label="Операция с карточкой">
+              <button class="operation-button is-selected" type="button" data-operation="create" aria-pressed="true">
+                <span>Создать новую</span>
+                <small>Начать карточку по выбранным источникам</small>
+              </button>
+              <button class="operation-button" type="button" data-operation="update" aria-pressed="false">
+                <span>Обновить существующую</span>
+                <small>Загрузить готовую карточку и пересчитать остатки</small>
+              </button>
+            </div>
+          </fieldset>
+
+          <label id="existing-card-field" class="file-field existing-card" for="existing-card" hidden>
+            <span>Существующая карточка <em>обязательно для обновления</em></span>
+            <input id="existing-card" name="existing_card" type="file" accept=".xlsx,.xlsm,.xls" disabled>
+            <small>Загрузите карточку, которую нужно обновить.</small>
+          </label>
+
+          <button id="create-job" class="primary-action" type="submit">Подготовить карточку</button>
+        </form>
+        <p id="status" class="status" role="status" aria-live="polite">Сначала выберите исходные документы.</p>
+      </section>
+
+      <section id="review-panel" class="review-card" aria-labelledby="review-title" hidden>
+        <div class="section-heading">
+          <p class="step-label">Шаг 2 · проверка</p>
+          <h2 id="review-title">Проверьте замечания</h2>
+          <p>Скачайте файл замечаний, внесите правки и загрузите его сюда.</p>
+        </div>
+        <div id="summary" class="summary" aria-label="Итог проверки"></div>
+        <ul id="warnings" class="warnings" aria-label="Замечания"></ul>
+        <div class="review-actions">
+          <a id="review-download" class="secondary-action" hidden>Скачать файл проверки</a>
+          <form id="review-form" class="review-upload" hidden>
+            <label for="review">
+              <span>Исправленный файл проверки</span>
+              <input id="review" name="review" type="file" accept=".xlsx,.xlsm,.xls" required>
+            </label>
+            <button id="submit-review" class="primary-action" type="submit">Загрузить проверку</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="result-card" aria-labelledby="result-title">
+        <div>
+          <p class="step-label">Шаг 3 · готовая карточка</p>
+          <h2 id="result-title">Файл карточки</h2>
+          <p id="result-hint">Станет доступен после подготовки.</p>
+        </div>
+        <a id="result-download" class="download is-disabled" aria-disabled="true">Карточка ещё не готова</a>
+      </section>
+    </main>
+  </body>
+</html>
