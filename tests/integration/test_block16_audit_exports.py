@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from hashlib import sha256
 
 import pytest
@@ -30,6 +31,42 @@ def test_existing_destination_is_never_clobbered_and_temp_files_are_cleaned(tmp_
     with pytest.raises(AuditExportError, match="EXPORT_DESTINATION_EXISTS"):
         export_snapshot(export_rows(), destination, "json")
     assert destination.read_bytes() == b"preserve"
+    assert not tuple(tmp_path.glob(".audit-*.tmp"))
+
+
+def test_publish_crash_and_concurrent_publishers_leave_no_temp_or_overwrite(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import report_processor.audit.export as audit_export
+
+    destination = tmp_path / "race.json"
+    original_link = audit_export.os.link
+
+    def crash(*_args: object, **_kwargs: object) -> None:
+        raise OSError("injected publish crash")
+
+    monkeypatch.setattr(audit_export.os, "link", crash)
+    with pytest.raises(OSError, match="injected publish crash"):
+        export_snapshot(export_rows(), destination, "json")
+    assert not destination.exists() and not tuple(tmp_path.glob(".audit-*.tmp"))
+    monkeypatch.setattr(audit_export.os, "link", original_link)
+    barrier = threading.Barrier(2)
+    outcomes: list[object] = []
+
+    def publish() -> None:
+        barrier.wait()
+        try:
+            outcomes.append(export_snapshot(export_rows(), destination, "json"))
+        except AuditExportError as exc:
+            outcomes.append(exc)
+
+    threads = [threading.Thread(target=publish), threading.Thread(target=publish)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len([item for item in outcomes if isinstance(item, str)]) == 1
+    assert len([item for item in outcomes if isinstance(item, AuditExportError)]) == 1
     assert not tuple(tmp_path.glob(".audit-*.tmp"))
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 
 import pytest
 from report_processor.audit import (
@@ -63,3 +64,29 @@ def test_events_are_append_only_and_invalid_transitions_are_rejected(tmp_path) -
         with pytest.raises(AuditIntegrityError) as failure:
             journal.append_event(run.run_id, "EXPORT", "EXPORT_VERIFIED")
     assert failure.value.code is AuditErrorCode.INVALID_STAGE_TRANSITION
+
+
+def test_concurrent_journals_allocate_one_strict_sequence_per_transition(tmp_path) -> None:
+    path = tmp_path / "audit.sqlite"
+    with AuditJournal(path) as journal:
+        run = _run(journal)
+    barrier = threading.Barrier(2)
+    outcomes: list[object] = []
+
+    def append_pending() -> None:
+        with AuditJournal(path) as connection:
+            barrier.wait()
+            try:
+                outcomes.append(connection.append_event(run.run_id, "RUN", "PENDING"))
+            except AuditIntegrityError as exc:
+                outcomes.append(exc)
+
+    threads = [threading.Thread(target=append_pending), threading.Thread(target=append_pending)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    with AuditJournal(path) as verified:
+        events = verified.validate_run(run.run_id)
+    assert [event.event_sequence for event in events] == [1]
+    assert sum(isinstance(item, AuditIntegrityError) for item in outcomes) == 1
