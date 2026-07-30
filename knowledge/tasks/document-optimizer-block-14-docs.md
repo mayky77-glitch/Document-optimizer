@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: document-optimizer-block-14-docs
-status: claimed
+status: done
 version: 1
 supersedes: null
 work_id: document-optimizer-block-14
@@ -12,7 +12,7 @@ agent_role: documentation-agent
 owner: block-14-docs
 profile: L0
 routing_grade: P1
-progress_revision: 0
+progress_revision: 2
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -21,9 +21,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-luna
 reasoning_effort: low
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-luna
+actual_reasoning_effort: low
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-31

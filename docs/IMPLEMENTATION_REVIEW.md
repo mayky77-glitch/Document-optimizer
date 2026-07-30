@@ -127,7 +127,8 @@ Raw cells, formulas и document content не попадают в отчёт; wor
 
 Evidence: synthetic set — 7 PASS; real-data — `REQUIRE_MANUAL_REVIEW`, 0 blocking,
 digest `c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`, входы
-не изменились. READY/main/CI здесь не заявляются.
+не изменились. Полный integration suite: **490 passed**; Ruff, format, clean
+install, compileall и `git diff --check` — PASS. READY/main требует зелёного PR.
 
 ## Блок 12 — детерминированный matching engine
 

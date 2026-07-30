@@ -332,7 +332,7 @@ rows, **107** target rows, **35** кандидатов, статусы **1 match
 ## Блок 14
 
 - **Название:** deterministic quality-control write gate
-- **Статус:** локальное evidence зафиксировано; integration release gate не объявлен
+- **Статус:** integration release gate пройден; ожидаются PR и GitHub Actions
 - **Контракт:** `QualityControlContract-14.0`, `QualityControlEngine-14.0`
 - **API:** `evaluate_quality_control(match_results, calculation_results, rule_set)`
 - **Выход:** `QualityControlReport` с decision, issues, summary, provenance и IDs
@@ -347,8 +347,9 @@ content не копируются; workbook и входы не изменяют�
 
 Evidence: synthetic **7 PASS**; real-data `REQUIRE_MANUAL_REVIEW`, **0 blocking**,
 digest `c20ecd6839a44cfb90586858f9a7699180f28fde2f299819624c2d3606689492`;
-размер, SHA-256 и `mtime` входных XLSX совпали. READY/main/CI требуют решения
-интеграционного владельца.
+размер, SHA-256 и `mtime` входных XLSX совпали. Полный suite: **490 passed**;
+Ruff, format, clean install, compileall и `git diff --check` — PASS. READY/main
+требует зелёного Pull Request.
 
 ## Блок 13
 
