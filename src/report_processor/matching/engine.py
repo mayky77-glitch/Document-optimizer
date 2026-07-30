@@ -214,7 +214,8 @@ def _candidate_for_pair(
     if rule_ids:
         strategies.append(MatchStrategy.CONFIGURATION_RULE)
         explanations.append("configuration_rule:" + ",".join(rule_ids))
-    if _fuzzy(source.work_name, target.work_name, policy.fuzzy_threshold):
+    fuzzy_confidence = _fuzzy_similarity(source.work_name, target.work_name)
+    if fuzzy_confidence is not None and fuzzy_confidence >= policy.fuzzy_threshold:
         strategies.append(MatchStrategy.FUZZY_REVIEW)
         explanations.append("fuzzy_review")
         manual = True
@@ -226,7 +227,7 @@ def _candidate_for_pair(
         rule_confidence if primary is MatchStrategy.CONFIGURATION_RULE else _CONFIDENCE[primary]
     )
     if MatchStrategy.FUZZY_REVIEW in ordered and len(ordered) == 1:
-        confidence = policy.fuzzy_threshold
+        confidence = fuzzy_confidence
     auto_selectable = not blockers and not manual
     candidate_id = _hash(
         "candidate",
@@ -325,6 +326,8 @@ def _rule_effects(
     manual = False
     confidence = _CONFIDENCE[MatchStrategy.CONFIGURATION_RULE]
     for rule in sorted(rule_set.rules, key=lambda item: item.rule_id):
+        if not rule.owner_approved or rule.status != "approved":
+            continue
         if not _scope_matches(rule.scope, source, target):
             continue
         for clause in rule.clauses:
@@ -394,11 +397,17 @@ def _clause_matches(clause, source_name: str | None, source_unit_raw: str | None
     )
 
 
-def _fuzzy(source_name: str | None, target_name: str | None, threshold: Decimal) -> bool:
+def _fuzzy_similarity(source_name: str | None, target_name: str | None) -> Decimal | None:
     if not source_name or not target_name or source_name == target_name:
-        return False
-    ratio = Decimal(str(SequenceMatcher(None, source_name, target_name, autojunk=False).ratio()))
-    return ratio >= threshold
+        return None
+    matcher = SequenceMatcher(None, source_name, target_name, autojunk=False)
+    matched_characters = sum(block.size for block in matcher.get_matching_blocks())
+    total_characters = len(source_name) + len(target_name)
+    if total_characters == 0:
+        return None
+    return (Decimal(2 * matched_characters) / Decimal(total_characters)).quantize(
+        Decimal("0.000001")
+    )
 
 
 def _document_index(value: object) -> str | None:
