@@ -110,6 +110,17 @@ src/report_processor/
 └── cli_inspect.py                    # команда inspect-workbook
 ```
 
+## Блоки 9–10
+
+`target_report/` читает целевой лист через готовую read-only workbook session.
+Он разделяет semantic recovery, row extraction, formula-cache trust, provenance
+и descriptive write plans; планы не применяются. Источник защищён fingerprint и
+stat checks, неоднозначный выбор требует явного override.
+
+`business_rules/` разделяет parsing, defaults, conflict detection и validation.
+Парсер принимает только data-only JSON/YAML, строит canonical JSON и SHA-256.
+Правила не исполняются; unsafe YAML-конструкции возвращаются как ошибки.
+
 ## Модель идентификатора
 
 Обычный файл:

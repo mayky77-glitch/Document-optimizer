@@ -77,3 +77,19 @@ business key отражены в collision statistics/warnings; строки н�
 отфильтрованы. SHA-256 и размер исходного Excel до/после совпали.
 Автоанализ трёх реальных книг также подтвердил безопасный
 `LOW_CONFIDENCE_SCHEMA` вместо необоснованного угадывания колонок.
+
+## Блоки 9–10
+
+Блок 9 публикует read-only контракт `TargetReportSchema-9.0`: snapshots
+структуры/формул/кэша, provenance, диагностику и описательные write plans.
+На реальном XLSX получены 107 строк, 60 планов и 0 diagnostics; исходник
+не изменён.
+
+Блок 10 публикует data-only контракт `RuleConfigurationVersion-1.0` для
+JSON/YAML. Валидация использует `Decimal`, canonical JSON и content hash;
+дубликаты YAML, tags, anchors/aliases и исполняемые конструкции запрещены.
+M01–M15 представлены структурированными issues/conflicts.
+
+Проверки: focused **28 passed**, полный suite **441 passed, 1 skipped**,
+Ruff PASS. До отдельного PR/CI gate блоки не считаются опубликованными в
+`main`.
