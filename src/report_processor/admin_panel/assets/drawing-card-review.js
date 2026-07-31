@@ -41,6 +41,14 @@
     manual_review: "Нужна ручная проверка",
   }[value] || text(value));
 
+  const firstValue = (source, keys) => {
+    if (!source || typeof source !== "object") return undefined;
+    for (const key of keys) {
+      if (source[key] !== null && source[key] !== undefined) return source[key];
+    }
+    return undefined;
+  };
+
   class DrawingCardReviewPanel {
     constructor({ requestJson, setStatus, setProgress, renderResult, persistSession }) {
       this.requestJson = requestJson;
@@ -109,7 +117,11 @@
     }
 
     render(payload) {
-      const clusters = Array.isArray(payload.clusters) ? payload.clusters : [];
+      const clusters = Array.isArray(payload.clusters)
+        ? payload.clusters
+        : Array.isArray(payload.items)
+          ? payload.items
+          : [];
       this.items.replaceChildren(...clusters.map((cluster) => this.renderCluster(cluster)));
       this.empty.hidden = clusters.length !== 0;
       this.page = Number(payload.page) || this.page;
@@ -151,7 +163,8 @@
       article.className = "review-item review-cluster";
       const id = text(cluster.cluster_id, "");
       const version = text(cluster.version, "");
-      const count = Number(cluster.member_count) || 0;
+      const members = Array.isArray(cluster.members) ? cluster.members : [];
+      const count = Number(cluster.member_count) || members.length;
       const selected = text(cluster.selected_category, "");
       const proposed = text(cluster.proposed_category, "");
       const decision = text(cluster.decision, "unresolved");
@@ -171,18 +184,17 @@
           <div><dt>Предложенная категория</dt><dd data-field="proposed"></dd></div>
           <div><dt>Уверенность</dt><dd data-field="confidence"></dd></div>
           <div><dt>Причина</dt><dd data-field="reason"></dd></div>
+          <div><dt>Стоимость группы</dt><dd class="aggregate-cost" data-field="aggregate-cost"></dd></div>
         </dl>
-        <details class="cluster-members">
-          <summary>Строк в группе: ${count}</summary>
-          <p>Решение ниже будет применено ко всем ${count} строкам этой группы.</p>
-        </details>
         <p class="selected-category" hidden></p>
         <div class="item-actions" aria-label="Решение по группе строк"></div>
-        <form class="category-editor" hidden>
-          <label>Категория<select class="category-input" required></select></label>
-          <button type="submit">Применить категорию</button>
-          <button type="button" data-cancel-category>Отмена</button>
-        </form>`;
+        <div class="category-actions" aria-label="Применить выбранную категорию">
+          <label>Категория<select class="category-input"></select></label>
+          <div class="category-action-buttons">
+            <button type="button" data-category-action="change_category">Учесть количество и стоимость</button>
+            <button type="button" data-category-action="cost_only">Учесть только стоимость</button>
+          </div>
+        </div>`;
       article.querySelector("h3").textContent = text(cluster.work_name, "Наименование работы не указано");
       article.querySelector(".decision-status").textContent = decisionLabel(decision);
       article.querySelector('[data-field="source-unit"]').textContent = text(cluster.source_unit);
@@ -192,6 +204,11 @@
         ? `${Math.round(Number(cluster.confidence) * 100)}%`
         : "Не указана";
       article.querySelector('[data-field="reason"]').textContent = reasonLabel(cluster.reason);
+      article.querySelector('[data-field="aggregate-cost"]').textContent = text(
+        firstValue(cluster, ["aggregate_total_cost", "total_cost"]),
+        "Не указана",
+      );
+      article.querySelector(".review-context").after(this.renderMembers(members, count));
       const selectedLabel = article.querySelector(".selected-category");
       if (selected) {
         selectedLabel.hidden = false;
@@ -201,9 +218,66 @@
       return article;
     }
 
+    renderMembers(members, count) {
+      const details = document.createElement("details");
+      details.className = "cluster-members";
+      const summary = document.createElement("summary");
+      summary.textContent = `Строк в группе: ${count}. Показать состав`;
+      const explanation = document.createElement("p");
+      explanation.textContent = `Решение ниже будет применено ко всем ${count} строкам этой группы.`;
+      details.append(summary, explanation);
+
+      if (!members.length) {
+        const empty = document.createElement("p");
+        empty.className = "cluster-members-empty";
+        empty.textContent = "Состав группы не получен.";
+        details.append(empty);
+        return details;
+      }
+
+      const scroll = document.createElement("div");
+      scroll.className = "cluster-members-table-wrap";
+      scroll.tabIndex = 0;
+      scroll.setAttribute("aria-label", "Таблица состава группы строк");
+      const table = document.createElement("table");
+      table.className = "cluster-members-table";
+      const caption = document.createElement("caption");
+      caption.textContent = "Состав группы строк";
+      const head = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      ["Наименование", "Ед.", "Количество", "Стоимость"].forEach((label) => {
+        const cell = document.createElement("th");
+        cell.scope = "col";
+        cell.textContent = label;
+        headRow.append(cell);
+      });
+      head.append(headRow);
+      const body = document.createElement("tbody");
+      members.forEach((member) => {
+        const row = document.createElement("tr");
+        const values = [
+          text(firstValue(member, ["work_name", "name", "display_name"]), "Не указано"),
+          text(firstValue(member, ["source_unit", "unit"]), "—"),
+          text(firstValue(member, ["quantity", "remaining_quantity"]), "—"),
+          text(firstValue(member, ["total_cost", "cost", "remaining_total_cost"]), "—"),
+        ];
+        values.forEach((value, index) => {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          if (index === 3) cell.className = "member-cost";
+          row.append(cell);
+        });
+        body.append(row);
+      });
+      table.append(caption, head, body);
+      scroll.append(table);
+      details.append(scroll);
+      return details;
+    }
+
     configureActions(article, state) {
       const actions = article.querySelector(".item-actions");
-      const editor = article.querySelector(".category-editor");
+      const categoryActions = article.querySelector(".category-actions");
       const category = article.querySelector(".category-input");
       CATEGORIES.forEach(([value, label]) => category.append(new Option(label, value)));
       category.value = state.proposed;
@@ -217,30 +291,20 @@
       };
       if (state.resolved) {
         addAction("Отменить решение", "undo");
+        categoryActions.hidden = true;
       } else {
         addAction("Одобрить", "approve", "approve-action");
         addAction("Отклонить", "reject", "danger-action");
-        addAction("Учитывать только стоимость", "cost_only");
-        const change = document.createElement("button");
-        change.type = "button";
-        change.textContent = "Изменить категорию";
-        change.addEventListener("click", () => {
-          editor.hidden = false;
-          category.focus();
+        categoryActions.querySelectorAll("[data-category-action]").forEach((button) => {
+          button.addEventListener("click", () => {
+            if (!category.value) {
+              category.focus();
+              return;
+            }
+            this.save(article, state.id, state.version, button.dataset.categoryAction, category.value);
+          });
         });
-        actions.append(change);
       }
-      article.querySelector("[data-cancel-category]").addEventListener("click", () => {
-        editor.hidden = true;
-      });
-      editor.addEventListener("submit", (event) => {
-        event.preventDefault();
-        if (!category.value) {
-          category.focus();
-          return;
-        }
-        this.save(article, state.id, state.version, "change_category", category.value);
-      });
     }
 
     async save(article, id, version, action, category) {
@@ -284,10 +348,29 @@
       try {
         const payload = await this.requestJson(`/api/drawing-card/jobs/${encodeURIComponent(this.jobId)}/review/apply`, { method: "POST" });
         this.renderResult(payload);
-        this.setStatus(payload.result_url ? "Решения применены. Карточка готова." : "Решения применены. Дождитесь подготовки карточки.");
+        const status = text(payload.status, "").toLowerCase();
+        if (payload.result_url || status === "ready") {
+          this.applyButton.hidden = true;
+          this.setStatus("Решения применены. Карточка готова.");
+        } else if (status === "processing") {
+          this.applyButton.hidden = true;
+          this.setStatus("Решения применены. Карточка готовится — дождитесь обновления статуса.");
+        } else if (status === "blocked" || status === "failed") {
+          this.applyButton.hidden = true;
+          this.setStatus(
+            status === "blocked"
+              ? "Карточка не сформирована: обработка заблокирована."
+              : "Карточка не сформирована: обработка завершилась с ошибкой.",
+            true,
+          );
+        } else {
+          this.applyButton.disabled = false;
+          this.setStatus("Решения приняты, но локальная панель не вернула понятный статус.", true);
+        }
       } catch (error) {
         this.setStatus(error.message, true);
-        this.applyButton.disabled = false;
+      } finally {
+        if (!this.applyButton.hidden) this.applyButton.disabled = false;
       }
     }
 
