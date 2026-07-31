@@ -341,11 +341,12 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
                 page=page,
                 page_size=page_size,
             )
+            current = drawing_panel.get_job(request.path_params["job_id"])
         except KeyError:
             return _error("Задача не найдена", 404)
         except (TypeError, ValueError):
             return _error("Проверьте номер страницы и размер списка", 400)
-        return _secure(JSONResponse(_inline_review_page(payload)))
+        return _secure(JSONResponse(_inline_review_page(payload, current)))
 
     async def drawing_card_review_item(request):
         job_id = request.path_params["job_id"]
@@ -476,7 +477,7 @@ def _period_label(value: str) -> str:
     return f"{months[int(month) - 1]} {year}"
 
 
-def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
+def _inline_review_page(payload: Mapping[str, object], job) -> dict[str, object]:
     action_states = {
         "approve": "approved",
         "reject": "rejected",
@@ -518,7 +519,7 @@ def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
         "total": total,
         "unresolved_count": unresolved,
         "can_apply": payload.get("can_apply", False),
-        "categories": drawing_card_category_options(),
+        "categories": drawing_card_category_options(job),
         "summary": {
             "Строк для проверки": total,
             "Осталось решений": unresolved,

@@ -328,6 +328,10 @@
     unresolved: "Ожидает решения",
   }[value] || "Ожидает решения");
 
+  const categoryDetails = (value) => reviewCategories.find((category) => category?.value === value);
+  const categoryLabel = (value) => categoryDetails(value)?.label || humanCategory(value);
+  const categoryUnit = (value, fallback) => categoryDetails(value)?.target_unit || fallback;
+
   const renderSummary = (values) => {
     summary.replaceChildren();
     if (!values || typeof values !== "object" || Array.isArray(values)) return;
@@ -381,20 +385,33 @@
     const id = reviewId(item);
     const state = valueFrom(item, ["decision", "status"]);
     const proposedCategory = valueFrom(item, ["proposed_category_label", "proposed_category"]);
-    const selectedCategory = draftCategories[id] || valueFrom(item, ["selected_category", "proposed_category", "category"]);
+    const persistedCategory = valueFrom(item, ["selected_category"]);
+    const selectedCategory = draftCategories[id] || persistedCategory || valueFrom(item, ["proposed_category", "category"]);
+    const resolved = ["approved", "rejected", "cost_only", "change_category"].includes(state);
     card.dataset.reviewId = id;
     card.querySelector(".work-name").textContent = textValue(valueFrom(item, ["work_name", "name", "work"]), "Наименование работы не указано");
     card.querySelector(".decision-status").textContent = decisionLabel(state);
     card.querySelector('[data-context="category"]').textContent = humanCategory(valueFrom(item, ["category_label", "category"]));
     card.querySelector('[data-context="quantity"]').textContent = textValue(valueFrom(item, ["quantity"]));
     card.querySelector('[data-context="source-unit"]').textContent = textValue(valueFrom(item, ["source_unit"]));
-    card.querySelector('[data-context="target-unit"]').textContent = textValue(valueFrom(item, ["target_unit"]));
+    const targetUnit = card.querySelector('[data-context="target-unit"]');
     card.querySelector('[data-context="cost"]').textContent = textValue(valueFrom(item, ["total_cost", "cost"]));
     const proposed = card.querySelector(".proposed-category");
     if (proposedCategory) {
       proposed.hidden = false;
       proposed.textContent = `Предложенная категория: ${humanCategory(proposedCategory)}`;
     }
+    const updateCategoryDetails = () => {
+      const draftCategory = draftCategories[id];
+      const displayedCategory = resolved ? persistedCategory : draftCategory || proposedCategory;
+      targetUnit.textContent = textValue(categoryUnit(displayedCategory, valueFrom(item, ["target_unit"])));
+      const selected = card.querySelector(".selected-category");
+      selected.hidden = !draftCategory || resolved;
+      selected.textContent = selected.hidden ? "" : `Выбранная категория: ${categoryLabel(draftCategory)}`;
+      const accepted = card.querySelector(".accepted-category");
+      accepted.hidden = !resolved || !persistedCategory;
+      accepted.textContent = accepted.hidden ? "" : `Принятая категория: ${categoryLabel(persistedCategory)}`;
+    };
     const categoryInput = card.querySelector(".category-input");
     categoryInput.replaceChildren(new Option("Выберите категорию", ""));
     reviewCategories.forEach((category) => {
@@ -405,9 +422,10 @@
     categoryInput.addEventListener("change", () => {
       if (categoryInput.value) draftCategories[id] = categoryInput.value;
       else delete draftCategories[id];
+      updateCategoryDetails();
       persistSession("review");
     });
-    const resolved = ["approved", "rejected", "cost_only", "change_category"].includes(state);
+    updateCategoryDetails();
     card.querySelector('[data-review-action="undo"]').hidden = !resolved;
     card.querySelectorAll('[data-review-action="approve"], [data-review-action="reject"], [data-review-action="change-category"], [data-review-action="cost-only"]').forEach((button) => { button.hidden = resolved; });
     card.querySelectorAll("[data-review-action]").forEach((button) => {
