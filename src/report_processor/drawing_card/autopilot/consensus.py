@@ -130,6 +130,8 @@ def _parse_record(line: str) -> MachineConsensus | None:
         if not isinstance(unit, str | type(None)) or not isinstance(source_type, str | type(None)):
             return None
         category = TargetWorkCategory(category_value) if category_value is not None else None
+        if category is None and (quantity == "include" or cost == "include"):
+            return None
         canonical = _canonical_payload(
             normalized_text=normalize_text(normalized_text),
             unit=normalize_unit(unit),

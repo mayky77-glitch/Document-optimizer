@@ -94,13 +94,17 @@ def test_valid_exact_machine_consensus_is_the_only_automatic_path(
     assert decision.requires_manual_review is False
 
 
-@pytest.mark.parametrize("mutation", ["fingerprint", "inactive", "malformed"])
+@pytest.mark.parametrize(
+    "mutation", ["fingerprint", "inactive", "malformed", "categoryless_include"]
+)
 def test_tampered_or_inactive_consensus_fails_closed(tmp_path: Path, mutation: str) -> None:
     payload = _record()
     if mutation == "fingerprint":
         payload["fingerprint"] = "tampered"
     elif mutation == "inactive":
         payload["active"] = False
+    elif mutation == "categoryless_include":
+        payload = _record(category=None, quantity="include", cost="include")
     else:
         payload["quantity_decision"] = "unsafe"
     path = tmp_path / "machine-consensus.jsonl"
