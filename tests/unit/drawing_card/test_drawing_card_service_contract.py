@@ -91,6 +91,13 @@ def test_update_requires_an_existing_xlsx_card_and_period_is_optional(tmp_path: 
         period="2026-07",
     )
     assert job.job_id
+    assert job.period == "2026-07"
+
+
+@pytest.mark.parametrize("period", ("июль 26", "июнь 2026 июль 2026", "2026-13"))
+def test_create_rejects_invalid_or_ambiguous_periods(tmp_path: Path, period: str) -> None:
+    with pytest.raises(ValueError):
+        _service(tmp_path).create_job(sources=[_source()], period=period)
 
 
 def test_jobs_keep_workspace_private_and_disable_rag_network(tmp_path: Path, monkeypatch) -> None:

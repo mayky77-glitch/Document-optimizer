@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 import shutil
 from collections.abc import Callable
@@ -14,6 +15,8 @@ from typing import Literal
 from report_processor.drawing_card.models import WorkflowRequest, WorkflowResult
 from report_processor.drawing_card.review import import_review_approvals
 from report_processor.drawing_card.workflow import default_template_path, run_workflow
+from report_processor.metadata.period_models import DocumentPeriod
+from report_processor.metadata.period_patterns import MONTHS
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
@@ -21,6 +24,12 @@ _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
 _ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+_CANONICAL_PERIOD_RE = re.compile(r"(?P<year>\d{4})-(?P<month>0[1-9]|1[0-2])")
+_RUSSIAN_PERIOD_RE = re.compile(
+    rf"(?P<month>{'|'.join(re.escape(name) for name in sorted(MONTHS, key=len, reverse=True))})"
+    r"\s+(?P<year>\d{4})",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True, repr=False)
@@ -265,7 +274,17 @@ def _validate_period(period: str | None) -> str | None:
         return None
     if not isinstance(period, str) or not (clean := period.strip()) or len(clean) > 64:
         raise ValueError("invalid period")
-    return clean
+    if match := _CANONICAL_PERIOD_RE.fullmatch(clean):
+        year, month = match.group("year"), match.group("month")
+    elif match := _RUSSIAN_PERIOD_RE.fullmatch(clean):
+        year = match.group("year")
+        month = str(MONTHS[match.group("month").casefold()])
+    else:
+        raise ValueError("invalid period")
+    try:
+        return DocumentPeriod(year=int(year), month=int(month)).normalized
+    except ValueError as error:
+        raise ValueError("invalid period") from error
 
 
 def _write_private(path: Path, content: bytes) -> Path:
