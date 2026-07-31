@@ -187,10 +187,16 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
     css = stylesheet.text.casefold()
 
     assert page.status_code == stylesheet.status_code == 200
-    for label in ("source", "target", "stage", "fit", "not fit"):
+    for label in (
+        "сверка документов",
+        "исходные документы",
+        "целевой отчёт",
+        "запустить сверку",
+    ):
         assert label in html
-    assert 'data-decision="fit"' in html and 'data-decision="not_fit"' in html
-    assert "fetch('/api/jobs'" in html
+    assert 'id="sources"' in html and 'name="sources"' in html
+    assert 'id="target"' in html and 'name="target"' in html
+    assert "post /api/jobs" in html
     assert 'name="viewport"' in html and "focus" in css
     assert "#0079c2" in css
     for token in ("unit_conflict", "unchanged_value", "cost_threshold", "manual_review"):

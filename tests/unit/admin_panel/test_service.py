@@ -245,12 +245,12 @@ def test_completed_jobs_are_bounded_without_evicting_an_active_review(tmp_path: 
 
     tracemalloc.start()
     try:
-        for index in range(16):
+        for index in range(80):
             complete_job(index)
         gc.collect()
         warmup_current, _ = tracemalloc.get_traced_memory()
 
-        for index in range(16, 64):
+        for index in range(80, 160):
             complete_job(index)
         gc.collect()
         retained_current, _ = tracemalloc.get_traced_memory()

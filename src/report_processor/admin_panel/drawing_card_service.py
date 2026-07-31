@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from report_processor.drawing_card.models import WorkflowRequest, WorkflowResult
+from report_processor.drawing_card.periods import discover_workbook_periods
 from report_processor.drawing_card.review import (
     append_feedback,
     import_review_approvals,
@@ -26,7 +27,7 @@ from report_processor.metadata.period_patterns import MONTHS
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
-MAX_RETAINED_TERMINAL_JOBS = 128
+MAX_RETAINED_TERMINAL_JOBS = 64
 _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
@@ -149,13 +150,20 @@ class DrawingCardService:
         except KeyError as error:
             raise KeyError(job_id) from error
 
+    def discover_periods(self, sources: list[tuple[str, bytes]]) -> tuple[str, ...]:
+        """Inspect filenames and workbook values read-only without creating a job."""
+        _validate_sources(sources)
+        return discover_workbook_periods(sources, temporary_root=self.workspace_root)
+
     def _prune_terminal_jobs(self) -> None:
         terminal = [
             job_id
             for job_id, job in self._jobs.items()
             if job.status in {"ready", "failed", "blocked"}
         ]
-        for job_id in terminal[:-MAX_RETAINED_TERMINAL_JOBS]:
+        active_count = len(self._jobs) - len(terminal)
+        terminal_limit = max(0, MAX_RETAINED_TERMINAL_JOBS - active_count)
+        for job_id in terminal[:-terminal_limit] if terminal_limit else terminal:
             self._jobs.pop(job_id, None)
 
     def get_result(self, job_id: str) -> tuple[Path, str]:
@@ -184,7 +192,9 @@ class DrawingCardService:
             review_path.unlink(missing_ok=True)
             raise ValueError("invalid manual review workbook") from error
         job.review = review_path
-        return self._run(job, review_decisions=review_path)
+        result = self._run(job, review_decisions=review_path)
+        self._prune_terminal_jobs()
+        return result
 
     def list_review_items(
         self, *, job_id: str, page: int = 1, page_size: int = 50
@@ -263,6 +273,7 @@ class DrawingCardService:
             append_feedback(
                 self.workspace_root / "review-feedback.jsonl", job.review_rows, job.inline_approvals
             )
+        self._prune_terminal_jobs()
         return rerun
 
     def _run(self, job: DrawingCardJob, *, review_decisions: Path | None = None) -> DrawingCardJob:

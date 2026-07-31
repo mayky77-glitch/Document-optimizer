@@ -17,7 +17,7 @@ from .presentation import journal_payload, processing_presentation
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
-MAX_RETAINED_TERMINAL_JOBS = 128
+MAX_RETAINED_TERMINAL_JOBS = 64
 _ALLOWED_SUFFIXES = {".xlsx", ".xlsm"}
 _ALLOWED_MODES = {"inspect", "dry-run", "write"}
 _STAGE_PATTERN = re.compile(r"^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё._ -]{0,63}$")
@@ -197,6 +197,7 @@ class AdminPanelService:
                 job.status = "review_recorded"
             elif job.status == "review_required":
                 job.status = "ready"
+        self._prune_terminal_jobs()
         return job
 
     def get_result(self, job_id: str) -> tuple[Path, str]:
@@ -211,7 +212,9 @@ class AdminPanelService:
             for job_id, job in self.jobs.items()
             if job.status in {"ready", "failed", "blocked", "review_recorded"}
         ]
-        for job_id in terminal[:-MAX_RETAINED_TERMINAL_JOBS]:
+        active_count = len(self.jobs) - len(terminal)
+        terminal_limit = max(0, MAX_RETAINED_TERMINAL_JOBS - active_count)
+        for job_id in terminal[:-terminal_limit] if terminal_limit else terminal:
             self.jobs.pop(job_id, None)
 
     def _apply_execution_result(self, job: AdminJob, result: object) -> None:

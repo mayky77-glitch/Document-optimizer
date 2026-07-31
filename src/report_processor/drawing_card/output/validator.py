@@ -13,6 +13,12 @@ from openpyxl.utils import get_column_letter
 from ..models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER, ObjectBlockLayout
 from ..sources.normalization import is_plausible_drawing_code, normalize_text
 from ..statuses import Status
+from .contract import (
+    CARD_HEADERS,
+    COST_FORMAT,
+    FRACTIONAL_QUANTITY_FORMAT,
+    INTEGER_QUANTITY_FORMAT,
+)
 from .xlsx_xml import find_binary_tail_cells
 
 _EXPECTED_CATEGORIES = tuple(
@@ -78,20 +84,24 @@ def _validate_layout_contract(
             errors.append(f"MISSING_MERGE:{sheet.title}:{merge}")
         if sheet.cell(2, start).value != f"Индекс объекта: {layout.object_index}":
             errors.append(f"INVALID_OBJECT_HEADER:{sheet.title}:{start}")
+        for offset, expected in enumerate(CARD_HEADERS):
+            if sheet.cell(3, start + offset).value != expected:
+                coordinate = sheet.cell(3, start + offset).coordinate
+                errors.append(f"INVALID_COLUMN_HEADER:{sheet.title}:{coordinate}")
         for block in layout.drawing_code_blocks:
             for offset in range(len(CATEGORY_ORDER)):
                 row = block.start_row + offset
                 quantity = sheet.cell(row, start + 3)
                 cost = sheet.cell(row, start + 4)
                 expected_quantity_format = (
-                    "0"
+                    INTEGER_QUANTITY_FORMAT
                     if isinstance(quantity.value, (int, Decimal))
                     and Decimal(str(quantity.value)) == Decimal(str(quantity.value)).to_integral()
-                    else "0.###"
+                    else FRACTIONAL_QUANTITY_FORMAT
                 )
                 if quantity.number_format != expected_quantity_format:
                     errors.append(f"INVALID_QUANTITY_FORMAT:{sheet.title}:{quantity.coordinate}")
-                if cost.number_format != "#,##0.00":
+                if cost.number_format != COST_FORMAT:
                     errors.append(f"INVALID_COST_FORMAT:{sheet.title}:{cost.coordinate}")
                 if not all(sheet.cell(row, column).has_style for column in range(start, start + 5)):
                     errors.append(f"MISSING_DATA_STYLE:{sheet.title}:{row}")

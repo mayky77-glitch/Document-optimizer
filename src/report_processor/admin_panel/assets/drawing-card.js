@@ -32,9 +32,42 @@
 
   const SOURCE_WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xlsb"]);
   const REVIEW_PAGE_SIZE = 50;
+  const RUSSIAN_MONTHS = [
+    "январь",
+    "февраль",
+    "март",
+    "апрель",
+    "май",
+    "июнь",
+    "июль",
+    "август",
+    "сентябрь",
+    "октябрь",
+    "ноябрь",
+    "декабрь",
+  ];
+  const RUSSIAN_MONTH_NUMBERS = new Map(
+    RUSSIAN_MONTHS.map((name, index) => [name, index + 1]),
+  );
+  const PERIOD_FROM_FULL_DATE_RE =
+    /(?:^|[^\d])(?:0?[1-9]|[12]\d|3[01])[._/-](?<month>0?[1-9]|1[0-2])[._/-](?<year>\d{4})(?!\d)/u;
+  const PERIOD_FROM_YEAR_MONTH_RE =
+    /(?:^|[^\d])(?<year>\d{4})[._-](?<month>0?[1-9]|1[0-2])(?!\d)/u;
+  const PERIOD_FROM_MONTH_YEAR_RE =
+    /(?:^|[^\d])(?<month>0?[1-9]|1[0-2])[._-](?<year>\d{4})(?!\d)/u;
+  const PERIOD_FROM_RUSSIAN_MONTH_RE = new RegExp(
+    `(?:^|[^\\p{L}])(?<month>${RUSSIAN_MONTHS.join("|")})(?=[^\\p{L}]|$)(?:[\\s_-]+[^\\s_-]+){0,2}[\\s_-]+(?<year>\\d{4})(?!\\d)`,
+    "u",
+  );
+  const ZIP_SIGNATURES = [
+    [0x50, 0x4b, 0x03, 0x04],
+    [0x50, 0x4b, 0x05, 0x06],
+    [0x50, 0x4b, 0x07, 0x08],
+  ];
   let currentJobId = null;
   let currentPage = 1;
   let totalPages = 1;
+  let periodScanRevision = 0;
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -60,10 +93,127 @@
     sourceCount.textContent = count ? `Выбрано исходных файлов: ${count}` : "Файлы пока не выбраны";
   };
 
-  const updatePeriodOptions = () => {
-    const periods = [...new Set([...sourceFiles.files].map((file) => file.name.match(/(20\d{2})[._-](0?[1-9]|1[0-2])/u)).filter(Boolean).map((match) => `${match[1]}-${match[2].padStart(2, "0")}`))].sort();
+  const canonicalPeriod = (year, month) => {
+    const numericYear = Number(year);
+    const numericMonth = Number(month);
+    if (
+      !Number.isInteger(numericYear) ||
+      numericYear < 1 ||
+      !Number.isInteger(numericMonth) ||
+      numericMonth < 1 ||
+      numericMonth > 12
+    ) {
+      return "";
+    }
+    return `${String(numericYear).padStart(4, "0")}-${String(numericMonth).padStart(2, "0")}`;
+  };
+
+  const extractPeriodFromFilename = (name) => {
+    const normalized =
+      typeof name === "string"
+        ? name.toLocaleLowerCase("ru-RU").replaceAll("ё", "е")
+        : "";
+    for (const pattern of [
+      PERIOD_FROM_FULL_DATE_RE,
+      PERIOD_FROM_YEAR_MONTH_RE,
+      PERIOD_FROM_MONTH_YEAR_RE,
+    ]) {
+      const match = normalized.match(pattern);
+      if (match?.groups) {
+        return canonicalPeriod(match.groups.year, match.groups.month);
+      }
+    }
+    const namedMatch = normalized.match(PERIOD_FROM_RUSSIAN_MONTH_RE);
+    return namedMatch?.groups
+      ? canonicalPeriod(
+          namedMatch.groups.year,
+          RUSSIAN_MONTH_NUMBERS.get(namedMatch.groups.month),
+        )
+      : "";
+  };
+
+  const periodLabel = (value) =>
+    `${RUSSIAN_MONTHS[Number(value.slice(5)) - 1]} ${value.slice(0, 4)}`;
+
+  const renderPeriodOptions = (values) => {
+    const periods = [...new Set(values)].sort();
     period.replaceChildren(new Option("Последний найденный период", ""));
-    periods.forEach((value) => period.append(new Option(value, value)));
+    periods.forEach((value) => period.append(new Option(periodLabel(value), value)));
+    period.value = periods.at(-1) ?? "";
+  };
+
+  const discoverPeriodsFromTables = async (revision, filenamePeriods) => {
+    const data = new FormData();
+    [...sourceFiles.files].forEach((file) => data.append("sources", file));
+    if (!sourceFiles.files.length) return;
+    try {
+      const response = await fetch("/api/drawing-card/periods", {
+        method: "POST",
+        body: data,
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (revision !== periodScanRevision || !Array.isArray(payload.periods)) return;
+      const workbookPeriods = payload.periods
+        .map((item) => (typeof item?.value === "string" ? item.value : ""))
+        .filter(Boolean);
+      renderPeriodOptions([...filenamePeriods, ...workbookPeriods]);
+    } catch {
+      // Filename periods remain usable when a workbook cannot be inspected.
+    }
+  };
+
+  const updatePeriodOptions = () => {
+    const revision = ++periodScanRevision;
+    const filenamePeriods = [...sourceFiles.files]
+      .map((file) => extractPeriodFromFilename(file.name))
+      .filter(Boolean);
+    renderPeriodOptions(filenamePeriods);
+    void discoverPeriodsFromTables(revision, filenamePeriods);
+  };
+
+  const matchesSignature = (bytes, signature) =>
+    signature.every((value, index) => bytes[index] === value);
+
+  const hasZipSignature = (bytes) =>
+    ZIP_SIGNATURES.some((signature) => matchesSignature(bytes, signature));
+
+  const workbookPreflightError = async (file, allowedExtensions) => {
+    const name =
+      typeof file?.name === "string" ? file.name : "выбранный файл";
+    const extension = fileExtension(file);
+    if (name.startsWith("~$")) {
+      return `Файл «${name}» — временный файл Excel. Закройте книгу и выберите файл без префикса «~$».`;
+    }
+    if (!allowedExtensions.has(extension)) {
+      return `Файл «${name}» имеет неподдерживаемый тип. Выберите Excel-файл (${[
+        ...allowedExtensions,
+      ].join(", ")}).`;
+    }
+    let bytes;
+    try {
+      bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    } catch {
+      return `Не удалось прочитать файл «${name}». Выберите его снова.`;
+    }
+    if (!hasZipSignature(bytes)) {
+      return `Файл «${name}» не является корректной Excel-книгой. Сохраните его в Excel и выберите снова.`;
+    }
+    return "";
+  };
+
+  const selectedWorkbooksPreflightError = async () => {
+    for (const file of sourceFiles.files) {
+      const error = await workbookPreflightError(
+        file,
+        SOURCE_WORKBOOK_EXTENSIONS,
+      );
+      if (error) return error;
+    }
+    if (operation.value === "update" && existingCard.files[0]) {
+      return workbookPreflightError(existingCard.files[0], new Set([".xlsx"]));
+    }
+    return "";
   };
 
   const formError = () => {
@@ -350,7 +500,7 @@
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const error = formError();
+    const error = formError() || (await selectedWorkbooksPreflightError());
     if (error) {
       setStatus(error, true);
       return;

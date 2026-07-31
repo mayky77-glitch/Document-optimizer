@@ -25,6 +25,7 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[TAGS]] — canonical tag taxonomy and targeted lookup.
 - [[ORCHESTRATION]] — routing, ownership, and model profiles.
 - [[maps/architecture|Architecture map]] — component links.
+- [[maps/project-map|Project map]] — product surfaces, contracts, and focused checks.
 - [[maps/active-work|Active work]] — live task links.
 - [[DECISIONS]] — accepted cross-cutting decisions.
 
