@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from ..config import CategoryRule, RulesConfig
@@ -105,6 +107,14 @@ _CONFIRMED_NEGATIVE_ALL = (
     ("изготовлен", "емкост"),
     ("изготовлен", "резервуар"),
 )
+
+_UNRESOLVED_FORMULA_WARNINGS = frozenset({Status.FORMULA_WITHOUT_CACHED_VALUE, Status.EXCEL_ERROR})
+
+
+@lru_cache(maxsize=256)
+def _exact_token_pattern(phrase: str) -> re.Pattern[str]:
+    """Compatibility helper for exact token masks; cache remains strictly bounded."""
+    return re.compile(rf"(?<![\w/]){re.escape(normalize_text(phrase))}(?![\w/])", re.IGNORECASE)
 
 
 def _contains_phrase(text: str, phrase: str) -> bool:
@@ -372,7 +382,7 @@ class DrawingRowMatcher:
 
     @staticmethod
     def _has_unresolved_formula(row: DrawingSourceRow) -> bool:
-        return any(str(item).startswith("FORMULA_") for item in row.warnings)
+        return any(item in _UNRESOLVED_FORMULA_WARNINGS for item in row.warnings)
 
     @staticmethod
     def _is_no_impact(row: DrawingSourceRow, text: str) -> bool:
@@ -423,12 +433,16 @@ class DrawingRowMatcher:
         quantity_only = _has_any(text, rule.quantity_only_any)
         compatible = _unit_is_compatible(row.unit_raw, rule)
         warnings: list[str] = []
-        quantity = "include" if row.remaining_quantity is not None and not cost_only else "exclude"
+        quantity = (
+            "include" if row.remaining_quantity not in (None, 0) and not cost_only else "exclude"
+        )
         if quantity == "include" and not compatible:
             quantity = "review"
             warnings.append(Status.UNIT_MISMATCH)
         cost = (
-            "include" if row.remaining_total_cost is not None and not quantity_only else "exclude"
+            "include"
+            if row.remaining_total_cost not in (None, 0) and not quantity_only
+            else "exclude"
         )
         review = quantity == "review"
         rule_id = f"rules:{self.rules.version}:{rule.category.value}"
