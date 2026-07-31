@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import shutil
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,8 @@ from pathlib import Path
 from .presentation import journal_payload, processing_presentation
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+MAX_SOURCES = 32
+MAX_RETAINED_TERMINAL_JOBS = 128
 _ALLOWED_SUFFIXES = {".xlsx", ".xlsm"}
 _ALLOWED_MODES = {"inspect", "dry-run", "write"}
 _STAGE_PATTERN = re.compile(r"^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё._ -]{0,63}$")
@@ -32,6 +35,8 @@ class AdminJob:
     mode: str
     source_digest: str
     target_digest: str
+    sources: tuple[Path, ...] = ()
+    source_digests: tuple[str, ...] = ()
     status: str = "pending"
     output: Path | None = None
     summary: dict[str, object] = field(default_factory=dict)
@@ -79,16 +84,20 @@ class AdminPanelService:
     def create_job(
         self,
         *,
-        source_name: str,
-        source_content: bytes,
+        source_name: str | None = None,
+        source_content: bytes | None = None,
+        sources: list[tuple[str, bytes]] | None = None,
         target_name: str,
         target_content: bytes,
         stage: str,
         mode: str = "write",
     ) -> AdminJob:
-        validate_workbook_upload(source_name, source_content)
+        upload_sources = _validated_sources(sources, source_name, source_content)
         validate_workbook_upload(target_name, target_content)
-        if len(source_content) + len(target_content) > MAX_UPLOAD_BYTES:
+        if (
+            sum(len(content) for _name, content in upload_sources) + len(target_content)
+            > MAX_UPLOAD_BYTES
+        ):
             raise ValueError("combined upload is too large")
         clean_stage = validate_stage(stage)
         clean_mode = validate_mode(mode)
@@ -97,23 +106,31 @@ class AdminPanelService:
         registered = False
         try:
             directory.mkdir(mode=0o700, parents=False, exist_ok=False)
-            source = directory / f"source{Path(source_name).suffix.casefold()}"
+            source_paths = tuple(
+                directory / f"source-{index:02d}{Path(name).suffix.casefold()}"
+                for index, (name, _content) in enumerate(upload_sources, 1)
+            )
             target = directory / f"target{Path(target_name).suffix.casefold()}"
-            _private_write(source, source_content)
+            for source, (_name, content) in zip(source_paths, upload_sources, strict=True):
+                _private_write(source, content)
             _private_write(target, target_content)
             job = AdminJob(
                 job_id=job_id,
                 directory=directory,
-                source=source,
+                source=source_paths[0],
                 target=target,
                 stage=clean_stage,
                 mode=clean_mode,
-                source_digest=_digest(source_content),
+                source_digest=_digest(upload_sources[0][1]),
                 target_digest=_digest(target_content),
+                sources=source_paths,
+                source_digests=tuple(_digest(content) for _name, content in upload_sources),
             )
             self.jobs[job_id] = job
             registered = True
-            return self.run(job_id)
+            result = self.run(job_id)
+            self._prune_terminal_jobs()
+            return result
         except (OSError, TypeError, ValueError):
             if registered:
                 self.jobs.pop(job_id, None)
@@ -188,6 +205,15 @@ class AdminPanelService:
             raise KeyError(job_id)
         return job.output, job.result_name
 
+    def _prune_terminal_jobs(self) -> None:
+        terminal = [
+            job_id
+            for job_id, job in self.jobs.items()
+            if job.status in {"ready", "failed", "blocked", "review_recorded"}
+        ]
+        for job_id in terminal[:-MAX_RETAINED_TERMINAL_JOBS]:
+            self.jobs.pop(job_id, None)
+
     def _apply_execution_result(self, job: AdminJob, result: object) -> None:
         if result is None or isinstance(result, Path):
             job.output = result
@@ -233,7 +259,7 @@ class AdminPanelService:
 
 
 def validate_workbook_upload(name: str, content: bytes) -> None:
-    if not isinstance(name, str) or not name or "\x00" in name:
+    if not isinstance(name, str) or not name or "\x00" in name or not _safe_basename(name):
         raise ValueError("invalid filename")
     if Path(name).suffix.casefold() not in _ALLOWED_SUFFIXES:
         raise ValueError("only .xlsx and .xlsm workbooks are accepted")
@@ -277,21 +303,37 @@ def _default_execute(job: AdminJob) -> object:
     from report_processor.processing import ProcessMode, ProcessReportRequest
     from report_processor.workflow import process_report
 
-    output = job.directory / "result.xlsx"
-    request = ProcessReportRequest(
-        source_path=job.source,
-        target_path=job.target,
-        mode=ProcessMode(job.mode),
-        strict=False,
-        output_path=output if job.mode == "write" else None,
-        stage=job.stage,
-        options={"stage_rag": True, "stage_rag_top_k": 3},
-    )
-    return process_report(request)
+    target = job.target
+    result = None
+    for index, source in enumerate(job.sources or (job.source,), 1):
+        output = job.directory / (
+            "result.xlsx"
+            if index == len(job.sources or (job.source,))
+            else f"result-{index:02d}.xlsx"
+        )
+        request = ProcessReportRequest(
+            source_path=source,
+            target_path=target,
+            mode=ProcessMode(job.mode),
+            strict=False,
+            output_path=output if job.mode == "write" else None,
+            stage=job.stage,
+            options={"stage_rag": True, "stage_rag_top_k": 3},
+        )
+        result = process_report(request)
+        if job.mode == "write" and result.exit_code.value in {0, 1}:
+            target = output
+        else:
+            break
+    return result
 
 
 def _verify_inputs(job: AdminJob) -> None:
-    if _file_digest(job.source) != job.source_digest:
+    sources = job.sources or (job.source,)
+    digests = job.source_digests or (job.source_digest,)
+    if len(sources) != len(digests) or any(
+        _file_digest(source) != digest for source, digest in zip(sources, digests, strict=True)
+    ):
         raise RuntimeError("source upload changed during processing")
     if _file_digest(job.target) != job.target_digest:
         raise RuntimeError("target upload changed during processing")
@@ -319,3 +361,34 @@ def _remove_partial_output(job: AdminJob) -> None:
     candidate.unlink(missing_ok=True)
     job.output = None
     job.result_name = None
+
+
+def _validated_sources(
+    sources: list[tuple[str, bytes]] | None,
+    source_name: str | None,
+    source_content: bytes | None,
+) -> list[tuple[str, bytes]]:
+    """Accept the legacy singular upload or the bounded bulk contract, never both."""
+    if sources is not None and (source_name is not None or source_content is not None):
+        raise ValueError("provide sources or legacy source_name/source_content, not both")
+    values = sources if sources is not None else [(source_name, source_content)]
+    if not isinstance(values, list) or not 1 <= len(values) <= MAX_SOURCES:
+        raise ValueError("provide from 1 to 32 source workbooks")
+    validated: list[tuple[str, bytes]] = []
+    basenames: set[str] = set()
+    for value in values:
+        if not isinstance(value, tuple) or len(value) != 2:
+            raise ValueError("invalid source upload")
+        name, content = value
+        validate_workbook_upload(name, content)
+        basename = unicodedata.normalize("NFC", name)
+        canonical_name = basename.casefold()
+        if canonical_name in basenames:
+            raise ValueError("duplicate source filename")
+        basenames.add(canonical_name)
+        validated.append((basename, content))
+    return sorted(validated, key=lambda item: (item[0].casefold(), _digest(item[1])))
+
+
+def _safe_basename(name: str) -> bool:
+    return name == Path(name).name and "/" not in name and "\\" not in name

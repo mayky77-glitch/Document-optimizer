@@ -273,7 +273,11 @@ def write_card(
                         if isinstance(value, Decimal) and column_offset in {3, 4}:
                             exact_numeric_cells[(sheet.title, cell.coordinate)] = value
                         if column_offset == 3:
-                            cell.number_format = "0.###"
+                            cell.number_format = (
+                                "0"
+                                if isinstance(value, Decimal) and value == value.to_integral()
+                                else "0.###"
+                            )
                         elif column_offset == 4:
                             cell.number_format = "#,##0.00"
                         if result.requires_manual_review or result.status not in {
