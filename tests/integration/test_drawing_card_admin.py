@@ -3,56 +3,53 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from starlette.testclient import TestClient
 
 from report_processor.admin_panel import create_app
+from report_processor.admin_panel.drawing_card_service import DrawingCardJob, DrawingCardService
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "drawing_card"
 
 
-class FakeDrawingCardService:
+class FakeDrawingCardService(DrawingCardService):
     def __init__(self, private_root: Path) -> None:
-        self.private_root = private_root
+        super().__init__(private_root)
         self.calls: list[dict[str, object]] = []
-        self.job = SimpleNamespace(
-            job_id="opaque-job",
-            status="review_required",
-            summary={"source_files": 1, "extracted_rows": 7, "card_rows": 32, "manual_review": 1},
-            warnings=[],
-        )
+        self.created_job_ids: list[str] = []
 
-    def create_job(self, **payload: object) -> object:
+    def create_job(self, **payload: object) -> DrawingCardJob:
         self.calls.append(dict(payload))
-        return self.job
+        job = super().create_job(**payload)
+        self.created_job_ids.append(job.job_id)
+        return job
 
-    def get_job(self, job_id: str) -> object:
-        if job_id != "opaque-job":
-            raise KeyError(job_id)
-        return self.job
+    def _run(self, job: DrawingCardJob, *, review_decisions: Path | None = None) -> DrawingCardJob:
+        del review_decisions
+        job.status = "review_required"
+        job.summary = {
+            "source_files": len(job.sources),
+            "extracted_rows": 7,
+            "card_rows": 32,
+            "manual_review": 1,
+        }
+        job.warnings = []
+        job.review = job.directory / "private-manual-review.xlsx"
+        job.review.write_bytes(b"PK\x03\x04review")
+        job.review.chmod(0o600)
+        return job
 
-    def get_result(self, job_id: str) -> tuple[str, bytes]:
-        if job_id != "opaque-job":
-            raise KeyError(job_id)
-        raise KeyError(job_id)
-
-    def get_review(self, job_id: str) -> tuple[str, bytes]:
-        if job_id != "opaque-job":
-            raise KeyError(job_id)
-        return "manual-review.xlsx", b"PK\x03\x04review"
-
-    def apply_review(self, *, job_id: str, review_name: str, review_content: bytes) -> object:
-        if job_id != "opaque-job" or not review_content.startswith(b"PK"):
+    def apply_review(
+        self, *, job_id: str, review_name: str, review_content: bytes
+    ) -> DrawingCardJob:
+        job = self.get_job(job_id)
+        if not review_name.endswith(".xlsx") or not review_content.startswith(b"PK"):
             raise ValueError("invalid review")
-        self.job = SimpleNamespace(
-            job_id=job_id,
-            status="ready",
-            summary={"source_files": 1, "extracted_rows": 7, "card_rows": 32, "manual_review": 0},
-            warnings=[],
-        )
-        return self.job
+        job.status = "ready"
+        job.summary["manual_review"] = 0
+        job.review = None
+        return job
 
 
 @pytest.fixture
@@ -79,7 +76,8 @@ def _files(name: str = "source.xlsx", content: bytes | None = None):
 def test_create_and_read_job_hide_private_paths_from_path_header_and_json(client) -> None:
     test_client, service, private_root = client
     created = test_client.post("/api/drawing-card/jobs", files=_files())
-    fetched = test_client.get("/api/drawing-card/jobs/opaque-job")
+    job_id = created.json()["job_id"]
+    fetched = test_client.get(f"/api/drawing-card/jobs/{job_id}")
 
     assert created.status_code == 201
     assert fetched.status_code == 200
@@ -93,16 +91,20 @@ def test_create_and_read_job_hide_private_paths_from_path_header_and_json(client
 
 @pytest.mark.parametrize("name", ("archive.zip", "../private.xlsx"))
 def test_create_rejects_archive_and_path_like_uploads(client, name: str) -> None:
-    response = client[0].post("/api/drawing-card/jobs", files=_files(name=name))
+    test_client, service, _ = client
+    response = test_client.post("/api/drawing-card/jobs", files=_files(name=name))
 
     assert response.status_code == 400
+    assert service.created_job_ids == []
 
 
 def test_review_download_upload_and_rerun_use_the_review_field(client) -> None:
     test_client, _, _ = client
-    downloaded = test_client.get("/api/drawing-card/jobs/opaque-job/review")
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job_id = created.json()["job_id"]
+    downloaded = test_client.get(f"/api/drawing-card/jobs/{job_id}/review")
     rerun = test_client.post(
-        "/api/drawing-card/jobs/opaque-job/review",
+        f"/api/drawing-card/jobs/{job_id}/review",
         files={
             "review": (
                 "manual-review.xlsx",
@@ -113,6 +115,6 @@ def test_review_download_upload_and_rerun_use_the_review_field(client) -> None:
     )
 
     assert downloaded.status_code == 200
-    assert "manual-review.xlsx" in downloaded.headers["content-disposition"]
+    assert "manual_review.xlsx" in downloaded.headers["content-disposition"]
     assert rerun.status_code == 200
     assert rerun.json()["status"] == "ready"

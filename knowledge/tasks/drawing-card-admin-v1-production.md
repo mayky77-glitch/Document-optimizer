@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: drawing-card-admin-v1-production
-status: claimed
+status: done
 version: 1
 work_id: drawing-card-admin-v1
 task_id: production
@@ -9,14 +9,18 @@ purpose: "Перенести deterministic drawing-card workflow и создат
 role: worker
 agent_role: developer
 owner: drawing-card-production
-profile: L2
-routing_grade: P4
+profile: L1
+routing_grade: P3
 routing_reason: "Port of a multi-module Excel workflow, package resources and private review lifecycle."
 assigned_model: gpt-5.6-terra
-reasoning_effort: high
-launch_status: planned
-progress_revision: 0
-state_fingerprint: ""
+reasoning_effort: medium
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
+fallback_reason: ""
+model_fallback: false
+progress_revision: 1
+state_fingerprint: "59ccb5f0536521ed96ac92cb315a9dab8055cb684ffac18b025607c5aa6f49f5"
 no_progress_count: 0
 circuit_state: closed
 luna_benchmark_evidence: ""
@@ -64,7 +68,7 @@ acceptance_commands:
   - "uv run python -m compileall -q src/report_processor/drawing_card src/report_processor/admin_panel"
 tags:
   - task/implementation
-  - status/active
+  - status/done
   - layer/backend
   - risk/high
 ---
@@ -79,3 +83,7 @@ model configuration. Package rules, examples and the default template as
 Create a private job service for create/update and review re-run. The service
 accepts only explicit uploaded files, never ZIP or directories, and never
 publishes private paths or raw audit artifacts.
+
+Completion evidence: private service, bundled resources and workflow integrated;
+safe filename/magic/size validation; opaque repr; identity-preserving private
+staging; focused real demo `1 passed`; full regression `604 passed`.

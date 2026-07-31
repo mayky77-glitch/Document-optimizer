@@ -39,8 +39,8 @@
         <form id="drawing-card-form" novalidate>
           <label class="file-field" for="sources">
             <span>Исходные документы <em>обязательно</em></span>
-            <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm,.xls" multiple required aria-describedby="sources-help">
-            <small id="sources-help">КС-2, накопительные ведомости и другие источники в Excel.</small>
+            <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm,.xlsb" multiple required aria-describedby="sources-help">
+            <small id="sources-help">КС-2, накопительные ведомости и другие источники в форматах .xlsx, .xlsm и .xlsb.</small>
           </label>
 
           <div class="fields-row">
@@ -67,7 +67,7 @@
 
           <label id="existing-card-field" class="file-field existing-card" for="existing-card" hidden>
             <span>Существующая карточка <em>обязательно для обновления</em></span>
-            <input id="existing-card" name="existing_card" type="file" accept=".xlsx,.xlsm,.xls" disabled>
+            <input id="existing-card" name="existing_card" type="file" accept=".xlsx" disabled>
             <small>Загрузите карточку, которую нужно обновить.</small>
           </label>
 
@@ -89,7 +89,7 @@
           <form id="review-form" class="review-upload" hidden>
             <label for="review">
               <span>Исправленный файл проверки</span>
-              <input id="review" name="review" type="file" accept=".xlsx,.xlsm,.xls" required>
+              <input id="review" name="review" type="file" accept=".xlsx" required>
             </label>
             <button id="submit-review" class="primary-action" type="submit">Загрузить проверку</button>
           </form>

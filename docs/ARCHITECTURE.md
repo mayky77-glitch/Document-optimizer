@@ -327,3 +327,21 @@ Static assets поставляются внутри wheel, внешних UI-з�
 desktop/mobile browser PASS, clean base/RAG installs и wheel assets PASS.
 Принят через PR #18: PR CI `30580440694`, post-merge main CI `30580539301`,
 main SHA `d54fcce5a71c85a1812a3b9209a815499c216e9a`.
+
+## Drawing-card admin boundary
+
+`report_processor.drawing_card` содержит детерминированный workflow создания и
+обновления карточки остатков. Встроенные template/rules/examples доступны через
+`importlib.resources`; source CLI, ZIP и рабочие каталоги исходного проекта не
+переносились.
+
+`DrawingCardService` принимает 1–32 `.xlsx/.xlsm/.xlsb`, а для update —
+дополнительную `.xlsx` карточку. Upload валидируется по basename, размеру и
+container signature. Приватный staging использует `01-<validated-basename>`:
+индекс исключает collision, basename сохраняет filename-based object identity.
+Workspace имеет `0700`, файлы — `0600`; публичные payload/download имена не
+раскрывают private paths. Review и result доступны только в допустимых
+состояниях job. Admin workflow всегда использует `rag_mode="off"`.
+
+Starlette routes изолированы под `/drawing-card` и
+`/api/drawing-card/jobs/**`; старые `/` и `/api/jobs/**` не изменены.

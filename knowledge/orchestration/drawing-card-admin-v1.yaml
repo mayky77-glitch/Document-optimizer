@@ -75,6 +75,15 @@ baseline_results:
   - "main pytest: 584 passed, 19 skipped in 13.25s"
   - "source ruff: pass; 52 files formatted"
   - "source pytest: 59 passed in 0.85s"
+release_results:
+  - "focused drawing-card: 23 passed, 3 skipped"
+  - "base full suite after final remediation: 604 passed, 22 skipped in 13.39s"
+  - "real+slow+pinned-RAG full suite: 624 passed, 2 skipped in 100.67s"
+  - "real demo: 1 passed; 7 extracted rows; 32 card rows; 0 manual-review rows"
+  - "original demo SHA-256/size/mtime unchanged"
+  - "wheel [rag] fresh install, resources and admin entrypoint: pass"
+  - "desktop/mobile/keyboard/create/download browser gate: pass; 0 error/external events"
+  - "Ruff, format, compileall, JS syntax and git diff --check: pass"
 shared_paths_owner: integration
 shared_paths:
   - .gitignore

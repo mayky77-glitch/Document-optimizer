@@ -231,3 +231,21 @@ errors; clean base/RAG installs, wheel assets, Ruff, format, compileall,
 JS syntax и diff-check PASS. Реальные XLSX сохранили исходные SHA.
 PR #18 принят: PR CI `30580440694`, post-merge main CI `30580539301` — success;
 main SHA `d54fcce5a71c85a1812a3b9209a815499c216e9a`.
+
+## Drawing-card admin implementation review
+
+Перенесён deterministic workflow `0.9.1` как изолированный пакет с bundled
+resources. Добавлены private admin lifecycle, create/update, controlled
+review rerun, opaque downloads и отдельный responsive экран в Gazprom-blue
+палитре. Sources допускают `.xlsx/.xlsm/.xlsb`; existing/review — `.xlsx`.
+ZIP, path-like names, invalid magic и combined oversize блокируются.
+
+Во время real gate найден и устранён дефект staging: переименование
+`0906_demo_input.xlsx` в `01.xlsx` удаляло object identity. Collision-safe
+`01-0906_demo_input.xlsx` сохраняет identity; real demo теперь даёт `OK`,
+7 extracted rows, 32 card rows, 0 review rows. SHA-256, size и mtime оригинала
+не изменились.
+
+Evidence: full real+slow+RAG **624 passed, 2 skipped in 100.67s**; base suite
+**604 passed**; wheel `[rag]` fresh install и resources — PASS; browser
+desktop/mobile/create/download/keyboard — PASS, внешние запросы и ошибки — 0.

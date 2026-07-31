@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from report_processor.admin_panel.drawing_card_presentation import drawing_card_job_payload
 from report_processor.admin_panel.drawing_card_service import DrawingCardService
 
@@ -12,6 +13,8 @@ FIXTURES = Path(__file__).parents[2] / "fixtures" / "drawing_card"
 
 
 def _source(name: str = "source.xlsx") -> tuple[str, bytes]:
+    if Path(name).suffix.casefold() == ".xlsb":
+        return name, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1binary-workbook"
     return name, (FIXTURES / "demo_source.xlsx").read_bytes()
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from report_processor.admin_panel.drawing_card_service import DrawingCardService
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "drawing_card"
@@ -23,15 +24,16 @@ def test_review_download_upload_and_rerun_keep_paths_opaque(tmp_path: Path) -> N
     service = DrawingCardService(tmp_path / "private-workspaces")
     job_id = _create_review_job(service)
 
-    review_name, review_content = service.get_review(job_id)
+    review_path, review_name = service.get_review(job_id)
     rerun = service.apply_review(
         job_id=job_id,
         review_name=review_name,
-        review_content=review_content,
+        review_content=review_path.read_bytes(),
     )
 
-    assert review_name.endswith(".xlsx")
-    assert review_content.startswith(b"PK")
+    assert review_path.is_file()
+    assert review_path.is_relative_to(tmp_path / "private-workspaces")
+    assert review_name == "manual_review.xlsx"
     assert rerun.status in {"processing", "review_required", "ready", "blocked", "failed"}
     assert str(tmp_path) not in str(rerun)
 

@@ -6,6 +6,16 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
+from .drawing_card_presentation import drawing_card_job_payload
+from .drawing_card_service import (
+    MAX_SOURCES as DRAWING_CARD_MAX_SOURCES,
+)
+from .drawing_card_service import (
+    MAX_UPLOAD_BYTES as DRAWING_CARD_MAX_UPLOAD_BYTES,
+)
+from .drawing_card_service import (
+    DrawingCardService,
+)
 from .presentation import job_payload
 from .service import (
     MAX_UPLOAD_BYTES,
@@ -14,22 +24,24 @@ from .service import (
     validate_stage,
     validate_workbook_upload,
 )
-from .view import index_page, static_asset
+from .view import drawing_card_page, index_page, static_asset
 
 _SAFE_DOWNLOAD_NAME = re.compile(r"[^0-9A-Za-z._-]+")
 _WORKBOOK_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def create_app(service=None, workspace_root=None):
+def create_app(service=None, workspace_root=None, drawing_card_service=None):
     """Return the frozen local panel API without starting a server."""
 
     from starlette.applications import Starlette
     from starlette.responses import HTMLResponse, JSONResponse, Response
     from starlette.routing import Route
 
-    panel = service or AdminPanelService(
+    workspace = (
         Path(workspace_root) if workspace_root is not None else Path.cwd() / ".admin-panel-jobs"
     )
+    panel = service or AdminPanelService(workspace)
+    drawing_panel = drawing_card_service or DrawingCardService(workspace / "drawing-card")
 
     async def index(request):
         del request
@@ -41,6 +53,10 @@ def create_app(service=None, workspace_root=None):
         except (KeyError, OSError):
             return _error("Ресурс не найден", 404)
         return _secure(Response(content, media_type=media_type))
+
+    async def drawing_card_index(request):
+        del request
+        return _secure(HTMLResponse(drawing_card_page()))
 
     async def upload(request):
         try:
@@ -128,40 +144,156 @@ def create_app(service=None, workspace_root=None):
             )
         )
 
+    async def drawing_card_upload(request):
+        try:
+            _validate_content_length(
+                request.headers.get("content-length"),
+                maximum=DRAWING_CARD_MAX_UPLOAD_BYTES + 1024 * 1024,
+            )
+            async with request.form(
+                max_files=DRAWING_CARD_MAX_SOURCES + 1,
+                max_fields=3,
+                max_part_size=DRAWING_CARD_MAX_UPLOAD_BYTES + 1,
+            ) as form:
+                uploads = list(form.getlist("sources"))
+                if not 1 <= len(uploads) <= DRAWING_CARD_MAX_SOURCES:
+                    raise ValueError("invalid source count")
+                sources = []
+                combined_size = 0
+                for upload_item in uploads:
+                    upload = _upload_value(upload_item)
+                    content = await _read_upload(upload, maximum=DRAWING_CARD_MAX_UPLOAD_BYTES)
+                    combined_size += len(content)
+                    sources.append((upload.filename, content))
+                operation = form.get("operation", "create")
+                if operation not in {"create", "update"}:
+                    raise ValueError("invalid operation")
+                existing_name = None
+                existing_content = None
+                existing_item = form.get("existing_card")
+                if operation == "update":
+                    existing = _upload_value(existing_item)
+                    existing_name = existing.filename
+                    existing_content = await _read_upload(
+                        existing, maximum=DRAWING_CARD_MAX_UPLOAD_BYTES
+                    )
+                    combined_size += len(existing_content)
+                elif getattr(existing_item, "filename", ""):
+                    raise ValueError("existing card is only valid for update")
+                if combined_size > DRAWING_CARD_MAX_UPLOAD_BYTES:
+                    raise ValueError("combined upload is too large")
+                period_item = form.get("period")
+                period = None
+                if isinstance(period_item, str):
+                    period = period_item.strip() or None
+                current = drawing_panel.create_job(
+                    sources=sources,
+                    mode=operation,
+                    existing_name=existing_name,
+                    existing_content=existing_content,
+                    period=period,
+                )
+        except (KeyError, OSError, TypeError, ValueError):
+            return _error("Проверьте исходные Excel-файлы и выбранную операцию", 400)
+        return _secure(JSONResponse(drawing_card_job_payload(current), status_code=201))
+
+    async def drawing_card_get_job(request):
+        try:
+            current = drawing_panel.get_job(request.path_params["job_id"])
+            payload = drawing_card_job_payload(current)
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Состояние задачи недоступно", 500)
+        return _secure(JSONResponse(payload))
+
+    async def drawing_card_result(request):
+        return _drawing_card_download(
+            drawing_panel,
+            request.path_params["job_id"],
+            kind="result",
+        )
+
+    async def drawing_card_review(request):
+        if request.method == "GET":
+            return _drawing_card_download(
+                drawing_panel,
+                request.path_params["job_id"],
+                kind="review",
+            )
+        try:
+            _validate_content_length(
+                request.headers.get("content-length"),
+                maximum=DRAWING_CARD_MAX_UPLOAD_BYTES + 1024 * 1024,
+            )
+            async with request.form(
+                max_files=1,
+                max_fields=0,
+                max_part_size=DRAWING_CARD_MAX_UPLOAD_BYTES + 1,
+            ) as form:
+                review = _upload_part(form, "review")
+                review_content = await _read_upload(review, maximum=DRAWING_CARD_MAX_UPLOAD_BYTES)
+                current = drawing_panel.apply_review(
+                    job_id=request.path_params["job_id"],
+                    review_name=review.filename,
+                    review_content=review_content,
+                )
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (OSError, TypeError, ValueError):
+            return _error("Проверьте заполненный файл проверки", 400)
+        return _secure(JSONResponse(drawing_card_job_payload(current)))
+
     return Starlette(
         routes=[
             Route("/", index),
+            Route("/drawing-card", drawing_card_index),
             Route("/static/{path}", static),
             Route("/api/jobs", upload, methods=["POST"]),
             Route("/api/jobs/{job_id}", get_job),
             Route("/api/jobs/{job_id}/decisions", decision, methods=["POST"]),
             Route("/api/jobs/{job_id}/result", download),
+            Route("/api/drawing-card/jobs", drawing_card_upload, methods=["POST"]),
+            Route("/api/drawing-card/jobs/{job_id}", drawing_card_get_job),
+            Route("/api/drawing-card/jobs/{job_id}/result", drawing_card_result),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/review",
+                drawing_card_review,
+                methods=["GET", "POST"],
+            ),
         ]
     )
 
 
 def _upload_part(form: Mapping[str, object], key: str):
-    value = form[key]
+    return _upload_value(form[key])
+
+
+def _upload_value(value: object):
     if not isinstance(getattr(value, "filename", None), str):
         raise ValueError("missing upload")
     return value
 
 
-async def _read_upload(upload) -> bytes:
-    content = await upload.read(MAX_UPLOAD_BYTES + 1)
-    if not content or len(content) > MAX_UPLOAD_BYTES:
+async def _read_upload(upload, *, maximum: int = MAX_UPLOAD_BYTES) -> bytes:
+    content = await upload.read(maximum + 1)
+    if not content or len(content) > maximum:
         raise ValueError("upload size is invalid")
     return content
 
 
-def _validate_content_length(value: str | None) -> None:
+def _validate_content_length(
+    value: str | None,
+    *,
+    maximum: int = MAX_UPLOAD_BYTES + 1024 * 1024,
+) -> None:
     if value is None:
         return
     try:
         size = int(value)
     except ValueError as error:
         raise ValueError("invalid content length") from error
-    if size < 0 or size > MAX_UPLOAD_BYTES + 1024 * 1024:
+    if size < 0 or size > maximum:
         raise ValueError("request body is too large")
 
 
@@ -183,6 +315,27 @@ def _safe_download_name(value: object) -> str:
     name = Path(value).name.replace("\r", "").replace("\n", "")
     name = _SAFE_DOWNLOAD_NAME.sub("-", name).strip(".-")
     return name[:120] or "result.bin"
+
+
+def _drawing_card_download(service, job_id: str, *, kind: str):
+    from starlette.responses import Response
+
+    try:
+        getter = service.get_result if kind == "result" else service.get_review
+        path, filename = getter(job_id)
+        content = _bounded_result(Path(path))
+        safe_name = _safe_download_name(filename)
+    except KeyError:
+        return _error("Файл пока недоступен", 404)
+    except (OSError, TypeError, ValueError):
+        return _error("Файл недоступен", 409)
+    return _secure(
+        Response(
+            content,
+            media_type=_WORKBOOK_MEDIA_TYPE,
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        )
+    )
 
 
 def _secure(response):

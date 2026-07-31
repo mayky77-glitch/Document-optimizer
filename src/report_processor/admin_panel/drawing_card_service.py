@@ -20,9 +20,11 @@ MAX_SOURCES = 32
 _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
+_ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+_OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, repr=False)
 class DrawingCardJob:
     job_id: str
     directory: Path
@@ -38,6 +40,13 @@ class DrawingCardJob:
     summary: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     run_count: int = 0
+
+    def __repr__(self) -> str:
+        return (
+            "DrawingCardJob("
+            f"job_id={self.job_id!r}, status={self.status!r}, "
+            f"mode={self.mode!r}, run_count={self.run_count!r})"
+        )
 
     @property
     def result_available(self) -> bool:
@@ -64,12 +73,11 @@ class DrawingCardService:
         self,
         *,
         sources: list[tuple[str, bytes]],
-        mode: Literal["create", "update"],
+        mode: Literal["create", "update"] = "create",
         existing_name: str | None = None,
         existing_content: bytes | None = None,
         period: str | None = None,
     ) -> DrawingCardJob:
-        _validate_sources(sources)
         if mode not in {"create", "update"}:
             raise ValueError("mode must be create or update")
         if mode == "update":
@@ -78,6 +86,7 @@ class DrawingCardService:
             _validate_existing(existing_name, existing_content)
         elif existing_name is not None or existing_content is not None:
             raise ValueError("existing card is only valid for update")
+        _validate_sources(sources, existing_content=existing_content)
         clean_period = _validate_period(period)
 
         job_id = secrets.token_urlsafe(18)
@@ -85,9 +94,7 @@ class DrawingCardService:
         directory.mkdir(mode=0o700, parents=False, exist_ok=False)
         try:
             source_paths = tuple(
-                _write_private(
-                    directory / "sources" / f"{index:02d}{Path(name).suffix.lower()}", content
-                )
+                _write_private(directory / "sources" / f"{index:02d}-{name}", content)
                 for index, (name, content) in enumerate(sources, 1)
             )
             existing = (
@@ -218,14 +225,17 @@ class DrawingCardService:
         return job
 
 
-def _validate_sources(sources: object) -> None:
+def _validate_sources(sources: object, *, existing_content: bytes | None = None) -> None:
     if not isinstance(sources, list) or not 1 <= len(sources) <= MAX_SOURCES:
         raise ValueError("provide from 1 to 32 source workbooks")
     total_size = 0
     for name, content in sources:
         _validate_workbook(name, content, allowed_suffixes=_SOURCE_SUFFIXES)
         total_size += len(content)
-    if total_size > MAX_UPLOAD_BYTES:
+    if (
+        total_size + (len(existing_content) if existing_content is not None else 0)
+        > MAX_UPLOAD_BYTES
+    ):
         raise ValueError("combined upload is too large")
 
 
@@ -240,9 +250,16 @@ def _validate_review(name: str, content: bytes) -> None:
 def _validate_workbook(name: object, content: object, *, allowed_suffixes: set[str]) -> None:
     if not isinstance(name, str) or not name or "\x00" in name:
         raise ValueError("invalid filename")
-    if Path(name).suffix.casefold() not in allowed_suffixes:
+    if Path(name).name != name or "/" in name or "\\" in name:
+        raise ValueError("invalid filename")
+    suffix = Path(name).suffix.casefold()
+    if suffix not in allowed_suffixes:
         raise ValueError("unsupported workbook type")
     if not isinstance(content, bytes) or not content or len(content) > MAX_UPLOAD_BYTES:
+        raise ValueError("invalid workbook content")
+    if suffix in {".xlsx", ".xlsm"} and not content.startswith(_ZIP_SIGNATURES):
+        raise ValueError("invalid workbook content")
+    if suffix == ".xlsb" and not content.startswith(_OLE_SIGNATURE):
         raise ValueError("invalid workbook content")
 
 

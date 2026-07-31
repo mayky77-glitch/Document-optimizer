@@ -435,3 +435,17 @@ Block 15 принят: PR #15, CI `30569460356`, main CI `30569606304`, 514 pass
   JS syntax и diff-check PASS. Реальные XLSX неизменны.
 - **GitHub:** PR CI `30580440694`, post-merge main CI `30580539301` — success;
   main SHA `d54fcce5a71c85a1812a3b9209a815499c216e9a`.
+
+## Функция «Карточка остатков»
+
+- **Статус:** integration release gates пройдены; GitHub acceptance требует
+  зелёного PR и merge в `main`.
+- **UI/API:** `/drawing-card`, `/api/drawing-card/jobs/**`; create/update,
+  review download/upload, result download.
+- **Форматы:** sources `.xlsx/.xlsm/.xlsb`; existing/review `.xlsx`; ZIP,
+  invalid magic, path-like names и oversize запрещены.
+- **Privacy:** private `0700/0600` workspace, opaque IDs, no path leaks,
+  `rag_mode=off`, no external model/network calls.
+- **Evidence:** **624 passed, 2 skipped in 100.67s** с real XLSX, slow и pinned
+  local RAG; drawing-card real demo **1 passed**, 7/32/0; wheel/browser/Ruff/
+  format/compileall/JS/diff gates — PASS; originals unchanged.

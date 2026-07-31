@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
+
 from report_processor.admin_panel.drawing_card_presentation import drawing_card_job_payload
 from report_processor.admin_panel.drawing_card_service import DrawingCardService
 

@@ -8,11 +8,14 @@ from .drawing_card_service import DrawingCardJob
 def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
     """Return only values safe to serialize through an admin endpoint."""
     review_required = job.status == "review_required"
+    source_files = job.summary.get("source_files")
+    if source_files is None:
+        source_files = len(job.sources)
     return {
         "job_id": job.job_id,
         "status": job.status,
         "summary": {
-            "source_files": int(job.summary.get("source_files", len(job.sources))),
+            "source_files": int(source_files),
             "extracted_rows": int(job.summary.get("extracted_rows", 0)),
             "card_rows": int(job.summary.get("card_rows", 0)),
             "manual_review": int(job.summary.get("manual_review", 0)),
