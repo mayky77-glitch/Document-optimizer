@@ -46,7 +46,10 @@
           <div class="fields-row">
             <label for="period">
               <span>Период <em>необязательно</em></span>
-              <input id="period" name="period" type="text" maxlength="64" placeholder="Например, июль 2026">
+              <select id="period" name="period" aria-describedby="period-help">
+                <option value="">Последний найденный период</option>
+              </select>
+              <small id="period-help">Доступны только периоды, найденные в выбранных файлах.</small>
             </label>
           </div>
 

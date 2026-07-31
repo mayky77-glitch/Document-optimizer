@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -153,8 +155,76 @@ def test_drawing_card_asset_publishes_local_workbook_preflight(client) -> None:
     assert "selectedWorkbooksPreflightError" in response.text
     assert "~$" in response.text
     assert "arrayBuffer()" in response.text
+    assert "hasZipSignature(bytes)" in response.text
+    assert "OLE_SIGNATURE" not in response.text
     assert "Файл «${name}» не является корректной Excel-книгой" in response.text
     assert "existingCard.files[0]" in response.text
+
+
+def test_drawing_card_page_offers_only_detected_periods(client) -> None:
+    test_client, _, _ = client
+
+    response = test_client.get("/drawing-card")
+
+    assert response.status_code == 200
+    assert '<select id="period" name="period"' in response.text
+    assert '<option value="">Последний найденный период</option>' in response.text
+    assert "Доступны только периоды, найденные в выбранных файлах." in response.text
+    assert 'type="text" maxlength="64"' not in response.text
+
+
+def test_drawing_card_asset_derives_detected_period_options() -> None:
+    asset = (
+        Path(__file__).parents[2]
+        / "src"
+        / "report_processor"
+        / "admin_panel"
+        / "assets"
+        / "drawing-card.js"
+    )
+    script = """
+const fs = require("node:fs");
+const listeners = {};
+const inert = { addEventListener() {} };
+const period = {
+  value: "",
+  options: [],
+  replaceChildren(...options) { this.options = options; },
+  append(option) { this.options.push(option); },
+};
+const sources = {
+  files: [
+    { name: "0906 КС-6а июль 31_2026.xlsb" },
+    { name: "КС-2 2026-06.xlsx" },
+  ],
+  addEventListener(name, callback) { listeners[name] = callback; },
+};
+global.Option = class Option {
+  constructor(text, value) { this.text = text; this.value = value; }
+};
+global.document = {
+  querySelector(selector) {
+    return selector === "#sources" ? sources : selector === "#period" ? period : inert;
+  },
+  querySelectorAll() { return []; },
+};
+eval(fs.readFileSync(process.argv[1], "utf8"));
+listeners.change();
+console.log(JSON.stringify({ value: period.value, options: period.options }));
+"""
+
+    result = subprocess.run(
+        ["node", "-e", script, str(asset)], check=True, capture_output=True, text=True
+    )
+
+    assert json.loads(result.stdout) == {
+        "value": "",
+        "options": [
+            {"text": "Последний найденный период", "value": ""},
+            {"text": "июнь 2026", "value": "2026-06"},
+            {"text": "июль 2026", "value": "2026-07"},
+        ],
+    }
 
 
 def test_review_download_upload_and_rerun_use_the_review_field(client) -> None:

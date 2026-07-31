@@ -16,14 +16,36 @@
   const summary = document.querySelector("#summary");
   const warnings = document.querySelector("#warnings");
   const sourceFiles = document.querySelector("#sources");
+  const period = document.querySelector("#period");
 
   const SOURCE_WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xlsb"]);
+  const RUSSIAN_MONTHS = [
+    "январь",
+    "февраль",
+    "март",
+    "апрель",
+    "май",
+    "июнь",
+    "июль",
+    "август",
+    "сентябрь",
+    "октябрь",
+    "ноябрь",
+    "декабрь",
+  ];
+  const RUSSIAN_MONTH_NUMBERS = new Map(RUSSIAN_MONTHS.map((name, index) => [name, index + 1]));
+  const PERIOD_FROM_FULL_DATE_RE = /(?:^|[^\d])(?:0?[1-9]|[12]\d|3[01])[._/-](?<month>0?[1-9]|1[0-2])[._/-](?<year>\d{4})(?!\d)/u;
+  const PERIOD_FROM_YEAR_MONTH_RE = /(?:^|[^\d])(?<year>\d{4})[._-](?<month>0?[1-9]|1[0-2])(?!\d)/u;
+  const PERIOD_FROM_MONTH_YEAR_RE = /(?:^|[^\d])(?<month>0?[1-9]|1[0-2])[._-](?<year>\d{4})(?!\d)/u;
+  const PERIOD_FROM_RUSSIAN_MONTH_RE = new RegExp(
+    `(?:^|[^\\p{L}])(?<month>${RUSSIAN_MONTHS.join("|")})(?=[^\\p{L}]|$)(?:[\\s_-]+[^\\s_-]+){0,2}[\\s_-]+(?<year>\\d{4})(?!\\d)`,
+    "u",
+  );
   const ZIP_SIGNATURES = [
     [0x50, 0x4b, 0x03, 0x04],
     [0x50, 0x4b, 0x05, 0x06],
     [0x50, 0x4b, 0x07, 0x08],
   ];
-  const OLE_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
   let currentJobId = null;
 
@@ -35,6 +57,35 @@
   const fileExtension = (name) => {
     const dot = name.lastIndexOf(".");
     return dot === -1 ? "" : name.slice(dot).toLowerCase();
+  };
+
+  const canonicalPeriod = (year, month) => {
+    const numericYear = Number(year);
+    const numericMonth = Number(month);
+    if (!Number.isInteger(numericYear) || numericYear < 1 || !Number.isInteger(numericMonth) || numericMonth < 1 || numericMonth > 12) {
+      return "";
+    }
+    return `${String(numericYear).padStart(4, "0")}-${String(numericMonth).padStart(2, "0")}`;
+  };
+
+  const extractPeriodFromFilename = (name) => {
+    const normalized = typeof name === "string" ? name.toLocaleLowerCase("ru-RU").replaceAll("ё", "е") : "";
+    for (const pattern of [PERIOD_FROM_FULL_DATE_RE, PERIOD_FROM_YEAR_MONTH_RE, PERIOD_FROM_MONTH_YEAR_RE]) {
+      const match = normalized.match(pattern);
+      if (match?.groups) return canonicalPeriod(match.groups.year, match.groups.month);
+    }
+    const namedMatch = normalized.match(PERIOD_FROM_RUSSIAN_MONTH_RE);
+    return namedMatch?.groups ? canonicalPeriod(namedMatch.groups.year, RUSSIAN_MONTH_NUMBERS.get(namedMatch.groups.month)) : "";
+  };
+
+  const updatePeriodOptions = () => {
+    const periods = [...new Set([...sourceFiles.files].map((file) => extractPeriodFromFilename(file.name)).filter(Boolean))].sort();
+    period.replaceChildren(new Option("Последний найденный период", ""));
+    periods.forEach((value) => {
+      const option = new Option(`${RUSSIAN_MONTHS[Number(value.slice(5)) - 1]} ${value.slice(0, 4)}`, value);
+      period.append(option);
+    });
+    period.value = "";
   };
 
   const matchesSignature = (bytes, signature) => signature.every((value, index) => bytes[index] === value);
@@ -53,12 +104,11 @@
 
     let bytes;
     try {
-      bytes = new Uint8Array(await file.slice(0, OLE_SIGNATURE.length).arrayBuffer());
+      bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
     } catch {
       return `Не удалось прочитать файл «${name}». Выберите его снова.`;
     }
-    const hasExpectedSignature = extension === ".xlsb" ? matchesSignature(bytes, OLE_SIGNATURE) : hasZipSignature(bytes);
-    if (!hasExpectedSignature) {
+    if (!hasZipSignature(bytes)) {
       return `Файл «${name}» не является корректной Excel-книгой. Сохраните его в Excel и выберите снова.`;
     }
     return "";
@@ -208,6 +258,8 @@
   document.querySelectorAll("[data-operation]").forEach((button) => {
     button.addEventListener("click", () => setOperation(button.dataset.operation));
   });
+
+  sourceFiles.addEventListener("change", updatePeriodOptions);
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

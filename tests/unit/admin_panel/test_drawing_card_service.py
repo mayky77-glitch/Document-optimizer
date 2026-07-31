@@ -22,7 +22,13 @@ def test_unknown_drawing_card_job_is_not_resolved_as_a_workspace_path(tmp_path: 
         service.get_review("../../private-workspaces")
 
 
-def test_injected_runner_preserves_source_basename_with_rag_disabled(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("period", "expected_period"),
+    (("июль 2026", "2026-07"), ("2026-07", "2026-07")),
+)
+def test_injected_runner_preserves_source_basename_with_rag_disabled(
+    tmp_path: Path, period: str, expected_period: str
+) -> None:
     fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
     seen = []
 
@@ -31,11 +37,15 @@ def test_injected_runner_preserves_source_basename_with_rag_disabled(tmp_path: P
         return run_workflow(request)
 
     service = DrawingCardService(tmp_path / "private-workspaces", runner=runner)
-    job = service.create_job(sources=[("0906_demo_input.xlsx", fixture.read_bytes())])
+    job = service.create_job(
+        sources=[("0906_demo_input.xlsx", fixture.read_bytes())], period=period
+    )
 
     assert len(seen) == 1
     assert seen[0].rag_mode == "off"
     assert seen[0].inputs[0].name == "01-0906_demo_input.xlsx"
     assert seen[0].inputs[0].read_bytes() == fixture.read_bytes()
     assert seen[0].inputs[0].resolve() != fixture.resolve()
+    assert job.period == expected_period
+    assert seen[0].period == expected_period
     assert str(tmp_path) not in str(drawing_card_job_payload(job))
