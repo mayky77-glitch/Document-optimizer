@@ -64,3 +64,11 @@ uv run pytest -q
 - [[../tasks/bulk-reconciliation-v1-ui]]
 - [[../tasks/bulk-reconciliation-v1-tests]]
 - [[../tasks/bulk-reconciliation-v1-design-parity]]
+
+## Последний релиз
+
+- PR: `#24`
+- main: `9b8c3e87f81e6aff3ffcd2766657a5274974bdda`
+- PR CI: `30603894650` — success
+- post-merge main CI: `30603954828` — success
+- full real+slow+RAG: `647 passed, 3 skipped in 101.12s`
