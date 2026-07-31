@@ -112,6 +112,12 @@ def exact_example_match(
     normalized = normalize_text(text)
     normalized_unit = normalize_unit(unit)
     candidates = [item for item in examples if item.normalized_text == normalized]
+    # Feedback is exact and unit-scoped.  Generic legacy examples may still be
+    # used, but never override a unit-specific decision.
+    exact_unit = [item for item in candidates if item.unit == normalized_unit]
+    candidates = exact_unit or [item for item in candidates if item.unit is None]
+    if not candidates:
+        return None
     candidates.sort(
         key=lambda item: (
             item.unit != normalized_unit if item.unit else True,
@@ -119,4 +125,25 @@ def exact_example_match(
             item.example_id,
         )
     )
-    return candidates[0] if candidates else None
+    decisions = {(item.category, item.quantity_decision, item.cost_decision) for item in candidates}
+    # Contradictory exact feedback is deliberately not a first/last-write rule.
+    return candidates[0] if len(decisions) == 1 else None
+
+
+def has_exact_example_conflict(
+    text: str,
+    examples: tuple[ConfirmedExample, ...],
+    *,
+    unit: str | None,
+) -> bool:
+    normalized = normalize_text(text)
+    normalized_unit = normalize_unit(unit)
+    candidates = [
+        item
+        for item in examples
+        if item.normalized_text == normalized and item.unit == normalized_unit
+    ]
+    return (
+        len({(item.category, item.quantity_decision, item.cost_decision) for item in candidates})
+        > 1
+    )

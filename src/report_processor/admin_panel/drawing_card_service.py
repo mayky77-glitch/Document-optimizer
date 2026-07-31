@@ -12,15 +12,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from report_processor.drawing_card.models import WorkflowRequest, WorkflowResult
+from report_processor.drawing_card.matching.matcher import ReviewApproval
+from report_processor.drawing_card.models import (
+    DrawingSourceRow,
+    MatchDecision,
+    WorkflowRequest,
+    WorkflowResult,
+)
 from report_processor.drawing_card.periods import discover_workbook_periods
 from report_processor.drawing_card.review import (
     append_feedback,
+    build_review_clusters,
+    cluster_approvals,
     import_review_approvals,
     inline_review_rows,
     review_approval,
     write_approvals,
 )
+from report_processor.drawing_card.review.clusters import ReviewCluster
 from report_processor.drawing_card.workflow import default_template_path, run_workflow
 from report_processor.metadata.period_models import DocumentPeriod
 from report_processor.metadata.period_patterns import MONTHS
@@ -57,8 +66,10 @@ class DrawingCardJob:
     warnings: list[str] = field(default_factory=list)
     category_units: dict[str, tuple[str, ...]] = field(default_factory=dict)
     review_items: dict[str, dict[str, object]] = field(default_factory=dict)
-    review_rows: dict[str, object] = field(default_factory=dict, repr=False)
-    inline_approvals: dict[str, object] = field(default_factory=dict, repr=False)
+    review_rows: dict[str, DrawingSourceRow] = field(default_factory=dict, repr=False)
+    review_decisions: dict[str, MatchDecision] = field(default_factory=dict, repr=False)
+    inline_approvals: dict[str, ReviewApproval] = field(default_factory=dict, repr=False)
+    cluster_actions: dict[str, dict[str, ReviewApproval]] = field(default_factory=dict, repr=False)
     rag_mode: Literal["off", "semantic"] = "semantic"
     run_count: int = 0
 
@@ -232,6 +243,65 @@ class DrawingCardService:
             "can_apply": bool(item_ids) and set(item_ids) <= set(job.inline_approvals),
         }
 
+    def list_review_clusters(
+        self, *, job_id: str, page: int = 1, page_size: int = 50
+    ) -> dict[str, object]:
+        """Return current cluster identities; callers must echo the version to act."""
+        job = self.get_job(job_id)
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("page must be positive and page_size must be between 1 and 100")
+        clusters = self._current_clusters(job)
+        start = (page - 1) * page_size
+        visible = clusters[start : start + page_size]
+        items = [self._cluster_payload(job, cluster) for cluster in visible]
+        unresolved = [cluster for cluster in clusters if not self._cluster_resolved(job, cluster)]
+        return {
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "total_clusters": len(clusters),
+            "total_rows": sum(len(cluster.member_ids) for cluster in clusters),
+            "unresolved_clusters": len(unresolved),
+            "unresolved_rows": sum(len(cluster.member_ids) for cluster in unresolved),
+            "can_apply": bool(clusters) and set(job.review_items) <= set(job.inline_approvals),
+        }
+
+    def put_review_cluster(
+        self,
+        *,
+        job_id: str,
+        cluster_id: str,
+        version: str,
+        action: str,
+        category: str | None = None,
+    ) -> DrawingCardJob:
+        """Atomically fan out one choice only to the exact current cluster."""
+        job = self.get_job(job_id)
+        cluster = self._require_current_cluster(job, cluster_id, version)
+        if job.status != "review_required":
+            raise ValueError("job does not await inline review")
+        approvals = cluster_approvals(cluster, action, category)
+        # ``cluster_approvals`` validates every member before this one mutation.
+        job.inline_approvals.update(approvals)
+        job.cluster_actions[cluster.cluster_id] = approvals
+        return job
+
+    def undo_review_cluster(self, *, job_id: str, cluster_id: str, version: str) -> DrawingCardJob:
+        """Undo only the still-current fanout; row edits make this safely stale."""
+        job = self.get_job(job_id)
+        cluster = self._require_current_cluster(job, cluster_id, version)
+        applied = job.cluster_actions.get(cluster.cluster_id)
+        if applied is None or tuple(applied) != cluster.member_ids:
+            raise ValueError("stale cluster identity")
+        if any(
+            job.inline_approvals.get(row_id) != approval for row_id, approval in applied.items()
+        ):
+            raise ValueError("stale cluster identity")
+        for row_id in applied:
+            job.inline_approvals.pop(row_id, None)
+        job.cluster_actions.pop(cluster.cluster_id, None)
+        return job
+
     def put_review_item(
         self, *, job_id: str, review_id: str, action: str, category: str | None = None
     ) -> DrawingCardJob:
@@ -240,6 +310,7 @@ class DrawingCardService:
         if job.status != "review_required" or review_id not in job.review_items:
             raise ValueError("unknown review item")
         job.inline_approvals[review_id] = review_approval(review_id, action, category)
+        self._discard_cluster_actions_for(job, review_id)
         return job
 
     def delete_review_item(self, *, job_id: str, review_id: str) -> DrawingCardJob:
@@ -247,6 +318,7 @@ class DrawingCardService:
         if review_id not in job.review_items:
             raise ValueError("unknown review item")
         job.inline_approvals.pop(review_id, None)
+        self._discard_cluster_actions_for(job, review_id)
         return job
 
     def bulk_review(self, *, job_id: str, action: str) -> DrawingCardJob:
@@ -262,8 +334,10 @@ class DrawingCardService:
                 job.inline_approvals[review_id] = review_approval(
                     review_id, "approve", str(proposed)
                 )
+                self._discard_cluster_actions_for(job, review_id)
             elif action == "reject_all":
                 job.inline_approvals[review_id] = review_approval(review_id, "reject", None)
+                self._discard_cluster_actions_for(job, review_id)
         return job
 
     def apply_inline_review(self, *, job_id: str) -> DrawingCardJob:
@@ -329,6 +403,8 @@ class DrawingCardService:
             result.source_rows, result.decisions, result.category_units
         )
         job.review_rows = {row.row_id: row for row in result.source_rows}
+        job.review_decisions = {decision.row_id: decision for decision in result.decisions}
+        job.cluster_actions.clear()
         if not _sources_unchanged(job):
             job.status = "failed"
             job.errors = ("SOURCE_HASH_CHANGED",)
@@ -359,6 +435,53 @@ class DrawingCardService:
             job.status = "failed"
             job.errors = ("PROCESSING_FAILED",)
         return job
+
+    @staticmethod
+    def _current_clusters(job: DrawingCardJob) -> tuple[ReviewCluster, ...]:
+        return build_review_clusters(job.review_rows, job.review_decisions)
+
+    @staticmethod
+    def _cluster_resolved(job: DrawingCardJob, cluster: ReviewCluster) -> bool:
+        return set(cluster.member_ids) <= set(job.inline_approvals)
+
+    def _require_current_cluster(
+        self, job: DrawingCardJob, cluster_id: str, version: str
+    ) -> ReviewCluster:
+        if not isinstance(cluster_id, str) or cluster_id != version:
+            raise ValueError("stale cluster identity")
+        for cluster in self._current_clusters(job):
+            if cluster.cluster_id == cluster_id:
+                return cluster
+        raise ValueError("stale cluster identity")
+
+    def _cluster_payload(self, job: DrawingCardJob, cluster: ReviewCluster) -> dict[str, object]:
+        approvals = [job.inline_approvals.get(row_id) for row_id in cluster.member_ids]
+        selected = (
+            approvals[0] if approvals and all(item == approvals[0] for item in approvals) else None
+        )
+        category = selected.category.value if selected and selected.category else None
+        target_category = category or (cluster.category.value if cluster.category else None)
+        return {
+            "cluster_id": cluster.cluster_id,
+            "version": cluster.cluster_id,
+            "work_name": cluster.name,
+            "source_unit": cluster.unit,
+            "target_unit": _first_category_unit(job.category_units, target_category),
+            "member_count": len(cluster.member_ids),
+            "proposed_category": cluster.category.value if cluster.category else None,
+            "proposed_category_label": _category_label(cluster.category),
+            "selected_category": category,
+            "selected_category_label": _category_label(selected.category) if selected else None,
+            "confidence": cluster.confidence,
+            "reason": cluster.reason_code,
+            "decision": selected.action if selected else "pending",
+        }
+
+    @staticmethod
+    def _discard_cluster_actions_for(job: DrawingCardJob, review_id: str) -> None:
+        for cluster_id, approvals in tuple(job.cluster_actions.items()):
+            if review_id in approvals:
+                job.cluster_actions.pop(cluster_id, None)
 
 
 def _validate_sources(sources: object, *, existing_content: bytes | None = None) -> None:
@@ -458,3 +581,11 @@ def _controlled_warnings(warnings: list[str]) -> list[str]:
 def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:
     units = category_units.get(category, ())
     return units[0] if units else None
+
+
+def _category_label(category) -> str | None:
+    if category is None:
+        return None
+    from report_processor.drawing_card.models import CATEGORY_DISPLAY_NAMES
+
+    return CATEGORY_DISPLAY_NAMES.get(category)
