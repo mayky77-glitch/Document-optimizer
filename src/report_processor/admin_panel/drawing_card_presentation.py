@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from report_processor.drawing_card.models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER
+
 from .drawing_card_service import DrawingCardJob
 
 
@@ -14,6 +16,11 @@ def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
     return {
         "job_id": job.job_id,
         "status": job.status,
+        "mode": job.mode,
+        "period": job.period,
+        "active_step": (
+            "review" if review_required else "card" if job.result_available else "sources"
+        ),
         "summary": {
             "source_files": int(source_files),
             "extracted_rows": int(job.summary.get("extracted_rows", 0)),
@@ -38,3 +45,11 @@ def drawing_card_inline_review_payload(job: DrawingCardJob) -> dict[str, object]
         ),
         "can_apply": review_required and set(job.review_items) == set(job.inline_approvals),
     }
+
+
+def drawing_card_category_options() -> list[dict[str, str]]:
+    """Return controlled category choices for the inline-review selector."""
+    return [
+        {"value": category.value, "label": CATEGORY_DISPLAY_NAMES[category]}
+        for category in CATEGORY_ORDER
+    ]

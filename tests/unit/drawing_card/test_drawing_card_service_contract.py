@@ -121,7 +121,10 @@ def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
     payload = drawing_card_job_payload(job)
 
     assert set(payload) == {
+        "active_step",
         "job_id",
+        "mode",
+        "period",
         "status",
         "summary",
         "warnings",
@@ -129,6 +132,9 @@ def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
         "review_url",
         "can_upload_review",
     }
+    assert payload["mode"] == "create"
+    assert payload["period"] is None
+    assert payload["active_step"] == "sources"
     assert set(payload["summary"]) == {
         "source_files",
         "extracted_rows",
