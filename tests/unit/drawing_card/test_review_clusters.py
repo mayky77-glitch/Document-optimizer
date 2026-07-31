@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 from report_processor.drawing_card.models import (
@@ -93,3 +94,36 @@ def test_cluster_fanout_validates_once_and_covers_every_member() -> None:
     assert {approval.category for approval in approvals.values()} == {
         TargetWorkCategory.CONCRETE_WORKS
     }
+
+
+def test_cable_coupling_groups_only_terminal_numbers_and_preserves_suffix() -> None:
+    rows = {
+        "one": _row("one"),
+        "two": _row("two"),
+        "other": _row("other"),
+        "generic-one": _row("generic-one"),
+        "generic-two": _row("generic-two"),
+    }
+    rows["one"] = replace(
+        rows["one"], work_name_raw="Установка муфт соединительных кабельных 10 кВ (№1)"
+    )
+    rows["two"] = replace(
+        rows["two"], work_name_raw="Установка муфт соединительных кабельных 10 кВ (№2)"
+    )
+    rows["other"] = replace(
+        rows["other"], work_name_raw="Установка муфт соединительных кабельных 6 кВ (№3)"
+    )
+    rows["generic-one"] = replace(rows["generic-one"], work_name_raw="Монтаж коробки (№1)")
+    rows["generic-two"] = replace(rows["generic-two"], work_name_raw="Монтаж коробки (№2)")
+
+    clusters = build_review_clusters(rows, {row_id: _decision(row_id) for row_id in rows})
+
+    assert {cluster.member_ids for cluster in clusters} == {
+        ("one", "two"),
+        ("other",),
+        ("generic-one",),
+        ("generic-two",),
+    }
+    assert next(cluster for cluster in clusters if cluster.member_ids == ("one", "two")).name == (
+        "установка муфт соединительных кабельных 10 кв"
+    )

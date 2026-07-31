@@ -170,6 +170,23 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
     service._jobs[job.job_id] = job
     cluster = service.list_review_clusters(job_id=job.job_id)["items"][0]
 
+    assert cluster["aggregate_total_cost"] == "4"
+    assert cluster["members"] == [
+        {
+            "review_id": "row-a",
+            "work_name": "Монтаж кабеля",
+            "source_unit": "м",
+            "quantity": "1",
+            "total_cost": "2",
+        },
+        {
+            "review_id": "row-b",
+            "work_name": "Монтаж кабеля",
+            "source_unit": "м",
+            "quantity": "1",
+            "total_cost": "2",
+        },
+    ]
     service.put_review_cluster(
         job_id=job.job_id,
         cluster_id=cluster["cluster_id"],
@@ -193,6 +210,72 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
     assert job.inline_approvals == {}
 
 
+def test_cluster_payload_uses_null_aggregate_when_every_member_cost_is_absent(
+    tmp_path: Path,
+) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    directory = service.workspace_root / "empty-cost-cluster-job"
+    directory.mkdir()
+    rows = {
+        row_id: DrawingSourceRow(
+            row_id=row_id,
+            location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 10, ("A10",)),
+            object_index_raw="1006",
+            drawing_code_raw="А-001",
+            work_name_raw="Монтаж кабеля",
+            unit_raw="м",
+            remaining_quantity=Decimal("1"),
+            remaining_total_cost=None,
+            formula_values=(),
+            cached_values=(),
+            source_document_type="ks6a",
+            source_period=None,
+            source_revision=None,
+            status=Status.OK,
+            warnings=(),
+        )
+        for row_id in ("row-a", "row-b")
+    }
+    decisions = {
+        row_id: MatchDecision(
+            row_id,
+            TargetWorkCategory.LOW_CURRENT_CABLE,
+            "review",
+            "review",
+            None,
+            None,
+            0.7,
+            0.7,
+            "manual_review",
+            (),
+            "review",
+            True,
+            Status.OK,
+            (),
+        )
+        for row_id in rows
+    }
+    job = DrawingCardJob(
+        job_id="empty-cost-cluster-job",
+        directory=directory,
+        sources=(),
+        source_hashes=(),
+        mode="create",
+        period=None,
+        existing_card=None,
+        status="review_required",
+        category_units={"low_current_cable": ("м",)},
+        review_items={row_id: {"review_id": row_id} for row_id in rows},
+        review_rows=rows,
+        review_decisions=decisions,
+    )
+    service._jobs[job.job_id] = job
+
+    cluster = service.list_review_clusters(job_id=job.job_id)["items"][0]
+
+    assert cluster["aggregate_total_cost"] is None
+
+
 def test_machine_consensus_uses_only_the_canonical_regular_private_file(tmp_path: Path) -> None:
     service = DrawingCardService(tmp_path / "private-workspaces")
     canonical = service.workspace_root / "machine-consensus.jsonl"
@@ -206,3 +289,32 @@ def test_machine_consensus_uses_only_the_canonical_regular_private_file(tmp_path
     canonical.symlink_to(outside)
 
     assert service._machine_consensus_path() is None
+
+
+def test_initial_run_is_strict_but_approved_inline_review_rerun_is_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    calls: list[tuple[Path | None, bool]] = []
+
+    def fake_run(
+        job: DrawingCardJob, *, review_decisions: Path | None = None, strict: bool = True
+    ) -> DrawingCardJob:
+        calls.append((review_decisions, strict))
+        job.status = "ready"
+        return job
+
+    monkeypatch.setattr(service, "_run", fake_run)
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    job.status = "review_required"
+    job.review_items = {"row-1": {"review_id": "row-1"}}
+    from report_processor.drawing_card.review.inline import review_approval
+
+    job.inline_approvals = {"row-1": review_approval("row-1", "approve", "power_cable")}
+
+    service.apply_inline_review(job_id=job.job_id)
+
+    assert calls[0] == (None, True)
+    assert calls[1][0] == job.directory / "inline_review_decisions.json"
+    assert calls[1][1] is False
