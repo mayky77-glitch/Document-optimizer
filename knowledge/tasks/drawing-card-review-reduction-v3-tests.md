@@ -1,9 +1,9 @@
 ---
 type: task
-card_id: drawing-card-review-reduction-v2-tests
+card_id: drawing-card-review-reduction-v3-tests
 status: draft
 version: 1
-work_id: drawing-card-review-reduction-v2
+work_id: drawing-card-review-reduction-v3
 task_id: tests
 purpose: "Зафиксировать cluster fanout, feedback reject/conflicts и UI/API контракты"
 role: worker
@@ -22,7 +22,7 @@ actual_model: ""
 actual_reasoning_effort: ""
 fallback_reason: ""
 model_fallback: false
-card_path: knowledge/tasks/drawing-card-review-reduction-v2-tests.md
+card_path: knowledge/tasks/drawing-card-review-reduction-v3-tests.md
 card_commit_sha_ref: launch_envelope
 base_sha_ref: card_commit_sha_ref
 dependency_shas: []

@@ -1,5 +1,5 @@
 status: frozen
-work_id: drawing-card-review-reduction-v2
+work_id: drawing-card-review-reduction-v3
 objective: "Сократить ручную проверку карточки остатков через безопасные кластеры и точную память решений"
 project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-ready"
 published_base_sha_ref: planning_commit
@@ -19,4 +19,3 @@ baseline_results:
 shared_paths_owner: integration
 data_classification: restricted
 created_at: "2026-07-31T15:42:00+08:00"
-

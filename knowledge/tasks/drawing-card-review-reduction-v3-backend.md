@@ -1,9 +1,9 @@
 ---
 type: task
-card_id: drawing-card-review-reduction-v2-backend
+card_id: drawing-card-review-reduction-v3-backend
 status: draft
 version: 1
-work_id: drawing-card-review-reduction-v2
+work_id: drawing-card-review-reduction-v3
 task_id: backend
 purpose: "Реализовать безопасные review-кластеры и exact feedback с памятью reject"
 role: worker
@@ -22,7 +22,7 @@ actual_model: ""
 actual_reasoning_effort: ""
 fallback_reason: ""
 model_fallback: false
-card_path: knowledge/tasks/drawing-card-review-reduction-v2-backend.md
+card_path: knowledge/tasks/drawing-card-review-reduction-v3-backend.md
 card_commit_sha_ref: launch_envelope
 base_sha_ref: card_commit_sha_ref
 dependency_shas: []

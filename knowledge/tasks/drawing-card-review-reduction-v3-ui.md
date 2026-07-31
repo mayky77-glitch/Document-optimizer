@@ -1,9 +1,9 @@
 ---
 type: task
-card_id: drawing-card-review-reduction-v2-ui
+card_id: drawing-card-review-reduction-v3-ui
 status: draft
 version: 1
-work_id: drawing-card-review-reduction-v2
+work_id: drawing-card-review-reduction-v3
 task_id: ui
 purpose: "Переключить ручную проверку на cluster-first интерфейс"
 role: worker
@@ -22,7 +22,7 @@ actual_model: ""
 actual_reasoning_effort: ""
 fallback_reason: ""
 model_fallback: false
-card_path: knowledge/tasks/drawing-card-review-reduction-v2-ui.md
+card_path: knowledge/tasks/drawing-card-review-reduction-v3-ui.md
 card_commit_sha_ref: launch_envelope
 base_sha_ref: card_commit_sha_ref
 dependency_shas: []
