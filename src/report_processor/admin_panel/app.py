@@ -341,11 +341,12 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
                 page=page,
                 page_size=page_size,
             )
+            current = drawing_panel.get_job(request.path_params["job_id"])
         except KeyError:
             return _error("Задача не найдена", 404)
         except (TypeError, ValueError):
             return _error("Проверьте номер страницы и размер списка", 400)
-        return _secure(JSONResponse(_inline_review_page(payload)))
+        return _secure(JSONResponse(_inline_review_page(payload, current)))
 
     async def drawing_card_review_item(request):
         job_id = request.path_params["job_id"]
@@ -476,7 +477,7 @@ def _period_label(value: str) -> str:
     return f"{months[int(month) - 1]} {year}"
 
 
-def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
+def _inline_review_page(payload: Mapping[str, object], job) -> dict[str, object]:
     action_states = {
         "approve": "approved",
         "reject": "rejected",
@@ -485,6 +486,8 @@ def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
         "quantity_only": "approved",
         "skip": "rejected",
     }
+    categories = drawing_card_category_options(job)
+    category_options = {str(item["value"]): item for item in categories}
     public_items = []
     for raw in payload.get("items", ()):
         if not isinstance(raw, Mapping):
@@ -492,6 +495,7 @@ def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
         decision = raw.get("решение")
         action = decision.get("action") if isinstance(decision, Mapping) else None
         selected_category = decision.get("category") if isinstance(decision, Mapping) else None
+        selected_option = category_options.get(str(selected_category))
         public_items.append(
             {
                 "review_id": raw.get("review_id"),
@@ -501,6 +505,9 @@ def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
                 "proposed_category": raw.get("предлагаемая_категория_id"),
                 "proposed_category_label": raw.get("предлагаемая_категория_рус"),
                 "selected_category": selected_category,
+                "selected_category_label": (
+                    selected_option.get("label") if selected_option is not None else None
+                ),
                 "quantity": raw.get("количество"),
                 "source_unit": raw.get("source_unit"),
                 "target_unit": raw.get("target_unit"),
@@ -518,7 +525,7 @@ def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
         "total": total,
         "unresolved_count": unresolved,
         "can_apply": payload.get("can_apply", False),
-        "categories": drawing_card_category_options(),
+        "categories": categories,
         "summary": {
             "Строк для проверки": total,
             "Осталось решений": unresolved,

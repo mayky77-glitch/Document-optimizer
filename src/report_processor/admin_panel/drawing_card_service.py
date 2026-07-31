@@ -55,6 +55,7 @@ class DrawingCardJob:
     errors: tuple[str, ...] = ()
     summary: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    category_units: dict[str, tuple[str, ...]] = field(default_factory=dict)
     review_items: dict[str, dict[str, object]] = field(default_factory=dict)
     review_rows: dict[str, object] = field(default_factory=dict, repr=False)
     inline_approvals: dict[str, object] = field(default_factory=dict, repr=False)
@@ -209,6 +210,10 @@ class DrawingCardService:
         for review_id in item_ids[start : start + page_size]:
             item = dict(job.review_items[review_id])
             approval = job.inline_approvals.get(review_id)
+            if approval is not None and approval.category is not None:
+                item["target_unit"] = _first_category_unit(
+                    job.category_units, approval.category.value
+                )
             item["решение"] = (
                 {
                     "action": approval.action,
@@ -318,6 +323,7 @@ class DrawingCardService:
             "manual_review": result.manual_review_count,
         }
         job.warnings = _controlled_warnings(result.warnings)
+        job.category_units = result.category_units
         job.review_items = inline_review_rows(
             result.source_rows, result.decisions, result.category_units
         )
@@ -446,3 +452,8 @@ def _inside_job(path: Path, job: DrawingCardJob) -> bool:
 
 def _controlled_warnings(warnings: list[str]) -> list[str]:
     return list(dict.fromkeys(str(item).partition(":")[0] for item in warnings if item))[:50]
+
+
+def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:
+    units = category_units.get(category, ())
+    return units[0] if units else None

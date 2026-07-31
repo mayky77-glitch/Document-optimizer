@@ -79,6 +79,14 @@ def _files(name: str = "source.xlsx", content: bytes | None = None):
 def _review_job(service: DrawingCardService, job_id: str) -> DrawingCardJob:
     """Give the HTTP fake one deterministic unresolved inline-review row."""
     job = service.get_job(job_id)
+    job.category_units = {
+        category.value: (unit,)
+        for category, unit in zip(
+            CATEGORY_ORDER,
+            ("шт", "м3", "т", "шт", "м", "шт", "м", "м"),
+            strict=True,
+        )
+    }
     job.review_items = {
         "review-row-1": {
             "review_id": "review-row-1",
@@ -204,6 +212,123 @@ def test_drawing_card_assets_keep_recoverable_review_state_and_use_category_sele
     assert "selectedCategory" in script.text
 
 
+def test_drawing_card_asset_renders_draft_and_accepted_categories_with_the_selected_unit() -> None:
+    asset = (
+        Path(__file__).parents[2]
+        / "src"
+        / "report_processor"
+        / "admin_panel"
+        / "assets"
+        / "drawing-card.js"
+    )
+    script = r"""
+const fs = require("node:fs");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const start = source.indexOf("  const renderItem =");
+const end = source.indexOf("\n\n  const renderReview", start);
+const drafts = { "row-1": "concrete_works" };
+const renderItemSource = source.slice(start, end).replace("  const renderItem", "const renderItem");
+const dependencyNames = [
+  "Option", "reviewTemplate", "reviewCategories", "draftCategories", "persistSession",
+  "decisionLabel", "humanCategory", "categoryLabel", "categoryUnit", "valueFrom",
+  "textValue", "reviewId", "runItemAction",
+].join(", ");
+const renderItem = Function(
+  "deps",
+  `const { ${dependencyNames} } = deps;\n${renderItemSource}\nreturn renderItem;`,
+)({
+  Option: class Option { constructor(text, value) { this.text = text; this.value = value; } },
+  reviewTemplate: { content: { cloneNode() { return fragment; } } },
+  reviewCategories: [
+    { value: "low_current_cable", label: "Слаботочные сети", target_unit: "м" },
+    { value: "concrete_works", label: "Бетонные работы", target_unit: "м3" },
+  ],
+  draftCategories: drafts,
+  persistSession() {},
+  decisionLabel: (value) => value || "Ожидает решения",
+  humanCategory: (value) => value === "concrete_works" ? "Бетонные работы" : "Слаботочные сети",
+  categoryLabel: (value) => value === "concrete_works" ? "Бетонные работы" : "Слаботочные сети",
+  categoryUnit: (value, fallback) => value === "concrete_works" ? "м3" : fallback,
+  valueFrom: (item, names) => names.map((name) => item[name]).find((value) => value != null),
+  textValue: (value, fallback = "") => value == null ? fallback : String(value),
+  reviewId: (item) => item.review_id,
+  runItemAction() {},
+});
+
+function element(dataset = {}) {
+  return {
+    dataset, hidden: false, textContent: "", value: "", children: [], listeners: {},
+    classList: { toggle() {} },
+    replaceChildren(...children) { this.children = children; },
+    append(child) { this.children.push(child); },
+    addEventListener(name, callback) { this.listeners[name] = callback; },
+    focus() {}, closest() { return card; },
+    querySelectorAll() { return []; },
+  };
+}
+const selected = element();
+const proposed = element();
+const categoryInput = element();
+const contexts = Object.fromEntries(
+  ["category", "quantity", "source-unit", "target-unit", "cost"].map(
+    (name) => [name, element()],
+  ),
+);
+const actions = [
+  "undo", "approve", "reject", "change-category", "cost-only", "cancel-category",
+].map(
+  (action) => element({ reviewAction: action }),
+);
+const card = element();
+card.querySelector = (selector) => {
+  if (selector === ".review-item") return card;
+  if (selector === ".decision-status") return status;
+  if (selector === ".work-name") return workName;
+  if (selector === ".proposed-category") return proposed;
+  if (selector === ".selected-category") return selected;
+  if (selector === ".category-input") return categoryInput;
+  if (selector === ".category-editor") return editor;
+  if (selector.startsWith("[data-context=")) return contexts[selector.match(/"(.+)"/)[1]];
+  return actions.find((button) => selector.includes(button.dataset.reviewAction));
+};
+card.querySelectorAll = (selector) => selector === "[data-review-action]"
+  ? actions
+  : actions.filter((button) => selector.includes(button.dataset.reviewAction));
+const fragment = { querySelector: () => card };
+const status = element(); const workName = element(); const editor = element();
+const item = {
+  review_id: "row-1", decision: "change_category", category: "low_current_cable",
+  category_label: "Слаботочные сети", proposed_category: "low_current_cable",
+  source_unit: "м", target_unit: "м", quantity: "12", total_cost: "3500",
+};
+renderItem(item);
+const draft = {
+  targetUnit: contexts["target-unit"].textContent,
+  draft: selected.textContent,
+  approveHidden: actions.find((button) => button.dataset.reviewAction === "approve").hidden,
+  costOnlyHidden: actions.find((button) => button.dataset.reviewAction === "cost-only").hidden,
+};
+delete drafts["row-1"];
+item.decision = "approved";
+item.selected_category = "concrete_works";
+renderItem(item);
+console.log(JSON.stringify({ draft, accepted: selected.textContent }));
+"""
+
+    result = subprocess.run(["node", "-e", script, str(asset)], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "draft": {
+            "targetUnit": "м3",
+            "draft": "Выбранная категория: Бетонные работы",
+            "approveHidden": False,
+            "costOnlyHidden": False,
+        },
+        "accepted": "Принятая категория: Бетонные работы",
+    }
+
+
 def test_drawing_card_page_offers_only_detected_periods(client) -> None:
     test_client, _, _ = client
 
@@ -319,8 +444,16 @@ def test_inline_review_exposes_the_eight_original_categories_in_russian(client) 
 
     assert response.status_code == 200
     assert response.json()["categories"] == [
-        {"value": category.value, "label": CATEGORY_DISPLAY_NAMES[category]}
-        for category in CATEGORY_ORDER
+        {
+            "value": category.value,
+            "label": CATEGORY_DISPLAY_NAMES[category],
+            "target_unit": target_unit,
+        }
+        for category, target_unit in zip(
+            CATEGORY_ORDER,
+            ("шт", "м3", "т", "шт", "м", "шт", "м", "м"),
+            strict=True,
+        )
     ]
     assert len(response.json()["categories"]) == 8
 
@@ -386,3 +519,62 @@ def test_changed_category_can_be_followed_by_a_final_approval_action(
         "approved" if final_action == "approve" else "cost_only"
     )
     assert page.json()["items"][0]["selected_category"] == "concrete_works"
+    assert page.json()["items"][0]["target_unit"] == "м3"
+
+
+def test_changed_category_is_shown_as_draft_then_as_accepted_after_refetch(client) -> None:
+    test_client, service, _ = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _review_job(service, created.json()["job_id"])
+    url = f"/api/drawing-card/jobs/{job.job_id}/review/items/review-row-1"
+
+    changed = test_client.put(
+        url,
+        json={"action": "change_category", "category": "concrete_works"},
+    )
+    draft = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/items")
+    accepted = test_client.put(
+        url,
+        json={"action": "approve", "category": "concrete_works"},
+    )
+    refetched = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/items")
+
+    assert changed.status_code == 200
+    assert draft.json()["items"][0] == {
+        "review_id": "review-row-1",
+        "work_name": "Монтаж контрольного кабеля",
+        "category": "low_current_cable",
+        "category_label": "Прокладка кабеля, провода (Слаботочные сети)",
+        "proposed_category": "low_current_cable",
+        "proposed_category_label": "Прокладка кабеля, провода (Слаботочные сети)",
+        "selected_category": "concrete_works",
+        "selected_category_label": "Бетонные работы",
+        "quantity": "12",
+        "source_unit": "м",
+        "target_unit": "м3",
+        "total_cost": "3500",
+        "confidence": 0.72,
+        "decision": "change_category",
+    }
+    assert accepted.status_code == 200
+    assert refetched.json()["items"][0]["selected_category"] == "concrete_works"
+    assert refetched.json()["items"][0]["selected_category_label"] == "Бетонные работы"
+    assert refetched.json()["items"][0]["target_unit"] == "м3"
+    assert refetched.json()["items"][0]["decision"] == "approved"
+
+
+def test_reject_keeps_the_proposed_category_and_target_unit(client) -> None:
+    test_client, service, _ = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _review_job(service, created.json()["job_id"])
+
+    response = test_client.put(
+        f"/api/drawing-card/jobs/{job.job_id}/review/items/review-row-1",
+        json={"action": "reject"},
+    )
+    page = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/items")
+
+    assert response.status_code == 200
+    assert page.json()["items"][0]["decision"] == "rejected"
+    assert page.json()["items"][0]["selected_category"] is None
+    assert page.json()["items"][0]["target_unit"] == "м"
