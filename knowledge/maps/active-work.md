@@ -12,4 +12,6 @@ updated: 2026-07-31
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
 - [[../ORCHESTRATION|Orchestration rules]]
+- [[../tasks/drawing-card-dictionary-production|Drawing-card dictionary production]]
+- [[../tasks/drawing-card-dictionary-tests|Drawing-card dictionary tests]]
 - Последняя принятая волна: [[../tasks/hierarchy-aggregate-production|Hierarchy aggregate exclusion]].
