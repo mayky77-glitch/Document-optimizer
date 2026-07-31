@@ -1,0 +1,44 @@
+status: frozen
+work_id: bulk-design-parity-v1
+objective: "Привести экран сверки документов к визуальному формату карточки остатков без изменения поведения"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-ready"
+planning_parent_sha: 253de9fa389e5c92476578823a0c4e2e54322ff0
+published_base_sha_ref: "commit containing this manifest and frozen task card"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: dc410c8aaf0596ddd924c52ba6bbe9c912350b7f
+wave: 1
+max_parallel: 1
+max_spawns: 2
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "node --check src/report_processor/admin_panel/assets/admin.js"
+  - "git diff --check"
+baseline_results:
+  - "accepted UI feature 67aee8d6d659344e17d3859e47278e920cb0791f"
+  - "Open Design review b0aef5a4-cdce-4a3a-a9ef-b378b151b101"
+shared_paths_owner: integration
+write_scope:
+  - src/report_processor/admin_panel/assets/admin.css
+  - src/report_processor/admin_panel/assets/index.html
+forbidden_paths:
+  - src/report_processor/admin_panel/assets/admin.js
+  - src/report_processor/admin_panel/assets/drawing-card.css
+  - src/report_processor/admin_panel/assets/drawing-card.html
+  - src/report_processor/admin_panel/assets/drawing-card.js
+  - src
+  - tests
+  - docs
+  - README.md
+  - knowledge
+  - pyproject.toml
+  - uv.lock
+  - .github
+acceptance_commands:
+  - "node --check src/report_processor/admin_panel/assets/admin.js"
+  - "git diff --check -- src/report_processor/admin_panel/assets/admin.css src/report_processor/admin_panel/assets/index.html"
+required_evidence:
+  - "visual parity with drawing-card page"
+  - "no IDs, field names, endpoints or behavior changed"
+  - "desktop 1440 and mobile 360 review"
+created_at: "2026-07-31T11:50:00+08:00"

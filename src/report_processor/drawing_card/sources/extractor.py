@@ -7,6 +7,8 @@ from itertools import islice
 
 from openpyxl.utils import get_column_letter
 
+from report_processor.identifiers import extract_document_index
+
 from ..models import DrawingSourceLocation, DrawingSourceRow, ManifestEntry, SourceSchema
 from ..statuses import Status
 from .normalization import is_plausible_drawing_code, parse_decimal, stable_id
@@ -36,6 +38,11 @@ def extract_rows(
     columns = schema.columns
     max_col = max(columns.values())
     current_drawing: str | None = None
+    current_document_index: str | None = None
+    filename_extraction = extract_document_index(entry.logical_path)
+    filename_document_index = (
+        filename_extraction.value.normalized if filename_extraction.value is not None else None
+    )
     rows = reader.iter_rows(
         schema.sheet_name,
         min_row=schema.data_start_row,
@@ -48,6 +55,7 @@ def extract_rows(
     for offset, (formula_row, cached_row) in enumerate(rows):
         row_number = schema.data_start_row + offset
         raw_drawing = _text(value_at(cached_row, columns.get("drawing_code")))
+        raw_document_index = _text(value_at(cached_row, columns.get("document_index")))
         work_name = _text(value_at(cached_row, columns.get("work_name")))
         unit = _text(value_at(cached_row, columns.get("unit")))
         formula_drawing = _text(value_at(formula_row, columns.get("drawing_code")))
@@ -74,6 +82,16 @@ def extract_rows(
         if raw_drawing is None and formula_drawing and not _is_formula(formula_drawing):
             raw_drawing = formula_drawing
         extraction_warnings: list[str] = []
+        if raw_document_index is not None:
+            if raw_document_index.casefold() in {"-", "—", "нет"}:
+                current_document_index = None
+            else:
+                extracted_index = extract_document_index(raw_document_index)
+                if extracted_index.value is None:
+                    current_document_index = None
+                    extraction_warnings.append("INVALID_DOCUMENT_INDEX")
+                else:
+                    current_document_index = extracted_index.value.normalized
         if raw_drawing and not is_plausible_drawing_code(raw_drawing):
             extraction_warnings.append(f"IGNORED_NON_DRAWING_CELL:{raw_drawing}")
             raw_drawing = None
@@ -110,6 +128,7 @@ def extract_rows(
                 sheet_name=schema.sheet_name,
                 row_number=row_number,
                 coordinates=coordinates,
+                document_index=current_document_index or filename_document_index,
             ),
             object_index_raw=object_index,
             drawing_code_raw=drawing,

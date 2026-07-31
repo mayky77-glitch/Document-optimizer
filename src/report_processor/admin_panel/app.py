@@ -18,6 +18,9 @@ from .drawing_card_service import (
 )
 from .presentation import job_payload
 from .service import (
+    MAX_SOURCES as ADMIN_MAX_SOURCES,
+)
+from .service import (
     MAX_UPLOAD_BYTES,
     AdminPanelService,
     validate_mode,
@@ -84,31 +87,91 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
         try:
             _validate_content_length(request.headers.get("content-length"))
             async with request.form(
-                max_files=2,
+                max_files=ADMIN_MAX_SOURCES + 1,
                 max_fields=2,
                 max_part_size=MAX_UPLOAD_BYTES + 1,
             ) as form:
-                source = _upload_part(form, "source")
+                source_uploads = list(form.getlist("sources"))
+                legacy_source = not source_uploads and form.get("source") is not None
+                if legacy_source:
+                    source_uploads = [form.get("source")]
+                if not 1 <= len(source_uploads) <= ADMIN_MAX_SOURCES:
+                    raise ValueError("invalid source count")
                 target = _upload_part(form, "target")
-                source_content = await _read_upload(source)
+                sources: list[tuple[str, bytes]] = []
+                combined_size = 0
+                for source_item in source_uploads:
+                    source = _upload_value(source_item)
+                    source_content = await _read_upload(source)
+                    validate_workbook_upload(source.filename, source_content)
+                    combined_size += len(source_content)
+                    sources.append((source.filename, source_content))
                 target_content = await _read_upload(target)
-                if len(source_content) + len(target_content) > MAX_UPLOAD_BYTES:
+                combined_size += len(target_content)
+                if combined_size > MAX_UPLOAD_BYTES:
                     raise ValueError("combined upload is too large")
-                validate_workbook_upload(source.filename, source_content)
                 validate_workbook_upload(target.filename, target_content)
                 stage = validate_stage(form.get("stage", "13.1"))
                 mode = validate_mode(form.get("mode", "write"))
-                job = panel.create_job(
-                    source_name=source.filename,
-                    source_content=source_content,
-                    target_name=target.filename,
-                    target_content=target_content,
-                    stage=stage,
-                    mode=mode,
-                )
+                if legacy_source:
+                    job = panel.create_job(
+                        source_name=sources[0][0],
+                        source_content=sources[0][1],
+                        target_name=target.filename,
+                        target_content=target_content,
+                        stage=stage,
+                        mode=mode,
+                    )
+                else:
+                    job = panel.create_job(
+                        sources=sources,
+                        target_name=target.filename,
+                        target_content=target_content,
+                        stage=stage,
+                        mode=mode,
+                    )
         except (KeyError, TypeError, ValueError):
             return _error("Проверьте два Excel-файла, этап и режим", 400)
         return _secure(JSONResponse(job_payload(job), status_code=201))
+
+    async def drawing_card_periods(request):
+        try:
+            _validate_content_length(
+                request.headers.get("content-length"),
+                maximum=DRAWING_CARD_MAX_UPLOAD_BYTES + 1024 * 1024,
+            )
+            async with request.form(
+                max_files=DRAWING_CARD_MAX_SOURCES,
+                max_fields=0,
+                max_part_size=DRAWING_CARD_MAX_UPLOAD_BYTES + 1,
+            ) as form:
+                uploads = list(form.getlist("sources"))
+                if not 1 <= len(uploads) <= DRAWING_CARD_MAX_SOURCES:
+                    raise ValueError("invalid source count")
+                sources = []
+                combined_size = 0
+                for upload_item in uploads:
+                    upload = _upload_value(upload_item)
+                    content = await _read_upload(
+                        upload,
+                        maximum=DRAWING_CARD_MAX_UPLOAD_BYTES,
+                    )
+                    combined_size += len(content)
+                    sources.append((upload.filename, content))
+                if combined_size > DRAWING_CARD_MAX_UPLOAD_BYTES:
+                    raise ValueError("combined upload is too large")
+                values = drawing_panel.discover_periods(sources)
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            return _error(_drawing_card_upload_error(error), 400)
+        periods = [{"value": value, "label": _period_label(value)} for value in values]
+        return _secure(
+            JSONResponse(
+                {
+                    "periods": periods,
+                    "latest": values[-1] if values else None,
+                }
+            )
+        )
 
     async def get_job(request):
         try:
@@ -266,6 +329,78 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             return _error("Проверьте заполненный файл проверки", 400)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
 
+    async def drawing_card_review_items(request):
+        try:
+            page = int(request.query_params.get("page", "1"))
+            page_size = int(request.query_params.get("page_size", "50"))
+            payload = drawing_panel.list_review_items(
+                job_id=request.path_params["job_id"],
+                page=page,
+                page_size=page_size,
+            )
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Проверьте номер страницы и размер списка", 400)
+        return _secure(JSONResponse(_inline_review_page(payload)))
+
+    async def drawing_card_review_item(request):
+        job_id = request.path_params["job_id"]
+        review_id = request.path_params["review_id"]
+        try:
+            if request.method == "DELETE":
+                current = drawing_panel.delete_review_item(
+                    job_id=job_id,
+                    review_id=review_id,
+                )
+            else:
+                payload = await request.json()
+                if not isinstance(payload, Mapping):
+                    raise ValueError("invalid decision")
+                action = payload.get("action")
+                category = payload.get("category")
+                if not isinstance(action, str) or (
+                    category is not None and not isinstance(category, str)
+                ):
+                    raise ValueError("invalid decision")
+                current = drawing_panel.put_review_item(
+                    job_id=job_id,
+                    review_id=review_id,
+                    action=action,
+                    category=category,
+                )
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Выберите допустимое решение и категорию", 400)
+        return _secure(JSONResponse(drawing_card_job_payload(current)))
+
+    async def drawing_card_review_bulk(request):
+        try:
+            payload = await request.json()
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("action"), str):
+                raise ValueError("invalid bulk decision")
+            current = drawing_panel.bulk_review(
+                job_id=request.path_params["job_id"],
+                action=payload["action"],
+            )
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Выберите допустимое общее решение", 400)
+        return _secure(JSONResponse(drawing_card_job_payload(current)))
+
+    async def drawing_card_review_apply(request):
+        try:
+            current = drawing_panel.apply_inline_review(
+                job_id=request.path_params["job_id"],
+            )
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Сначала примите решение по каждой строке", 409)
+        return _secure(JSONResponse(drawing_card_job_payload(current)))
+
     return Starlette(
         routes=[
             Route("/", index),
@@ -275,6 +410,7 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             Route("/api/jobs/{job_id}", get_job),
             Route("/api/jobs/{job_id}/decisions", decision, methods=["POST"]),
             Route("/api/jobs/{job_id}/result", download),
+            Route("/api/drawing-card/periods", drawing_card_periods, methods=["POST"]),
             Route("/api/drawing-card/jobs", drawing_card_upload, methods=["POST"]),
             Route("/api/drawing-card/jobs/{job_id}", drawing_card_get_job),
             Route("/api/drawing-card/jobs/{job_id}/result", drawing_card_result),
@@ -282,6 +418,26 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
                 "/api/drawing-card/jobs/{job_id}/review",
                 drawing_card_review,
                 methods=["GET", "POST"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/review/items",
+                drawing_card_review_items,
+                methods=["GET"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/review/items/{review_id}",
+                drawing_card_review_item,
+                methods=["PUT", "DELETE"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/review/bulk",
+                drawing_card_review_bulk,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/review/apply",
+                drawing_card_review_apply,
+                methods=["POST"],
             ),
         ]
     )
@@ -296,6 +452,72 @@ def _drawing_card_upload_error(error: Exception) -> str:
     if isinstance(error, ValueError):
         return _DRAWING_CARD_UPLOAD_ERRORS.get(str(error), _DRAWING_CARD_UPLOAD_FALLBACK)
     return _DRAWING_CARD_UPLOAD_FALLBACK
+
+
+def _period_label(value: str) -> str:
+    months = (
+        "январь",
+        "февраль",
+        "март",
+        "апрель",
+        "май",
+        "июнь",
+        "июль",
+        "август",
+        "сентябрь",
+        "октябрь",
+        "ноябрь",
+        "декабрь",
+    )
+    year, month = value.split("-", 1)
+    return f"{months[int(month) - 1]} {year}"
+
+
+def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
+    action_states = {
+        "approve": "approved",
+        "reject": "rejected",
+        "cost_only": "cost_only",
+        "change_category": "change_category",
+        "quantity_only": "approved",
+        "skip": "rejected",
+    }
+    public_items = []
+    for raw in payload.get("items", ()):
+        if not isinstance(raw, Mapping):
+            continue
+        decision = raw.get("решение")
+        action = decision.get("action") if isinstance(decision, Mapping) else None
+        public_items.append(
+            {
+                "review_id": raw.get("review_id"),
+                "work_name": raw.get("наименование"),
+                "category": raw.get("предлагаемая_категория_id"),
+                "category_label": raw.get("предлагаемая_категория_рус"),
+                "proposed_category": raw.get("предлагаемая_категория_id"),
+                "proposed_category_label": raw.get("предлагаемая_категория_рус"),
+                "quantity": raw.get("количество"),
+                "source_unit": raw.get("source_unit"),
+                "target_unit": raw.get("target_unit"),
+                "total_cost": raw.get("стоимость"),
+                "confidence": raw.get("confidence"),
+                "decision": action_states.get(str(action), "pending"),
+            }
+        )
+    total = int(payload.get("total", len(public_items)))
+    unresolved = int(payload.get("unresolved_count", total))
+    return {
+        "items": public_items,
+        "page": payload.get("page", 1),
+        "page_size": payload.get("page_size", 50),
+        "total": total,
+        "unresolved_count": unresolved,
+        "can_apply": payload.get("can_apply", False),
+        "summary": {
+            "Строк для проверки": total,
+            "Осталось решений": unresolved,
+        },
+    }
 
 
 def _upload_value(value: object):

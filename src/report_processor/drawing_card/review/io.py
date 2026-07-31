@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import zipfile
+from decimal import Decimal
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -171,10 +172,13 @@ def export_manual_review(
             for cell in row_values:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
         if count:
-            sheet["I2"].number_format = "0.###"
-            sheet[f"I2:I{count + 1}"][0][0].number_format = "0.###"
-            for cell in sheet[f"I2:I{count + 1}"]:
-                cell[0].number_format = "0.###"
+            for index, cell in enumerate(sheet[f"I2:I{count + 1}"], start=0):
+                quantity = review_decisions[index]
+                row = row_map.get(quantity.row_id)
+                value = row.remaining_quantity if row is not None else None
+                cell[0].number_format = (
+                    "0" if isinstance(value, Decimal) and value == value.to_integral() else "0.###"
+                )
             for cell in sheet[f"J2:J{count + 1}"]:
                 cell[0].number_format = "#,##0.00"
             for cell in sheet[f"N2:N{count + 1}"]:

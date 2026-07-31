@@ -13,13 +13,21 @@ from pathlib import Path
 from typing import Literal
 
 from report_processor.drawing_card.models import WorkflowRequest, WorkflowResult
-from report_processor.drawing_card.review import import_review_approvals
+from report_processor.drawing_card.periods import discover_workbook_periods
+from report_processor.drawing_card.review import (
+    append_feedback,
+    import_review_approvals,
+    inline_review_rows,
+    review_approval,
+    write_approvals,
+)
 from report_processor.drawing_card.workflow import default_template_path, run_workflow
 from report_processor.metadata.period_models import DocumentPeriod
 from report_processor.metadata.period_patterns import MONTHS
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
+MAX_RETAINED_TERMINAL_JOBS = 64
 _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
@@ -47,6 +55,10 @@ class DrawingCardJob:
     errors: tuple[str, ...] = ()
     summary: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    review_items: dict[str, dict[str, object]] = field(default_factory=dict)
+    review_rows: dict[str, object] = field(default_factory=dict, repr=False)
+    inline_approvals: dict[str, object] = field(default_factory=dict, repr=False)
+    rag_mode: Literal["off", "semantic"] = "semantic"
     run_count: int = 0
 
     def __repr__(self) -> str:
@@ -85,6 +97,7 @@ class DrawingCardService:
         existing_name: str | None = None,
         existing_content: bytes | None = None,
         period: str | None = None,
+        rag_mode: Literal["off", "semantic"] = "semantic",
     ) -> DrawingCardJob:
         if mode not in {"create", "update"}:
             raise ValueError("mode must be create or update")
@@ -95,6 +108,8 @@ class DrawingCardService:
         elif existing_name is not None or existing_content is not None:
             raise ValueError("existing card is only valid for update")
         _validate_sources(sources, existing_content=existing_content)
+        if rag_mode not in {"off", "semantic"}:
+            raise ValueError("rag_mode must be off or semantic")
         clean_period = _validate_period(period)
 
         job_id = secrets.token_urlsafe(18)
@@ -118,9 +133,12 @@ class DrawingCardService:
                 mode=mode,
                 period=clean_period,
                 existing_card=existing,
+                rag_mode=rag_mode,
             )
             self._jobs[job_id] = job
-            return self._run(job)
+            result = self._run(job)
+            self._prune_terminal_jobs()
+            return result
         except Exception:
             self._jobs.pop(job_id, None)
             shutil.rmtree(directory, ignore_errors=True)
@@ -131,6 +149,22 @@ class DrawingCardService:
             return self._jobs[job_id]
         except KeyError as error:
             raise KeyError(job_id) from error
+
+    def discover_periods(self, sources: list[tuple[str, bytes]]) -> tuple[str, ...]:
+        """Inspect filenames and workbook values read-only without creating a job."""
+        _validate_sources(sources)
+        return discover_workbook_periods(sources, temporary_root=self.workspace_root)
+
+    def _prune_terminal_jobs(self) -> None:
+        terminal = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.status in {"ready", "failed", "blocked"}
+        ]
+        active_count = len(self._jobs) - len(terminal)
+        terminal_limit = max(0, MAX_RETAINED_TERMINAL_JOBS - active_count)
+        for job_id in terminal[:-terminal_limit] if terminal_limit else terminal:
+            self._jobs.pop(job_id, None)
 
     def get_result(self, job_id: str) -> tuple[Path, str]:
         job = self.get_job(job_id)
@@ -158,7 +192,89 @@ class DrawingCardService:
             review_path.unlink(missing_ok=True)
             raise ValueError("invalid manual review workbook") from error
         job.review = review_path
-        return self._run(job, review_decisions=review_path)
+        result = self._run(job, review_decisions=review_path)
+        self._prune_terminal_jobs()
+        return result
+
+    def list_review_items(
+        self, *, job_id: str, page: int = 1, page_size: int = 50
+    ) -> dict[str, object]:
+        """Return a bounded, Russian inline-review page without workspace metadata."""
+        job = self.get_job(job_id)
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("page must be positive and page_size must be between 1 and 100")
+        item_ids = sorted(job.review_items)
+        start = (page - 1) * page_size
+        items = []
+        for review_id in item_ids[start : start + page_size]:
+            item = dict(job.review_items[review_id])
+            approval = job.inline_approvals.get(review_id)
+            item["решение"] = (
+                {
+                    "action": approval.action,
+                    "category": approval.category.value if approval.category else None,
+                }
+                if approval is not None
+                else None
+            )
+            items.append(item)
+        return {
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "total": len(item_ids),
+            "unresolved_count": len(set(item_ids) - set(job.inline_approvals)),
+            "can_apply": bool(item_ids) and set(item_ids) <= set(job.inline_approvals),
+        }
+
+    def put_review_item(
+        self, *, job_id: str, review_id: str, action: str, category: str | None = None
+    ) -> DrawingCardJob:
+        """Create or replace one decision; replacement makes a choice reversible."""
+        job = self.get_job(job_id)
+        if job.status != "review_required" or review_id not in job.review_items:
+            raise ValueError("unknown review item")
+        job.inline_approvals[review_id] = review_approval(review_id, action, category)
+        return job
+
+    def delete_review_item(self, *, job_id: str, review_id: str) -> DrawingCardJob:
+        job = self.get_job(job_id)
+        if review_id not in job.review_items:
+            raise ValueError("unknown review item")
+        job.inline_approvals.pop(review_id, None)
+        return job
+
+    def bulk_review(self, *, job_id: str, action: str) -> DrawingCardJob:
+        """Apply a reversible bulk decision only where a category was proposed."""
+        if action not in {"approve_all_proposed", "reject_all"}:
+            raise ValueError("unsupported bulk review action")
+        job = self.get_job(job_id)
+        if job.status != "review_required":
+            raise ValueError("job does not await inline review")
+        for review_id, item in job.review_items.items():
+            proposed = item.get("предлагаемая_категория")
+            if action == "approve_all_proposed" and proposed:
+                job.inline_approvals[review_id] = review_approval(
+                    review_id, "approve", str(proposed)
+                )
+            elif action == "reject_all":
+                job.inline_approvals[review_id] = review_approval(review_id, "reject", None)
+        return job
+
+    def apply_inline_review(self, *, job_id: str) -> DrawingCardJob:
+        """Rerun only after every review row has an explicit decision."""
+        job = self.get_job(job_id)
+        if job.status != "review_required" or set(job.review_items) != set(job.inline_approvals):
+            raise ValueError("unresolved review items remain")
+        approvals_path = job.directory / "inline_review_decisions.json"
+        write_approvals(approvals_path, job.inline_approvals)
+        rerun = self._run(job, review_decisions=approvals_path)
+        if rerun.status == "ready":
+            append_feedback(
+                self.workspace_root / "review-feedback.jsonl", job.review_rows, job.inline_approvals
+            )
+        self._prune_terminal_jobs()
+        return rerun
 
     def _run(self, job: DrawingCardJob, *, review_decisions: Path | None = None) -> DrawingCardJob:
         if not _sources_unchanged(job):
@@ -177,8 +293,9 @@ class DrawingCardService:
             output=output,
             mode=job.mode,
             period=job.period,
-            rag_mode="off",
+            rag_mode=job.rag_mode,
             review_decisions=review_decisions,
+            feedback_examples=self.workspace_root / "review-feedback.jsonl",
             strict=True,
             work_dir=job.directory / "runs",
         )
@@ -201,6 +318,10 @@ class DrawingCardService:
             "manual_review": result.manual_review_count,
         }
         job.warnings = _controlled_warnings(result.warnings)
+        job.review_items = inline_review_rows(
+            result.source_rows, result.decisions, result.category_units
+        )
+        job.review_rows = {row.row_id: row for row in result.source_rows}
         if not _sources_unchanged(job):
             job.status = "failed"
             job.errors = ("SOURCE_HASH_CHANGED",)

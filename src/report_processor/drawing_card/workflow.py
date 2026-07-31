@@ -288,6 +288,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     rules_path = (request.rules or default_rules_path()).expanduser().resolve()
     examples_path = (request.examples or default_examples_path()).expanduser().resolve()
     rules = load_rules(rules_path)
+    result.category_units = {rule.category.value: rule.expected_units for rule in rules.categories}
     mapping = load_object_map(request.object_map)
     before_hashes = source_hashes(_container_paths(request))
     atomic_write_json(run_dir / "source_hashes_before.json", before_hashes)
@@ -329,6 +330,9 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         _save_summary(result)
         return result
     examples = load_confirmed_examples(examples_path)
+    if request.feedback_examples is not None:
+        feedback = load_confirmed_examples(request.feedback_examples)
+        examples = tuple({item.example_id: item for item in (*examples, *feedback)}.values())
     tiny_model = None
     if request.rag_mode != "off" and request.model_config is not None:
         from .matching.tiny_model import OpenAICompatibleTinyModel

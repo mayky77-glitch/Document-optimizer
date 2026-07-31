@@ -22,12 +22,16 @@ from ..models import (
 )
 from ..sources.normalization import build_drawing_code, normalize_text
 from ..statuses import Status
+from .contract import (
+    CARD_HEADERS,
+    COST_FORMAT,
+    FRACTIONAL_QUANTITY_FORMAT,
+    INTEGER_QUANTITY_FORMAT,
+)
 from .planner import plan_write_operations
 from .styles import clone_block_columns, clone_row_style
 from .validator import validate_card
 from .xlsx_xml import rewrite_exact_numeric_cells
-
-_HEADERS = ("Шифр чертежа", "Наименование этапа работ", "Ед. изм.", "Количество", "Общая стоимость")
 
 
 def _decimal_or_value(value):
@@ -191,7 +195,7 @@ def _prepare_block(sheet, layout: ObjectBlockLayout) -> None:
         sheet.merge_cells(merge_range)
     sheet.cell(2, start).value = f"Индекс объекта: {layout.object_index}"
     sheet.cell(2, start + 3).value = "Остаток работ по договору"
-    for offset, header in enumerate(_HEADERS):
+    for offset, header in enumerate(CARD_HEADERS):
         sheet.cell(3, start + offset).value = header
 
 
@@ -273,9 +277,13 @@ def write_card(
                         if isinstance(value, Decimal) and column_offset in {3, 4}:
                             exact_numeric_cells[(sheet.title, cell.coordinate)] = value
                         if column_offset == 3:
-                            cell.number_format = "0.###"
+                            cell.number_format = (
+                                INTEGER_QUANTITY_FORMAT
+                                if isinstance(value, Decimal) and value == value.to_integral()
+                                else FRACTIONAL_QUANTITY_FORMAT
+                            )
                         elif column_offset == 4:
-                            cell.number_format = "#,##0.00"
+                            cell.number_format = COST_FORMAT
                         if result.requires_manual_review or result.status not in {
                             Status.OK,
                             Status.VALUE_NOT_FOUND,

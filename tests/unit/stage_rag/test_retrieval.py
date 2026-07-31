@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import math
+import tracemalloc
 
 import pytest
 
@@ -115,3 +117,29 @@ def test_invalid_stage_identity_duplicate_and_encoder_failure_are_controlled() -
         StageRelationRAG(BrokenEncoder(), embedding_dimensions=2).suggest(
             (_stage("a"),), (_stage("target"),), k=1
         )
+
+
+def test_repeated_semantic_retrieval_has_bounded_retained_memory_after_warmup() -> None:
+    class StatelessEncoder:
+        def encode(self, texts):
+            return tuple((float(len(text)), 1.0) for text in texts)
+
+    rag = StageRelationRAG(StatelessEncoder(), embedding_dimensions=2)
+    sources = tuple(_stage(f"source-{index}") for index in range(16))
+    targets = tuple(_stage(f"target-{index}") for index in range(8))
+
+    tracemalloc.start()
+    try:
+        for _ in range(20):
+            rag.suggest(sources, targets, k=3)
+        gc.collect()
+        warmup_current, _ = tracemalloc.get_traced_memory()
+
+        for _ in range(100):
+            rag.suggest(sources, targets, k=3)
+        gc.collect()
+        retained_current, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert retained_current - warmup_current < 200_000

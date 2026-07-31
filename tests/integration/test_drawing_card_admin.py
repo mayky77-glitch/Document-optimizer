@@ -218,13 +218,31 @@ console.log(JSON.stringify({ value: period.value, options: period.options }));
     )
 
     assert json.loads(result.stdout) == {
-        "value": "",
+        "value": "2026-07",
         "options": [
             {"text": "Последний найденный период", "value": ""},
             {"text": "июнь 2026", "value": "2026-06"},
             {"text": "июль 2026", "value": "2026-07"},
         ],
     }
+
+
+def test_period_discovery_route_unions_files_and_uses_russian_labels(client) -> None:
+    test_client, _, _ = client
+    response = test_client.post(
+        "/api/drawing-card/periods",
+        files=[
+            ("sources", _files("КС-2 2026-06.xlsx")[0][1]),
+            ("sources", _files("0906 КС-6а июль 31_2026.xlsb")[0][1]),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["periods"] == [
+        {"value": "2026-06", "label": "июнь 2026"},
+        {"value": "2026-07", "label": "июль 2026"},
+    ]
+    assert response.json()["latest"] == "2026-07"
 
 
 def test_review_download_upload_and_rerun_use_the_review_field(client) -> None:

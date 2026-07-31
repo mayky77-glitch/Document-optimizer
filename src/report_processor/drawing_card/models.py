@@ -85,6 +85,7 @@ class DrawingSourceLocation:
     sheet_name: str
     row_number: int
     coordinates: tuple[str, ...]
+    document_index: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +234,7 @@ class WorkflowRequest:
     rag_mode: str = "off"
     model_config: Path | None = None
     review_decisions: Path | None = None
+    feedback_examples: Path | None = None
     objects_per_sheet: int = 4
     drawing_code_mode: str = "preserve_group"
     remaining_strategy: str = "direct_remaining_columns"
@@ -252,6 +254,7 @@ class WorkflowResult:
     schemas: list[SourceSchema] = field(default_factory=list)
     source_rows: list[DrawingSourceRow] = field(default_factory=list)
     decisions: list[MatchDecision] = field(default_factory=list)
+    category_units: dict[str, tuple[str, ...]] = field(default_factory=dict)
     extracted_row_count: int = 0
     classification_decision_count: int = 0
     manual_review_count: int = 0

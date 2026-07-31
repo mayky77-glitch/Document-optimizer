@@ -25,6 +25,7 @@ _DRAWING_ALIASES = (
     "обозначение чертежа",
     "чертеж",
 )
+_DOCUMENT_INDEX_ALIASES = ("индекс документа", "шифр документа", "номер документа")
 _WORK_ALIASES = (
     "наименование этапа выполнения работ",
     "наименование этапа работ",
@@ -111,6 +112,7 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
     warnings: list[str] = []
     candidates: dict[str, list[tuple[int, int]]] = {
         "drawing_code": [],
+        "document_index": [],
         "work_name": [],
         "unit": [],
         "remaining_quantity": [],
@@ -119,6 +121,8 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
     for column, header in headers.items():
         if _contains_alias(header, _DRAWING_ALIASES):
             candidates["drawing_code"].append((10, column))
+        if _contains_alias(header, _DOCUMENT_INDEX_ALIASES):
+            candidates["document_index"].append((9, column))
         if _contains_alias(header, _WORK_ALIASES):
             candidates["work_name"].append((10, column))
         if _contains_alias(header, _UNIT_ALIASES):

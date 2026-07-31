@@ -8,6 +8,12 @@ import pytest
 
 from report_processor.admin_panel.drawing_card_presentation import drawing_card_job_payload
 from report_processor.admin_panel.drawing_card_service import DrawingCardService
+from report_processor.drawing_card.output.contract import (
+    CARD_HEADERS,
+    COST_FORMAT,
+    FRACTIONAL_QUANTITY_FORMAT,
+    INTEGER_QUANTITY_FORMAT,
+)
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "drawing_card"
 
@@ -130,3 +136,16 @@ def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
         "manual_review",
     }
     assert str(tmp_path) not in str(payload)
+
+
+def test_output_contract_keeps_required_columns_and_numeric_formats() -> None:
+    assert CARD_HEADERS == (
+        "Шифр чертежа",
+        "Наименование этапа работ",
+        "Ед. изм.",
+        "Количество",
+        "Общая стоимость",
+    )
+    assert INTEGER_QUANTITY_FORMAT == "0"
+    assert FRACTIONAL_QUANTITY_FORMAT == "0.###"
+    assert COST_FORMAT == "#,##0.00"

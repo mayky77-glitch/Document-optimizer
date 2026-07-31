@@ -26,7 +26,7 @@ def test_unknown_drawing_card_job_is_not_resolved_as_a_workspace_path(tmp_path: 
     ("period", "expected_period"),
     (("июль 2026", "2026-07"), ("2026-07", "2026-07")),
 )
-def test_injected_runner_preserves_source_basename_with_rag_disabled(
+def test_injected_runner_preserves_source_basename_with_semantic_rag(
     tmp_path: Path, period: str, expected_period: str
 ) -> None:
     fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
@@ -42,7 +42,7 @@ def test_injected_runner_preserves_source_basename_with_rag_disabled(
     )
 
     assert len(seen) == 1
-    assert seen[0].rag_mode == "off"
+    assert seen[0].rag_mode == "semantic"
     assert seen[0].inputs[0].name == "01-0906_demo_input.xlsx"
     assert seen[0].inputs[0].read_bytes() == fixture.read_bytes()
     assert seen[0].inputs[0].resolve() != fixture.resolve()
