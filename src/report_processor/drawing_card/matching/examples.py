@@ -113,9 +113,11 @@ def exact_example_match(
     normalized_unit = normalize_unit(unit)
     candidates = [item for item in examples if item.normalized_text == normalized]
     # Feedback is exact and unit-scoped.  Generic legacy examples may still be
-    # used, but never override a unit-specific decision.
+    # used for positive categories, but a negative decision must never cross units.
     exact_unit = [item for item in candidates if item.unit == normalized_unit]
-    candidates = exact_unit or [item for item in candidates if item.unit is None]
+    candidates = exact_unit or [
+        item for item in candidates if item.unit is None and item.category is not None
+    ]
     if not candidates:
         return None
     candidates.sort(

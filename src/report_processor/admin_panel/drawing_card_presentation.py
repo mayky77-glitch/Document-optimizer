@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from report_processor.drawing_card.models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER
 
 from .drawing_card_service import DrawingCardJob
@@ -57,6 +59,81 @@ def drawing_card_category_options(job: DrawingCardJob) -> list[dict[str, str | N
         }
         for category in CATEGORY_ORDER
     ]
+
+
+def drawing_card_inline_review_page(
+    payload: Mapping[str, object], job: DrawingCardJob
+) -> dict[str, object]:
+    """Translate legacy row review data into the controlled public contract."""
+    action_states = {
+        "approve": "approved",
+        "reject": "rejected",
+        "cost_only": "cost_only",
+        "change_category": "change_category",
+        "quantity_only": "approved",
+        "skip": "rejected",
+    }
+    categories = drawing_card_category_options(job)
+    category_options = {str(item["value"]): item for item in categories}
+    public_items = []
+    for raw in payload.get("items", ()):
+        if not isinstance(raw, Mapping):
+            continue
+        decision = raw.get("решение")
+        action = decision.get("action") if isinstance(decision, Mapping) else None
+        selected_category = decision.get("category") if isinstance(decision, Mapping) else None
+        selected_option = category_options.get(str(selected_category))
+        public_items.append(
+            {
+                "review_id": raw.get("review_id"),
+                "work_name": raw.get("наименование"),
+                "category": raw.get("предлагаемая_категория_id"),
+                "category_label": raw.get("предлагаемая_категория_рус"),
+                "proposed_category": raw.get("предлагаемая_категория_id"),
+                "proposed_category_label": raw.get("предлагаемая_категория_рус"),
+                "selected_category": selected_category,
+                "selected_category_label": (
+                    selected_option.get("label") if selected_option is not None else None
+                ),
+                "quantity": raw.get("количество"),
+                "source_unit": raw.get("source_unit"),
+                "target_unit": raw.get("target_unit"),
+                "total_cost": raw.get("стоимость"),
+                "confidence": raw.get("confidence"),
+                "decision": action_states.get(str(action), "pending"),
+            }
+        )
+    total = int(payload.get("total", len(public_items)))
+    unresolved = int(payload.get("unresolved_count", total))
+    return {
+        "items": public_items,
+        "page": payload.get("page", 1),
+        "page_size": payload.get("page_size", 50),
+        "total": total,
+        "unresolved_count": unresolved,
+        "can_apply": payload.get("can_apply", False),
+        "categories": categories,
+        "summary": {
+            "Строк для проверки": total,
+            "Осталось решений": unresolved,
+        },
+    }
+
+
+def drawing_card_cluster_review_page(payload: Mapping[str, object]) -> dict[str, object]:
+    """Expose both names during the additive transition to the cluster UI."""
+    items = list(payload.get("items", ()))
+    return {
+        "items": items,
+        "clusters": items,
+        "page": payload.get("page", 1),
+        "page_size": payload.get("page_size", 50),
+        "total_clusters": payload.get("total_clusters", 0),
+        "total_rows": payload.get("total_rows", 0),
+        "unresolved_clusters": payload.get("unresolved_clusters", 0),
+        "unresolved_rows": payload.get("unresolved_rows", 0),
+        "can_apply": bool(payload.get("can_apply", False)),
+    }
 
 
 def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:

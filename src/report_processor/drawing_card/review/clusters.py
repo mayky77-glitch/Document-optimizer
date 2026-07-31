@@ -102,8 +102,7 @@ def _approval(row_id: str, action: str, category: str | None) -> ReviewApproval:
 def _has_hazard(row: DrawingSourceRow, decision: MatchDecision) -> bool:
     unsafe = {Status.FORMULA_WITHOUT_CACHED_VALUE, Status.EXCEL_ERROR}
     return bool(
-        row.formula_values
-        or unsafe.intersection(row.warnings)
+        unsafe.intersection(row.warnings)
         or decision.status in unsafe
         or unsafe.intersection(decision.warnings)
     )

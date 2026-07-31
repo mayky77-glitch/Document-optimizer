@@ -7,7 +7,8 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .drawing_card_presentation import (
-    drawing_card_category_options,
+    drawing_card_cluster_review_page,
+    drawing_card_inline_review_page,
     drawing_card_job_payload,
 )
 from .drawing_card_service import (
@@ -346,7 +347,7 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             return _error("Задача не найдена", 404)
         except (TypeError, ValueError):
             return _error("Проверьте номер страницы и размер списка", 400)
-        return _secure(JSONResponse(_inline_review_page(payload, current)))
+        return _secure(JSONResponse(drawing_card_inline_review_page(payload, current)))
 
     async def drawing_card_review_clusters(request):
         try:
@@ -359,7 +360,7 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             return _error("Задача не найдена", 404)
         except (TypeError, ValueError):
             return _error("Проверьте номер страницы и размер списка", 400)
-        return _secure(JSONResponse(_cluster_review_page(payload)))
+        return _secure(JSONResponse(drawing_card_cluster_review_page(payload)))
 
     async def drawing_card_review_cluster(request):
         job_id = request.path_params["job_id"]
@@ -367,6 +368,9 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
         try:
             if request.method == "DELETE":
                 version = request.query_params.get("version")
+                if not isinstance(version, str):
+                    payload = await request.json()
+                    version = payload.get("version") if isinstance(payload, Mapping) else None
                 if not isinstance(version, str):
                     raise ValueError("invalid cluster action")
                 current = drawing_panel.undo_review_cluster(
@@ -535,76 +539,6 @@ def _period_label(value: str) -> str:
     )
     year, month = value.split("-", 1)
     return f"{months[int(month) - 1]} {year}"
-
-
-def _inline_review_page(payload: Mapping[str, object], job) -> dict[str, object]:
-    action_states = {
-        "approve": "approved",
-        "reject": "rejected",
-        "cost_only": "cost_only",
-        "change_category": "change_category",
-        "quantity_only": "approved",
-        "skip": "rejected",
-    }
-    categories = drawing_card_category_options(job)
-    category_options = {str(item["value"]): item for item in categories}
-    public_items = []
-    for raw in payload.get("items", ()):
-        if not isinstance(raw, Mapping):
-            continue
-        decision = raw.get("решение")
-        action = decision.get("action") if isinstance(decision, Mapping) else None
-        selected_category = decision.get("category") if isinstance(decision, Mapping) else None
-        selected_option = category_options.get(str(selected_category))
-        public_items.append(
-            {
-                "review_id": raw.get("review_id"),
-                "work_name": raw.get("наименование"),
-                "category": raw.get("предлагаемая_категория_id"),
-                "category_label": raw.get("предлагаемая_категория_рус"),
-                "proposed_category": raw.get("предлагаемая_категория_id"),
-                "proposed_category_label": raw.get("предлагаемая_категория_рус"),
-                "selected_category": selected_category,
-                "selected_category_label": (
-                    selected_option.get("label") if selected_option is not None else None
-                ),
-                "quantity": raw.get("количество"),
-                "source_unit": raw.get("source_unit"),
-                "target_unit": raw.get("target_unit"),
-                "total_cost": raw.get("стоимость"),
-                "confidence": raw.get("confidence"),
-                "decision": action_states.get(str(action), "pending"),
-            }
-        )
-    total = int(payload.get("total", len(public_items)))
-    unresolved = int(payload.get("unresolved_count", total))
-    return {
-        "items": public_items,
-        "page": payload.get("page", 1),
-        "page_size": payload.get("page_size", 50),
-        "total": total,
-        "unresolved_count": unresolved,
-        "can_apply": payload.get("can_apply", False),
-        "categories": categories,
-        "summary": {
-            "Строк для проверки": total,
-            "Осталось решений": unresolved,
-        },
-    }
-
-
-def _cluster_review_page(payload: Mapping[str, object]) -> dict[str, object]:
-    """The service payload is already controlled; keep the cluster contract explicit."""
-    return {
-        "items": list(payload.get("items", ())),
-        "page": payload.get("page", 1),
-        "page_size": payload.get("page_size", 50),
-        "total_clusters": payload.get("total_clusters", 0),
-        "total_rows": payload.get("total_rows", 0),
-        "unresolved_clusters": payload.get("unresolved_clusters", 0),
-        "unresolved_rows": payload.get("unresolved_rows", 0),
-        "can_apply": bool(payload.get("can_apply", False)),
-    }
 
 
 def _upload_value(value: object):

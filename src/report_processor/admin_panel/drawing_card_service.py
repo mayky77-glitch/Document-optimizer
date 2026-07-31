@@ -456,11 +456,27 @@ class DrawingCardService:
 
     def _cluster_payload(self, job: DrawingCardJob, cluster: ReviewCluster) -> dict[str, object]:
         approvals = [job.inline_approvals.get(row_id) for row_id in cluster.member_ids]
+        first = approvals[0] if approvals else None
         selected = (
-            approvals[0] if approvals and all(item == approvals[0] for item in approvals) else None
+            first
+            if first is not None
+            and all(
+                item is not None and item.action == first.action and item.category == first.category
+                for item in approvals
+            )
+            else None
         )
         category = selected.category.value if selected and selected.category else None
         target_category = category or (cluster.category.value if cluster.category else None)
+        decision = (
+            {
+                "approve": "approved",
+                "reject": "rejected",
+                "quantity_only": "approved",
+            }.get(selected.action, selected.action)
+            if selected
+            else "pending"
+        )
         return {
             "cluster_id": cluster.cluster_id,
             "version": cluster.cluster_id,
@@ -474,7 +490,7 @@ class DrawingCardService:
             "selected_category_label": _category_label(selected.category) if selected else None,
             "confidence": cluster.confidence,
             "reason": cluster.reason_code,
-            "decision": selected.action if selected else "pending",
+            "decision": decision,
         }
 
     @staticmethod

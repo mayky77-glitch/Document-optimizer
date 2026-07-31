@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from report_processor.admin_panel.drawing_card_presentation import drawing_card_job_payload
 from report_processor.admin_panel.drawing_card_service import DrawingCardJob, DrawingCardService
+from report_processor.drawing_card.models import (
+    DrawingSourceLocation,
+    DrawingSourceRow,
+    MatchDecision,
+    TargetWorkCategory,
+)
+from report_processor.drawing_card.statuses import Status
 from report_processor.drawing_card.workflow import run_workflow
 
 
@@ -100,3 +108,86 @@ def test_category_change_updates_the_review_target_unit_from_the_selected_catego
             "решение": {"action": "change_category", "category": "concrete_works"},
         }
     ]
+
+
+def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Path) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    directory = service.workspace_root / "cluster-job"
+    directory.mkdir()
+    rows = {
+        row_id: DrawingSourceRow(
+            row_id=row_id,
+            location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 10, ("A10",)),
+            object_index_raw="1006",
+            drawing_code_raw="А-001",
+            work_name_raw="Монтаж кабеля",
+            unit_raw="м",
+            remaining_quantity=Decimal("1"),
+            remaining_total_cost=Decimal("2"),
+            formula_values=(),
+            cached_values=(),
+            source_document_type="ks6a",
+            source_period=None,
+            source_revision=None,
+            status=Status.OK,
+            warnings=(),
+        )
+        for row_id in ("row-a", "row-b")
+    }
+    decisions = {
+        row_id: MatchDecision(
+            row_id,
+            TargetWorkCategory.LOW_CURRENT_CABLE,
+            "review",
+            "review",
+            None,
+            None,
+            0.7,
+            0.7,
+            "manual_review",
+            (),
+            "review",
+            True,
+            Status.OK,
+            (),
+        )
+        for row_id in rows
+    }
+    job = DrawingCardJob(
+        job_id="cluster-job",
+        directory=directory,
+        sources=(),
+        source_hashes=(),
+        mode="create",
+        period=None,
+        existing_card=None,
+        status="review_required",
+        category_units={"low_current_cable": ("м",)},
+        review_items={row_id: {"review_id": row_id} for row_id in rows},
+        review_rows=rows,
+        review_decisions=decisions,
+    )
+    service._jobs[job.job_id] = job
+    cluster = service.list_review_clusters(job_id=job.job_id)["items"][0]
+
+    service.put_review_cluster(
+        job_id=job.job_id,
+        cluster_id=cluster["cluster_id"],
+        version=cluster["version"],
+        action="approve",
+        category="low_current_cable",
+    )
+    assert set(job.inline_approvals) == {"row-a", "row-b"}
+    with pytest.raises(ValueError, match="stale cluster identity"):
+        service.put_review_cluster(
+            job_id=job.job_id,
+            cluster_id=cluster["cluster_id"],
+            version="obsolete",
+            action="reject",
+        )
+    assert set(job.inline_approvals) == {"row-a", "row-b"}
+
+    service.undo_review_cluster(
+        job_id=job.job_id, cluster_id=cluster["cluster_id"], version=cluster["version"]
+    )
+    assert job.inline_approvals == {}

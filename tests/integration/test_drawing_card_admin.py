@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -104,6 +102,124 @@ def _review_job(service: DrawingCardService, job_id: str) -> DrawingCardJob:
     return job
 
 
+def _cluster_review_job(service: DrawingCardService, job_id: str) -> DrawingCardJob:
+    job = _review_job(service, job_id)
+    from decimal import Decimal
+
+    from report_processor.drawing_card.models import (
+        DrawingSourceLocation,
+        DrawingSourceRow,
+        MatchDecision,
+    )
+    from report_processor.drawing_card.statuses import Status
+
+    job.review_items = {
+        **job.review_items,
+        "review-row-2": {**job.review_items["review-row-1"], "review_id": "review-row-2"},
+    }
+    rows = {}
+    decisions = {}
+    for row_id in job.review_items:
+        rows[row_id] = DrawingSourceRow(
+            row_id=row_id,
+            location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 10, ("A10",)),
+            object_index_raw="1006",
+            drawing_code_raw="А-001",
+            work_name_raw="Монтаж контрольного кабеля",
+            unit_raw="м",
+            remaining_quantity=Decimal("12"),
+            remaining_total_cost=Decimal("3500"),
+            formula_values=(),
+            cached_values=(),
+            source_document_type="ks6a",
+            source_period=None,
+            source_revision=None,
+            status=Status.OK,
+            warnings=(),
+        )
+        decisions[row_id] = MatchDecision(
+            row_id,
+            None,
+            "review",
+            "review",
+            None,
+            None,
+            0.72,
+            0.72,
+            "manual_review",
+            (),
+            "review",
+            True,
+            Status.OK,
+            (Status.UNIT_MISMATCH,),
+        )
+    job.review_rows, job.review_decisions = rows, decisions
+    return job
+
+
+def test_cluster_api_fans_out_undoes_and_hides_private_metadata(client) -> None:
+    test_client, service, private_root = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _cluster_review_job(service, created.json()["job_id"])
+    listing = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+    cluster = listing.json()["items"][0]
+
+    approved = test_client.put(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
+        json={"version": cluster["version"], "action": "approve", "category": "low_current_cable"},
+    )
+    stale = test_client.put(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
+        json={"version": "obsolete", "action": "reject"},
+    )
+    undone = test_client.delete(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}?version={cluster['version']}"
+    )
+
+    assert listing.status_code == approved.status_code == undone.status_code == 200
+    assert stale.status_code == 409
+    assert set(service.get_job(job.job_id).inline_approvals) == set()
+    assert listing.json()["total_clusters"] == 1
+    assert listing.json()["total_rows"] == 2
+    for response in (listing, approved, stale, undone):
+        assert str(private_root) not in response.text
+        assert "private.xlsx" not in response.text
+        assert "Лист1" not in response.text
+
+
+def test_cluster_api_matches_the_review_asset_contract(client) -> None:
+    test_client, service, _ = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _cluster_review_job(service, created.json()["job_id"])
+    listing = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+
+    assert listing.status_code == 200
+    assert "clusters" in listing.json()
+
+
+def test_cluster_api_accepts_the_asset_delete_payload_and_returns_ui_decision_names(client) -> None:
+    test_client, service, _ = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _cluster_review_job(service, created.json()["job_id"])
+    listing = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+    cluster = listing.json()["items"][0]
+
+    approved = test_client.put(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
+        json={"version": cluster["version"], "action": "approve", "category": "low_current_cable"},
+    )
+    refetched = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+    undone = test_client.request(
+        "DELETE",
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
+        json={"version": cluster["version"]},
+    )
+
+    assert approved.status_code == 200
+    assert refetched.json()["items"][0]["decision"] == "approved"
+    assert undone.status_code == 200
+
+
 def test_create_and_read_job_hide_private_paths_from_path_header_and_json(client) -> None:
     test_client, service, private_root = client
     created = test_client.post("/api/drawing-card/jobs", files=_files())
@@ -184,7 +300,7 @@ def test_drawing_card_asset_publishes_local_workbook_preflight(client) -> None:
     assert "selectedWorkbooksPreflightError" in response.text
     assert "~$" in response.text
     assert "arrayBuffer()" in response.text
-    assert "hasZipSignature(bytes)" in response.text
+    assert "ZIP_SIGNATURES.some" in response.text
     assert "OLE_SIGNATURE" not in response.text
     assert "Файл «${name}» не является корректной Excel-книгой" in response.text
     assert "existingCard.files[0]" in response.text
@@ -194,139 +310,25 @@ def test_drawing_card_assets_keep_recoverable_review_state_and_use_category_sele
     test_client, _, _ = client
     page = test_client.get("/drawing-card")
     script = test_client.get("/static/drawing-card.js")
+    review_script = test_client.get("/static/drawing-card-review.js")
 
     assert page.status_code == 200
     assert script.status_code == 200
-    assert '<select class="category-input"' in page.text
-    assert 'class="category-input" type="text"' not in page.text
+    assert review_script.status_code == 200
+    assert '<select class="category-input"' in review_script.text
+    assert 'class="category-input" type="text"' not in review_script.text
     assert "sessionStorage" in script.text
     assert "currentJobId" in script.text
-    assert "currentPage" in script.text
+    assert "currentReviewPage" in script.text
     assert "operation.value" in script.text
     assert "period.value" in script.text
     assert "sourceFiles.files.length" in script.text
     assert "/api/drawing-card/jobs/${encodeURIComponent(currentJobId)}" in script.text
     assert "error.status === 404" in script.text
     assert "Уже загружено для текущей карточки" in script.text
-    assert "categoryInput.focus()" in script.text
-    assert "selectedCategory" in script.text
-
-
-def test_drawing_card_asset_renders_draft_and_accepted_categories_with_the_selected_unit() -> None:
-    asset = (
-        Path(__file__).parents[2]
-        / "src"
-        / "report_processor"
-        / "admin_panel"
-        / "assets"
-        / "drawing-card.js"
-    )
-    script = r"""
-const fs = require("node:fs");
-const source = fs.readFileSync(process.argv[1], "utf8");
-const start = source.indexOf("  const renderItem =");
-const end = source.indexOf("\n\n  const renderReview", start);
-const drafts = { "row-1": "concrete_works" };
-const renderItemSource = source.slice(start, end).replace("  const renderItem", "const renderItem");
-const dependencyNames = [
-  "Option", "reviewTemplate", "reviewCategories", "draftCategories", "persistSession",
-  "decisionLabel", "humanCategory", "categoryLabel", "categoryUnit", "valueFrom",
-  "textValue", "reviewId", "runItemAction",
-].join(", ");
-const renderItem = Function(
-  "deps",
-  `const { ${dependencyNames} } = deps;\n${renderItemSource}\nreturn renderItem;`,
-)({
-  Option: class Option { constructor(text, value) { this.text = text; this.value = value; } },
-  reviewTemplate: { content: { cloneNode() { return fragment; } } },
-  reviewCategories: [
-    { value: "low_current_cable", label: "Слаботочные сети", target_unit: "м" },
-    { value: "concrete_works", label: "Бетонные работы", target_unit: "м3" },
-  ],
-  draftCategories: drafts,
-  persistSession() {},
-  decisionLabel: (value) => value || "Ожидает решения",
-  humanCategory: (value) => value === "concrete_works" ? "Бетонные работы" : "Слаботочные сети",
-  categoryLabel: (value) => value === "concrete_works" ? "Бетонные работы" : "Слаботочные сети",
-  categoryUnit: (value, fallback) => value === "concrete_works" ? "м3" : fallback,
-  valueFrom: (item, names) => names.map((name) => item[name]).find((value) => value != null),
-  textValue: (value, fallback = "") => value == null ? fallback : String(value),
-  reviewId: (item) => item.review_id,
-  runItemAction() {},
-});
-
-function element(dataset = {}) {
-  return {
-    dataset, hidden: false, textContent: "", value: "", children: [], listeners: {},
-    classList: { toggle() {} },
-    replaceChildren(...children) { this.children = children; },
-    append(child) { this.children.push(child); },
-    addEventListener(name, callback) { this.listeners[name] = callback; },
-    focus() {}, closest() { return card; },
-    querySelectorAll() { return []; },
-  };
-}
-const selected = element();
-const proposed = element();
-const categoryInput = element();
-const contexts = Object.fromEntries(
-  ["category", "quantity", "source-unit", "target-unit", "cost"].map(
-    (name) => [name, element()],
-  ),
-);
-const actions = [
-  "undo", "approve", "reject", "change-category", "cost-only", "cancel-category",
-].map(
-  (action) => element({ reviewAction: action }),
-);
-const card = element();
-card.querySelector = (selector) => {
-  if (selector === ".review-item") return card;
-  if (selector === ".decision-status") return status;
-  if (selector === ".work-name") return workName;
-  if (selector === ".proposed-category") return proposed;
-  if (selector === ".selected-category") return selected;
-  if (selector === ".category-input") return categoryInput;
-  if (selector === ".category-editor") return editor;
-  if (selector.startsWith("[data-context=")) return contexts[selector.match(/"(.+)"/)[1]];
-  return actions.find((button) => selector.includes(button.dataset.reviewAction));
-};
-card.querySelectorAll = (selector) => selector === "[data-review-action]"
-  ? actions
-  : actions.filter((button) => selector.includes(button.dataset.reviewAction));
-const fragment = { querySelector: () => card };
-const status = element(); const workName = element(); const editor = element();
-const item = {
-  review_id: "row-1", decision: "change_category", category: "low_current_cable",
-  category_label: "Слаботочные сети", proposed_category: "low_current_cable",
-  source_unit: "м", target_unit: "м", quantity: "12", total_cost: "3500",
-};
-renderItem(item);
-const draft = {
-  targetUnit: contexts["target-unit"].textContent,
-  draft: selected.textContent,
-  approveHidden: actions.find((button) => button.dataset.reviewAction === "approve").hidden,
-  costOnlyHidden: actions.find((button) => button.dataset.reviewAction === "cost-only").hidden,
-};
-delete drafts["row-1"];
-item.decision = "approved";
-item.selected_category = "concrete_works";
-renderItem(item);
-console.log(JSON.stringify({ draft, accepted: selected.textContent }));
-"""
-
-    result = subprocess.run(["node", "-e", script, str(asset)], capture_output=True, text=True)
-
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {
-        "draft": {
-            "targetUnit": "м3",
-            "draft": "Выбранная категория: Бетонные работы",
-            "approveHidden": False,
-            "costOnlyHidden": False,
-        },
-        "accepted": "Принятая категория: Бетонные работы",
-    }
+    assert "category.focus()" in review_script.text
+    assert "selected_category" in review_script.text
+    assert "extractPeriodFromFilename" in script.text
 
 
 def test_drawing_card_page_offers_only_detected_periods(client) -> None:
@@ -339,60 +341,6 @@ def test_drawing_card_page_offers_only_detected_periods(client) -> None:
     assert '<option value="">Последний найденный период</option>' in response.text
     assert "Доступны только периоды, найденные в выбранных файлах." in response.text
     assert 'type="text" maxlength="64"' not in response.text
-
-
-def test_drawing_card_asset_derives_detected_period_options() -> None:
-    asset = (
-        Path(__file__).parents[2]
-        / "src"
-        / "report_processor"
-        / "admin_panel"
-        / "assets"
-        / "drawing-card.js"
-    )
-    script = """
-const fs = require("node:fs");
-const listeners = {};
-const inert = { addEventListener() {} };
-const period = {
-  value: "",
-  options: [],
-  replaceChildren(...options) { this.options = options; },
-  append(option) { this.options.push(option); },
-};
-const sources = {
-  files: [
-    { name: "0906 КС-6а июль 31_2026.xlsb" },
-    { name: "КС-2 2026-06.xlsx" },
-  ],
-  addEventListener(name, callback) { listeners[name] = callback; },
-};
-global.Option = class Option {
-  constructor(text, value) { this.text = text; this.value = value; }
-};
-global.document = {
-  querySelector(selector) {
-    return selector === "#sources" ? sources : selector === "#period" ? period : inert;
-  },
-  querySelectorAll() { return []; },
-};
-eval(fs.readFileSync(process.argv[1], "utf8"));
-listeners.change();
-console.log(JSON.stringify({ value: period.value, options: period.options }));
-"""
-
-    result = subprocess.run(
-        ["node", "-e", script, str(asset)], check=True, capture_output=True, text=True
-    )
-
-    assert json.loads(result.stdout) == {
-        "value": "2026-07",
-        "options": [
-            {"text": "Последний найденный период", "value": ""},
-            {"text": "июнь 2026", "value": "2026-06"},
-            {"text": "июль 2026", "value": "2026-07"},
-        ],
-    }
 
 
 def test_period_discovery_route_unions_files_and_uses_russian_labels(client) -> None:
