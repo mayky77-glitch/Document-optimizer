@@ -1,22 +1,22 @@
 ---
 type: task
-status: claimed
+status: done
 work_id: drawing-card-dictionary-v1
 role: worker
 agent_role: developer
 owner: "dictionary-developer-1"
 profile: L2
 routing_grade: P4
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 1
+state_fingerprint: "b8dee2f6a30c458c85bc621eb30967cbfae32169"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Consequential multi-rule classification, unit guards and feedback precedence"
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-31
@@ -32,7 +32,7 @@ depends_on:
   - "dea20106129bd3b89446990427cc706b63e81f4a"
 tags:
   - "task/implementation"
-  - "status/claimed"
+  - "status/done"
   - "drawing-card"
   - "matching"
 links:
@@ -67,11 +67,14 @@ links:
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: matcher cascade, bounded mask engine and rules `2.0`.
+- Commands and tests run: focused/full/slow pytest, ruff, compileall, 25-case
+  confirmed dictionary matrix, real XLSB read-only classification and memory probe.
+- Result: feature `b8dee2f6a30c458c85bc621eb30967cbfae32169`; accepted merge
+  `12b2d6c7b3e63cc89924ff1eb50b5c0915516e68`.
+- Risks or follow-up: the remaining 536 real-data rows stay manual because no
+  confirmed deterministic rule can safely decide them.
 
 ## Handoff
 
-Leave in review until integration accepts the feature commit.
+Accepted by integration owner.
