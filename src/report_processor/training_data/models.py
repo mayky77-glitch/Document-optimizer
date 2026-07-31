@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
 
+from report_processor.hierarchy.models import HierarchyIssue
+
 
 class FormulaErrorCode(StrEnum):
     NONE = "NONE"
@@ -71,3 +73,4 @@ class TrainingDataResult:
     rows: tuple[TrainingDataRow, ...]
     statistics: TrainingDataStatistics
     warnings: tuple[str, ...] = ()
+    hierarchy_issues: tuple[HierarchyIssue, ...] = ()

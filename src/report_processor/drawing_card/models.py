@@ -105,6 +105,7 @@ class DrawingSourceRow:
     source_revision: str | None
     status: str
     warnings: tuple[str, ...]
+    position_code_raw: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +254,7 @@ class WorkflowResult:
     manifest: list[ManifestEntry] = field(default_factory=list)
     schemas: list[SourceSchema] = field(default_factory=list)
     source_rows: list[DrawingSourceRow] = field(default_factory=list)
+    hierarchy_issues: list[object] = field(default_factory=list)
     decisions: list[MatchDecision] = field(default_factory=list)
     category_units: dict[str, tuple[str, ...]] = field(default_factory=dict)
     extracted_row_count: int = 0

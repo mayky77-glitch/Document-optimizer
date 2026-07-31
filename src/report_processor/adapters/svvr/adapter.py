@@ -23,6 +23,7 @@ class SVVRAdapter:
     supported_sheet_type = SheetType.SVVR
     required_columns = (LogicalColumn.WORK_NAME, LogicalColumn.CURRENT_PERIOD_QUANTITY)
     optional_columns = (
+        LogicalColumn.ROW_NUMBER,
         LogicalColumn.OBJECT_CODE,
         LogicalColumn.SUBOBJECT_CODE,
         LogicalColumn.POSITION_CODE,
@@ -47,7 +48,7 @@ class SVVRAdapter:
         object_name, w2 = parse_text_cell(values, "object_name", "object")
         subobject_code, w3 = parse_text_cell(values, "subobject_code")
         subobject_name, w4 = parse_text_cell(values, "subobject_name", "subobject")
-        position, w5 = parse_text_cell(values, "position_code", "position", "order")
+        position, w5 = parse_text_cell(values, "position_code", "position", "order", "row_number")
         work_name, w6 = parse_text_cell(values, "work_name", "name")
         unit, w7 = parse_text_cell(values, "unit")
         quantity, w8 = parse_numeric_cell(
