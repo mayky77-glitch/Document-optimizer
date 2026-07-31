@@ -30,6 +30,7 @@ from report_processor.drawing_card.review import (
     write_approvals,
 )
 from report_processor.drawing_card.review.clusters import ReviewCluster
+from report_processor.drawing_card.statuses import Status
 from report_processor.drawing_card.workflow import default_template_path, run_workflow
 from report_processor.metadata.period_models import DocumentPeriod
 from report_processor.metadata.period_patterns import MONTHS
@@ -43,6 +44,11 @@ _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
 _MACHINE_CONSENSUS_NAME = "machine-consensus.jsonl"
+_PUBLISHABLE_WORKFLOW_STATUSES = {
+    Status.OK,
+    Status.COMPLETED_WITH_WARNINGS,
+    Status.PARTIALLY_READY,
+}
 _ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 _CANONICAL_PERIOD_RE = re.compile(r"(?P<year>\d{4})-(?P<month>0[1-9]|1[0-2])")
 _RUSSIAN_PERIOD_RE = re.compile(
@@ -428,7 +434,7 @@ class DrawingCardService:
         elif (
             result.output_path is not None
             and result.output_path.is_file()
-            and result.status == "OK"
+            and result.status in _PUBLISHABLE_WORKFLOW_STATUSES
         ):
             if not _inside_job(result.output_path, job):
                 job.status = "failed"

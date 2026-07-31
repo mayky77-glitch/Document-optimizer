@@ -14,9 +14,38 @@ from report_processor.drawing_card.models import (
     DrawingSourceRow,
     MatchDecision,
     TargetWorkCategory,
+    WorkflowResult,
 )
 from report_processor.drawing_card.statuses import Status
 from report_processor.drawing_card.workflow import run_workflow
+
+
+@pytest.mark.parametrize(
+    "workflow_status",
+    (Status.COMPLETED_WITH_WARNINGS, Status.PARTIALLY_READY),
+)
+def test_validated_warning_output_is_available_after_review(
+    tmp_path: Path, workflow_status: Status
+) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request):
+        run_dir = request.work_dir / "warning-output"
+        run_dir.mkdir(parents=True)
+        assert request.output is not None
+        request.output.write_bytes(b"validated output")
+        return WorkflowResult(
+            run_id="warning-output",
+            status=workflow_status,
+            work_dir=run_dir,
+            output_path=request.output,
+        )
+
+    service = DrawingCardService(tmp_path / "private-workspaces", runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+
+    assert job.status == "ready"
+    assert job.result_available is True
 
 
 def test_unknown_drawing_card_job_is_not_resolved_as_a_workspace_path(tmp_path: Path) -> None:
