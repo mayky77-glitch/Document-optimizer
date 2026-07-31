@@ -1,0 +1,119 @@
+status: frozen
+work_id: bulk-reconciliation-v1
+objective: "Массовая сверка документов и встроенная русская проверка карточки остатков с локальным RAG"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-ready"
+planning_parent_sha: 0c3a135bcac8b929bd7056bec21c016b44e27e83
+dependency_sha: 0c3a135bcac8b929bd7056bec21c016b44e27e83
+published_base_sha_ref: "commit containing this manifest and all frozen task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 0c3a135bcac8b929bd7056bec21c016b44e27e83
+contract_versions:
+  processing: ProcessingContract-17.1
+  source_batch: SourceBatchIdentity-1.0
+  source_row_index: SourceRowIndex-1.0
+  inline_review: DrawingCardInlineReview-1.0
+  feedback: ReviewFeedbackStore-1.0
+  rag: DrawingCardRAG-1.0
+  review_workbook: ManualReviewWorkbook-1.1
+  result_columns: DrawingCardResultColumns-1.0
+processing_contract:
+  sources: "1..32 Excel workbooks, deterministic order, one target workbook and one result"
+  total_upload_limit: "256 MiB"
+  source_formats: [".xlsx", ".xlsm", ".xlsb"]
+  zip: rejected
+  document_index: "explicit row value, worksheet-local carry-forward, then unambiguous filename fallback"
+  compatibility: "legacy one-source request remains valid"
+review_contract:
+  language: ru
+  page_size_default: 50
+  page_size_max: 100
+  actions:
+    - approve
+    - reject
+    - change_category
+    - cost_only
+    - revert
+    - approve_all_proposed
+    - reject_all
+  apply: "explicit; blocked while unresolved rows remain"
+  context:
+    - category
+    - work_name
+    - quantity
+    - source_unit
+    - target_unit
+    - total_cost
+  feedback: "private local last-explicit-wins memory; no paths, filenames, sheets or credentials"
+rag_contract:
+  model: cointegrated/rubert-tiny2
+  revision: e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae
+  dimensions: 312
+  network: forbidden
+  behavior: "semantic retrieval over confirmed examples; suggestion only; deterministic fallback when unavailable"
+result_contract:
+  required_columns:
+    - "Шифр чертежа"
+    - "Наименование этапа работ"
+    - "Ед. изм."
+    - "Количество"
+    - "Общая стоимость"
+  quantity_format: "integer 0; fractional 0.###"
+  cost_format: "#,##0.00"
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv run ruff check src tests"
+  - "uv run ruff format --check src tests"
+  - "env PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider"
+baseline_results:
+  - "main SHA 0c3a135bcac8b929bd7056bec21c016b44e27e83"
+  - "post-merge main CI 30601137279: success"
+  - "full local: 614 passed, 22 skipped"
+shared_paths_owner: integration
+shared_paths:
+  - .gitignore
+  - README.md
+  - docs
+  - knowledge
+  - pyproject.toml
+  - uv.lock
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - src/report_processor/cli_admin.py
+  - src/report_processor/admin_panel/__init__.py
+  - src/report_processor/admin_panel/app.py
+  - src/report_processor/admin_panel/view.py
+  - tests/conftest.py
+forbidden_paths:
+  - ".env*"
+  - cache
+  - logs
+  - output
+  - .github
+  - "**/*.zip"
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+acceptance_commands:
+  - "uv run ruff check src tests"
+  - "uv run ruff format --check src tests"
+  - "uv run pytest -q tests/unit/admin_panel tests/unit/drawing_card tests/integration/test_admin_panel.py tests/integration/test_drawing_card_admin.py"
+  - "uv run pytest -q"
+  - "uv run python -m compileall -q src tests"
+  - "node --check src/report_processor/admin_panel/assets/admin.js"
+  - "node --check src/report_processor/admin_panel/assets/drawing-card.js"
+  - "git diff --check"
+required_evidence:
+  - "1 and 32 sources accepted; 0 and 33 rejected without residue"
+  - "upload order cannot change output"
+  - "multiple document indexes in one workbook remain isolated"
+  - "Russian inline review has stable pagination and reversible decisions"
+  - "bulk approval never accepts rows without a proposed category"
+  - "feedback survives a new job and reduces repeated manual review"
+  - "RAG remains local, suggestion-only and falls back safely"
+  - "required five result columns and numeric formats are verified"
+  - "real input SHA-256, size and mtime_ns remain unchanged"
+created_at: "2026-07-31T11:30:00+08:00"
