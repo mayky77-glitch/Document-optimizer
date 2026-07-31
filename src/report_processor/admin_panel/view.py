@@ -16,6 +16,10 @@ _PUBLIC_ASSETS = {
         "text/javascript; charset=utf-8",
         _ASSET_DIRECTORY / "drawing-card.js",
     ),
+    "drawing-card-review.js": (
+        "text/javascript; charset=utf-8",
+        _ASSET_DIRECTORY / "drawing-card-review.js",
+    ),
 }
 
 
