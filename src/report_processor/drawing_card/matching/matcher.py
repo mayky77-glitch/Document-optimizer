@@ -47,6 +47,7 @@ _TARGET_CUES = (
     "буронабивн",
     "бетон",
     "монолит",
+    "железобетон",
     "ростверк",
     "металлоконструк",
     "м/к",
@@ -106,6 +107,7 @@ _CONFIRMED_NEGATIVE_ALL = (
     ("антенн", "мачт"),
     ("изготовлен", "емкост"),
     ("изготовлен", "резервуар"),
+    ("подключен", "жил"),
 )
 
 _UNRESOLVED_FORMULA_WARNINGS = frozenset({Status.FORMULA_WITHOUT_CACHED_VALUE, Status.EXCEL_ERROR})
