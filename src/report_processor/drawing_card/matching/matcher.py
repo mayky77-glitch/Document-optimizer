@@ -16,6 +16,7 @@ from .examples import (
     LexicalExampleRetriever,
     exact_example_match,
 )
+from .masks import contains_mask, has_all_masks, has_any_mask
 from .semantic import SemanticExampleRetriever
 
 if TYPE_CHECKING:
@@ -46,10 +47,10 @@ _TARGET_CUES = (
     "буронабивн",
     "бетон",
     "монолит",
+    "железобетон",
     "ростверк",
     "металлоконструк",
     "м/к",
-    "тсг",
     "трубопровод",
     "зра",
     "запорн",
@@ -65,7 +66,6 @@ _CONFIRMED_NEGATIVE_PHRASES = (
     "динамическое испытание",
     "контроль свай",
     "обследование свай",
-    "срезка тсг",
     "испытание бетона",
     "лабораторный контроль",
     "демонтаж бетона",
@@ -82,16 +82,14 @@ _CONFIRMED_NEGATIVE_PHRASES = (
     "демонтаж арматуры",
     "подключение жил",
     "разводка по устройствам",
-    "кабельный лоток",
-    "кабельных лотков",
-    "кабельных коробов",
-    "кабельных стоек",
-    "заземляющ",
-    "под кабельную продукцию",
-    "опорных конструкций для крепления трубопроводов",
 )
 
 _CONFIRMED_NEGATIVE_ALL = (
+    ("испытан", "сва"),
+    ("контрол", "сва"),
+    ("обследован", "сва"),
+    ("геодез", "сва"),
+    ("изыскан", "сва"),
     ("контрол", "трубопровод"),
     ("изоляц", "трубопровод"),
     ("испытан", "трубопровод"),
@@ -102,37 +100,27 @@ _CONFIRMED_NEGATIVE_ALL = (
     ("рк", "трубопровод"),
     ("узк", "трубопровод"),
     ("капиллярн", "трубопровод"),
+    ("опорн", "трубопровод"),
+    ("поддержк", "трубопровод"),
+    ("креплен", "трубопровод"),
+    ("мачт", "молниеотвод"),
+    ("антенн", "мачт"),
+    ("изготовлен", "емкост"),
+    ("изготовлен", "резервуар"),
+    ("подключен", "жил"),
 )
 
-_EXACT_TOKEN_PHRASES = {
-    "зра",
-    "тсг",
-    "волс",
-    "кип",
-    "м/к",
-    "монтаж",
-    "устройство",
-    "испытание",
-    "контроль",
-    "обследование",
-    "извлечение",
-    "ремонт",
-    "ревизия",
-}
+_UNRESOLVED_FORMULA_WARNINGS = frozenset({Status.FORMULA_WITHOUT_CACHED_VALUE, Status.EXCEL_ERROR})
 
 
 @lru_cache(maxsize=256)
 def _exact_token_pattern(phrase: str) -> re.Pattern[str]:
-    return re.compile(rf"(?<![\w/]){re.escape(phrase)}(?![\w/])", re.IGNORECASE)
+    """Compatibility helper for exact token masks; cache remains strictly bounded."""
+    return re.compile(rf"(?<![\w/]){re.escape(normalize_text(phrase))}(?![\w/])", re.IGNORECASE)
 
 
 def _contains_phrase(text: str, phrase: str) -> bool:
-    normalized = normalize_text(phrase)
-    if not normalized:
-        return False
-    if normalized in _EXACT_TOKEN_PHRASES:
-        return _exact_token_pattern(normalized).search(text) is not None
-    return normalized in text
+    return contains_mask(text, phrase)
 
 
 def _has_target_cue(text: str) -> bool:
@@ -144,23 +132,19 @@ def _has_target_cue(text: str) -> bool:
 
 
 def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
-    return any(_contains_phrase(text, phrase) for phrase in phrases)
+    return has_any_mask(text, phrases)
 
 
 def _has_confirmed_negative(text: str) -> bool:
     if _has_any(text, _CONFIRMED_NEGATIVE_PHRASES):
         return True
-    return any(
-        all(_contains_phrase(text, token) for token in group) for group in _CONFIRMED_NEGATIVE_ALL
-    )
+    return any(has_all_masks(text, group) for group in _CONFIRMED_NEGATIVE_ALL)
 
 
 def _rule_matches(text: str, rule: CategoryRule) -> bool:
     if _has_any(text, rule.exclude_any):
         return False
-    exact_groups = any(
-        all(_contains_phrase(text, token) for token in group) for group in rule.include_all
-    )
+    exact_groups = any(has_all_masks(text, group) for group in rule.include_all)
     return exact_groups or _has_any(text, rule.include_any)
 
 
@@ -246,15 +230,16 @@ class DrawingRowMatcher:
         if approved is not None:
             return approved
         text = normalize_text(row.work_name_raw)
-        matched = [rule for rule in self.rules.categories if _rule_matches(text, rule)]
-        if len(matched) == 1:
-            return self._deterministic(row, text, matched[0])
-        if len(matched) > 1:
+        if self._has_unresolved_formula(row):
             return self._review(
                 row,
-                reason="Several deterministic categories matched",
-                warnings=("MULTIPLE_CATEGORY_MATCHES",),
+                reason="Formula value is unresolved; automatic no-impact exclusion is unsafe",
+                warnings=tuple(
+                    str(item) for item in row.warnings if str(item).startswith("FORMULA_")
+                ),
             )
+        if self._is_no_impact(row, text):
+            return self._exclude_no_impact(row)
         exact = exact_example_match(
             text,
             self.examples,
@@ -262,38 +247,52 @@ class DrawingRowMatcher:
             source_type=row.source_document_type,
         )
         if exact is not None:
-            return MatchDecision(
-                row_id=row.row_id,
+            if (
+                exact.category is None
+                or exact.unit is None
+                or exact.unit == normalize_unit(row.unit_raw)
+            ):
+                return MatchDecision(
+                    row_id=row.row_id,
+                    category=exact.category,
+                    quantity_decision=exact.quantity_decision,
+                    cost_decision=exact.cost_decision,
+                    quantity_rule_id=f"example:{exact.example_id}",
+                    cost_rule_id=f"example:{exact.example_id}",
+                    quantity_confidence=1.0,
+                    cost_confidence=1.0,
+                    matching_strategy="confirmed_dictionary",
+                    evidence_ids=(exact.example_id,),
+                    reason="Exact confirmed example",
+                    requires_manual_review=False,
+                    status=Status.OK,
+                    warnings=(),
+                )
+            return self._review(
+                row,
                 category=exact.category,
-                quantity_decision=exact.quantity_decision,
-                cost_decision=exact.cost_decision,
-                quantity_rule_id=f"example:{exact.example_id}",
-                cost_rule_id=f"example:{exact.example_id}",
-                quantity_confidence=1.0,
-                cost_confidence=1.0,
-                matching_strategy="confirmed_dictionary",
+                reason="Exact confirmed example has an incompatible unit",
+                warnings=(Status.UNIT_MISMATCH,),
                 evidence_ids=(exact.example_id,),
-                reason="Exact confirmed example",
-                requires_manual_review=False,
-                status=Status.OK,
-                warnings=(),
             )
         if _has_confirmed_negative(text):
-            return MatchDecision(
-                row_id=row.row_id,
-                category=None,
-                quantity_decision="exclude",
-                cost_decision="exclude",
-                quantity_rule_id="rules:confirmed-negative",
-                cost_rule_id="rules:confirmed-negative",
-                quantity_confidence=0.99,
-                cost_confidence=0.99,
-                matching_strategy="deterministic_negative",
-                evidence_ids=(),
-                reason="Confirmed negative category rule",
-                requires_manual_review=False,
-                status=Status.OK,
-                warnings=(),
+            return self._exclude_negative(row)
+        matched = [rule for rule in self.rules.categories if _rule_matches(text, rule)]
+        compatible = [rule for rule in matched if _unit_is_compatible(row.unit_raw, rule)]
+        if len(compatible) == 1:
+            return self._deterministic(row, text, compatible[0])
+        if len(compatible) > 1:
+            return self._review(
+                row,
+                reason="Several deterministic categories matched",
+                warnings=("MULTIPLE_CATEGORY_MATCHES",),
+            )
+        if len(matched) == 1:
+            return self._review(
+                row,
+                category=matched[0].category,
+                reason="Deterministic category has an incompatible unit",
+                warnings=(Status.UNIT_MISMATCH,),
             )
         if not _has_target_cue(text):
             return MatchDecision(
@@ -383,17 +382,69 @@ class DrawingRowMatcher:
             evidence_ids=tuple(item.example.example_id for item in retrieved),
         )
 
+    @staticmethod
+    def _has_unresolved_formula(row: DrawingSourceRow) -> bool:
+        return any(item in _UNRESOLVED_FORMULA_WARNINGS for item in row.warnings)
+
+    @staticmethod
+    def _is_no_impact(row: DrawingSourceRow, text: str) -> bool:
+        return not text or (
+            row.remaining_quantity in (None, 0) and row.remaining_total_cost in (None, 0)
+        )
+
+    @staticmethod
+    def _exclude_no_impact(row: DrawingSourceRow) -> MatchDecision:
+        return MatchDecision(
+            row_id=row.row_id,
+            category=None,
+            quantity_decision="exclude",
+            cost_decision="exclude",
+            quantity_rule_id="rules:no-impact",
+            cost_rule_id="rules:no-impact",
+            quantity_confidence=1.0,
+            cost_confidence=1.0,
+            matching_strategy="deterministic_no_impact",
+            evidence_ids=(),
+            reason="Blank work name or both remaining values are absent/zero",
+            requires_manual_review=False,
+            status=Status.OK,
+            warnings=(),
+        )
+
+    @staticmethod
+    def _exclude_negative(row: DrawingSourceRow) -> MatchDecision:
+        return MatchDecision(
+            row_id=row.row_id,
+            category=None,
+            quantity_decision="exclude",
+            cost_decision="exclude",
+            quantity_rule_id="rules:confirmed-negative",
+            cost_rule_id="rules:confirmed-negative",
+            quantity_confidence=0.99,
+            cost_confidence=0.99,
+            matching_strategy="deterministic_negative",
+            evidence_ids=(),
+            reason="Confirmed negative category rule",
+            requires_manual_review=False,
+            status=Status.OK,
+            warnings=(),
+        )
+
     def _deterministic(self, row: DrawingSourceRow, text: str, rule: CategoryRule) -> MatchDecision:
         cost_only = _has_any(text, rule.cost_only_any)
         quantity_only = _has_any(text, rule.quantity_only_any)
         compatible = _unit_is_compatible(row.unit_raw, rule)
         warnings: list[str] = []
-        quantity = "include" if row.remaining_quantity is not None and not cost_only else "exclude"
+        quantity = (
+            "include" if row.remaining_quantity not in (None, 0) and not cost_only else "exclude"
+        )
         if quantity == "include" and not compatible:
             quantity = "review"
             warnings.append(Status.UNIT_MISMATCH)
         cost = (
-            "include" if row.remaining_total_cost is not None and not quantity_only else "exclude"
+            "include"
+            if row.remaining_total_cost not in (None, 0) and not quantity_only
+            else "exclude"
         )
         review = quantity == "review"
         rule_id = f"rules:{self.rules.version}:{rule.category.value}"

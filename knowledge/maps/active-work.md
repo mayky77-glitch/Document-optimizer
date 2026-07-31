@@ -12,4 +12,4 @@ updated: 2026-07-31
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
 - [[../ORCHESTRATION|Orchestration rules]]
-- Последняя принятая волна: [[../tasks/hierarchy-aggregate-production|Hierarchy aggregate exclusion]].
+- Последняя принятая волна: [[../tasks/drawing-card-dictionary-production|Drawing-card dictionary 2.0]].

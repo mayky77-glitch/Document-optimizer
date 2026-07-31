@@ -1,0 +1,29 @@
+schema_version: 1
+work_id: drawing-card-dictionary-v1
+status: frozen
+base_sha: dea20106129bd3b89446990427cc706b63e81f4a
+dependency_shas:
+  - dea20106129bd3b89446990427cc706b63e81f4a
+objective: "Apply the confirmed construction dictionary and safe masks before RAG."
+merge_method: merge-no-ff
+max_parallel: 2
+max_spawns: 2
+max_retries: 1
+contracts:
+  matcher: DrawingCardDictionary-2.0
+  categories: TargetWorkCategory-8
+  semantic_model: RuBERT-Tiny2-suggestion-only
+  user_feedback: ExactConfirmedFeedback-First
+shared_owner: integration
+forbidden:
+  - ".env*"
+  - "cache/**"
+  - "logs/**"
+  - "output/**"
+  - ".github/**"
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+tasks:
+  - knowledge/tasks/drawing-card-dictionary-production.md
+  - knowledge/tasks/drawing-card-dictionary-tests.md
