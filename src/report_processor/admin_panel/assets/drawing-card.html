@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="drawing-card-api-contract" content="POST /api/drawing-card/jobs">
+    <meta name="drawing-card-api-contract" content="POST /api/drawing-card/jobs; inline review API">
     <title>Карточка остатков</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/drawing-card.css">
@@ -19,12 +19,12 @@
       <header class="page-heading">
         <p class="eyebrow">Исполнительная документация</p>
         <h1>Карточка остатков</h1>
-        <p>Выберите исходные документы, проверьте замечания при необходимости и скачайте готовую карточку.</p>
+        <p>Загрузите документы, подтвердите спорные строки прямо в панели и скачайте готовую карточку.</p>
       </header>
 
       <ol class="progress-rail" aria-label="Готовность карточки">
         <li class="is-active" data-progress="sources"><span>01</span><b>Источники</b><small>Выберите файлы</small></li>
-        <li data-progress="review"><span>02</span><b>Проверка</b><small>Устраните замечания</small></li>
+        <li data-progress="review"><span>02</span><b>Проверка</b><small>Подтвердите строки</small></li>
         <li data-progress="card"><span>03</span><b>Карточка</b><small>Скачайте файл</small></li>
       </ol>
 
@@ -33,14 +33,15 @@
         <div class="section-heading">
           <p class="step-label">Шаг 1 · подготовка</p>
           <h2 id="source-title">Какие документы использовать?</h2>
-          <p>Можно выбрать несколько Excel-файлов. Период указывать необязательно.</p>
+          <p>Выберите от 1 до 32 Excel-файлов. Период указывать необязательно.</p>
         </div>
 
         <form id="drawing-card-form" novalidate>
           <label class="file-field" for="sources">
             <span>Исходные документы <em>обязательно</em></span>
-            <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm,.xlsb" multiple required aria-describedby="sources-help">
-            <small id="sources-help">КС-2, накопительные ведомости и другие источники в форматах .xlsx, .xlsm и .xlsb.</small>
+            <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm,.xlsb" multiple required aria-describedby="sources-help source-count">
+            <small id="sources-help">КС-2, накопительные ведомости и другие источники .xlsx, .xlsm или .xlsb.</small>
+            <strong id="source-count" class="file-count" aria-live="polite">Файлы пока не выбраны</strong>
           </label>
 
           <div class="fields-row">
@@ -79,15 +80,33 @@
         <p id="status" class="status" role="status" aria-live="polite">Сначала выберите исходные документы.</p>
       </section>
 
-      <section id="review-panel" class="review-card" aria-labelledby="review-title" hidden>
-        <div class="section-heading">
-          <p class="step-label">Шаг 2 · проверка</p>
-          <h2 id="review-title">Проверьте замечания</h2>
-          <p>Скачайте файл замечаний, внесите правки и загрузите его сюда.</p>
+      <section id="review-panel" class="review-card" aria-labelledby="review-title" tabindex="-1" hidden>
+        <div class="section-heading review-heading">
+          <div>
+            <p class="step-label">Шаг 2 · проверка</p>
+            <h2 id="review-title">Проверьте строки</h2>
+            <p>Решение можно изменить до применения. Категория и стоимость показаны в контексте каждой строки.</p>
+          </div>
+          <div class="bulk-actions" aria-label="Массовые решения">
+            <button id="approve-all" class="secondary-action" type="button">Одобрить все предложенные</button>
+            <button id="reject-all" class="secondary-action danger-action" type="button">Отклонить все</button>
+          </div>
         </div>
         <div id="summary" class="summary" aria-label="Итог проверки"></div>
-        <ul id="warnings" class="warnings" aria-label="Замечания"></ul>
-        <div class="review-actions">
+        <p id="review-empty" class="empty-review" hidden>Строк для проверки нет.</p>
+        <div id="review-items" class="review-items" aria-live="polite" tabindex="-1"></div>
+        <nav id="review-pagination" class="pagination" aria-label="Страницы проверки" hidden>
+          <button id="previous-page" class="page-button" type="button">Назад</button>
+          <span id="page-status" aria-live="polite"></span>
+          <button id="next-page" class="page-button" type="button">Далее</button>
+        </nav>
+        <div class="review-footer">
+          <button id="apply-review" class="primary-action" type="button">Применить решения</button>
+          <p id="review-hint">Сначала примите или отклоните все спорные строки.</p>
+        </div>
+
+        <div id="legacy-review" class="legacy-review" hidden>
+          <p>Если проверка доступна только файлом, скачайте замечания, исправьте их и загрузите обратно.</p>
           <a id="review-download" class="secondary-action" hidden>Скачать файл проверки</a>
           <form id="review-form" class="review-upload" hidden>
             <label for="review">
@@ -108,5 +127,37 @@
         <a id="result-download" class="download is-disabled" aria-disabled="true">Карточка ещё не готова</a>
       </section>
     </main>
+
+    <template id="review-item-template">
+      <article class="review-item">
+        <header class="review-item-head">
+          <div>
+            <p class="review-kicker">Строка проверки</p>
+            <h3 class="work-name"></h3>
+          </div>
+          <p class="decision-status"></p>
+        </header>
+        <dl class="review-context">
+          <div><dt>Категория</dt><dd data-context="category"></dd></div>
+          <div><dt>Количество</dt><dd data-context="quantity"></dd></div>
+          <div><dt>Ед. в источнике</dt><dd data-context="source-unit"></dd></div>
+          <div><dt>Ед. в цели</dt><dd data-context="target-unit"></dd></div>
+          <div><dt>Общая стоимость</dt><dd data-context="cost"></dd></div>
+        </dl>
+        <p class="proposed-category" hidden></p>
+        <div class="item-actions" aria-label="Решение по строке">
+          <button type="button" data-review-action="approve">Одобрить</button>
+          <button type="button" data-review-action="reject">Отклонить</button>
+          <button type="button" data-review-action="change-category">Изменить категорию</button>
+          <button type="button" data-review-action="cost-only">Учитывать только стоимость</button>
+          <button type="button" data-review-action="undo" hidden>Отменить решение</button>
+        </div>
+        <form class="category-editor" hidden>
+          <label>Новая категория<input class="category-input" type="text" maxlength="160" required></label>
+          <button type="submit">Сохранить категорию</button>
+          <button type="button" data-review-action="cancel-category">Отмена</button>
+        </form>
+      </article>
+    </template>
   </body>
 </html>
