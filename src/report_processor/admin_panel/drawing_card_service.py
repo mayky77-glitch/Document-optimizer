@@ -40,6 +40,7 @@ MAX_RETAINED_TERMINAL_JOBS = 64
 _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
+_MACHINE_CONSENSUS_NAME = "machine-consensus.jsonl"
 _ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 _CANONICAL_PERIOD_RE = re.compile(r"(?P<year>\d{4})-(?P<month>0[1-9]|1[0-2])")
 _RUSSIAN_PERIOD_RE = re.compile(
@@ -375,6 +376,7 @@ class DrawingCardService:
             rag_mode=job.rag_mode,
             review_decisions=review_decisions,
             feedback_examples=self.workspace_root / "review-feedback.jsonl",
+            machine_consensus=self._machine_consensus_path(),
             strict=True,
             work_dir=job.directory / "runs",
         )
@@ -435,6 +437,11 @@ class DrawingCardService:
             job.status = "failed"
             job.errors = ("PROCESSING_FAILED",)
         return job
+
+    def _machine_consensus_path(self) -> Path | None:
+        """Use one canonical private replay input; absence is the rollback switch."""
+        path = self.workspace_root / _MACHINE_CONSENSUS_NAME
+        return path if path.is_file() and not path.is_symlink() else None
 
     @staticmethod
     def _current_clusters(job: DrawingCardJob) -> tuple[ReviewCluster, ...]:
