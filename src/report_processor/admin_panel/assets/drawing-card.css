@@ -21,7 +21,7 @@ body {
   font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 
 .drawing-shell { width: min(1040px, calc(100% - 32px)); margin: 0 auto; padding: 38px 0 56px; }
 
@@ -55,7 +55,7 @@ form { display: grid; gap: 20px; }
 label { display: grid; gap: 7px; font-weight: 780; }
 label em { color: var(--muted); font-size: .8rem; font-style: normal; font-weight: 600; }
 label small { color: var(--muted); font-size: .84rem; font-weight: 500; }
-input { width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid #91aabc; border-radius: 2px; background: var(--white); color: var(--ink); }
+input, select { width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid #91aabc; border-radius: 2px; background: var(--white); color: var(--ink); }
 input[type="file"] { min-height: 76px; padding: 22px 12px; border-style: dashed; background: #f9fcfe; }
 .fields-row { display: grid; grid-template-columns: minmax(220px, .55fr); }
 .operation-choice { margin: 0; padding: 0; border: 0; }
@@ -89,7 +89,7 @@ input[type="file"] { min-height: 76px; padding: 22px 12px; border-style: dashed;
 .download { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; }
 .download.is-disabled { border-color: var(--line); background: #e4ebf0; color: var(--muted); cursor: default; pointer-events: none; }
 
-button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 button:disabled { cursor: default; opacity: .62; }
 [hidden] { display: none !important; }
 
