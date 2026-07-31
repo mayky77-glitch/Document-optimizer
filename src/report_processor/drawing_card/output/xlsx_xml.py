@@ -32,6 +32,9 @@ _VALUE_RE = re.compile(rb"(<v>)(?P<value>.*?)(</v>)", re.DOTALL)
 def decimal_xml_text(value: Decimal) -> str:
     """Return a plain, non-exponential decimal representation for XLSX XML."""
 
+    canonical = _binary_tail_candidate(format(value, "f"))
+    if canonical is not None:
+        value = canonical
     text = format(value, "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
