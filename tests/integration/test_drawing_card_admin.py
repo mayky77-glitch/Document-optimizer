@@ -79,6 +79,14 @@ def _files(name: str = "source.xlsx", content: bytes | None = None):
 def _review_job(service: DrawingCardService, job_id: str) -> DrawingCardJob:
     """Give the HTTP fake one deterministic unresolved inline-review row."""
     job = service.get_job(job_id)
+    job.category_units = {
+        category.value: (unit,)
+        for category, unit in zip(
+            CATEGORY_ORDER,
+            ("шт", "м3", "т", "шт", "м", "шт", "м", "м"),
+            strict=True,
+        )
+    }
     job.review_items = {
         "review-row-1": {
             "review_id": "review-row-1",
@@ -222,7 +230,8 @@ const drafts = { "row-1": "concrete_works" };
 const renderItemSource = source.slice(start, end).replace("  const renderItem", "const renderItem");
 const dependencyNames = [
   "Option", "reviewTemplate", "reviewCategories", "draftCategories", "persistSession",
-  "decisionLabel", "humanCategory", "valueFrom", "textValue", "reviewId", "runItemAction",
+  "decisionLabel", "humanCategory", "categoryLabel", "categoryUnit", "valueFrom",
+  "textValue", "reviewId", "runItemAction",
 ].join(", ");
 const renderItem = Function(
   "deps",
@@ -238,6 +247,8 @@ const renderItem = Function(
   persistSession() {},
   decisionLabel: (value) => value || "Ожидает решения",
   humanCategory: (value) => value === "concrete_works" ? "Бетонные работы" : "Слаботочные сети",
+  categoryLabel: (value) => value === "concrete_works" ? "Бетонные работы" : "Слаботочные сети",
+  categoryUnit: (value, fallback) => value === "concrete_works" ? "м3" : fallback,
   valueFrom: (item, names) => names.map((name) => item[name]).find((value) => value != null),
   textValue: (value, fallback = "") => value == null ? fallback : String(value),
   reviewId: (item) => item.review_id,

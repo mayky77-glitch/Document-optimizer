@@ -66,6 +66,10 @@ def test_category_change_updates_the_review_target_unit_from_the_selected_catego
         period=None,
         existing_card=None,
         status="review_required",
+        category_units={
+            "low_current_cable": ("м",),
+            "concrete_works": ("м3", "м³"),
+        },
         review_items={
             "row-1": {
                 "review_id": "row-1",

@@ -387,7 +387,8 @@
     const proposedCategory = valueFrom(item, ["proposed_category_label", "proposed_category"]);
     const persistedCategory = valueFrom(item, ["selected_category"]);
     const selectedCategory = draftCategories[id] || persistedCategory || valueFrom(item, ["proposed_category", "category"]);
-    const resolved = ["approved", "rejected", "cost_only", "change_category"].includes(state);
+    const hasDecision = ["approved", "rejected", "cost_only", "change_category"].includes(state);
+    const finalized = ["approved", "rejected", "cost_only"].includes(state);
     card.dataset.reviewId = id;
     card.querySelector(".work-name").textContent = textValue(valueFrom(item, ["work_name", "name", "work"]), "Наименование работы не указано");
     card.querySelector(".decision-status").textContent = decisionLabel(state);
@@ -403,14 +404,16 @@
     }
     const updateCategoryDetails = () => {
       const draftCategory = draftCategories[id];
-      const displayedCategory = resolved ? persistedCategory : draftCategory || proposedCategory;
+      const displayedCategory = draftCategory || persistedCategory || proposedCategory;
       targetUnit.textContent = textValue(categoryUnit(displayedCategory, valueFrom(item, ["target_unit"])));
       const selected = card.querySelector(".selected-category");
-      selected.hidden = !draftCategory || resolved;
-      selected.textContent = selected.hidden ? "" : `Выбранная категория: ${categoryLabel(draftCategory)}`;
-      const accepted = card.querySelector(".accepted-category");
-      accepted.hidden = !resolved || !persistedCategory;
-      accepted.textContent = accepted.hidden ? "" : `Принятая категория: ${categoryLabel(persistedCategory)}`;
+      const acceptedCategory = state !== "rejected" ? persistedCategory : null;
+      selected.hidden = !draftCategory && !acceptedCategory;
+      selected.textContent = draftCategory
+        ? `Выбранная категория: ${categoryLabel(draftCategory)}`
+        : acceptedCategory
+          ? `Принятая категория: ${categoryLabel(acceptedCategory)}`
+          : "";
     };
     const categoryInput = card.querySelector(".category-input");
     categoryInput.replaceChildren(new Option("Выберите категорию", ""));
@@ -426,8 +429,8 @@
       persistSession("review");
     });
     updateCategoryDetails();
-    card.querySelector('[data-review-action="undo"]').hidden = !resolved;
-    card.querySelectorAll('[data-review-action="approve"], [data-review-action="reject"], [data-review-action="change-category"], [data-review-action="cost-only"]').forEach((button) => { button.hidden = resolved; });
+    card.querySelector('[data-review-action="undo"]').hidden = !hasDecision;
+    card.querySelectorAll('[data-review-action="approve"], [data-review-action="reject"], [data-review-action="change-category"], [data-review-action="cost-only"]').forEach((button) => { button.hidden = finalized; });
     card.querySelectorAll("[data-review-action]").forEach((button) => {
       button.addEventListener("click", () => {
         const action = button.dataset.reviewAction;
