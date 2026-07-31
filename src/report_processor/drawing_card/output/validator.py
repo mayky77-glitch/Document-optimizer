@@ -83,7 +83,13 @@ def _validate_layout_contract(
                 row = block.start_row + offset
                 quantity = sheet.cell(row, start + 3)
                 cost = sheet.cell(row, start + 4)
-                if quantity.number_format != "0.###":
+                expected_quantity_format = (
+                    "0"
+                    if isinstance(quantity.value, (int, Decimal))
+                    and Decimal(str(quantity.value)) == Decimal(str(quantity.value)).to_integral()
+                    else "0.###"
+                )
+                if quantity.number_format != expected_quantity_format:
                     errors.append(f"INVALID_QUANTITY_FORMAT:{sheet.title}:{quantity.coordinate}")
                 if cost.number_format != "#,##0.00":
                     errors.append(f"INVALID_COST_FORMAT:{sheet.title}:{cost.coordinate}")

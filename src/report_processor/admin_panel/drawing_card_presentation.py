@@ -27,3 +27,14 @@ def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
         "review_url": f"/api/drawing-card/jobs/{job.job_id}/review" if review_required else None,
         "can_upload_review": review_required,
     }
+
+
+def drawing_card_inline_review_payload(job: DrawingCardJob) -> dict[str, object]:
+    """Return endpoint metadata without widening the stable job payload."""
+    review_required = job.status == "review_required"
+    return {
+        "review_url": (
+            f"/api/drawing-card/jobs/{job.job_id}/review/items" if review_required else None
+        ),
+        "can_apply": review_required and set(job.review_items) == set(job.inline_approvals),
+    }

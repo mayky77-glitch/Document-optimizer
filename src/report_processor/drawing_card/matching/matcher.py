@@ -16,6 +16,7 @@ from .examples import (
     LexicalExampleRetriever,
     exact_example_match,
 )
+from .semantic import SemanticExampleRetriever
 
 if TYPE_CHECKING:
     from .tiny_model import OpenAICompatibleTinyModel
@@ -182,6 +183,9 @@ class DrawingRowMatcher:
         self.rules = rules
         self.examples = examples
         self.retriever = LexicalExampleRetriever(examples)
+        self.semantic_retriever = (
+            SemanticExampleRetriever(examples) if rag_mode == "semantic" else None
+        )
         self.rag_mode = rag_mode
         self.tiny_model = tiny_model
         self.approvals = approvals or {}
@@ -314,6 +318,21 @@ class DrawingRowMatcher:
             unit=row.unit_raw,
             top_k=self.rules.top_k_examples,
         )
+        if self.semantic_retriever is not None:
+            semantic = self.semantic_retriever.search(text, top_k=self.rules.top_k_examples)
+            proposed = next((item for item in semantic if item.example.category is not None), None)
+            if proposed is not None:
+                margin = proposed.score - (semantic[1].score if len(semantic) > 1 else 0.0)
+                return self._review(
+                    row,
+                    category=proposed.example.category,
+                    reason=(
+                        "Локальная RuBERT-подсказка требует ручного подтверждения "
+                        f"(score={proposed.score:.3f}, margin={margin:.3f})"
+                    ),
+                    warnings=("SEMANTIC_SUGGESTION_NOT_APPLIED",),
+                    evidence_ids=tuple(item.example.example_id for item in semantic),
+                )
         if self.rag_mode != "off" and self.tiny_model is not None and retrieved:
             try:
                 self.model_calls += 1
@@ -398,13 +417,14 @@ class DrawingRowMatcher:
     def _review(
         row: DrawingSourceRow,
         *,
+        category: TargetWorkCategory | None = None,
         reason: str,
         warnings: tuple[str, ...],
         evidence_ids: tuple[str, ...] = (),
     ) -> MatchDecision:
         return MatchDecision(
             row_id=row.row_id,
-            category=None,
+            category=category,
             quantity_decision="review",
             cost_decision="review",
             quantity_rule_id=None,

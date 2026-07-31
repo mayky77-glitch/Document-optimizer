@@ -329,6 +329,9 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         _save_summary(result)
         return result
     examples = load_confirmed_examples(examples_path)
+    if request.feedback_examples is not None:
+        feedback = load_confirmed_examples(request.feedback_examples)
+        examples = tuple({item.example_id: item for item in (*examples, *feedback)}.values())
     tiny_model = None
     if request.rag_mode != "off" and request.model_config is not None:
         from .matching.tiny_model import OpenAICompatibleTinyModel

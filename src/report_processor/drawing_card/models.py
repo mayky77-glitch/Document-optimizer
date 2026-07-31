@@ -85,6 +85,7 @@ class DrawingSourceLocation:
     sheet_name: str
     row_number: int
     coordinates: tuple[str, ...]
+    document_index: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +234,7 @@ class WorkflowRequest:
     rag_mode: str = "off"
     model_config: Path | None = None
     review_decisions: Path | None = None
+    feedback_examples: Path | None = None
     objects_per_sheet: int = 4
     drawing_code_mode: str = "preserve_group"
     remaining_strategy: str = "direct_remaining_columns"
