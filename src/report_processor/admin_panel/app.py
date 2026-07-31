@@ -28,6 +28,28 @@ from .view import drawing_card_page, index_page, static_asset
 
 _SAFE_DOWNLOAD_NAME = re.compile(r"[^0-9A-Za-z._-]+")
 _WORKBOOK_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_DRAWING_CARD_UPLOAD_ERRORS = {
+    "combined upload is too large": "Общий размер загружаемых файлов превышает допустимый предел",
+    "existing card is only valid for update": (
+        "Файл существующей карточки допустим только при обновлении"
+    ),
+    "invalid filename": "Недопустимое имя загружаемого файла",
+    "invalid operation": "Выбран недопустимый режим операции",
+    "invalid period": "Некорректный период",
+    "invalid source count": "Загрузите от 1 до 32 исходных Excel-файлов",
+    "invalid workbook content": "Файл не является корректной Excel-книгой",
+    "missing upload": "Не выбран файл для загрузки",
+    "mode must be create or update": "Выбран недопустимый режим операции",
+    "request body is too large": "Размер запроса превышает допустимый предел",
+    "unsupported workbook type": (
+        "Неподдерживаемый тип файла. Загрузите Excel-файл (.xlsx, .xlsm или .xlsb)"
+    ),
+    "update requires an existing .xlsx drawing card": (
+        "Для обновления загрузите существующую карточку Excel"
+    ),
+    "upload size is invalid": "Размер файла должен быть в допустимых пределах",
+}
+_DRAWING_CARD_UPLOAD_FALLBACK = "Проверьте исходные Excel-файлы и выбранную операцию"
 
 
 def create_app(service=None, workspace_root=None, drawing_card_service=None):
@@ -193,8 +215,8 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
                     existing_content=existing_content,
                     period=period,
                 )
-        except (KeyError, OSError, TypeError, ValueError):
-            return _error("Проверьте исходные Excel-файлы и выбранную операцию", 400)
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            return _error(_drawing_card_upload_error(error), 400)
         return _secure(JSONResponse(drawing_card_job_payload(current), status_code=201))
 
     async def drawing_card_get_job(request):
@@ -267,6 +289,13 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
 
 def _upload_part(form: Mapping[str, object], key: str):
     return _upload_value(form[key])
+
+
+def _drawing_card_upload_error(error: Exception) -> str:
+    """Return a public validation category without exposing exception details."""
+    if isinstance(error, ValueError):
+        return _DRAWING_CARD_UPLOAD_ERRORS.get(str(error), _DRAWING_CARD_UPLOAD_FALLBACK)
+    return _DRAWING_CARD_UPLOAD_FALLBACK
 
 
 def _upload_value(value: object):

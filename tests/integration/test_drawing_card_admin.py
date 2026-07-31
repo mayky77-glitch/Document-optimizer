@@ -89,13 +89,72 @@ def test_create_and_read_job_hide_private_paths_from_path_header_and_json(client
         )
 
 
-@pytest.mark.parametrize("name", ("archive.zip", "../private.xlsx"))
-def test_create_rejects_archive_and_path_like_uploads(client, name: str) -> None:
+@pytest.mark.parametrize(
+    ("name", "expected_error"),
+    (
+        (
+            "super-secret-archive.zip",
+            "Неподдерживаемый тип файла. Загрузите Excel-файл (.xlsx, .xlsm или .xlsb)",
+        ),
+        ("../private-source.xlsx", "Недопустимое имя загружаемого файла"),
+    ),
+)
+def test_create_rejects_unsupported_and_path_like_uploads(
+    client, name: str, expected_error: str
+) -> None:
     test_client, service, _ = client
     response = test_client.post("/api/drawing-card/jobs", files=_files(name=name))
 
     assert response.status_code == 400
+    assert response.json() == {"error": expected_error}
+    assert name not in response.text
     assert service.created_job_ids == []
+
+
+def test_create_rejects_invalid_workbook_content_without_leaking_upload_data(client) -> None:
+    test_client, service, _ = client
+    filename = "private-source.xlsx"
+    content = b"not-an-excel-workbook-private-content"
+
+    response = test_client.post(
+        "/api/drawing-card/jobs", files=_files(name=filename, content=content)
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "Файл не является корректной Excel-книгой"}
+    assert filename not in response.text
+    assert content.decode() not in response.text
+    assert service.created_job_ids == []
+
+
+def test_create_masks_unknown_validation_error(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_client, service, private_root = client
+    private_detail = f"{private_root}/confidential-source.xlsx"
+
+    def fail_with_private_detail(**payload: object) -> DrawingCardJob:
+        del payload
+        raise ValueError(private_detail)
+
+    monkeypatch.setattr(service, "create_job", fail_with_private_detail)
+    response = test_client.post("/api/drawing-card/jobs", files=_files())
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "Проверьте исходные Excel-файлы и выбранную операцию"}
+    assert private_detail not in response.text
+
+
+def test_drawing_card_asset_publishes_local_workbook_preflight(client) -> None:
+    test_client, _, _ = client
+
+    response = test_client.get("/static/drawing-card.js")
+
+    assert response.status_code == 200
+    assert "workbookPreflightError" in response.text
+    assert "selectedWorkbooksPreflightError" in response.text
+    assert "~$" in response.text
+    assert "arrayBuffer()" in response.text
+    assert "Файл «${name}» не является корректной Excel-книгой" in response.text
+    assert "existingCard.files[0]" in response.text
 
 
 def test_review_download_upload_and_rerun_use_the_review_field(client) -> None:
