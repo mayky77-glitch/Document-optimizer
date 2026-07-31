@@ -235,6 +235,7 @@ def test_cluster_api_fans_out_cost_only_with_category_and_rejects_changed_member
             "category": "power_cable",
         },
     )
+    refetched = test_client.get(url)
     from dataclasses import replace
 
     extra_row = replace(job.review_rows["review-row-1"], row_id="review-row-3")
@@ -250,7 +251,7 @@ def test_cluster_api_fans_out_cost_only_with_category_and_rejects_changed_member
     assert set(job.inline_approvals) == {"review-row-1", "review-row-2"}
     assert {approval.action for approval in job.inline_approvals.values()} == {"cost_only"}
     assert {approval.category.value for approval in job.inline_approvals.values()} == {"power_cable"}
-    assert applied.json()["items"][0]["decision"] == "cost_only"
+    assert refetched.json()["items"][0]["decision"] == "cost_only"
     assert stale.status_code == 409
 
 
