@@ -1,22 +1,22 @@
 ---
 type: task
-status: claimed
+status: done
 work_id: hierarchy-aggregate-v1
 role: worker
 agent_role: developer
 owner: "developer-1"
 profile: L2
 routing_grade: P4
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 1
+state_fingerprint: "533d0d3de1895b5063648accca0c52eb13af0a3b"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Shared hierarchy, hybrid position-column detection, and two workflow integrations"
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-31
@@ -51,7 +51,7 @@ depends_on:
   - "20d44e15e8a2c57affd2be6fbfdf0c682c02ab3e"
 tags:
   - "task/implementation"
-  - "status/claimed"
+  - "status/done"
   - "hierarchy"
   - "reconciliation"
   - "drawing-card"
@@ -79,11 +79,13 @@ links:
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: hierarchy core, schema/adapters, reconciliation, drawing-card workflow.
+- Commands and tests run: ruff, focused pytest, full pytest, slow performance, compileall,
+  real XLSB read-only hierarchy pass.
+- Result: feature `533d0d3de1895b5063648accca0c52eb13af0a3b`; accepted merge
+  `b3712567da10b85877a38d23bea1df5ff02d1235`.
+- Risks or follow-up: category dictionary tuning remains a separate accepted dependency wave.
 
 ## Handoff
 
-Leave this card in `review` until integration accepts the feature commit.
+Accepted by integration owner.

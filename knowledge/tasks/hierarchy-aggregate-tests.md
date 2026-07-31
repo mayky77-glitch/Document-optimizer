@@ -1,22 +1,22 @@
 ---
 type: task
-status: claimed
+status: done
 work_id: hierarchy-aggregate-v1
 role: worker
 agent_role: tester
 owner: "tester-1"
 profile: L1
 routing_grade: P3
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 1
+state_fingerprint: "34d7e986638ccd8562f175bffb4fa0dca3d65a5f"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Focused hierarchy, schema inference, workflow, and regression contracts"
 assigned_model: gpt-5.6-terra
 reasoning_effort: medium
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-07-31
@@ -37,7 +37,7 @@ depends_on:
   - "20d44e15e8a2c57affd2be6fbfdf0c682c02ab3e"
 tags:
   - "task/tests"
-  - "status/claimed"
+  - "status/done"
   - "hierarchy"
   - "reconciliation"
   - "drawing-card"
@@ -61,11 +61,13 @@ links:
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: focused hierarchy, schema, training, drawing-card and admin tests.
+- Commands and tests run: focused `20 passed`; full `662 passed, 22 skipped`;
+  slow performance `4 passed`.
+- Result: feature `34d7e986638ccd8562f175bffb4fa0dca3d65a5f`; accepted merge
+  `6edec73f4df690947c6223ba20a033f1abb892c7`.
+- Risks or follow-up: real XLSB pass measured 37,695 rows and preserved source SHA.
 
 ## Handoff
 
-Leave this card in `review` until integration accepts the test commit.
+Accepted by integration owner.
