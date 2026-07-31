@@ -191,3 +191,18 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
         job_id=job.job_id, cluster_id=cluster["cluster_id"], version=cluster["version"]
     )
     assert job.inline_approvals == {}
+
+
+def test_machine_consensus_uses_only_the_canonical_regular_private_file(tmp_path: Path) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    canonical = service.workspace_root / "machine-consensus.jsonl"
+
+    assert service._machine_consensus_path() is None
+    canonical.write_text("{}", encoding="utf-8")
+    assert service._machine_consensus_path() == canonical
+    canonical.unlink()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("{}", encoding="utf-8")
+    canonical.symlink_to(outside)
+
+    assert service._machine_consensus_path() is None
