@@ -68,7 +68,7 @@ def test_rubert_suggestion_is_never_auto_applied() -> None:
     matcher = DrawingRowMatcher(RULES, (example,), rag_mode="semantic")
     matcher.semantic_retriever = _SemanticSuggestion(example)
 
-    decision = matcher.match(_row("Редкий этап прокладки кабеля"))
+    decision = matcher.match(_row("Редкий монолитный этап"))
 
     assert decision.category is TargetWorkCategory.LOW_CURRENT_CABLE
     assert decision.quantity_decision == "review"
@@ -82,6 +82,6 @@ class _SemanticSuggestion:
         self.example = example
 
     def search(self, text: str, *, top_k: int) -> tuple[RetrievedExample, ...]:
-        assert text == "редкий этап прокладки кабеля"
+        assert text == "редкий монолитный этап"
         assert top_k == RULES.top_k_examples
         return (RetrievedExample(self.example, 0.91),)
