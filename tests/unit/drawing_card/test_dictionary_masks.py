@@ -282,6 +282,25 @@ def test_exact_confirmed_feedback_beats_a_generic_rule() -> None:
     assert decision.matching_strategy == "confirmed_dictionary"
 
 
+def test_unitless_negative_feedback_never_auto_excludes_a_row_with_a_unit() -> None:
+    example = ConfirmedExample(
+        example_id="negative-without-unit",
+        source_text="Монтаж контрольного кабеля",
+        normalized_text="монтаж контрольного кабеля",
+        category=None,
+        quantity_decision="exclude",
+        cost_decision="exclude",
+        unit=None,
+        source_type=None,
+        confirmed_by="inline-review",
+        rule_version="1.0",
+    )
+
+    decision = _matcher(examples=(example,)).match(_row(example.source_text, unit="м"))
+
+    assert decision.matching_strategy != "confirmed_dictionary"
+
+
 def test_exact_phrase_cache_is_bounded_for_many_unique_terms() -> None:
     caches = (_exact_token_pattern, _normalized, _tokens, _phrase_pattern)
     for cache in caches:

@@ -104,6 +104,124 @@ def _review_job(service: DrawingCardService, job_id: str) -> DrawingCardJob:
     return job
 
 
+def _cluster_review_job(service: DrawingCardService, job_id: str) -> DrawingCardJob:
+    job = _review_job(service, job_id)
+    from decimal import Decimal
+
+    from report_processor.drawing_card.models import (
+        DrawingSourceLocation,
+        DrawingSourceRow,
+        MatchDecision,
+    )
+    from report_processor.drawing_card.statuses import Status
+
+    job.review_items = {
+        **job.review_items,
+        "review-row-2": {**job.review_items["review-row-1"], "review_id": "review-row-2"},
+    }
+    rows = {}
+    decisions = {}
+    for row_id in job.review_items:
+        rows[row_id] = DrawingSourceRow(
+            row_id=row_id,
+            location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 10, ("A10",)),
+            object_index_raw="1006",
+            drawing_code_raw="А-001",
+            work_name_raw="Монтаж контрольного кабеля",
+            unit_raw="м",
+            remaining_quantity=Decimal("12"),
+            remaining_total_cost=Decimal("3500"),
+            formula_values=(),
+            cached_values=(),
+            source_document_type="ks6a",
+            source_period=None,
+            source_revision=None,
+            status=Status.OK,
+            warnings=(),
+        )
+        decisions[row_id] = MatchDecision(
+            row_id,
+            None,
+            "review",
+            "review",
+            None,
+            None,
+            0.72,
+            0.72,
+            "manual_review",
+            (),
+            "review",
+            True,
+            Status.OK,
+            (Status.UNIT_MISMATCH,),
+        )
+    job.review_rows, job.review_decisions = rows, decisions
+    return job
+
+
+def test_cluster_api_fans_out_undoes_and_hides_private_metadata(client) -> None:
+    test_client, service, private_root = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _cluster_review_job(service, created.json()["job_id"])
+    listing = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+    cluster = listing.json()["items"][0]
+
+    approved = test_client.put(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
+        json={"version": cluster["version"], "action": "approve", "category": "low_current_cable"},
+    )
+    stale = test_client.put(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
+        json={"version": "obsolete", "action": "reject"},
+    )
+    undone = test_client.delete(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}?version={cluster['version']}"
+    )
+
+    assert listing.status_code == approved.status_code == undone.status_code == 200
+    assert stale.status_code == 409
+    assert set(service.get_job(job.job_id).inline_approvals) == set()
+    assert listing.json()["total_clusters"] == 1
+    assert listing.json()["total_rows"] == 2
+    for response in (listing, approved, stale, undone):
+        assert str(private_root) not in response.text
+        assert "private.xlsx" not in response.text
+        assert "Лист1" not in response.text
+
+
+def test_cluster_api_matches_the_review_asset_contract(client) -> None:
+    test_client, service, _ = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _cluster_review_job(service, created.json()["job_id"])
+    listing = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+
+    assert listing.status_code == 200
+    assert "clusters" in listing.json()
+
+
+def test_cluster_api_accepts_the_asset_delete_payload_and_returns_ui_decision_names(client) -> None:
+    test_client, service, _ = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _cluster_review_job(service, created.json()["job_id"])
+    listing = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+    cluster = listing.json()["items"][0]
+
+    approved = test_client.put(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
+        json={"version": cluster["version"], "action": "approve", "category": "low_current_cable"},
+    )
+    refetched = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+    undone = test_client.request(
+        "DELETE",
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
+        json={"version": cluster["version"]},
+    )
+
+    assert approved.status_code == 200
+    assert refetched.json()["items"][0]["decision"] == "approved"
+    assert undone.status_code == 200
+
+
 def test_create_and_read_job_hide_private_paths_from_path_header_and_json(client) -> None:
     test_client, service, private_root = client
     created = test_client.post("/api/drawing-card/jobs", files=_files())

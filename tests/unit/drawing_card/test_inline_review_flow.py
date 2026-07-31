@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
 from report_processor.drawing_card.aggregation import aggregate_rows
+from report_processor.drawing_card.matching.examples import (
+    ConfirmedExample,
+    exact_example_match,
+    has_exact_example_conflict,
+)
 from report_processor.drawing_card.matching.matcher import DrawingRowMatcher, ReviewApproval
 from report_processor.drawing_card.models import (
     DrawingSourceLocation,
@@ -101,3 +107,58 @@ def test_cost_only_feedback_remembers_category_with_quantity_excluded(tmp_path: 
     assert record["category"] == "low_current_cable"
     assert record["quantity_decision"] == "exclude"
     assert record["cost_decision"] == "include"
+
+
+def test_reject_feedback_is_exact_unit_scoped_and_not_a_category_prediction(tmp_path: Path) -> None:
+    feedback = tmp_path / "review-feedback.jsonl"
+    rejection = ReviewApproval(row_id="review-row-1", action="reject", category=None)
+
+    append_feedback(feedback, {"review-row-1": _row()}, {"review-row-1": rejection})
+
+    record = json.loads(feedback.read_text(encoding="utf-8"))
+    assert record["category"] is None
+    assert (record["quantity_decision"], record["cost_decision"]) == ("exclude", "exclude")
+    examples = (
+        ConfirmedExample(
+            example_id=record["example_id"],
+            source_text=record["source_text"],
+            normalized_text=record["normalized_text"],
+            category=None,
+            quantity_decision="exclude",
+            cost_decision="exclude",
+            unit=record["unit"],
+            source_type=None,
+            confirmed_by="inline-review",
+            rule_version="ReviewFeedbackStore-1.0",
+        ),
+    )
+    text = _row().work_name_raw or ""
+    assert exact_example_match(text, examples, unit="шт", source_type=None) is None
+    assert exact_example_match(text, examples, unit="м", source_type=None) == examples[0]
+
+
+def test_conflicting_exact_feedback_refuses_first_record_wins() -> None:
+    base = ConfirmedExample(
+        example_id="feedback-a",
+        source_text="Монтаж контрольного кабеля",
+        normalized_text="монтаж контрольного кабеля",
+        category=TargetWorkCategory.LOW_CURRENT_CABLE,
+        quantity_decision="include",
+        cost_decision="include",
+        unit="м",
+        source_type=None,
+        confirmed_by="inline-review",
+        rule_version="1",
+    )
+    conflict = replace(
+        base,
+        example_id="feedback-b",
+        category=None,
+        quantity_decision="exclude",
+        cost_decision="exclude",
+    )
+
+    assert has_exact_example_conflict(base.source_text, (base, conflict), unit="м") is True
+    assert (
+        exact_example_match(base.source_text, (base, conflict), unit="м", source_type=None) is None
+    )
