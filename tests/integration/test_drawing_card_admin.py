@@ -220,6 +220,40 @@ def test_cluster_api_accepts_the_asset_delete_payload_and_returns_ui_decision_na
     assert undone.status_code == 200
 
 
+def test_cluster_api_fans_out_cost_only_with_category_and_rejects_changed_membership(client) -> None:
+    test_client, service, _ = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = _cluster_review_job(service, created.json()["job_id"])
+    url = f"/api/drawing-card/jobs/{job.job_id}/review/clusters"
+    cluster = test_client.get(url).json()["items"][0]
+
+    applied = test_client.put(
+        f"{url}/{cluster['cluster_id']}",
+        json={
+            "version": cluster["version"],
+            "action": "cost_only",
+            "category": "power_cable",
+        },
+    )
+    from dataclasses import replace
+
+    extra_row = replace(job.review_rows["review-row-1"], row_id="review-row-3")
+    extra_decision = replace(job.review_decisions["review-row-1"], row_id="review-row-3")
+    job.review_rows[extra_row.row_id] = extra_row
+    job.review_decisions[extra_decision.row_id] = extra_decision
+    stale = test_client.put(
+        f"{url}/{cluster['cluster_id']}",
+        json={"version": cluster["version"], "action": "reject"},
+    )
+
+    assert applied.status_code == 200
+    assert set(job.inline_approvals) == {"review-row-1", "review-row-2"}
+    assert {approval.action for approval in job.inline_approvals.values()} == {"cost_only"}
+    assert {approval.category.value for approval in job.inline_approvals.values()} == {"power_cable"}
+    assert applied.json()["items"][0]["decision"] == "cost_only"
+    assert stale.status_code == 409
+
+
 def test_create_and_read_job_hide_private_paths_from_path_header_and_json(client) -> None:
     test_client, service, private_root = client
     created = test_client.post("/api/drawing-card/jobs", files=_files())
@@ -328,6 +362,11 @@ def test_drawing_card_assets_keep_recoverable_review_state_and_use_category_sele
     assert "Уже загружено для текущей карточки" in script.text
     assert "category.focus()" in review_script.text
     assert "selected_category" in review_script.text
+    assert 'addAction("Одобрить", "approve", "approve-action")' in review_script.text
+    assert 'addAction("Отклонить", "reject", "danger-action")' in review_script.text
+    assert 'button.dataset.categoryAction, category.value' in review_script.text
+    assert 'status === "blocked" || status === "failed"' in review_script.text
+    assert 'payload.result_url || status === "ready"' in review_script.text
     assert "extractPeriodFromFilename" in script.text
 
 
