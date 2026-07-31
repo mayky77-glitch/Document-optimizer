@@ -1,0 +1,127 @@
+"""Streaming extraction of canonical drawing source rows."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from itertools import islice
+
+from openpyxl.utils import get_column_letter
+
+from ..models import DrawingSourceLocation, DrawingSourceRow, ManifestEntry, SourceSchema
+from ..statuses import Status
+from .normalization import is_plausible_drawing_code, parse_decimal, stable_id
+from .readers import WorkbookReader, value_at
+
+
+def _text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).replace("\u00a0", " ").strip()
+    return text or None
+
+
+def _is_formula(value: object) -> bool:
+    return isinstance(value, str) and value.startswith("=")
+
+
+def extract_rows(
+    reader: WorkbookReader,
+    entry: ManifestEntry,
+    schema: SourceSchema,
+    object_index: str | None,
+    *,
+    max_rows: int | None = None,
+    empty_row_limit: int = 200,
+) -> Iterator[DrawingSourceRow]:
+    columns = schema.columns
+    max_col = max(columns.values())
+    current_drawing: str | None = None
+    rows = reader.iter_rows(
+        schema.sheet_name,
+        min_row=schema.data_start_row,
+        max_col=max_col,
+        selected_columns=tuple(sorted(set(columns.values()))),
+    )
+    if max_rows is not None:
+        rows = islice(rows, max_rows)
+    empty_streak = 0
+    for offset, (formula_row, cached_row) in enumerate(rows):
+        row_number = schema.data_start_row + offset
+        raw_drawing = _text(value_at(cached_row, columns.get("drawing_code")))
+        work_name = _text(value_at(cached_row, columns.get("work_name")))
+        unit = _text(value_at(cached_row, columns.get("unit")))
+        formula_drawing = _text(value_at(formula_row, columns.get("drawing_code")))
+        quantity_formula = value_at(formula_row, columns.get("remaining_quantity"))
+        quantity_cached = value_at(cached_row, columns.get("remaining_quantity"))
+        cost_formula = value_at(formula_row, columns.get("remaining_total_cost"))
+        cost_cached = value_at(cached_row, columns.get("remaining_total_cost"))
+        observed = (
+            raw_drawing,
+            work_name,
+            unit,
+            formula_drawing,
+            quantity_formula,
+            quantity_cached,
+            cost_formula,
+            cost_cached,
+        )
+        if all(value in (None, "") for value in observed):
+            empty_streak += 1
+            if empty_streak >= empty_row_limit:
+                break
+            continue
+        empty_streak = 0
+        if raw_drawing is None and formula_drawing and not _is_formula(formula_drawing):
+            raw_drawing = formula_drawing
+        extraction_warnings: list[str] = []
+        if raw_drawing and not is_plausible_drawing_code(raw_drawing):
+            extraction_warnings.append(f"IGNORED_NON_DRAWING_CELL:{raw_drawing}")
+            raw_drawing = None
+        if raw_drawing and not work_name:
+            current_drawing = raw_drawing
+            continue
+        if raw_drawing:
+            current_drawing = raw_drawing
+        drawing = raw_drawing or current_drawing
+        if not work_name:
+            continue
+        quantity, quantity_warnings = parse_decimal(quantity_cached)
+        cost, cost_warnings = parse_decimal(cost_cached)
+        warnings = extraction_warnings + list(quantity_warnings + cost_warnings)
+        if _is_formula(quantity_formula) and quantity_cached is None:
+            warnings.append(Status.FORMULA_WITHOUT_CACHED_VALUE)
+        if _is_formula(cost_formula) and cost_cached is None:
+            warnings.append(Status.FORMULA_WITHOUT_CACHED_VALUE)
+        if entry.extension == ".xlsb":
+            warnings.append(Status.FORMULA_NOT_AVAILABLE_FOR_BACKEND)
+        if not drawing:
+            warnings.append(Status.DRAWING_CODE_NOT_FOUND)
+        coordinate_columns = tuple(sorted(set(columns.values())))
+        coordinates = tuple(
+            f"{get_column_letter(column)}{row_number}" for column in coordinate_columns
+        )
+        row_id = stable_id(entry.file_id, schema.sheet_name, row_number)
+        status = Status.OK.value if not warnings else Status.WARNING.value
+        yield DrawingSourceRow(
+            row_id=row_id,
+            location=DrawingSourceLocation(
+                file_id=entry.file_id,
+                filename=entry.filename,
+                sheet_name=schema.sheet_name,
+                row_number=row_number,
+                coordinates=coordinates,
+            ),
+            object_index_raw=object_index,
+            drawing_code_raw=drawing,
+            work_name_raw=work_name,
+            unit_raw=unit,
+            remaining_quantity=quantity,
+            remaining_total_cost=cost,
+            formula_values=(quantity_formula, cost_formula),
+            cached_values=(quantity_cached, cost_cached),
+            source_document_type=entry.document_type,
+            source_period=entry.period,
+            source_revision=entry.revision,
+            status=status,
+            warnings=tuple(dict.fromkeys(str(item) for item in warnings)),
+        )

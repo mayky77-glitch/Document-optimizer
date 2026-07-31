@@ -13,6 +13,7 @@ authors = [{ name = "Project Team" }]
 dependencies = [
   "duckdb>=1.2,<2",
   "openpyxl>=3.1,<4",
+  "pyxlsb>=1.0,<2",
   "python-multipart>=0.0.20,<1",
   "pyyaml>=6.0.2,<7",
   "starlette>=0.47,<1",
@@ -42,6 +43,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "report_processor.admin_panel" = ["assets/*.css", "assets/*.html", "assets/*.js"]
+"report_processor.drawing_card" = ["resources/*.json", "resources/*.jsonl", "resources/*.xlsx"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

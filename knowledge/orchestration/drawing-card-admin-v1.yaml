@@ -1,0 +1,150 @@
+status: frozen
+work_id: drawing-card-admin-v1
+objective: "Добавить в локальную web-панель отдельную функцию создания и обновления карточки остатков"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-ready"
+planning_parent_sha: b8db88e43b0bf54ac31f4b39c9413ae93d50627e
+dependency_sha: b8db88e43b0bf54ac31f4b39c9413ae93d50627e
+published_base_sha_ref: "commit containing this manifest and all frozen task cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: b8db88e43b0bf54ac31f4b39c9413ae93d50627e
+source_project: "/Users/x/Downloads/report_processor_drawing_card_cli"
+source_snapshot:
+  algorithm: "sha256 of sorted sha256/path lines"
+  digest: b5d0081e0bab054a896e1ee20e705ed2f6aca51ebd54de22e0451ed06a8a14a0
+  demo_sha256: a26001dcceb7fab2bcd013bffafcc080d23af759e0e5d743a55a7fe5b6cedc82
+  template_sha256: cea0266efd240514df2b24fa8e856e5793034f28445490c139b3be6db5f5ed98
+  rules_sha256: 5ff80c3ad63cfb2207913f5dc7ff0796cb9db8c30bbfab7537cf0181d181be81
+  examples_sha256: 5096bea0f79fa1f31cba0bd0d36d5b777d9df1d8621cbbba610f7ccd43778f53
+contract_versions:
+  workflow: DrawingCardWorkflow-0.9.1-adapter-1.0
+  resources: DrawingCardResources-1.0
+  admin_api: DrawingCardAdminJob-1.0
+  ui: DrawingCardUI-1.0
+admin_contract:
+  existing_screen: "GET / and /api/jobs/** remain backward compatible"
+  screen: "GET /drawing-card"
+  create: "1..32 source workbooks; bundled template; optional period"
+  update: "1..32 source workbooks plus one existing .xlsx card; optional period"
+  source_formats:
+    - .xlsx
+    - .xlsm
+    - .xlsb
+  zip: rejected
+  input_directory: rejected
+  rag_mode: "off; no network or external model API in admin flow"
+  modes:
+    - create
+    - update
+  endpoints:
+    - "POST /api/drawing-card/jobs"
+    - "GET /api/drawing-card/jobs/{job_id}"
+    - "GET /api/drawing-card/jobs/{job_id}/result"
+    - "GET /api/drawing-card/jobs/{job_id}/review"
+    - "POST /api/drawing-card/jobs/{job_id}/review"
+  statuses:
+    - processing
+    - review_required
+    - ready
+    - blocked
+    - failed
+  review: "download manual_review.xlsx, fill controlled decisions, upload it, rerun against private copies"
+  privacy: "opaque IDs only; no private paths or raw audit artifacts in JSON or headers"
+  publication: "result and review stay inside private job workspace; inputs and package resources remain unchanged"
+ui_contract:
+  navigation: "two direct top-level choices: Сверка документов / Карточка остатков"
+  operation: "two direct choices: Создать / Обновить"
+  progress: "Источники / Проверка / Карточка"
+  brand_primary: "#0079C2"
+  external_assets: false
+  responsive_min_width_px: 360
+wave: 1
+max_parallel: 3
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "uv sync --extra dev --extra rag"
+  - "uv run ruff check src tests"
+  - "uv run ruff format --check src tests"
+  - "env PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider"
+  - "source project: env PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider"
+baseline_results:
+  - "main SHA b8db88e43b0bf54ac31f4b39c9413ae93d50627e"
+  - "post-merge main CI 30582131670: success"
+  - "main ruff: pass; 343 files formatted"
+  - "main pytest: 584 passed, 19 skipped in 13.25s"
+  - "source ruff: pass; 52 files formatted"
+  - "source pytest: 59 passed in 0.85s"
+release_results:
+  - "focused drawing-card: 23 passed, 3 skipped"
+  - "base full suite after final remediation: 604 passed, 22 skipped in 13.39s"
+  - "real+slow+pinned-RAG full suite: 624 passed, 2 skipped in 100.67s"
+  - "real demo: 1 passed; 7 extracted rows; 32 card rows; 0 manual-review rows"
+  - "original demo SHA-256/size/mtime unchanged"
+  - "wheel [rag] fresh install, resources and admin entrypoint: pass"
+  - "desktop/mobile/keyboard/create/download browser gate: pass; 0 error/external events"
+  - "Ruff, format, compileall, JS syntax and git diff --check: pass"
+shared_paths_owner: integration
+shared_paths:
+  - .gitignore
+  - README.md
+  - docs
+  - knowledge
+  - pyproject.toml
+  - uv.lock
+  - src/report_processor/__init__.py
+  - src/report_processor/cli.py
+  - src/report_processor/cli_admin.py
+  - src/report_processor/admin_panel/__init__.py
+  - src/report_processor/admin_panel/app.py
+  - src/report_processor/admin_panel/view.py
+  - tests/conftest.py
+production_scope:
+  - src/report_processor/drawing_card
+  - src/report_processor/admin_panel/drawing_card_service.py
+  - src/report_processor/admin_panel/drawing_card_presentation.py
+test_scope:
+  - tests/fixtures/drawing_card
+  - tests/unit/drawing_card
+  - tests/unit/admin_panel/test_drawing_card_service.py
+  - tests/integration/test_drawing_card_admin.py
+  - tests/integration/test_drawing_card_real_data.py
+ui_scope:
+  - src/report_processor/admin_panel/assets
+forbidden_paths:
+  - ".env*"
+  - cache
+  - logs
+  - output
+  - .github
+  - "**/*.zip"
+  - src/report_processor/adapters
+  - src/report_processor/analytics
+  - src/report_processor/audit
+  - src/report_processor/business_rules
+  - src/report_processor/calculation
+  - src/report_processor/excel_writer
+  - src/report_processor/matching
+  - src/report_processor/processing
+  - src/report_processor/quality_control
+  - src/report_processor/stage_rag
+  - src/report_processor/storage
+acceptance_commands:
+  - "uv sync --locked --extra dev --extra rag"
+  - "uv run ruff check src tests"
+  - "uv run ruff format --check src tests"
+  - "uv run pytest -q tests/unit/drawing_card tests/unit/admin_panel tests/integration/test_drawing_card_admin.py"
+  - "uv run pytest -q"
+  - "uv build"
+  - "fresh wheel install and importlib.resources probe in private temporary environment"
+  - "uv run python -m compileall -q src tests"
+  - "git diff --check"
+required_evidence:
+  - "existing / and /api/jobs/** contract unchanged"
+  - "source demo produces validated card with 7 extracted rows, 32 card rows and zero review rows"
+  - "source demo and template SHA-256, size and mtime_ns unchanged"
+  - "create, update, review download/upload and result download"
+  - "ZIP, invalid magic, oversize and unsafe filenames rejected"
+  - "no path leaks, external requests or remote model calls"
+  - "desktop/mobile browser flow and keyboard focus"
+created_at: "2026-07-31T05:22:00+08:00"
