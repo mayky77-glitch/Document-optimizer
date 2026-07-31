@@ -107,7 +107,7 @@ h2 {
 
 .progress-rail {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   margin: 0 0 18px;
   padding: 0;
   list-style: none;
@@ -209,6 +209,18 @@ label small {
   font-weight: 500;
 }
 
+label em {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.file-count {
+  color: var(--gazprom-dark);
+  font-size: 0.9rem;
+}
+
 input,
 select,
 button,
@@ -271,6 +283,11 @@ button:disabled {
   color: var(--muted);
 }
 
+.status.is-error {
+  color: var(--red);
+  font-weight: 700;
+}
+
 .review-panel {
   margin-top: 18px;
 }
@@ -303,8 +320,22 @@ button:disabled {
 }
 
 .discrepancies li {
+  display: grid;
+  gap: 4px;
   padding: 12px 14px;
   background: #f8fafc;
+}
+
+.discrepancies li span {
+  color: var(--muted);
+}
+
+.empty-review {
+  margin: 0;
+  padding: 14px;
+  border-left: 4px solid var(--gazprom);
+  background: #edf7fb;
+  color: var(--gazprom-dark);
 }
 
 .unit_conflict {
