@@ -143,6 +143,20 @@ def test_create_masks_unknown_validation_error(client, monkeypatch: pytest.Monke
     assert private_detail not in response.text
 
 
+def test_drawing_card_asset_publishes_local_workbook_preflight(client) -> None:
+    test_client, _, _ = client
+
+    response = test_client.get("/static/drawing-card.js")
+
+    assert response.status_code == 200
+    assert "workbookPreflightError" in response.text
+    assert "selectedWorkbooksPreflightError" in response.text
+    assert "~$" in response.text
+    assert "arrayBuffer()" in response.text
+    assert "Файл «${name}» не является корректной Excel-книгой" in response.text
+    assert "existingCard.files[0]" in response.text
+
+
 def test_review_download_upload_and_rerun_use_the_review_field(client) -> None:
     test_client, _, _ = client
     created = test_client.post("/api/drawing-card/jobs", files=_files())

@@ -15,12 +15,64 @@
   const resultHint = document.querySelector("#result-hint");
   const summary = document.querySelector("#summary");
   const warnings = document.querySelector("#warnings");
+  const sourceFiles = document.querySelector("#sources");
+
+  const SOURCE_WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xlsb"]);
+  const ZIP_SIGNATURES = [
+    [0x50, 0x4b, 0x03, 0x04],
+    [0x50, 0x4b, 0x05, 0x06],
+    [0x50, 0x4b, 0x07, 0x08],
+  ];
+  const OLE_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
   let currentJobId = null;
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
     status.classList.toggle("is-error", isError);
+  };
+
+  const fileExtension = (name) => {
+    const dot = name.lastIndexOf(".");
+    return dot === -1 ? "" : name.slice(dot).toLowerCase();
+  };
+
+  const matchesSignature = (bytes, signature) => signature.every((value, index) => bytes[index] === value);
+
+  const hasZipSignature = (bytes) => ZIP_SIGNATURES.some((signature) => matchesSignature(bytes, signature));
+
+  const workbookPreflightError = async (file, allowedExtensions) => {
+    const name = typeof file?.name === "string" ? file.name : "выбранный файл";
+    const extension = fileExtension(name);
+    if (name.startsWith("~$")) {
+      return `Файл «${name}» — временный файл Excel. Закройте книгу и выберите файл без префикса «~$».`;
+    }
+    if (!allowedExtensions.has(extension)) {
+      return `Файл «${name}» имеет неподдерживаемый тип. Выберите Excel-файл (${[...allowedExtensions].join(", ")}).`;
+    }
+
+    let bytes;
+    try {
+      bytes = new Uint8Array(await file.slice(0, OLE_SIGNATURE.length).arrayBuffer());
+    } catch {
+      return `Не удалось прочитать файл «${name}». Выберите его снова.`;
+    }
+    const hasExpectedSignature = extension === ".xlsb" ? matchesSignature(bytes, OLE_SIGNATURE) : hasZipSignature(bytes);
+    if (!hasExpectedSignature) {
+      return `Файл «${name}» не является корректной Excel-книгой. Сохраните его в Excel и выберите снова.`;
+    }
+    return "";
+  };
+
+  const selectedWorkbooksPreflightError = async () => {
+    for (const file of sourceFiles.files) {
+      const error = await workbookPreflightError(file, SOURCE_WORKBOOK_EXTENSIONS);
+      if (error) return error;
+    }
+    if (operation.value === "update" && existingCard.files[0]) {
+      return workbookPreflightError(existingCard.files[0], new Set([".xlsx"]));
+    }
+    return "";
   };
 
   const setProgress = (step) => {
@@ -164,10 +216,15 @@
       return;
     }
     createJob.disabled = true;
-    reviewPanel.hidden = true;
-    setProgress("sources");
-    setStatus("Проверяем источники и готовим карточку…");
     try {
+      const preflightError = await selectedWorkbooksPreflightError();
+      if (preflightError) {
+        setStatus(preflightError, true);
+        return;
+      }
+      reviewPanel.hidden = true;
+      setProgress("sources");
+      setStatus("Проверяем источники и готовим карточку…");
       const payload = await requestJson("/api/drawing-card/jobs", { method: "POST", body: new FormData(form) });
       renderJob(payload);
     } catch (error) {
