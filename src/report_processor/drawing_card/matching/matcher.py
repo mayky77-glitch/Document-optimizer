@@ -21,6 +21,7 @@ from .masks import contains_mask, has_all_masks, has_any_mask
 from .semantic import SemanticExampleRetriever
 
 if TYPE_CHECKING:
+    from ..autopilot import MachineConsensusStore
     from .tiny_model import OpenAICompatibleTinyModel
 
 
@@ -149,6 +150,18 @@ def _rule_matches(text: str, rule: CategoryRule) -> bool:
     return exact_groups or _has_any(text, rule.include_any)
 
 
+def _strong_rule_matches(text: str, rule: CategoryRule) -> bool:
+    """Mismatch automation needs a composite rule, never a broad one-token cue."""
+    if _has_any(text, rule.exclude_any):
+        return False
+    if any(has_all_masks(text, group) for group in rule.include_all):
+        return True
+    return any(
+        len(normalize_text(cue).split()) > 1 and _contains_phrase(text, cue)
+        for cue in rule.include_any
+    )
+
+
 def _unit_is_compatible(unit: str | None, rule: CategoryRule) -> bool:
     normalized = normalize_unit(unit)
     expected = {normalize_unit(item) for item in rule.expected_units}
@@ -164,6 +177,7 @@ class DrawingRowMatcher:
         rag_mode: str,
         tiny_model: OpenAICompatibleTinyModel | None = None,
         approvals: dict[str, ReviewApproval] | None = None,
+        machine_consensus: MachineConsensusStore | None = None,
     ) -> None:
         self.rules = rules
         self.examples = examples
@@ -174,6 +188,7 @@ class DrawingRowMatcher:
         self.rag_mode = rag_mode
         self.tiny_model = tiny_model
         self.approvals = approvals or {}
+        self.machine_consensus = machine_consensus
         self.model_calls = 0
 
     def _approved_decision(self, row: DrawingSourceRow) -> MatchDecision | None:
@@ -282,6 +297,50 @@ class DrawingRowMatcher:
                 warnings=(Status.UNIT_MISMATCH,),
                 evidence_ids=(exact.example_id,),
             )
+        if self.machine_consensus and self.machine_consensus.requires_manual_review(
+            row, self.rules.version
+        ):
+            return self._review(
+                row,
+                reason="Machine consensus is stale or conflicting",
+                warnings=(Status.CONFLICT_REQUIRES_REVIEW,),
+            )
+        machine = (
+            self.machine_consensus.lookup(row, self.rules.version)
+            if self.machine_consensus
+            else None
+        )
+        if machine is not None:
+            rule = next(
+                (item for item in self.rules.categories if item.category == machine.category), None
+            )
+            if (
+                machine.quantity_decision == "include"
+                and rule is not None
+                and not _unit_is_compatible(row.unit_raw, rule)
+            ):
+                return self._review(
+                    row,
+                    category=machine.category,
+                    reason="Machine consensus cannot include quantity across a unit mismatch",
+                    warnings=(Status.UNIT_MISMATCH,),
+                )
+            return MatchDecision(
+                row_id=row.row_id,
+                category=machine.category,
+                quantity_decision=machine.quantity_decision,
+                cost_decision=machine.cost_decision,
+                quantity_rule_id=f"machine-consensus:{machine.fingerprint}",
+                cost_rule_id=f"machine-consensus:{machine.fingerprint}",
+                quantity_confidence=1.0 if machine.quantity_decision == "include" else None,
+                cost_confidence=1.0 if machine.cost_decision == "include" else None,
+                matching_strategy="machine_consensus_exact",
+                evidence_ids=(machine.fingerprint,),
+                reason="Exact private machine consensus",
+                requires_manual_review=False,
+                status=Status.OK,
+                warnings=(),
+            )
         if _has_confirmed_negative(text):
             return self._exclude_negative(row)
         matched = [rule for rule in self.rules.categories if _rule_matches(text, rule)]
@@ -295,6 +354,14 @@ class DrawingRowMatcher:
                 warnings=("MULTIPLE_CATEGORY_MATCHES",),
             )
         if len(matched) == 1:
+            strong = [rule for rule in self.rules.categories if _strong_rule_matches(text, rule)]
+            if (
+                len(strong) == 1
+                and row.remaining_total_cost not in (None, 0)
+                and not _unit_is_compatible(row.unit_raw, strong[0])
+                and _has_any(text, strong[0].cost_only_any)
+            ):
+                return self._strong_cost_only(row, strong[0])
             return self._review(
                 row,
                 category=matched[0].category,
@@ -389,9 +456,30 @@ class DrawingRowMatcher:
             evidence_ids=tuple(item.example.example_id for item in retrieved),
         )
 
+    def _strong_cost_only(self, row: DrawingSourceRow, rule: CategoryRule) -> MatchDecision:
+        rule_id = f"rules:{self.rules.version}:{rule.category.value}"
+        return MatchDecision(
+            row_id=row.row_id,
+            category=rule.category,
+            quantity_decision="exclude",
+            cost_decision="include",
+            quantity_rule_id=None,
+            cost_rule_id=rule_id,
+            quantity_confidence=None,
+            cost_confidence=0.99,
+            matching_strategy="deterministic_strong_rule_cost_only",
+            evidence_ids=(),
+            reason="Strong unique rule with unit mismatch: cost only",
+            requires_manual_review=False,
+            status=Status.OK,
+            warnings=(Status.UNIT_MISMATCH,),
+        )
+
     @staticmethod
     def _has_unresolved_formula(row: DrawingSourceRow) -> bool:
-        return any(item in _UNRESOLVED_FORMULA_WARNINGS for item in row.warnings)
+        return bool(row.formula_values) or any(
+            item in _UNRESOLVED_FORMULA_WARNINGS for item in row.warnings
+        )
 
     @staticmethod
     def _is_no_impact(row: DrawingSourceRow, text: str) -> bool:

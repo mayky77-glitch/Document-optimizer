@@ -11,6 +11,7 @@ from report_processor.hierarchy import HierarchyEntry, filter_aggregate_rows
 
 from .aggregation.aggregator import aggregate_rows, build_complete_card_rows
 from .audit import AtomicJsonlWriter, atomic_write_json, atomic_write_jsonl, source_hashes
+from .autopilot import load_machine_consensus
 from .config import load_model_config, load_rules
 from .matching.examples import load_confirmed_examples
 from .matching.matcher import DrawingRowMatcher
@@ -97,6 +98,8 @@ def _validate_request(request: WorkflowRequest) -> None:
         raise FileNotFoundError(request.existing_card)
     if request.review_decisions is not None and not request.review_decisions.is_file():
         raise FileNotFoundError(request.review_decisions)
+    if request.machine_consensus is not None and not request.machine_consensus.is_file():
+        raise FileNotFoundError(request.machine_consensus)
     if request.remaining_strategy != "direct_remaining_columns":
         raise ValueError(
             "Only direct_remaining_columns is enabled by default; "
@@ -350,6 +353,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         rag_mode=request.rag_mode,
         tiny_model=tiny_model,
         approvals=approvals,
+        machine_consensus=load_machine_consensus(request.machine_consensus),
     )
 
     matched_rows = []

@@ -236,6 +236,7 @@ class WorkflowRequest:
     model_config: Path | None = None
     review_decisions: Path | None = None
     feedback_examples: Path | None = None
+    machine_consensus: Path | None = None
     objects_per_sheet: int = 4
     drawing_code_mode: str = "preserve_group"
     remaining_strategy: str = "direct_remaining_columns"
