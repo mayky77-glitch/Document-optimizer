@@ -7,7 +7,10 @@ from dataclasses import replace
 from itertools import pairwise
 
 from report_processor.excel import DualWorkbookSession
-from report_processor.schema.column_resolver import resolve_logical_columns
+from report_processor.schema.column_resolver import (
+    resolve_logical_columns,
+    resolve_position_column_from_content,
+)
 from report_processor.schema.confidence import calculate_schema_confidence
 from report_processor.schema.config import SchemaDetectionConfig
 from report_processor.schema.exceptions import SchemaDetectionError
@@ -161,10 +164,24 @@ def analyze_worksheet_schema(
             classification.sheet_type,
             config.column_aliases,
         )
-        columns = apply_column_overrides(columns, headers, override)
         data_start_row = detect_data_start_row(scan, header_end_row=header.end_row)
         if override and override.data_start_row is not None:
             data_start_row = override.data_start_row
+        sampled_values: dict[int, list[object]] = {}
+        for cell in scan.cells:
+            if data_start_row is not None and cell.row >= data_start_row:
+                sampled_values.setdefault(cell.column, []).append(cell.raw_value)
+        columns = tuple(
+            resolve_position_column_from_content(
+                headers,
+                {column: tuple(values[:32]) for column, values in sampled_values.items()},
+                column,
+            )
+            if column.logical_column.value == "position_code"
+            else column
+            for column in columns
+        )
+        columns = apply_column_overrides(columns, headers, override)
         if data_start_row is None:
             warnings.append("DATA_START_NOT_FOUND")
         first_column, last_column = detect_table_column_bounds(headers, columns)

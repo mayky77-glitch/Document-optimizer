@@ -22,6 +22,14 @@ def _text(value: object) -> str | None:
     return text or None
 
 
+def _position_text(value: object) -> str | None:
+    # XLSB readers commonly expose an integer position such as 1 as 1.0.
+    # Keep true dotted string codes unchanged, but normalize numeric integer cells.
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return _text(value)
+
+
 def _is_formula(value: object) -> bool:
     return isinstance(value, str) and value.startswith("=")
 
@@ -55,6 +63,7 @@ def extract_rows(
     for offset, (formula_row, cached_row) in enumerate(rows):
         row_number = schema.data_start_row + offset
         raw_drawing = _text(value_at(cached_row, columns.get("drawing_code")))
+        position_code = _position_text(value_at(cached_row, columns.get("position_code")))
         raw_document_index = _text(value_at(cached_row, columns.get("document_index")))
         work_name = _text(value_at(cached_row, columns.get("work_name")))
         unit = _text(value_at(cached_row, columns.get("unit")))
@@ -131,6 +140,7 @@ def extract_rows(
                 document_index=current_document_index or filename_document_index,
             ),
             object_index_raw=object_index,
+            position_code_raw=position_code,
             drawing_code_raw=drawing,
             work_name_raw=work_name,
             unit_raw=unit,

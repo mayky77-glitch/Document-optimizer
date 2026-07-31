@@ -11,6 +11,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 
+from report_processor.hierarchy import is_ancestor_position, parse_position_code
+
 from ..models import SourceSchema
 from ..statuses import Status
 from .normalization import normalize_text
@@ -26,6 +28,13 @@ _DRAWING_ALIASES = (
     "чертеж",
 )
 _DOCUMENT_INDEX_ALIASES = ("индекс документа", "шифр документа", "номер документа")
+_POSITION_ALIASES = (
+    "номер позиции",
+    "позиция",
+    "номер п п",
+    "номер по порядку",
+    "порядковый номер",
+)
 _WORK_ALIASES = (
     "наименование этапа выполнения работ",
     "наименование этапа работ",
@@ -113,6 +122,7 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
     candidates: dict[str, list[tuple[int, int]]] = {
         "drawing_code": [],
         "document_index": [],
+        "position_code": [],
         "work_name": [],
         "unit": [],
         "remaining_quantity": [],
@@ -123,6 +133,8 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
             candidates["drawing_code"].append((10, column))
         if _contains_alias(header, _DOCUMENT_INDEX_ALIASES):
             candidates["document_index"].append((9, column))
+        if _contains_alias(header, _POSITION_ALIASES):
+            candidates["position_code"].append((10, column))
         if _contains_alias(header, _WORK_ALIASES):
             candidates["work_name"].append((10, column))
         if _contains_alias(header, _UNIT_ALIASES):
@@ -144,6 +156,36 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
         column = resolved.pop("remaining_quantity", None)
         warnings.append(f"SAME_COLUMN_FOR_QUANTITY_AND_COST:{column}")
     return resolved, warnings
+
+
+def _content_position_column(
+    columns: dict[str, int],
+    headers: dict[int, str],
+    rows: Sequence[tuple[object, ...]],
+    *,
+    start: int,
+) -> tuple[int | None, str | None]:
+    """Recover a non-standard position column only on strong, unique hierarchy evidence."""
+    if "position_code" in columns:
+        return columns["position_code"], None
+    excluded = ("единиц", "колич", "объем", "стоим", "цен", "работ", "чертеж")
+    ranked: list[tuple[int, int]] = []
+    for column, header in headers.items():
+        if any(token in header for token in excluded):
+            continue
+        parsed = [parse_position_code(value_at(row, column)) for row in rows[start : start + 32]]
+        values = [value for value in parsed if value is not None]
+        parent_pairs = sum(
+            1 for parent in values for child in values if is_ancestor_position(parent, child)
+        )
+        if len(values) >= 4 and parent_pairs >= 2 and len(values) / 32 >= 0.12:
+            ranked.append((len(values) + parent_pairs * 3, column))
+    ranked.sort(reverse=True)
+    if not ranked:
+        return None, None
+    if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+        return None, "AMBIGUOUS_POSITION_COLUMN_CONTENT"
+    return ranked[0][1], "POSITION_COLUMN_FROM_CONTENT"
 
 
 def _schema_score(columns: dict[str, int]) -> int:
@@ -402,6 +444,13 @@ def detect_sheet_schema(
         data_start_index=end + 1,
     )
     warnings.extend(metric_warnings)
+    position_column, position_warning = _content_position_column(
+        columns, headers, cached_rows, start=end + 1
+    )
+    if position_column is not None:
+        columns["position_code"] = position_column
+    if position_warning:
+        warnings.append(position_warning)
     required = {"drawing_code", "work_name", "unit", "remaining_quantity", "remaining_total_cost"}
     missing = sorted(required - columns.keys())
     status = Status.OK.value if not missing else Status.MISSING_REQUIRED_COLUMNS.value

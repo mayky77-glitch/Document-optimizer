@@ -12,5 +12,4 @@ updated: 2026-07-31
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
 - [[../ORCHESTRATION|Orchestration rules]]
-- Активных задач нет.
-- Последняя принятая волна: [[project-map|Bulk reconciliation and admin panel]].
+- Последняя принятая волна: [[../tasks/hierarchy-aggregate-production|Hierarchy aggregate exclusion]].

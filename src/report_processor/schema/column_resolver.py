@@ -6,6 +6,7 @@ import re
 from collections import defaultdict
 from dataclasses import replace
 
+from report_processor.hierarchy import is_ancestor_position, parse_position_code
 from report_processor.schema.models import (
     ColumnAliasRule,
     ColumnCandidate,
@@ -199,3 +200,41 @@ def resolve_logical_columns(
         for logical in logical_columns
     )
     return _resolve_physical_conflicts(resolutions)
+
+
+def resolve_position_column_from_content(
+    headers: tuple[ComposedHeader, ...],
+    sampled_values: dict[int, tuple[object, ...]],
+    current: ColumnResolution,
+) -> ColumnResolution:
+    """Recover a variant numbering header only from strong, unique hierarchy evidence."""
+    if current.status == "OK" or current.logical_column is not LogicalColumn.POSITION_CODE:
+        return current
+    excluded = ("единиц", "колич", "объем", "стоим", "цен", "работ", "чертеж")
+    candidates: list[tuple[int, ComposedHeader]] = []
+    for header in headers:
+        if any(token in header.normalized_text for token in excluded):
+            continue
+        codes = [
+            code
+            for value in sampled_values.get(header.column_index, ())
+            if (code := parse_position_code(value))
+        ]
+        pairs = sum(1 for parent in codes for child in codes if is_ancestor_position(parent, child))
+        if len(codes) >= 4 and pairs >= 2:
+            candidates.append((len(codes) + pairs * 3, header))
+    candidates.sort(key=lambda item: (-item[0], item[1].column_index))
+    if not candidates or (len(candidates) > 1 and candidates[0][0] == candidates[1][0]):
+        return current
+    _score, header = candidates[0]
+    return ColumnResolution(
+        logical_column=LogicalColumn.POSITION_CODE,
+        column_index=header.column_index,
+        column_letter=header.column_letter,
+        header_text=header.raw_text,
+        confidence=0.80,
+        matched_rule="content_hierarchy",
+        alternatives=(),
+        status="OK",
+        warnings=("POSITION_COLUMN_FROM_CONTENT",),
+    )

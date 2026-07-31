@@ -20,6 +20,10 @@ _ISSUE_PRESENTATION = {
     "QUANTITY_COST_INCONSISTENT": ("cost_threshold", "orange"),
     "SIGN_CONFLICT": ("cost_threshold", "orange"),
     "NEGATIVE_VALUE": ("cost_threshold", "orange"),
+    "HIERARCHY_COST_MISMATCH": ("hierarchy_review", "orange"),
+    "HIERARCHY_MISSING_DIRECT_CHILD_COST": ("hierarchy_review", "orange"),
+    "HIERARCHY_DUPLICATE_POSITION": ("hierarchy_review", "orange"),
+    "HIERARCHY_POSITION_GAP": ("hierarchy_review", "orange"),
     "AMBIGUOUS": ("manual_review", "blue"),
     "UNMATCHED": ("manual_review", "blue"),
 }
@@ -84,6 +88,9 @@ def processing_presentation(
         }
     )
     discrepancies = [_issue_record(issue) for issue in tuple(getattr(report, "issues", ()) or ())]
+    discrepancies.extend(
+        _issue_record(issue) for issue in tuple(artifacts.get("hierarchy_issues", ()) or ())
+    )
     existing_codes = {str(item["code"]) for item in discrepancies}
     for warning in tuple(getattr(result, "warnings", ()) or ()):
         warning_code = _enum_value(warning).upper()
@@ -96,6 +103,17 @@ def processing_presentation(
                     "color": "yellow",
                     "severity": "warning",
                     "message": "Исходное значение представлено без изменения.",
+                }
+            )
+        elif warning_code.startswith("HIERARCHY_") and warning_code not in existing_codes:
+            discrepancies.append(
+                {
+                    "discrepancy_id": _controlled_id("warning", warning_code),
+                    "code": warning_code,
+                    "category": "hierarchy_review",
+                    "color": "orange",
+                    "severity": "warning",
+                    "message": "Иерархия позиций требует проверки перед публикацией.",
                 }
             )
     source_labels = _source_labels(artifacts.get("normalized"))
@@ -150,7 +168,7 @@ def _issue_record(issue: object) -> dict[str, object]:
     issue_id = _public_text(getattr(issue, "issue_id", "")) or _controlled_id(
         code, getattr(issue, "message", "")
     )
-    return {
+    record = {
         "discrepancy_id": _controlled_id(issue_id),
         "code": code,
         "category": category,
@@ -158,6 +176,16 @@ def _issue_record(issue: object) -> dict[str, object]:
         "severity": _enum_value(getattr(issue, "severity", "manual_review")),
         "message": _public_text(getattr(issue, "message", "Требуется проверка.")),
     }
+    if code.startswith("HIERARCHY_"):
+        # Numbering code is a controlled source identifier needed to repair the workbook.
+        record["position_code"] = _public_text(getattr(issue, "position_code", None))
+        record["parent_amount"] = _public_scalar(getattr(issue, "parent_amount", None))
+        record["direct_children_amount"] = _public_scalar(
+            getattr(issue, "direct_children_amount", None)
+        )
+        record["delta"] = _public_scalar(getattr(issue, "delta", None))
+        record["tolerance"] = _public_scalar(getattr(issue, "tolerance", None))
+    return record
 
 
 def _suggestion_records(

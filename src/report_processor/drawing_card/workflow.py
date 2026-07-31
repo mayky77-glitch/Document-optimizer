@@ -7,6 +7,8 @@ import uuid
 from importlib import resources
 from pathlib import Path
 
+from report_processor.hierarchy import HierarchyEntry, filter_aggregate_rows
+
 from .aggregation.aggregator import aggregate_rows, build_complete_card_rows
 from .audit import AtomicJsonlWriter, atomic_write_json, atomic_write_jsonl, source_hashes
 from .config import load_model_config, load_rules
@@ -57,6 +59,10 @@ _STRICT_BLOCKER_STATUSES = frozenset(
         Status.UNSAFE_ARCHIVE_PATH,
         Status.SUSPICIOUS_COMPRESSION_RATIO,
         Status.VERY_LARGE_ARCHIVE_ENTRY,
+        Status.HIERARCHY_COST_MISMATCH,
+        Status.HIERARCHY_MISSING_DIRECT_CHILD_COST,
+        Status.HIERARCHY_DUPLICATE_POSITION,
+        Status.HIERARCHY_POSITION_GAP,
     }
 )
 
@@ -372,15 +378,37 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                     schema.sheet_name,
                 )
                 reader = open_reader(materialized.path)
-                for row in extract_rows(
-                    reader,
-                    inspection.entry,
-                    schema,
-                    inspection.object_identity.value,
-                ):
+                extracted_rows = list(
+                    extract_rows(
+                        reader,
+                        inspection.entry,
+                        schema,
+                        inspection.object_identity.value,
+                    )
+                )
+                hierarchy = filter_aggregate_rows(
+                    [
+                        HierarchyEntry(
+                            row_id=row.row_id,
+                            position_code=row.position_code_raw,
+                            amount=row.remaining_total_cost,
+                            context=(row.location.file_id, row.location.sheet_name),
+                        )
+                        for row in extracted_rows
+                    ]
+                )
+                parent_ids = set(hierarchy.parent_row_ids)
+                result.hierarchy_issues.extend(hierarchy.issues)
+                result.warnings.extend(hierarchy.warnings)
+                for row in extracted_rows:
                     result.extracted_row_count += 1
                     extracted_writer.write(row)
                     result.warnings.extend(row.warnings)
+                    if row.row_id in parent_ids:
+                        rejected_writer.write(
+                            {"row_id": row.row_id, "status": Status.HIERARCHY_AGGREGATE_EXCLUDED}
+                        )
+                        continue
                     if row.object_index_raw and row.drawing_code_raw:
                         drawing_rows.setdefault((row.object_index_raw, row.drawing_code_raw), row)
                     decision = matcher.match(row)
@@ -410,6 +438,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                     reader.close()
                 materialized.close()
 
+    atomic_write_jsonl(run_dir / "hierarchy_issues.jsonl", result.hierarchy_issues)
     result.manual_review_count = len(review_decisions)
     if result.manual_review_count:
         result.warnings.append(f"MANUAL_REVIEW_REQUIRED:{result.manual_review_count}")

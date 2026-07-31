@@ -114,8 +114,10 @@ class DefaultProcessingAdapters:
                 "source_schema": source_schema,
                 "target_report": target_report,
                 "training": training,
+                "hierarchy_issues": training.hierarchy_issues,
                 "target_source": target,
             },
+            warnings=training.warnings,
         )
 
     def calculate(self, context: ProcessingContext) -> StageOutcome:
@@ -285,9 +287,10 @@ class DefaultProcessingAdapters:
                     export_hash=export_hash,
                 )
             events = journal.validate_run(run.run_id)
+        hierarchy_issues = tuple(context.values.get("hierarchy_issues", ()) or ())
         decision = (
             "require_manual_review"
-            if context.values.get("stage_rag_requires_manual_review") is True
+            if context.values.get("stage_rag_requires_manual_review") is True or hierarchy_issues
             else report.decision.value
         )
         return StageOutcome(
@@ -297,7 +300,8 @@ class DefaultProcessingAdapters:
                 "audit_boundary": events[-1].controlled_state_code,
                 "audit_export_hash": export_hash or "",
             },
-            warnings=tuple(issue.code.value for issue in report.issues),
+            warnings=tuple(issue.code.value for issue in report.issues)
+            + tuple(issue.code for issue in hierarchy_issues),
             decision=decision,
         )
 
@@ -306,6 +310,8 @@ class DefaultProcessingAdapters:
         from report_processor.audit.serialization import event_payload
         from report_processor.excel_writer import write_target_report
 
+        if context.values.get("hierarchy_issues"):
+            raise RuntimeError("HIERARCHY_INTEGRITY_BLOCKED")
         request = _request(context)
         report = context.values["quality_report"]
         target_report = context.values["target_report"]
