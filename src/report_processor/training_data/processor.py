@@ -4,6 +4,7 @@ from dataclasses import replace
 from decimal import Decimal
 
 from report_processor.extraction.models import CanonicalSourceRow
+from report_processor.hierarchy import HierarchyEntry, filter_aggregate_rows
 
 from .classification import is_detail_row, is_outdated_row, is_total_row
 from .config import TrainingDataConfig
@@ -103,6 +104,27 @@ def prepare_training_data(
     config: TrainingDataConfig | None = None,
 ) -> TrainingDataResult:
     config = config or TrainingDataConfig()
+    input_row_count = len(rows)
+    hierarchy = filter_aggregate_rows(
+        [
+            HierarchyEntry(
+                row_id=row.row_id,
+                position_code=row.position_code_raw,
+                amount=row.current_period_cost,
+                context=(
+                    row.source_location.source_file_id,
+                    row.source_location.sheet_name,
+                    row.document_period or "",
+                    row.document_index or "",
+                    row.object_code_raw or "",
+                    row.subobject_code_raw or "",
+                ),
+            )
+            for row in rows
+        ]
+    )
+    parent_ids = set(hierarchy.parent_row_ids)
+    rows = tuple(row for row in rows if row.row_id not in parent_ids)
     output: list[TrainingDataRow] = []
     skipped_non_detail = 0
     skipped_outdated = 0
@@ -111,7 +133,7 @@ def prepare_training_data(
     collisions = 0
     seen: dict[str, TrainingDataRow] = {}
     seen_signatures: dict[str, set[tuple[object, ...]]] = {}
-    global_warnings: list[str] = []
+    global_warnings: list[str] = list(hierarchy.warnings)
     source_rows_by_id: dict[str, CanonicalSourceRow] = {}
 
     for source_row in rows:
@@ -171,7 +193,7 @@ def prepare_training_data(
         output.append(prepared)
 
     statistics = TrainingDataStatistics(
-        input_rows=len(rows),
+        input_rows=input_row_count,
         output_rows=len(output),
         skipped_non_detail_rows=skipped_non_detail,
         skipped_outdated_rows=skipped_outdated,
@@ -183,6 +205,7 @@ def prepare_training_data(
         rows=tuple(output),
         statistics=statistics,
         warnings=tuple(dict.fromkeys(global_warnings)),
+        hierarchy_issues=hierarchy.issues,
     )
 
 

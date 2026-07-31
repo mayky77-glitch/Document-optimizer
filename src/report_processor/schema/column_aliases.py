@@ -26,7 +26,7 @@ _WORK = (
 DEFAULT_COLUMN_ALIASES: tuple[ColumnAliasRule, ...] = (
     ColumnAliasRule(
         LogicalColumn.ROW_NUMBER,
-        ("номер п п", "номер по порядку", "порядковый номер"),
+        ("номер п п", "номер по порядку", "порядковый номер", "номер позиции"),
         ("номер",),
         ("поряд", "п п"),
         ("позиция",),

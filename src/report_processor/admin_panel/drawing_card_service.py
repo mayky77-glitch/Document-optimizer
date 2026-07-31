@@ -321,6 +321,7 @@ class DrawingCardService:
             "extracted_rows": result.extracted_row_count,
             "card_rows": len(result.card_rows),
             "manual_review": result.manual_review_count,
+            "hierarchy_issues": len(result.hierarchy_issues),
         }
         job.warnings = _controlled_warnings(result.warnings)
         job.category_units = result.category_units
