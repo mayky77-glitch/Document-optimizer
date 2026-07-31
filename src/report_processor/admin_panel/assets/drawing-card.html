@@ -7,6 +7,7 @@
     <title>Карточка остатков</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/drawing-card.css">
+    <script src="/static/drawing-card-review.js" defer></script>
     <script src="/static/drawing-card.js" defer></script>
   </head>
   <body>
@@ -84,16 +85,12 @@
         <div class="section-heading review-heading">
           <div>
             <p class="step-label">Шаг 2 · проверка</p>
-            <h2 id="review-title">Проверьте строки</h2>
-            <p>Решение можно изменить до применения. Категория и стоимость показаны в контексте каждой строки.</p>
-          </div>
-          <div class="bulk-actions" aria-label="Массовые решения">
-            <button id="approve-all" class="secondary-action" type="button">Одобрить все предложенные</button>
-            <button id="reject-all" class="secondary-action danger-action" type="button">Отклонить все</button>
+            <h2 id="review-title">Проверьте группы строк</h2>
+            <p>Одно решение применяется к одинаковым строкам в группе. Состав группы защищён от устаревших изменений.</p>
           </div>
         </div>
         <div id="summary" class="summary" aria-label="Итог проверки"></div>
-        <p id="review-empty" class="empty-review" hidden>Строк для проверки нет.</p>
+        <p id="review-empty" class="empty-review" hidden>Групп для проверки нет.</p>
         <div id="review-items" class="review-items" aria-live="polite" tabindex="-1"></div>
         <nav id="review-pagination" class="pagination" aria-label="Страницы проверки" hidden>
           <button id="previous-page" class="page-button" type="button">Назад</button>
@@ -102,7 +99,7 @@
         </nav>
         <div class="review-footer">
           <button id="apply-review" class="primary-action" type="button">Применить решения</button>
-          <p id="review-hint">Сначала примите или отклоните все спорные строки.</p>
+          <p id="review-hint">Сначала примите решение по каждой группе.</p>
         </div>
 
         <div id="legacy-review" class="legacy-review" hidden>
@@ -128,36 +125,5 @@
       </section>
     </main>
 
-    <template id="review-item-template">
-      <article class="review-item">
-        <header class="review-item-head">
-          <div>
-            <p class="review-kicker">Строка проверки</p>
-            <h3 class="work-name"></h3>
-          </div>
-          <p class="decision-status"></p>
-        </header>
-        <dl class="review-context">
-          <div><dt>Категория</dt><dd data-context="category"></dd></div>
-          <div><dt>Количество</dt><dd data-context="quantity"></dd></div>
-          <div><dt>Ед. в источнике</dt><dd data-context="source-unit"></dd></div>
-          <div><dt>Ед. в цели</dt><dd data-context="target-unit"></dd></div>
-          <div><dt>Общая стоимость</dt><dd data-context="cost"></dd></div>
-        </dl>
-        <p class="proposed-category" hidden></p>
-        <p class="selected-category" hidden></p>
-        <div class="item-actions" aria-label="Решение по строке">
-          <button type="button" data-review-action="approve">Одобрить</button>
-          <button type="button" data-review-action="reject">Отклонить</button>
-          <button type="button" data-review-action="change-category">Изменить категорию</button>
-          <button type="button" data-review-action="cost-only">Учитывать только стоимость</button>
-          <button type="button" data-review-action="undo" hidden>Отменить решение</button>
-        </div>
-        <form class="category-editor" hidden>
-          <label>Категория<select class="category-input" required></select></label>
-          <button type="button" data-review-action="cancel-category">Отмена</button>
-        </form>
-      </article>
-    </template>
   </body>
 </html>
