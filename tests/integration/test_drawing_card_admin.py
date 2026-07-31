@@ -198,9 +198,9 @@ def test_drawing_card_assets_keep_recoverable_review_state_and_use_category_sele
     assert "period.value" in script.text
     assert "sourceFiles.files.length" in script.text
     assert "/api/drawing-card/jobs/${encodeURIComponent(currentJobId)}" in script.text
-    assert "response.status === 404" in script.text
-    assert "Файлы нужно выбрать повторно" in script.text
-    assert 'editor.querySelector("select").focus()' in script.text
+    assert "error.status === 404" in script.text
+    assert "Уже загружено для текущей карточки" in script.text
+    assert "categoryInput.focus()" in script.text
     assert "selectedCategory" in script.text
 
 
