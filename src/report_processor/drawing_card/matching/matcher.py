@@ -297,6 +297,8 @@ class DrawingRowMatcher:
                 warnings=(Status.UNIT_MISMATCH,),
                 evidence_ids=(exact.example_id,),
             )
+        if _has_confirmed_negative(text):
+            return self._exclude_negative(row)
         if self.machine_consensus and self.machine_consensus.requires_manual_review(
             row, self.rules.version
         ):
@@ -341,8 +343,6 @@ class DrawingRowMatcher:
                 status=Status.OK,
                 warnings=(),
             )
-        if _has_confirmed_negative(text):
-            return self._exclude_negative(row)
         matched = [rule for rule in self.rules.categories if _rule_matches(text, rule)]
         compatible = [rule for rule in matched if _unit_is_compatible(row.unit_raw, rule)]
         if len(compatible) == 1:

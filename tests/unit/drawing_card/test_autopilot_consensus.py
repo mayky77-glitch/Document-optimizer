@@ -34,8 +34,10 @@ def _record(
     cost: str = "include",
     active: bool = True,
     rules_version: str | None = None,
+    text: str = "неоднозначная работа",
+    unit: str = "м",
+    source_type: str = "visr",
 ) -> dict[str, object]:
-    text, unit, source_type = "неоднозначная работа", "м", "visr"
     version = rules_version or RULES.version
     return {
         "schema": "MachineConsensus-1.0",
@@ -174,6 +176,28 @@ def test_available_formula_values_do_not_mark_every_extracted_row_unresolved(
 
     assert decision.matching_strategy == "machine_consensus_exact"
     assert decision.requires_manual_review is False
+
+
+def test_confirmed_negative_rule_precedes_machine_consensus(tmp_path: Path) -> None:
+    text = "Изоляция трубопроводов"
+    path = tmp_path / "machine-consensus.jsonl"
+    path.write_text(
+        json.dumps(
+            _record(
+                category="tt_installation",
+                text=text.lower(),
+                unit="м",
+                quantity="include",
+                cost="include",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    decision = _matcher(consensus_path=path).match(_row(text, unit="м"))
+
+    assert decision.matching_strategy == "deterministic_negative"
+    assert (decision.quantity_decision, decision.cost_decision) == ("exclude", "exclude")
 
 
 def test_strong_unique_unit_mismatch_is_cost_only_but_broad_cue_stays_manual(
