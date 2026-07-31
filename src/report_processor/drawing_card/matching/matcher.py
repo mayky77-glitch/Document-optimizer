@@ -113,6 +113,7 @@ _CONFIRMED_NEGATIVE_ALL = (
 )
 
 _UNRESOLVED_FORMULA_WARNINGS = frozenset({Status.FORMULA_WITHOUT_CACHED_VALUE, Status.EXCEL_ERROR})
+_CABLE_COUPLING_PREFIX_RE = re.compile(r"^установка муфт соединительных\b", re.IGNORECASE)
 
 
 @lru_cache(maxsize=256)
@@ -299,6 +300,9 @@ class DrawingRowMatcher:
             )
         if _has_confirmed_negative(text):
             return self._exclude_negative(row)
+        coupling = self._safe_cable_coupling(row, text)
+        if coupling is not None:
+            return coupling
         if self.machine_consensus and self.machine_consensus.requires_manual_review(
             row, self.rules.version
         ):
@@ -454,6 +458,36 @@ class DrawingRowMatcher:
             reason="No confirmed automatic classification",
             warnings=(Status.UNCONFIRMED_CLASSIFICATION,),
             evidence_ids=tuple(item.example.example_id for item in retrieved),
+        )
+
+    def _safe_cable_coupling(self, row: DrawingSourceRow, text: str) -> MatchDecision | None:
+        """Include only a proven leading cable-coupling phrase as cost-only.
+
+        This deliberately bypasses broad dictionary masks: an inner ``муфт``
+        substring must never classify a row, and quantity is never inferred.
+        Formula hazards, human feedback conflicts and negative rules are handled
+        by the earlier cascade stages.
+        """
+        if not _CABLE_COUPLING_PREFIX_RE.match(text):
+            return None
+        if row.remaining_total_cost in (None, 0):
+            return None
+        rule_id = f"rules:{self.rules.version}:power_cable"
+        return MatchDecision(
+            row_id=row.row_id,
+            category=TargetWorkCategory.POWER_CABLE,
+            quantity_decision="exclude",
+            cost_decision="include",
+            quantity_rule_id=None,
+            cost_rule_id=rule_id,
+            quantity_confidence=None,
+            cost_confidence=0.99,
+            matching_strategy="deterministic_cable_coupling_cost_only",
+            evidence_ids=(),
+            reason="Anchored cable-coupling rule: cost only",
+            requires_manual_review=False,
+            status=Status.OK,
+            warnings=(),
         )
 
     def _strong_cost_only(self, row: DrawingSourceRow, rule: CategoryRule) -> MatchDecision:

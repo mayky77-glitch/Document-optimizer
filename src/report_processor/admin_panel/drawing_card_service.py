@@ -34,6 +34,8 @@ from report_processor.drawing_card.workflow import default_template_path, run_wo
 from report_processor.metadata.period_models import DocumentPeriod
 from report_processor.metadata.period_patterns import MONTHS
 
+from .drawing_card_review_payload import drawing_card_cluster_payload
+
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
 MAX_RETAINED_TERMINAL_JOBS = 64
@@ -348,7 +350,7 @@ class DrawingCardService:
             raise ValueError("unresolved review items remain")
         approvals_path = job.directory / "inline_review_decisions.json"
         write_approvals(approvals_path, job.inline_approvals)
-        rerun = self._run(job, review_decisions=approvals_path)
+        rerun = self._run(job, review_decisions=approvals_path, strict=False)
         if rerun.status == "ready":
             append_feedback(
                 self.workspace_root / "review-feedback.jsonl", job.review_rows, job.inline_approvals
@@ -356,7 +358,13 @@ class DrawingCardService:
         self._prune_terminal_jobs()
         return rerun
 
-    def _run(self, job: DrawingCardJob, *, review_decisions: Path | None = None) -> DrawingCardJob:
+    def _run(
+        self,
+        job: DrawingCardJob,
+        *,
+        review_decisions: Path | None = None,
+        strict: bool = True,
+    ) -> DrawingCardJob:
         if not _sources_unchanged(job):
             job.status = "failed"
             job.errors = ("SOURCE_HASH_CHANGED",)
@@ -377,7 +385,7 @@ class DrawingCardService:
             review_decisions=review_decisions,
             feedback_examples=self.workspace_root / "review-feedback.jsonl",
             machine_consensus=self._machine_consensus_path(),
-            strict=True,
+            strict=strict,
             work_dir=job.directory / "runs",
         )
         try:
@@ -462,43 +470,12 @@ class DrawingCardService:
         raise ValueError("stale cluster identity")
 
     def _cluster_payload(self, job: DrawingCardJob, cluster: ReviewCluster) -> dict[str, object]:
-        approvals = [job.inline_approvals.get(row_id) for row_id in cluster.member_ids]
-        first = approvals[0] if approvals else None
-        selected = (
-            first
-            if first is not None
-            and all(
-                item is not None and item.action == first.action and item.category == first.category
-                for item in approvals
-            )
-            else None
+        return drawing_card_cluster_payload(
+            cluster=cluster,
+            rows=job.review_rows,
+            approvals=job.inline_approvals,
+            category_units=job.category_units,
         )
-        category = selected.category.value if selected and selected.category else None
-        target_category = category or (cluster.category.value if cluster.category else None)
-        decision = (
-            {
-                "approve": "approved",
-                "reject": "rejected",
-                "quantity_only": "approved",
-            }.get(selected.action, selected.action)
-            if selected
-            else "pending"
-        )
-        return {
-            "cluster_id": cluster.cluster_id,
-            "version": cluster.cluster_id,
-            "work_name": cluster.name,
-            "source_unit": cluster.unit,
-            "target_unit": _first_category_unit(job.category_units, target_category),
-            "member_count": len(cluster.member_ids),
-            "proposed_category": cluster.category.value if cluster.category else None,
-            "proposed_category_label": _category_label(cluster.category),
-            "selected_category": category,
-            "selected_category_label": _category_label(selected.category) if selected else None,
-            "confidence": cluster.confidence,
-            "reason": cluster.reason_code,
-            "decision": decision,
-        }
 
     @staticmethod
     def _discard_cluster_actions_for(job: DrawingCardJob, review_id: str) -> None:
@@ -604,11 +581,3 @@ def _controlled_warnings(warnings: list[str]) -> list[str]:
 def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:
     units = category_units.get(category, ())
     return units[0] if units else None
-
-
-def _category_label(category) -> str | None:
-    if category is None:
-        return None
-    from report_processor.drawing_card.models import CATEGORY_DISPLAY_NAMES
-
-    return CATEGORY_DISPLAY_NAMES.get(category)

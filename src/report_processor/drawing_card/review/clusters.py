@@ -10,6 +10,7 @@ from ..matching.matcher import ReviewApproval
 from ..models import DrawingSourceRow, MatchDecision, TargetWorkCategory
 from ..sources.normalization import normalize_text, normalize_unit
 from ..statuses import Status
+from .grouping import review_group_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +36,7 @@ def build_review_clusters(
         row = rows.get(row_id)
         if row is None or not decision.requires_manual_review:
             continue
-        name = normalize_text(row.work_name_raw)
+        name = review_group_name(row.work_name_raw)
         if not name:
             # Empty names are deliberately singleton clusters.
             name = f"missing-name:{row_id}"
@@ -64,6 +65,7 @@ def build_review_clusters(
         cluster_id = "cluster-" + sha256(identity.encode()).hexdigest()[:24]
         first_id, first_decision = members[0]
         first_row = rows[first_id]
+        cluster_name = "" if str(key[0]).startswith("missing-name:") else str(key[0])
         confidences = [
             value
             for _row_id, decision in members
@@ -74,7 +76,7 @@ def build_review_clusters(
             ReviewCluster(
                 cluster_id=cluster_id,
                 member_ids=member_ids,
-                name=first_row.work_name_raw or "",
+                name=cluster_name,
                 unit=normalize_unit(first_row.unit_raw),
                 category=first_decision.category,
                 reason_code=str(key[-1]),
