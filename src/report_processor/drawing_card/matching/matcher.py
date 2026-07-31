@@ -470,8 +470,13 @@ class DrawingRowMatcher:
         """
         if not _CABLE_COUPLING_PREFIX_RE.match(text):
             return None
-        if row.remaining_total_cost in (None, 0):
-            return None
+        if row.remaining_total_cost is None or row.remaining_total_cost <= 0:
+            return self._review(
+                row,
+                category=TargetWorkCategory.POWER_CABLE,
+                reason="Cable-coupling cost is missing or non-positive; manual review required",
+                warnings=(),
+            )
         rule_id = f"rules:{self.rules.version}:power_cable"
         return MatchDecision(
             row_id=row.row_id,

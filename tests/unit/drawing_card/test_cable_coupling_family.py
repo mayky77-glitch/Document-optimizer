@@ -52,7 +52,6 @@ def test_anchored_cable_coupling_with_cost_is_unique_power_cable_cost_only() -> 
     "row",
     [
         _row("Монтаж: установка муфт соединительных кабельных", cost=Decimal("10")),
-        _row("Установка муфт соединительных кабельных", cost=None),
         replace(
             _row("Установка муфт соединительных кабельных", cost=Decimal("10")),
             formula_values=("=A1",),
@@ -68,3 +67,17 @@ def test_cable_coupling_rule_never_overrides_unsafe_or_non_anchored_inputs(row) 
     if row.warnings:
         assert decision.requires_manual_review is True
         assert Status.FORMULA_WITHOUT_CACHED_VALUE in decision.warnings
+
+
+@pytest.mark.parametrize("cost", [None, Decimal("0"), Decimal("-10")])
+def test_cable_coupling_without_positive_cost_stays_fail_closed(
+    cost: Decimal | None,
+) -> None:
+    decision = _matcher().match(
+        _row("Установка муфт соединительных кабельных 10 кВ", cost=cost)
+    )
+
+    assert decision.category is TargetWorkCategory.POWER_CABLE
+    assert (decision.quantity_decision, decision.cost_decision) == ("review", "review")
+    assert decision.matching_strategy == "review"
+    assert decision.requires_manual_review is True
