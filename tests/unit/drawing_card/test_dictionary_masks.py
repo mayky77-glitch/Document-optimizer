@@ -11,6 +11,7 @@ import pytest
 from report_processor.drawing_card.aggregation import aggregate_rows
 from report_processor.drawing_card.config import load_rules
 from report_processor.drawing_card.matching.examples import ConfirmedExample
+from report_processor.drawing_card.matching.masks import _normalized, _phrase_pattern, _tokens
 from report_processor.drawing_card.matching.matcher import DrawingRowMatcher, _exact_token_pattern
 from report_processor.drawing_card.models import (
     DrawingSourceLocation,
@@ -282,9 +283,16 @@ def test_exact_confirmed_feedback_beats_a_generic_rule() -> None:
 
 
 def test_exact_phrase_cache_is_bounded_for_many_unique_terms() -> None:
-    _exact_token_pattern.cache_clear()
+    caches = (_exact_token_pattern, _normalized, _tokens, _phrase_pattern)
+    for cache in caches:
+        cache.cache_clear()
     for index in range(512):
-        _exact_token_pattern(f"длинный-токен-{index}")
+        value = f"длинный-токен-{index}"
+        _exact_token_pattern(value)
+        _normalized(value)
+        _tokens(value)
+        _phrase_pattern(value)
 
-    info = _exact_token_pattern.cache_info()
-    assert info.currsize <= info.maxsize == 256
+    for cache in caches:
+        info = cache.cache_info()
+        assert info.currsize <= info.maxsize == 256

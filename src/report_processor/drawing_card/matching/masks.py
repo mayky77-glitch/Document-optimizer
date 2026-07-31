@@ -12,9 +12,15 @@ _DISTINCTIVE_TOKEN_LENGTH = 6
 
 
 @lru_cache(maxsize=256)
+def _normalized(value: str) -> str:
+    """Avoid re-normalizing one source row for every dictionary mask."""
+    return normalize_text(value)
+
+
+@lru_cache(maxsize=256)
 def _tokens(value: str) -> tuple[str, ...]:
     """Normalize one reusable mask; the bounded cache never stores source rows."""
-    return tuple(_TOKEN_RE.findall(normalize_text(value)))
+    return tuple(_TOKEN_RE.findall(_normalized(value)))
 
 
 @lru_cache(maxsize=256)
@@ -58,8 +64,8 @@ def _token_matches(mask: str, candidate: str) -> bool:
 
 def contains_mask(text: str, mask: str) -> bool:
     """Match a mask, allowing one-edit typos only for distinctive long tokens."""
-    normalized = normalize_text(text)
-    phrase = normalize_text(mask)
+    normalized = _normalized(text)
+    phrase = _normalized(mask)
     if not phrase:
         return False
     if _phrase_pattern(phrase).search(normalized) is not None:
