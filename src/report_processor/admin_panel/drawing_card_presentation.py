@@ -47,9 +47,18 @@ def drawing_card_inline_review_payload(job: DrawingCardJob) -> dict[str, object]
     }
 
 
-def drawing_card_category_options() -> list[dict[str, str]]:
+def drawing_card_category_options(job: DrawingCardJob) -> list[dict[str, str | None]]:
     """Return controlled category choices for the inline-review selector."""
     return [
-        {"value": category.value, "label": CATEGORY_DISPLAY_NAMES[category]}
+        {
+            "value": category.value,
+            "label": CATEGORY_DISPLAY_NAMES[category],
+            "target_unit": _first_category_unit(job.category_units, category.value),
+        }
         for category in CATEGORY_ORDER
     ]
+
+
+def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:
+    units = category_units.get(category, ())
+    return units[0] if units else None
