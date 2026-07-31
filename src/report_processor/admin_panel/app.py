@@ -348,6 +348,56 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             return _error("Проверьте номер страницы и размер списка", 400)
         return _secure(JSONResponse(_inline_review_page(payload, current)))
 
+    async def drawing_card_review_clusters(request):
+        try:
+            page = int(request.query_params.get("page", "1"))
+            page_size = int(request.query_params.get("page_size", "50"))
+            payload = drawing_panel.list_review_clusters(
+                job_id=request.path_params["job_id"], page=page, page_size=page_size
+            )
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Проверьте номер страницы и размер списка", 400)
+        return _secure(JSONResponse(_cluster_review_page(payload)))
+
+    async def drawing_card_review_cluster(request):
+        job_id = request.path_params["job_id"]
+        cluster_id = request.path_params["cluster_id"]
+        try:
+            if request.method == "DELETE":
+                version = request.query_params.get("version")
+                if not isinstance(version, str):
+                    raise ValueError("invalid cluster action")
+                current = drawing_panel.undo_review_cluster(
+                    job_id=job_id, cluster_id=cluster_id, version=version
+                )
+            else:
+                payload = await request.json()
+                if not isinstance(payload, Mapping):
+                    raise ValueError("invalid cluster action")
+                action = payload.get("action")
+                category = payload.get("category")
+                version = payload.get("version")
+                if (
+                    not isinstance(action, str)
+                    or not isinstance(version, str)
+                    or (category is not None and not isinstance(category, str))
+                ):
+                    raise ValueError("invalid cluster action")
+                current = drawing_panel.put_review_cluster(
+                    job_id=job_id,
+                    cluster_id=cluster_id,
+                    version=version,
+                    action=action,
+                    category=category,
+                )
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Кластер изменился — обновите список и повторите действие", 409)
+        return _secure(JSONResponse(drawing_card_job_payload(current)))
+
     async def drawing_card_review_item(request):
         job_id = request.path_params["job_id"]
         review_id = request.path_params["review_id"]
@@ -427,6 +477,16 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
                 "/api/drawing-card/jobs/{job_id}/review/items",
                 drawing_card_review_items,
                 methods=["GET"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/review/clusters",
+                drawing_card_review_clusters,
+                methods=["GET"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/review/clusters/{cluster_id}",
+                drawing_card_review_cluster,
+                methods=["PUT", "DELETE"],
             ),
             Route(
                 "/api/drawing-card/jobs/{job_id}/review/items/{review_id}",
@@ -530,6 +590,20 @@ def _inline_review_page(payload: Mapping[str, object], job) -> dict[str, object]
             "Строк для проверки": total,
             "Осталось решений": unresolved,
         },
+    }
+
+
+def _cluster_review_page(payload: Mapping[str, object]) -> dict[str, object]:
+    """The service payload is already controlled; keep the cluster contract explicit."""
+    return {
+        "items": list(payload.get("items", ())),
+        "page": payload.get("page", 1),
+        "page_size": payload.get("page_size", 50),
+        "total_clusters": payload.get("total_clusters", 0),
+        "total_rows": payload.get("total_rows", 0),
+        "unresolved_clusters": payload.get("unresolved_clusters", 0),
+        "unresolved_rows": payload.get("unresolved_rows", 0),
+        "can_apply": bool(payload.get("can_apply", False)),
     }
 
 

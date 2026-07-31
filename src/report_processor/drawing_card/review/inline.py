@@ -93,7 +93,7 @@ def append_feedback(
     records = _feedback_records(path)
     for review_id, approval in sorted(approvals.items()):
         row = rows.get(review_id)
-        if row is None or approval.category is None or approval.action == "skip":
+        if row is None or approval.action == "skip":
             continue
         source_text = normalize_text(row.work_name_raw)
         if not source_text:
@@ -101,11 +101,14 @@ def append_feedback(
         record = {
             "example_id": "feedback-"
             + sha256(
-                f"{source_text}|{normalize_unit(row.unit_raw)}|{approval.category.value}".encode()
+                (
+                    f"{source_text}|{normalize_unit(row.unit_raw)}|"
+                    f"{approval.category.value if approval.category else ''}|{approval.action}"
+                ).encode()
             ).hexdigest()[:20],
             "source_text": source_text,
             "normalized_text": source_text,
-            "category": approval.category.value,
+            "category": approval.category.value if approval.category else None,
             "quantity_decision": "include"
             if approval.action in {"approve", "change_category", "quantity_only"}
             else "exclude",
@@ -118,7 +121,7 @@ def append_feedback(
             "confirmed_by": "inline-review",
             "rule_version": "ReviewFeedbackStore-1.0",
         }
-        records[(source_text, normalize_unit(row.unit_raw) or "")] = record
+        records[(source_text, normalize_unit(row.unit_raw) or "", record["example_id"])] = record
     if records:
         _atomic_text(
             path,
@@ -129,14 +132,18 @@ def append_feedback(
         )
 
 
-def _feedback_records(path: Path) -> dict[tuple[str, str], dict[str, object]]:
-    records: dict[tuple[str, str], dict[str, object]] = {}
+def _feedback_records(path: Path) -> dict[tuple[str, str, str], dict[str, object]]:
+    records: dict[tuple[str, str, str], dict[str, object]] = {}
     if not path.exists():
         return records
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             record = json.loads(line)
-            key = (str(record["normalized_text"]), str(record.get("unit") or ""))
+            key = (
+                str(record["normalized_text"]),
+                str(record.get("unit") or ""),
+                str(record["example_id"]),
+            )
         except (KeyError, TypeError, json.JSONDecodeError):
             continue
         records[key] = record

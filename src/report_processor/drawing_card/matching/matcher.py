@@ -15,6 +15,7 @@ from .examples import (
     ConfirmedExample,
     LexicalExampleRetriever,
     exact_example_match,
+    has_exact_example_conflict,
 )
 from .masks import contains_mask, has_all_masks, has_any_mask
 from .semantic import SemanticExampleRetriever
@@ -240,6 +241,12 @@ class DrawingRowMatcher:
             )
         if self._is_no_impact(row, text):
             return self._exclude_no_impact(row)
+        if has_exact_example_conflict(text, self.examples, unit=row.unit_raw):
+            return self._review(
+                row,
+                reason="Conflicting exact feedback requires manual review",
+                warnings=(Status.CONFLICT_REQUIRES_REVIEW,),
+            )
         exact = exact_example_match(
             text,
             self.examples,
