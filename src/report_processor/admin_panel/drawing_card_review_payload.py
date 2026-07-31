@@ -26,10 +26,7 @@ def drawing_card_cluster_payload(
     category = selected.category.value if selected and selected.category else None
     target_category = category or (cluster.category.value if cluster.category else None)
     members = [_member_payload(row_id, rows[row_id]) for row_id in cluster.member_ids]
-    aggregate_total_cost = sum(
-        (row.remaining_total_cost or Decimal())
-        for row in (rows[row_id] for row_id in cluster.member_ids)
-    )
+    aggregate_total_cost = _aggregate_total_cost(rows, cluster.member_ids)
     decision = (
         {"approve": "approved", "reject": "rejected", "quantity_only": "approved"}.get(
             selected.action, selected.action
@@ -46,7 +43,9 @@ def drawing_card_cluster_payload(
         "source_unit": cluster.unit,
         "target_unit": _first_category_unit(category_units, target_category),
         "member_count": len(members),
-        "aggregate_total_cost": str(aggregate_total_cost),
+        "aggregate_total_cost": (
+            str(aggregate_total_cost) if aggregate_total_cost is not None else None
+        ),
         "members": members,
         "proposed_category": cluster.category.value if cluster.category else None,
         "proposed_category_label": _category_label(cluster.category),
@@ -84,6 +83,15 @@ def _member_payload(review_id: str, row: DrawingSourceRow) -> dict[str, str | No
             str(row.remaining_total_cost) if row.remaining_total_cost is not None else None
         ),
     }
+
+
+def _aggregate_total_cost(
+    rows: Mapping[str, DrawingSourceRow], member_ids: tuple[str, ...]
+) -> Decimal | None:
+    costs = [rows[row_id].remaining_total_cost for row_id in member_ids]
+    if not any(cost is not None for cost in costs):
+        return None
+    return sum(cost or Decimal() for cost in costs)
 
 
 def _first_category_unit(
