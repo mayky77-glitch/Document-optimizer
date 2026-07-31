@@ -118,7 +118,11 @@ def aggregate_rows(
         quantity = (
             None
             if unit_mismatch
-            else (sum(bucket.quantity_values, Decimal(0)) if bucket.quantity_values else None)
+            else (
+                sum(bucket.quantity_values, Decimal(0))
+                if bucket.quantity_values
+                else (Decimal(0) if bucket.cost_values else None)
+            )
         )
         cost = sum(bucket.cost_values, Decimal(0)) if bucket.cost_values else None
         warnings = list(dict.fromkeys(bucket.warnings))

@@ -6,7 +6,10 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
-from .drawing_card_presentation import drawing_card_job_payload
+from .drawing_card_presentation import (
+    drawing_card_category_options,
+    drawing_card_job_payload,
+)
 from .drawing_card_service import (
     MAX_SOURCES as DRAWING_CARD_MAX_SOURCES,
 )
@@ -488,6 +491,7 @@ def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
             continue
         decision = raw.get("решение")
         action = decision.get("action") if isinstance(decision, Mapping) else None
+        selected_category = decision.get("category") if isinstance(decision, Mapping) else None
         public_items.append(
             {
                 "review_id": raw.get("review_id"),
@@ -496,6 +500,7 @@ def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
                 "category_label": raw.get("предлагаемая_категория_рус"),
                 "proposed_category": raw.get("предлагаемая_категория_id"),
                 "proposed_category_label": raw.get("предлагаемая_категория_рус"),
+                "selected_category": selected_category,
                 "quantity": raw.get("количество"),
                 "source_unit": raw.get("source_unit"),
                 "target_unit": raw.get("target_unit"),
@@ -513,6 +518,7 @@ def _inline_review_page(payload: Mapping[str, object]) -> dict[str, object]:
         "total": total,
         "unresolved_count": unresolved,
         "can_apply": payload.get("can_apply", False),
+        "categories": drawing_card_category_options(),
         "summary": {
             "Строк для проверки": total,
             "Осталось решений": unresolved,
