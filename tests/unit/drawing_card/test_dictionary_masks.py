@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -18,9 +19,13 @@ from report_processor.drawing_card.models import (
 )
 from report_processor.drawing_card.statuses import Status
 
-
 RULES = load_rules(
-    Path(__file__).parents[3] / "src" / "report_processor" / "drawing_card" / "resources" / "rules.json"
+    Path(__file__).parents[3]
+    / "src"
+    / "report_processor"
+    / "drawing_card"
+    / "resources"
+    / "rules.json"
 )
 
 
@@ -215,24 +220,21 @@ def test_pile_tests_are_not_pile_foundation_work(name: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("quantity", "cost", "manual"),
+    ("quantity", "cost", "expected_decisions"),
     [
-        (None, None, False),
-        (Decimal("0"), Decimal("0"), False),
-        (Decimal("0"), Decimal("300"), False),
-        (Decimal("8"), Decimal("0"), False),
+        (None, None, ("exclude", "exclude")),
+        (Decimal("0"), Decimal("0"), ("exclude", "exclude")),
+        (Decimal("0"), Decimal("300"), ("exclude", "include")),
+        (Decimal("8"), Decimal("0"), ("include", "exclude")),
     ],
 )
 def test_empty_or_zero_only_rows_never_create_manual_review(
-    quantity: Decimal | None, cost: Decimal | None, manual: bool
+    quantity: Decimal | None, cost: Decimal | None, expected_decisions: tuple[str, str]
 ) -> None:
-    decision = _matcher().match(
-        _row("Прокладка силового кабеля", quantity=quantity, cost=cost)
-    )
+    decision = _matcher().match(_row("Прокладка силового кабеля", quantity=quantity, cost=cost))
 
-    assert decision.requires_manual_review is manual
-    assert decision.quantity_decision == ("include" if quantity is not None else "exclude")
-    assert decision.cost_decision == ("include" if cost is not None else "exclude")
+    assert decision.requires_manual_review is False
+    assert (decision.quantity_decision, decision.cost_decision) == expected_decisions
 
 
 @pytest.mark.parametrize("name", (None, "", "   \u00a0   "))
@@ -242,6 +244,20 @@ def test_blank_work_name_with_no_values_is_ignored_without_manual_review(name: s
     assert decision.category is None
     assert (decision.quantity_decision, decision.cost_decision) == ("exclude", "exclude")
     assert decision.requires_manual_review is False
+
+
+def test_formula_without_cached_value_is_not_silently_treated_as_no_impact() -> None:
+    row = replace(
+        _row("Прокладка силового кабеля", quantity=None, cost=None),
+        formula_values=("=SUM(F2:F5)", None),
+        cached_values=(None, None),
+        status=Status.WARNING,
+        warnings=(Status.FORMULA_WITHOUT_CACHED_VALUE,),
+    )
+
+    decision = _matcher().match(row)
+
+    assert decision.requires_manual_review is True
 
 
 def test_exact_confirmed_feedback_beats_a_generic_rule() -> None:
