@@ -14,7 +14,7 @@ FIXTURES = Path(__file__).parents[2] / "fixtures" / "drawing_card"
 
 def _source(name: str = "source.xlsx") -> tuple[str, bytes]:
     if Path(name).suffix.casefold() == ".xlsb":
-        return name, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1binary-workbook"
+        return name, b"PK\x03\x04binary-workbook"
     return name, (FIXTURES / "demo_source.xlsx").read_bytes()
 
 
@@ -60,6 +60,13 @@ def test_create_rejects_archives_invalid_magic_and_path_like_names(
 ) -> None:
     with pytest.raises(ValueError):
         _service(tmp_path).create_job(sources=[(name, content)])
+
+
+def test_create_rejects_legacy_ole_payload_for_xlsb(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        _service(tmp_path).create_job(
+            sources=[("legacy.xlsb", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1binary-workbook")]
+        )
 
 
 def test_update_requires_an_existing_xlsx_card_and_period_is_optional(tmp_path: Path) -> None:

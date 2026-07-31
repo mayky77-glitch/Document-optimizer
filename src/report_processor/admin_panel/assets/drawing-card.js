@@ -23,7 +23,6 @@
     [0x50, 0x4b, 0x05, 0x06],
     [0x50, 0x4b, 0x07, 0x08],
   ];
-  const OLE_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
   let currentJobId = null;
 
@@ -53,12 +52,11 @@
 
     let bytes;
     try {
-      bytes = new Uint8Array(await file.slice(0, OLE_SIGNATURE.length).arrayBuffer());
+      bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
     } catch {
       return `Не удалось прочитать файл «${name}». Выберите его снова.`;
     }
-    const hasExpectedSignature = extension === ".xlsb" ? matchesSignature(bytes, OLE_SIGNATURE) : hasZipSignature(bytes);
-    if (!hasExpectedSignature) {
+    if (!hasZipSignature(bytes)) {
       return `Файл «${name}» не является корректной Excel-книгой. Сохраните его в Excel и выберите снова.`;
     }
     return "";

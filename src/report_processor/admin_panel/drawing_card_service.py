@@ -21,7 +21,6 @@ _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
 _ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
-_OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 @dataclass(slots=True, repr=False)
@@ -257,9 +256,7 @@ def _validate_workbook(name: object, content: object, *, allowed_suffixes: set[s
         raise ValueError("unsupported workbook type")
     if not isinstance(content, bytes) or not content or len(content) > MAX_UPLOAD_BYTES:
         raise ValueError("invalid workbook content")
-    if suffix in {".xlsx", ".xlsm"} and not content.startswith(_ZIP_SIGNATURES):
-        raise ValueError("invalid workbook content")
-    if suffix == ".xlsb" and not content.startswith(_OLE_SIGNATURE):
+    if not content.startswith(_ZIP_SIGNATURES):
         raise ValueError("invalid workbook content")
 
 

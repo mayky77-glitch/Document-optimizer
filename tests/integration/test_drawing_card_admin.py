@@ -153,6 +153,8 @@ def test_drawing_card_asset_publishes_local_workbook_preflight(client) -> None:
     assert "selectedWorkbooksPreflightError" in response.text
     assert "~$" in response.text
     assert "arrayBuffer()" in response.text
+    assert "hasZipSignature(bytes)" in response.text
+    assert "OLE_SIGNATURE" not in response.text
     assert "Файл «${name}» не является корректной Excel-книгой" in response.text
     assert "existingCard.files[0]" in response.text
 
