@@ -3,7 +3,7 @@ type: task
 card_id: bulk-reconciliation-v1-design-parity
 status: frozen
 version: 1
-work_id: bulk-reconciliation-v1
+work_id: bulk-design-parity-v1
 task_id: design-parity
 purpose: "Привести экран сверки документов к визуальному формату карточки остатков"
 role: worker
