@@ -154,6 +154,24 @@ def test_formula_guard_and_human_feedback_precede_machine_consensus(tmp_path: Pa
     assert human_decision.category is TargetWorkCategory.POWER_CABLE
 
 
+def test_available_formula_values_do_not_mark_every_extracted_row_unresolved(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "machine-consensus.jsonl"
+    path.write_text(json.dumps(_record()), encoding="utf-8")
+    resolved_row = replace(
+        _row("Неоднозначная работа"),
+        formula_values=(15.0, 16.0),
+        cached_values=(15.0, 16.0),
+        warnings=(),
+    )
+
+    decision = _matcher(consensus_path=path).match(resolved_row)
+
+    assert decision.matching_strategy == "machine_consensus_exact"
+    assert decision.requires_manual_review is False
+
+
 def test_strong_unique_unit_mismatch_is_cost_only_but_broad_cue_stays_manual(
     tmp_path: Path,
 ) -> None:

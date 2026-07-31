@@ -477,9 +477,7 @@ class DrawingRowMatcher:
 
     @staticmethod
     def _has_unresolved_formula(row: DrawingSourceRow) -> bool:
-        return bool(row.formula_values) or any(
-            item in _UNRESOLVED_FORMULA_WARNINGS for item in row.warnings
-        )
+        return any(item in _UNRESOLVED_FORMULA_WARNINGS for item in row.warnings)
 
     @staticmethod
     def _is_no_impact(row: DrawingSourceRow, text: str) -> bool:
