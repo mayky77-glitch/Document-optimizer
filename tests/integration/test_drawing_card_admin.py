@@ -220,7 +220,9 @@ def test_cluster_api_accepts_the_asset_delete_payload_and_returns_ui_decision_na
     assert undone.status_code == 200
 
 
-def test_cluster_api_fans_out_cost_only_with_category_and_rejects_changed_membership(client) -> None:
+def test_cluster_api_fans_out_cost_only_with_category_and_rejects_changed_membership(
+    client,
+) -> None:
     test_client, service, _ = client
     created = test_client.post("/api/drawing-card/jobs", files=_files())
     job = _cluster_review_job(service, created.json()["job_id"])
@@ -250,7 +252,9 @@ def test_cluster_api_fans_out_cost_only_with_category_and_rejects_changed_member
     assert applied.status_code == 200
     assert set(job.inline_approvals) == {"review-row-1", "review-row-2"}
     assert {approval.action for approval in job.inline_approvals.values()} == {"cost_only"}
-    assert {approval.category.value for approval in job.inline_approvals.values()} == {"power_cable"}
+    assert {approval.category.value for approval in job.inline_approvals.values()} == {
+        "power_cable"
+    }
     assert refetched.json()["items"][0]["decision"] == "cost_only"
     assert stale.status_code == 409
 
