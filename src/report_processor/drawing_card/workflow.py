@@ -288,6 +288,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     rules_path = (request.rules or default_rules_path()).expanduser().resolve()
     examples_path = (request.examples or default_examples_path()).expanduser().resolve()
     rules = load_rules(rules_path)
+    result.category_units = {rule.category.value: rule.expected_units for rule in rules.categories}
     mapping = load_object_map(request.object_map)
     before_hashes = source_hashes(_container_paths(request))
     atomic_write_json(run_dir / "source_hashes_before.json", before_hashes)

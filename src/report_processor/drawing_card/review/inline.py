@@ -17,7 +17,9 @@ _CATEGORY_ACTIONS = frozenset({"approve", "change_category", "quantity_only", "c
 
 
 def inline_review_rows(
-    rows: list[DrawingSourceRow], decisions: list[MatchDecision]
+    rows: list[DrawingSourceRow],
+    decisions: list[MatchDecision],
+    category_units: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Presentation-safe Russian data; source paths, filenames and sheets stay private."""
     by_id = {row.row_id: row for row in rows}
@@ -26,24 +28,33 @@ def inline_review_rows(
         if not decision.requires_manual_review or decision.row_id not in by_id:
             continue
         row = by_id[decision.row_id]
+        category_id = decision.category.value if decision.category else None
+        confidence_values = [
+            value
+            for value in (decision.quantity_confidence, decision.cost_confidence)
+            if value is not None
+        ]
         result[decision.row_id] = {
             "review_id": decision.row_id,
             "наименование": row.work_name_raw or "",
             "единица": row.unit_raw,
             "source_unit": row.unit_raw,
-            "target_unit": row.unit_raw,
+            "target_unit": (
+                ((category_units or {}).get(category_id) or (None,))[0] if category_id else None
+            ),
             "количество": str(row.remaining_quantity)
             if row.remaining_quantity is not None
             else None,
             "стоимость": str(row.remaining_total_cost)
             if row.remaining_total_cost is not None
             else None,
-            "предлагаемая_категория": decision.category.value if decision.category else None,
-            "предлагаемая_категория_id": decision.category.value if decision.category else None,
+            "предлагаемая_категория": category_id,
+            "предлагаемая_категория_id": category_id,
             "предлагаемая_категория_рус": (
                 CATEGORY_DISPLAY_NAMES[decision.category] if decision.category else None
             ),
             "причина": decision.reason[:240],
+            "confidence": float(min(confidence_values)) if confidence_values else 0.0,
             "suggestion_ids": list(decision.evidence_ids[:5]),
         }
     return result

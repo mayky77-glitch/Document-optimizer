@@ -26,6 +26,7 @@ from report_processor.metadata.period_patterns import MONTHS
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
+MAX_RETAINED_TERMINAL_JOBS = 128
 _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
@@ -134,7 +135,9 @@ class DrawingCardService:
                 rag_mode=rag_mode,
             )
             self._jobs[job_id] = job
-            return self._run(job)
+            result = self._run(job)
+            self._prune_terminal_jobs()
+            return result
         except Exception:
             self._jobs.pop(job_id, None)
             shutil.rmtree(directory, ignore_errors=True)
@@ -145,6 +148,15 @@ class DrawingCardService:
             return self._jobs[job_id]
         except KeyError as error:
             raise KeyError(job_id) from error
+
+    def _prune_terminal_jobs(self) -> None:
+        terminal = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.status in {"ready", "failed", "blocked"}
+        ]
+        for job_id in terminal[:-MAX_RETAINED_TERMINAL_JOBS]:
+            self._jobs.pop(job_id, None)
 
     def get_result(self, job_id: str) -> tuple[Path, str]:
         job = self.get_job(job_id)
@@ -295,7 +307,9 @@ class DrawingCardService:
             "manual_review": result.manual_review_count,
         }
         job.warnings = _controlled_warnings(result.warnings)
-        job.review_items = inline_review_rows(result.source_rows, result.decisions)
+        job.review_items = inline_review_rows(
+            result.source_rows, result.decisions, result.category_units
+        )
         job.review_rows = {row.row_id: row for row in result.source_rows}
         if not _sources_unchanged(job):
             job.status = "failed"

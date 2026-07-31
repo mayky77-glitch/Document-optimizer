@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import shutil
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,7 @@ from .presentation import journal_payload, processing_presentation
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
+MAX_RETAINED_TERMINAL_JOBS = 128
 _ALLOWED_SUFFIXES = {".xlsx", ".xlsm"}
 _ALLOWED_MODES = {"inspect", "dry-run", "write"}
 _STAGE_PATTERN = re.compile(r"^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё._ -]{0,63}$")
@@ -126,7 +128,9 @@ class AdminPanelService:
             )
             self.jobs[job_id] = job
             registered = True
-            return self.run(job_id)
+            result = self.run(job_id)
+            self._prune_terminal_jobs()
+            return result
         except (OSError, TypeError, ValueError):
             if registered:
                 self.jobs.pop(job_id, None)
@@ -201,6 +205,15 @@ class AdminPanelService:
             raise KeyError(job_id)
         return job.output, job.result_name
 
+    def _prune_terminal_jobs(self) -> None:
+        terminal = [
+            job_id
+            for job_id, job in self.jobs.items()
+            if job.status in {"ready", "failed", "blocked", "review_recorded"}
+        ]
+        for job_id in terminal[:-MAX_RETAINED_TERMINAL_JOBS]:
+            self.jobs.pop(job_id, None)
+
     def _apply_execution_result(self, job: AdminJob, result: object) -> None:
         if result is None or isinstance(result, Path):
             job.output = result
@@ -246,7 +259,7 @@ class AdminPanelService:
 
 
 def validate_workbook_upload(name: str, content: bytes) -> None:
-    if not isinstance(name, str) or not name or "\x00" in name:
+    if not isinstance(name, str) or not name or "\x00" in name or not _safe_basename(name):
         raise ValueError("invalid filename")
     if Path(name).suffix.casefold() not in _ALLOWED_SUFFIXES:
         raise ValueError("only .xlsx and .xlsm workbooks are accepted")
@@ -362,10 +375,20 @@ def _validated_sources(
     if not isinstance(values, list) or not 1 <= len(values) <= MAX_SOURCES:
         raise ValueError("provide from 1 to 32 source workbooks")
     validated: list[tuple[str, bytes]] = []
+    basenames: set[str] = set()
     for value in values:
         if not isinstance(value, tuple) or len(value) != 2:
             raise ValueError("invalid source upload")
         name, content = value
         validate_workbook_upload(name, content)
-        validated.append((name, content))
-    return validated
+        basename = unicodedata.normalize("NFC", name)
+        canonical_name = basename.casefold()
+        if canonical_name in basenames:
+            raise ValueError("duplicate source filename")
+        basenames.add(canonical_name)
+        validated.append((basename, content))
+    return sorted(validated, key=lambda item: (item[0].casefold(), _digest(item[1])))
+
+
+def _safe_basename(name: str) -> bool:
+    return name == Path(name).name and "/" not in name and "\\" not in name

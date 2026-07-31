@@ -254,6 +254,7 @@ class WorkflowResult:
     schemas: list[SourceSchema] = field(default_factory=list)
     source_rows: list[DrawingSourceRow] = field(default_factory=list)
     decisions: list[MatchDecision] = field(default_factory=list)
+    category_units: dict[str, tuple[str, ...]] = field(default_factory=dict)
     extracted_row_count: int = 0
     classification_decision_count: int = 0
     manual_review_count: int = 0

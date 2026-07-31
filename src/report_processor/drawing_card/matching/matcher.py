@@ -332,6 +332,7 @@ class DrawingRowMatcher:
                     ),
                     warnings=("SEMANTIC_SUGGESTION_NOT_APPLIED",),
                     evidence_ids=tuple(item.example.example_id for item in semantic),
+                    confidence=proposed.score,
                 )
         if self.rag_mode != "off" and self.tiny_model is not None and retrieved:
             try:
@@ -421,6 +422,7 @@ class DrawingRowMatcher:
         reason: str,
         warnings: tuple[str, ...],
         evidence_ids: tuple[str, ...] = (),
+        confidence: float | None = None,
     ) -> MatchDecision:
         return MatchDecision(
             row_id=row.row_id,
@@ -429,8 +431,8 @@ class DrawingRowMatcher:
             cost_decision="review",
             quantity_rule_id=None,
             cost_rule_id=None,
-            quantity_confidence=None,
-            cost_confidence=None,
+            quantity_confidence=confidence,
+            cost_confidence=confidence,
             matching_strategy="review",
             evidence_ids=evidence_ids,
             reason=reason,
