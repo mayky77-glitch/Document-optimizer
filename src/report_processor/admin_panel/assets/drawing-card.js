@@ -32,6 +32,7 @@
 
   const SOURCE_WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xlsb"]);
   const REVIEW_PAGE_SIZE = 50;
+  const SESSION_STORAGE_KEY = "report-processor.drawing-card.state.v1";
   const RUSSIAN_MONTHS = [
     "январь",
     "февраль",
@@ -68,6 +69,44 @@
   let currentPage = 1;
   let totalPages = 1;
   let periodScanRevision = 0;
+  let uploadedSourceCount = 0;
+  let reviewCategories = [];
+  let draftCategories = {};
+
+  const sessionState = () => {
+    try {
+      const value = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      const parsed = value ? JSON.parse(value) : null;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const persistSession = (step) => {
+    try {
+      const prior = sessionState();
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+        jobId: currentJobId,
+        page: currentPage,
+        mode: operation.value,
+        period: period.value,
+        sourceCount: uploadedSourceCount,
+        step: step || prior.step || "sources",
+        draftCategories,
+      }));
+    } catch {
+      // Browser storage is optional.
+    }
+  };
+
+  const clearSession = () => {
+    try {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {
+      // Browser storage is optional.
+    }
+  };
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -81,6 +120,7 @@
       item.classList.toggle("is-active", index === current);
       item.classList.toggle("is-complete", index < current);
     });
+    persistSession(step);
   };
 
   const fileExtension = (file) => {
@@ -90,7 +130,13 @@
 
   const updateSourceCount = () => {
     const count = sourceFiles.files.length;
-    sourceCount.textContent = count ? `Выбрано исходных файлов: ${count}` : "Файлы пока не выбраны";
+    if (count) uploadedSourceCount = count;
+    sourceCount.textContent = count
+      ? `Выбрано исходных файлов: ${count}`
+      : uploadedSourceCount
+        ? `Уже загружено для текущей карточки: ${uploadedSourceCount}. Чтобы создать новую, выберите файлы снова.`
+        : "Файлы пока не выбраны";
+    persistSession();
   };
 
   const canonicalPeriod = (year, month) => {
@@ -140,6 +186,14 @@
     period.replaceChildren(new Option("Последний найденный период", ""));
     periods.forEach((value) => period.append(new Option(periodLabel(value), value)));
     period.value = periods.at(-1) ?? "";
+  };
+
+  const selectPeriod = (value) => {
+    if (typeof value !== "string" || !value) return;
+    if (![...period.options].some((option) => option.value === value)) {
+      period.append(new Option(periodLabel(value), value));
+    }
+    period.value = value;
   };
 
   const discoverPeriodsFromTables = async (revision, filenamePeriods) => {
@@ -239,7 +293,11 @@
     } catch {
       throw new Error("Панель вернула непонятный ответ. Повторите действие.");
     }
-    if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Операция не выполнена. Проверьте данные и повторите действие.");
+    if (!response.ok) {
+      const error = new Error(typeof payload.error === "string" ? payload.error : "Операция не выполнена. Проверьте данные и повторите действие.");
+      error.status = response.status;
+      throw error;
+    }
     return payload;
   };
 
@@ -283,7 +341,7 @@
 
   const reviewId = (item) => textValue(item.review_id ?? item.id, "");
 
-  const setControlsBusy = (root, busy) => root.querySelectorAll("button, input").forEach((control) => { control.disabled = busy; });
+  const setControlsBusy = (root, busy) => root.querySelectorAll("button, input, select").forEach((control) => { control.disabled = busy; });
 
   const saveDecision = async (id, action, category) => {
     const payload = { action };
@@ -308,6 +366,7 @@
     try {
       if (action === "undo") await undoDecision(id);
       else await saveDecision(id, action, category);
+      delete draftCategories[id];
       setStatus("Решение сохранено.");
       await loadReviewPage(currentPage);
     } catch (error) {
@@ -322,6 +381,7 @@
     const id = reviewId(item);
     const state = valueFrom(item, ["decision", "status"]);
     const proposedCategory = valueFrom(item, ["proposed_category_label", "proposed_category"]);
+    const selectedCategory = draftCategories[id] || valueFrom(item, ["selected_category", "proposed_category", "category"]);
     card.dataset.reviewId = id;
     card.querySelector(".work-name").textContent = textValue(valueFrom(item, ["work_name", "name", "work"]), "Наименование работы не указано");
     card.querySelector(".decision-status").textContent = decisionLabel(state);
@@ -335,6 +395,18 @@
       proposed.hidden = false;
       proposed.textContent = `Предложенная категория: ${humanCategory(proposedCategory)}`;
     }
+    const categoryInput = card.querySelector(".category-input");
+    categoryInput.replaceChildren(new Option("Выберите категорию", ""));
+    reviewCategories.forEach((category) => {
+      if (typeof category?.value !== "string" || typeof category?.label !== "string") return;
+      categoryInput.append(new Option(category.label, category.value));
+    });
+    categoryInput.value = typeof selectedCategory === "string" ? selectedCategory : "";
+    categoryInput.addEventListener("change", () => {
+      if (categoryInput.value) draftCategories[id] = categoryInput.value;
+      else delete draftCategories[id];
+      persistSession("review");
+    });
     const resolved = ["approved", "rejected", "cost_only", "change_category"].includes(state);
     card.querySelector('[data-review-action="undo"]').hidden = !resolved;
     card.querySelectorAll('[data-review-action="approve"], [data-review-action="reject"], [data-review-action="change-category"], [data-review-action="cost-only"]').forEach((button) => { button.hidden = resolved; });
@@ -344,31 +416,30 @@
         if (action === "change-category") {
           const editor = card.querySelector(".category-editor");
           editor.hidden = false;
-          editor.querySelector("input").focus();
+          categoryInput.focus();
           return;
         }
         if (action === "cancel-category") {
           card.querySelector(".category-editor").hidden = true;
           return;
         }
-        runItemAction(button, item, action === "cost-only" ? "cost_only" : action);
+        const decision = action === "cost-only" ? "cost_only" : action;
+        const category = decision === "reject" ? undefined : categoryInput.value;
+        if (decision !== "reject" && !category) {
+          card.querySelector(".category-editor").hidden = false;
+          categoryInput.focus();
+          setStatus("Выберите категорию, затем подтвердите решение.", true);
+          return;
+        }
+        runItemAction(button, item, decision, category);
       });
-    });
-    card.querySelector(".category-editor").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const input = card.querySelector(".category-input");
-      const category = input.value.trim();
-      if (!category) {
-        input.focus();
-        return;
-      }
-      runItemAction(input, item, "change_category", category);
     });
     return fragment;
   };
 
   const renderReview = (payload) => {
     const items = Array.isArray(payload.items) ? payload.items : [];
+    reviewCategories = Array.isArray(payload.categories) ? payload.categories : [];
     reviewItems.replaceChildren(...items.map(renderItem));
     renderSummary(payload.summary);
     reviewEmpty.hidden = items.length !== 0;
@@ -384,6 +455,7 @@
     const unresolved = Number(payload.unresolved ?? payload.unresolved_count);
     applyReview.disabled = Number.isFinite(unresolved) && unresolved > 0;
     reviewHint.textContent = applyReview.disabled ? `Осталось принять решение по строкам: ${unresolved}.` : "Все строки обработаны. Примените решения, чтобы собрать карточку.";
+    persistSession("review");
   };
 
   const loadReviewPage = async (page = 1, moveFocus = false) => {
@@ -418,8 +490,15 @@
     reviewHint.textContent = "Проверьте файл замечаний и загрузите исправленную версию.";
   };
 
-  const renderJob = async (payload) => {
+  const renderJob = async (payload, reviewPage = 1) => {
     currentJobId = typeof payload.job_id === "string" ? payload.job_id : currentJobId;
+    if (payload.mode === "create" || payload.mode === "update") setOperation(payload.mode);
+    selectPeriod(payload.period);
+    const sourceCountFromJob = Number(payload?.summary?.source_files);
+    if (Number.isInteger(sourceCountFromJob) && sourceCountFromJob > 0) {
+      uploadedSourceCount = sourceCountFromJob;
+      updateSourceCount();
+    }
     renderResult(payload);
     const needsReview = payload.status === "review_required" || payload.status === "awaiting_review" || payload.can_upload_review || payload.review_url;
     if (needsReview && currentJobId) {
@@ -428,7 +507,7 @@
       applyReview.hidden = false;
       approveAll.closest(".bulk-actions").hidden = false;
       try {
-        await loadReviewPage(1);
+        await loadReviewPage(reviewPage);
         reviewPanel.focus({ preventScroll: true });
         setStatus("Проверьте строки и примените решения.");
         return;
@@ -445,6 +524,7 @@
     }
     if (payload.result_url) setStatus("Карточка готова. Скачайте файл.");
     else setStatus("Подготовка запущена. Следующий шаг появится в локальной панели.");
+    persistSession();
   };
 
   const setOperation = (value) => {
@@ -458,6 +538,7 @@
       button.classList.toggle("is-selected", selected);
       button.setAttribute("aria-pressed", String(selected));
     });
+    persistSession();
   };
 
   const runBulkAction = async (action) => {
@@ -481,6 +562,7 @@
 
   document.querySelectorAll("[data-operation]").forEach((button) => button.addEventListener("click", () => setOperation(button.dataset.operation)));
   sourceFiles.addEventListener("change", () => { updateSourceCount(); updatePeriodOptions(); });
+  period.addEventListener?.("change", () => persistSession());
   approveAll.addEventListener("click", () => runBulkAction("approve_all_proposed"));
   rejectAll.addEventListener("click", () => runBulkAction("reject_all"));
   previousPage.addEventListener("click", () => loadReviewPage(currentPage - 1, true));
@@ -532,4 +614,42 @@
       submitReview.disabled = false;
     }
   });
+
+  const restoreSavedJob = async () => {
+    const saved = sessionState();
+    if (saved.mode === "create" || saved.mode === "update") setOperation(saved.mode);
+    selectPeriod(saved.period);
+    uploadedSourceCount = Number.isInteger(saved.sourceCount) && saved.sourceCount > 0
+      ? saved.sourceCount
+      : 0;
+    draftCategories = saved.draftCategories && typeof saved.draftCategories === "object"
+      ? saved.draftCategories
+      : {};
+    updateSourceCount();
+    if (typeof saved.jobId !== "string" || !saved.jobId) {
+      if (saved.step === "review" || saved.step === "card") setProgress(saved.step);
+      return;
+    }
+    currentJobId = saved.jobId;
+    currentPage = Number.isInteger(saved.page) && saved.page > 0 ? saved.page : 1;
+    try {
+      await renderJob(
+        await requestJson(`/api/drawing-card/jobs/${encodeURIComponent(currentJobId)}`, { method: "GET" }),
+        currentPage,
+      );
+    } catch (error) {
+      if (error.status === 404) {
+        currentJobId = null;
+        uploadedSourceCount = 0;
+        clearSession();
+        updateSourceCount();
+        setProgress("sources");
+        setStatus("Предыдущая карточка больше недоступна. Выберите исходные файлы снова.", true);
+        return;
+      }
+      setStatus("Не удалось восстановить карточку. Повторите действие или выберите файлы снова.", true);
+    }
+  };
+
+  void restoreSavedJob();
 })();
