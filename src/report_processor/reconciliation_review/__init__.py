@@ -3,6 +3,7 @@
 from .feedback import (
     feedback_for_group,
     feedback_from_decision,
+    feedback_from_row_decision,
     latest_feedback,
     suppress_resolved_groups,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "build_review_groups",
     "feedback_for_group",
     "feedback_from_decision",
+    "feedback_from_row_decision",
     "latest_feedback",
     "normalize_name",
     "normalize_unit",

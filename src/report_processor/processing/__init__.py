@@ -13,6 +13,7 @@ from .contracts import (
     ProcessReportRequest,
 )
 from .engine import ProcessingEngine, highest_exit_code, process_report, process_reports
+from .reconciliation import ReconciliationArtifacts, execute_reconciliation
 
 __all__ = [
     "PROCESSING_CONTRACT_VERSION",
@@ -28,7 +29,9 @@ __all__ = [
     "ProcessingExitCode",
     "ProcessingResult",
     "ProcessingState",
+    "ReconciliationArtifacts",
     "StageOutcome",
+    "execute_reconciliation",
     "highest_exit_code",
     "process_report",
     "process_reports",

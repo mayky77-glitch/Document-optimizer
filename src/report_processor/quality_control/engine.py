@@ -106,8 +106,8 @@ def _validate_inputs(
 def _check_source_reuse(matches: tuple[MatchResult, ...], issues: list) -> None:
     used: defaultdict[str, list[MatchResult]] = defaultdict(list)
     for match in matches:
-        if match.selected_candidate is not None:
-            used[match.selected_candidate.source_row_id].append(match)
+        for candidate in match.effective_selected_candidates:
+            used[candidate.source_row_id].append(match)
     for source_row_id, linked in sorted(used.items()):
         if len(linked) > 1:
             for match in linked:

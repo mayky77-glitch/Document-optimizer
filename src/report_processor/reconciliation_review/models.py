@@ -27,6 +27,7 @@ class ReviewRow:
     quantity: Decimal | None
     cost: Decimal | None
     proposed_category: str | None = None
+    target_category: str | None = None
 
     def __post_init__(self) -> None:
         if not self.row_id.strip():
@@ -34,6 +35,14 @@ class ReviewRow:
         for value in (self.quantity, self.cost):
             if value is not None and (not isinstance(value, Decimal) or not value.is_finite()):
                 raise ValueError("quantity and cost must be finite Decimals or None")
+        if (
+            self.proposed_category is not None
+            and self.target_category is not None
+            and self.proposed_category != self.target_category
+        ):
+            raise ValueError("proposed_category and target_category conflict")
+        if self.target_category is not None:
+            object.__setattr__(self, "proposed_category", self.target_category)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +57,8 @@ class ReviewGroup:
     proposed_category: str | None
 
     def __post_init__(self) -> None:
+        if not self.version.strip():
+            raise ValueError("version must not be empty")
         if not self.member_ids or tuple(sorted(set(self.member_ids))) != self.member_ids:
             raise ValueError("member_ids must be non-empty, unique and sorted")
 
@@ -82,6 +93,11 @@ class AppliedOverride:
     include_quantity: bool
     include_cost: bool
     action: ReviewAction | None
+
+    @property
+    def candidate_inclusion(self) -> tuple[bool, bool]:
+        """Flags accepted by ``calculate_matches`` for the selected source row."""
+        return self.include_quantity, self.include_cost
 
 
 @dataclass(frozen=True, slots=True)
