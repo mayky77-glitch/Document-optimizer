@@ -311,7 +311,30 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     )
     assert "setSuggestionBusy(card, true)" in javascript
     assert "setSuggestionBusy(card, false)" in javascript
-    assert ".suggestion-card { container-type: inline-size;" in css
-    assert "@container (max-width: 560px)" in css
-    assert ".suggestion-actions, .manual-review-actions { grid-row: 2;" in css
-    assert ".manual-review-card { container-type: inline-size;" in css
+    assert 'card.className = "review-item suggestion-card";' in javascript
+    assert 'card.className = "review-item manual-review-card";' in javascript
+    assert 'header.className = "review-item-head";' in javascript
+    assert 'context.className = "review-context manual-review-context";' in javascript
+    assert 'context.className = "review-context suggestion-context";' in javascript
+    assert 'decisionRegion.className = "review-decision";' in javascript
+    assert 'actions.className = "review-decision-actions";' in javascript
+    assert 'renderDecisionContext("Охват", `Вся группа · ${count} замечаний`)' in javascript
+    assert 'renderDecisionContext("Действие", "Одобрить или отклонить")' in javascript
+    assert 'renderDecisionContext("Тип", "Сопоставление")' in javascript
+    assert 'renderDecisionContext("Действие", "Подтвердить или отклонить связь")' in javascript
+    assert '"Количество замечаний"' in javascript
+    assert ".review-item { container-type: inline-size;" in css
+    assert ".review-item-head { display: flex; justify-content: space-between;" in css
+    assert (
+        ".review-context { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));" in css
+    )
+    assert (
+        ".review-decision { display: grid; grid-template-columns: minmax(220px, 280px) "
+        "minmax(0, 390px) max-content;" in css
+    )
+    assert "@container (max-width: 620px)" in css
+    assert (
+        ".review-decision-actions { grid-column: auto; grid-template-columns: repeat(2, "
+        "minmax(0, 1fr)); }" in css
+    )
+    assert ".manual-review-card { border-left-color: var(--manual-blue); }" in css

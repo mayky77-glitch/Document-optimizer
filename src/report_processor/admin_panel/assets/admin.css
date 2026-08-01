@@ -117,42 +117,42 @@ button, .download { min-height: 48px; padding: 11px 18px; border: 1px solid var(
 .suggestion-review { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
 .suggestion-review h3 { margin-bottom: 12px; font-size: 1.05rem; }
 .suggestions { display: grid; gap: 12px; }
-.suggestion-card { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 16px; padding: clamp(16px, 3vw, 22px); border: 1px solid var(--input-border); border-left: 5px solid var(--gazprom); background: var(--white); }
-.manual-review-card { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 16px; padding: clamp(16px, 3vw, 22px); border: 1px solid var(--input-border); border-left: 5px solid var(--manual-blue); background: var(--white); }
-.suggestion-card-head { min-width: 0; }
-.manual-review-card-head { min-width: 0; }
-.suggestion-kicker { margin: 0 0 4px; color: var(--gazprom-dark); font-size: .72rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
-.suggestion-card h4 { margin: 0; font-size: clamp(1.05rem, 2.6vw, 1.35rem); line-height: 1.2; }
-.manual-review-card h4 { margin: 0; font-size: clamp(1.05rem, 2.6vw, 1.35rem); line-height: 1.2; }
-.manual-review-message { margin: 8px 0 0; color: var(--muted); }
-.manual-review-count { margin: 8px 0 0; color: var(--gazprom-dark); font-weight: 800; }
-.suggestion-context { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 2px 0 0; }
-.suggestion-context div { min-width: 0; padding: 9px 10px; border-top: 1px solid var(--line); background: var(--surface-input); }
-.suggestion-context dt { color: var(--muted); font-size: .76rem; font-weight: 700; }
-.suggestion-context dd { margin: 3px 0 0; overflow-wrap: anywhere; font-weight: 800; }
-.suggestion-actions { display: grid; grid-template-columns: repeat(2, max-content); align-self: start; gap: 8px; }
-.manual-review-actions { display: grid; grid-template-columns: repeat(2, max-content); align-self: start; gap: 8px; }
-.suggestion-actions button { min-width: 112px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--input-border); border-radius: 2px; background: var(--white); color: var(--gazprom-dark); font-weight: 800; cursor: pointer; white-space: nowrap; }
-.manual-review-actions button { min-width: 112px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--input-border); border-radius: 2px; background: var(--white); color: var(--gazprom-dark); font-weight: 800; cursor: pointer; white-space: nowrap; }
-.suggestion-actions button:hover { background: var(--soft-blue); }
-.manual-review-actions button:hover { background: var(--soft-blue); }
-.suggestion-actions .suggestion-fit { border-color: var(--gazprom); background: var(--gazprom); color: var(--white); }
-.suggestion-actions .suggestion-fit:hover { border-color: var(--gazprom-dark); background: var(--gazprom-dark); }
-.suggestion-actions .suggestion-not-fit { border-color: var(--red); color: var(--red); }
-.suggestion-actions .suggestion-not-fit:hover { background: var(--surface-warning); }
-.manual-review-actions .manual-review-approve { border-color: var(--gazprom); background: var(--gazprom); color: var(--white); }
-.manual-review-actions .manual-review-approve:hover { border-color: var(--gazprom-dark); background: var(--gazprom-dark); }
-.manual-review-actions .manual-review-reject { border-color: var(--red); color: var(--red); }
-.manual-review-actions .manual-review-reject:hover { background: var(--surface-warning); }
-@container (max-width: 560px) {
-  .suggestion-card, .manual-review-card { grid-template-columns: 1fr; }
-  .suggestion-actions, .manual-review-actions { grid-row: 2; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .suggestion-actions button, .manual-review-actions button { width: 100%; min-width: 0; white-space: normal; }
-  .suggestion-context { grid-column: auto; grid-row: 3; }
+.review-item { container-type: inline-size; padding: clamp(16px, 3vw, 22px); border: 1px solid var(--input-border); border-left: 5px solid var(--gazprom); background: var(--white); }
+.review-item-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.review-item-head > div { min-width: 0; }
+.review-kicker { margin: 0 0 4px; color: var(--gazprom-dark); font-size: .72rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.review-item h3 { margin: 0; font-size: clamp(1.05rem, 2.6vw, 1.35rem); line-height: 1.2; }
+.decision-status { flex: 0 0 auto; margin: 0; padding: 5px 8px; background: var(--soft-blue); color: var(--gazprom-dark); font-size: .83rem; font-weight: 800; white-space: nowrap; }
+.review-context { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 18px 0 0; }
+.review-context div { min-width: 0; padding: 9px 10px; border-top: 1px solid var(--line); background: var(--surface-input); }
+.review-context dt { color: var(--muted); font-size: .76rem; font-weight: 700; }
+.review-context dd { margin: 3px 0 0; overflow-wrap: anywhere; font-weight: 800; }
+.manual-review-context { grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr); }
+.manual-review-card { border-left-color: var(--manual-blue); }
+.review-decision { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 390px) max-content; align-items: end; gap: 12px 16px; width: 100%; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.review-decision-context { display: grid; gap: 3px; min-width: 0; }
+.review-decision-label { color: var(--muted); font-size: .76rem; font-weight: 700; }
+.review-decision-context strong { overflow-wrap: anywhere; }
+.review-decision-actions { display: grid; grid-template-columns: repeat(2, max-content); gap: 8px; }
+.review-decision-actions button { min-width: 112px; min-height: 48px; padding: 8px 14px; border: 1px solid var(--input-border); border-radius: 2px; background: var(--white); color: var(--gazprom-dark); font-weight: 800; cursor: pointer; white-space: nowrap; }
+.review-decision-actions button:hover { background: var(--soft-blue); }
+.review-decision-actions .suggestion-fit, .review-decision-actions .manual-review-approve { border-color: var(--gazprom); background: var(--gazprom); color: var(--white); }
+.review-decision-actions .suggestion-fit:hover, .review-decision-actions .manual-review-approve:hover { border-color: var(--gazprom-dark); background: var(--gazprom-dark); }
+.review-decision-actions .suggestion-not-fit, .review-decision-actions .manual-review-reject { border-color: var(--red); color: var(--red); }
+.review-decision-actions .suggestion-not-fit:hover, .review-decision-actions .manual-review-reject:hover { background: var(--surface-warning); }
+@container (max-width: 860px) {
+  .review-decision { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); }
+  .review-decision-actions { grid-column: 1 / -1; }
 }
-@container (max-width: 340px) {
-  .suggestion-actions, .manual-review-actions { grid-template-columns: 1fr; }
-  .suggestion-context { grid-template-columns: 1fr; }
+@container (max-width: 620px) {
+  .review-decision { grid-template-columns: 1fr; }
+  .review-decision-actions { grid-column: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .review-decision-actions button { width: 100%; min-width: 0; white-space: normal; }
+}
+@container (max-width: 400px) {
+  .review-decision-actions { grid-template-columns: 1fr; }
+  .review-context, .manual-review-context { grid-template-columns: 1fr; }
+  .review-item-head { flex-direction: column; }
 }
 .empty-review { margin: 0; padding: 14px; border-left: 4px solid var(--gazprom); background: var(--soft-blue); color: var(--gazprom-dark); }
 

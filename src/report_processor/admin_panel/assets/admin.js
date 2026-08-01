@@ -117,18 +117,22 @@
 
   const renderSuggestion = (item, jobId) => {
     const card = document.createElement("article");
-    card.className = "suggestion-card";
+    card.className = "review-item suggestion-card";
     const header = document.createElement("header");
-    header.className = "suggestion-card-head";
+    header.className = "review-item-head";
     const kicker = document.createElement("p");
-    kicker.className = "suggestion-kicker";
+    kicker.className = "review-kicker";
     kicker.textContent = "Подсказка сопоставления";
-    const title = document.createElement("h4");
+    const title = document.createElement("h3");
     title.textContent = suggestionText(item.target_label, "Целевой этап");
-    header.append(kicker, title);
+    const status = document.createElement("p");
+    status.className = "decision-status";
+    status.textContent = "Требует решения";
+    header.append(document.createElement("div"), status);
+    header.firstElementChild.append(kicker, title);
 
     const actions = document.createElement("div");
-    actions.className = "suggestion-actions";
+    actions.className = "review-decision-actions";
     actions.setAttribute("role", "group");
     actions.setAttribute("aria-label", `Решение для «${title.textContent}»`);
     [["Подходит", "fit", "suggestion-fit"], ["Не подходит", "not_fit", "suggestion-not-fit"]].forEach(([label, decision, className]) => {
@@ -143,7 +147,7 @@
     });
 
     const context = document.createElement("dl");
-    context.className = "suggestion-context";
+    context.className = "review-context suggestion-context";
     [["Кандидат", suggestionText(item.candidate_label, "Предложенный этап")], ["Цель", suggestionText(item.target_label, "Целевой этап")], ["Оценка", scoreText(item.score)]].forEach(([label, value]) => {
       const entry = document.createElement("div");
       const term = document.createElement("dt");
@@ -153,30 +157,67 @@
       entry.append(term, detail);
       context.append(entry);
     });
-    card.append(header, actions, context);
+    const decision = document.createElement("div");
+    decision.className = "review-decision";
+    decision.setAttribute("aria-label", `Решение для «${title.textContent}»`);
+    decision.append(
+      renderDecisionContext("Тип", "Сопоставление"),
+      renderDecisionContext("Действие", "Подтвердить или отклонить связь"),
+      actions,
+    );
+    card.append(header, context, decision);
     return card;
+  };
+
+  const renderDecisionContext = (label, value) => {
+    const context = document.createElement("div");
+    context.className = "review-decision-context";
+    const labelElement = document.createElement("span");
+    labelElement.className = "review-decision-label";
+    labelElement.textContent = label;
+    const valueElement = document.createElement("strong");
+    valueElement.textContent = value;
+    context.append(labelElement, valueElement);
+    return context;
   };
 
   const renderManualGroup = (item, jobId) => {
     const card = document.createElement("article");
-    card.className = "manual-review-card";
+    card.className = "review-item manual-review-card";
     const header = document.createElement("header");
-    header.className = "manual-review-card-head";
+    header.className = "review-item-head";
     const kicker = document.createElement("p");
-    kicker.className = "suggestion-kicker";
+    kicker.className = "review-kicker";
     kicker.textContent = "Ручное замечание";
-    const title = document.createElement("h4");
+    const title = document.createElement("h3");
     title.textContent = suggestionText(item.title, "Нужна ручная проверка");
-    const message = document.createElement("p");
-    message.className = "manual-review-message";
-    message.textContent = suggestionText(item.message, "Проверьте замечание и примите решение.");
-    const count = document.createElement("p");
-    count.className = "manual-review-count";
-    count.textContent = `Замечаний: ${item.count || item.discrepancy_ids.length}`;
-    header.append(kicker, title, message, count);
+    const status = document.createElement("p");
+    status.className = "decision-status";
+    status.textContent = "Требует решения";
+    const headerContent = document.createElement("div");
+    headerContent.append(kicker, title);
+    header.append(headerContent, status);
+
+    const count = Number.isInteger(item.count) && item.count > 0
+      ? item.count
+      : item.discrepancy_ids.length;
+    const context = document.createElement("dl");
+    context.className = "review-context manual-review-context";
+    [
+      ["Причина", suggestionText(item.message, "Проверьте замечание и примите решение.")],
+      ["Количество замечаний", String(count)],
+    ].forEach(([label, value]) => {
+      const entry = document.createElement("div");
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const detail = document.createElement("dd");
+      detail.textContent = value;
+      entry.append(term, detail);
+      context.append(entry);
+    });
 
     const actions = document.createElement("div");
-    actions.className = "manual-review-actions";
+    actions.className = "review-decision-actions";
     actions.setAttribute("role", "group");
     actions.setAttribute("aria-label", `Решение для «${title.textContent}»`);
     [["Одобрить", "approve", "manual-review-approve"], ["Отклонить", "reject", "manual-review-reject"]].forEach(([label, decision, className]) => {
@@ -189,7 +230,15 @@
       });
       actions.append(button);
     });
-    card.append(header, actions);
+    const decisionRegion = document.createElement("div");
+    decisionRegion.className = "review-decision";
+    decisionRegion.setAttribute("aria-label", `Решение для «${title.textContent}»`);
+    decisionRegion.append(
+      renderDecisionContext("Охват", `Вся группа · ${count} замечаний`),
+      renderDecisionContext("Действие", "Одобрить или отклонить"),
+      actions,
+    );
+    card.append(header, context, decisionRegion);
     return card;
   };
 
