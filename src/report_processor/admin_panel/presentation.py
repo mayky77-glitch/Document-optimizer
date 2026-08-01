@@ -10,6 +10,14 @@ from dataclasses import fields, is_dataclass
 from enum import Enum
 from pathlib import Path
 
+from .review_presentation import (
+    issue_contexts,
+    manual_review_groups,
+    public_context,
+    suggestion_contexts,
+    suggestion_review_groups,
+)
+
 _ISSUE_PRESENTATION = {
     "UNIT_CONFLICT": ("unit_conflict", "red"),
     "UNCHANGED_VALUE": ("unchanged_value", "yellow"),
@@ -34,19 +42,17 @@ _ABSOLUTE_PATH = re.compile(r"(?<![\w])(?:/[^\s,;]+|[A-Za-z]:\\[^\s,;]+)")
 
 def job_payload(job: object) -> dict[str, object]:
     """Serialize only frozen, client-facing fields from a job or fake mapping."""
-
     if isinstance(job, Mapping):
         job_id = _required_text(job.get("job_id"), "job_id")
-        status = _required_text(job.get("status"), "status")
-        discrepancies = _public_records(job.get("discrepancies"))
-        decisions = _public_records(job.get("decisions"))
-        output = {
+        discrepancies, decisions = _public_records(job.get("discrepancies")), _public_records(job.get("decisions"))
+        output: dict[str, object] = {
             "job_id": job_id,
             "stage": _required_text(job.get("stage"), "stage"),
-            "status": status,
+            "status": _required_text(job.get("status"), "status"),
             "summary": _public_mapping(job.get("summary")),
             "discrepancies": passive_discrepancies(discrepancies),
             "manual_review_groups": manual_review_groups(discrepancies, decisions),
+            "suggestion_review_groups": suggestion_review_groups(_public_records(job.get("suggestions")), decisions),
             "suggestions": _public_records(job.get("suggestions")),
             "download_url": _download_url(job.get("download_url"), job_id),
         }
@@ -55,7 +61,6 @@ def job_payload(job: object) -> dict[str, object]:
         if "decisions" in job:
             output["decisions"] = decisions
         return output
-
     job_id = _required_text(getattr(job, "job_id", None), "job_id")
     discrepancies = _public_records(getattr(job, "discrepancies", ()))
     decisions = _public_records(getattr(job, "decisions", ()))
@@ -67,295 +72,124 @@ def job_payload(job: object) -> dict[str, object]:
         "summary": _public_mapping(getattr(job, "summary", {})),
         "discrepancies": passive_discrepancies(discrepancies),
         "manual_review_groups": manual_review_groups(discrepancies, decisions),
+        "suggestion_review_groups": suggestion_review_groups(_public_records(getattr(job, "suggestions", ())), decisions),
         "suggestions": _public_records(getattr(job, "suggestions", ())),
         "decisions": decisions,
-        "download_url": (
-            f"/api/jobs/{job_id}/result" if bool(getattr(job, "result_available", False)) else None
-        ),
+        "download_url": f"/api/jobs/{job_id}/result" if bool(getattr(job, "result_available", False)) else None,
     }
-
-
-def manual_review_groups(
-    discrepancies: Sequence[Mapping[str, object]], decisions: Sequence[Mapping[str, object]]
-) -> list[dict[str, object]]:
-    """Return unresolved manual-review issues as stable, compact decision groups."""
-
-    decided = {
-        _public_text(item.get("discrepancy_id"))
-        for item in decisions
-        if _public_text(item.get("decision")) in {"approve", "reject"}
-    }
-    grouped: dict[tuple[str, str], list[str]] = {}
-    for item in discrepancies:
-        if not _is_manual_discrepancy(item):
-            continue
-        discrepancy_id = _public_text(item.get("discrepancy_id"), 200)
-        if not discrepancy_id or discrepancy_id in decided:
-            continue
-        code = _public_text(item.get("code"), 120) or "MANUAL_REVIEW"
-        message = _public_text(item.get("message")) or "Требуется ручная проверка."
-        grouped.setdefault((code, message), []).append(discrepancy_id)
-    return [
-        {
-            "group_id": _controlled_id("manual-review-group", code, message),
-            "code": code,
-            "title": "Нужна ручная проверка",
-            "message": message,
-            "count": len(ids),
-            "discrepancy_ids": sorted(ids),
-        }
-        for (code, message), ids in sorted(grouped.items())
-    ]
 
 
 def passive_discrepancies(discrepancies: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
-    """Keep manual decisions separate and collapse identical passive warnings."""
-
     grouped: dict[str, dict[str, object]] = {}
     for item in discrepancies:
-        if _is_manual_discrepancy(item):
+        if _public_text(item.get("severity")) == "manual_review":
             continue
         record = dict(item)
         record.pop("discrepancy_id", None)
         key = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        existing = grouped.get(key)
-        if existing is None:
-            grouped[key] = {"record": dict(item), "count": 1}
-        else:
-            existing["count"] = int(existing["count"]) + 1
-    output: list[dict[str, object]] = []
+        grouped.setdefault(key, {"record": dict(item), "count": 0})["count"] += 1
+    output = []
     for key in sorted(grouped):
-        group = grouped[key]
-        record = dict(group["record"])
-        count = int(group["count"])
+        record, count = dict(grouped[key]["record"]), int(grouped[key]["count"])
         if count > 1:
             record["count"] = count
         output.append(record)
     return output
 
 
-def _is_manual_discrepancy(item: Mapping[str, object]) -> bool:
-    return _public_text(item.get("severity")) == "manual_review"
-
-
-def processing_presentation(
-    result: object,
-) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
-    """Extract controlled summary, discrepancy and RAG suggestion records."""
-
+def processing_presentation(result: object) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
     artifacts = getattr(result, "artifacts", {})
     if not isinstance(artifacts, Mapping):
         artifacts = {}
     report = artifacts.get("quality_report")
     summary = _summary_record(getattr(report, "summary", None))
-    summary.update(
-        {
-            "state": _enum_value(getattr(result, "state", "UNKNOWN")),
-            "exit_code": _integer(getattr(result, "exit_code", -1)),
-            "warning_count": len(tuple(getattr(result, "warnings", ()) or ())),
-            "error_count": len(tuple(getattr(result, "errors", ()) or ())),
-        }
-    )
-    discrepancies = [_issue_record(issue) for issue in tuple(getattr(report, "issues", ()) or ())]
-    discrepancies.extend(
-        _issue_record(issue) for issue in tuple(artifacts.get("hierarchy_issues", ()) or ())
-    )
+    summary.update({"state": _enum_value(getattr(result, "state", "UNKNOWN")), "exit_code": _integer(getattr(result, "exit_code", -1)), "warning_count": len(tuple(getattr(result, "warnings", ()) or ())), "error_count": len(tuple(getattr(result, "errors", ()) or ()))})
+    contexts = issue_contexts(artifacts)
+    discrepancies = [_issue_record(issue, contexts.get(_public_text(getattr(issue, "issue_id", "")), {})) for issue in tuple(getattr(report, "issues", ()) or ())]
+    discrepancies.extend(_issue_record(issue, contexts.get(_public_text(getattr(issue, "issue_id", "")), {})) for issue in tuple(artifacts.get("hierarchy_issues", ()) or ()))
     existing_codes = {str(item["code"]) for item in discrepancies}
     for warning in tuple(getattr(result, "warnings", ()) or ()):
-        warning_code = _enum_value(warning).upper()
-        if warning_code in _UNCHANGED_CODES and warning_code not in existing_codes:
-            discrepancies.append(
-                {
-                    "discrepancy_id": _controlled_id("warning", warning_code),
-                    "code": warning_code,
-                    "category": "unchanged_value",
-                    "color": "yellow",
-                    "severity": "warning",
-                    "message": "Исходное значение представлено без изменения.",
-                }
-            )
-        elif warning_code.startswith("HIERARCHY_") and warning_code not in existing_codes:
-            discrepancies.append(
-                {
-                    "discrepancy_id": _controlled_id("warning", warning_code),
-                    "code": warning_code,
-                    "category": "hierarchy_review",
-                    "color": "orange",
-                    "severity": "warning",
-                    "message": "Иерархия позиций требует проверки перед публикацией.",
-                }
-            )
-    source_labels = _source_labels(artifacts.get("normalized"))
-    target_labels = _target_labels(artifacts.get("matches"))
-    suggestions = [
-        record
-        for suggestion in tuple(artifacts.get("stage_relation_suggestions", ()) or ())
-        for record in _suggestion_records(suggestion, source_labels, target_labels)
-    ]
+        code = _enum_value(warning).upper()
+        if code in _UNCHANGED_CODES and code not in existing_codes:
+            discrepancies.append(_warning_record(code, "unchanged_value", "yellow", "Исходное значение представлено без изменения."))
+        elif code.startswith("HIERARCHY_") and code not in existing_codes:
+            discrepancies.append(_warning_record(code, "hierarchy_review", "orange", "Иерархия позиций требует проверки перед публикацией."))
+    source_labels, target_labels = _source_labels(artifacts.get("normalized")), _target_labels(artifacts.get("matches"))
+    contexts = suggestion_contexts(artifacts)
+    suggestions = [record for suggestion in tuple(artifacts.get("stage_relation_suggestions", ()) or ()) for record in _suggestion_records(suggestion, source_labels, target_labels, contexts)]
     if artifacts.get("stage_rag_requires_manual_review") is True and not suggestions:
-        discrepancies.append(
-            {
-                "discrepancy_id": _controlled_id("rag-model-unavailable"),
-                "code": "RAG_MODEL_UNAVAILABLE",
-                "category": "manual_review",
-                "color": "blue",
-                "severity": "manual_review",
-                "message": "Семантическая связь требует ручной проверки.",
-            }
-        )
+        discrepancies.append(_warning_record("RAG_MODEL_UNAVAILABLE", "manual_review", "blue", "Семантическая связь требует ручной проверки.", severity="manual_review"))
     return summary, discrepancies, suggestions
 
 
 def journal_payload(job: object) -> bytes:
-    """Build a path-free, controlled-ID review journal."""
-
     payload = job_payload(job)
     payload.pop("download_url", None)
-    payload["statement"] = (
-        "Решения оператора записаны отдельно и не изменяют авторитетное сопоставление Block 12."
-    )
-    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
-        "utf-8"
-    )
+    payload["statement"] = "Решения оператора записаны отдельно и не изменяют авторитетное сопоставление Block 12."
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _warning_record(code: str, category: str, color: str, message: str, *, severity: str = "warning") -> dict[str, object]:
+    return {"discrepancy_id": _controlled_id("warning", code), "code": code, "category": category, "color": color, "severity": severity, "message": message}
 
 
 def _summary_record(summary: object) -> dict[str, object]:
-    if summary is None:
-        return {}
     if is_dataclass(summary):
-        return {
-            field.name: _public_scalar(getattr(summary, field.name)) for field in fields(summary)
-        }
-    if isinstance(summary, Mapping):
-        return _public_mapping(summary)
-    return {}
+        return {field.name: _public_scalar(getattr(summary, field.name)) for field in fields(summary)}
+    return _public_mapping(summary) if isinstance(summary, Mapping) else {}
 
 
-def _issue_record(issue: object) -> dict[str, object]:
+def _issue_record(issue: object, context: Mapping[str, object]) -> dict[str, object]:
     code = _enum_value(getattr(issue, "code", "MANUAL_REVIEW")).upper()
     category, color = _ISSUE_PRESENTATION.get(code, _DEFAULT_PRESENTATION)
-    issue_id = _public_text(getattr(issue, "issue_id", "")) or _controlled_id(
-        code, getattr(issue, "message", "")
-    )
-    record = {
-        "discrepancy_id": _controlled_id(issue_id),
-        "code": code,
-        "category": category,
-        "color": color,
-        "severity": _enum_value(getattr(issue, "severity", "manual_review")),
-        "message": _public_text(getattr(issue, "message", "Требуется проверка.")),
-    }
-    if code.startswith("HIERARCHY_"):
-        # Numbering code is a controlled source identifier needed to repair the workbook.
-        record["position_code"] = _public_text(getattr(issue, "position_code", None))
-        record["parent_amount"] = _public_scalar(getattr(issue, "parent_amount", None))
-        record["direct_children_amount"] = _public_scalar(
-            getattr(issue, "direct_children_amount", None)
-        )
-        record["delta"] = _public_scalar(getattr(issue, "delta", None))
-        record["tolerance"] = _public_scalar(getattr(issue, "tolerance", None))
+    issue_id = _public_text(getattr(issue, "issue_id", "")) or _controlled_id(code, getattr(issue, "message", ""))
+    record: dict[str, object] = {"discrepancy_id": _controlled_id(issue_id), "code": code, "category": category, "color": color, "severity": _enum_value(getattr(issue, "severity", "manual_review")), "message": _public_text(getattr(issue, "message", "Требуется проверка."))}
+    if context:
+        record["context"] = public_context(context)
     return record
 
 
-def _suggestion_records(
-    suggestion: object,
-    source_labels: Mapping[str, str],
-    target_labels: Mapping[str, str],
-) -> list[dict[str, object]]:
+def _suggestion_records(suggestion: object, source_labels: Mapping[str, str], target_labels: Mapping[str, str], contexts: Mapping[tuple[str, str], Mapping[str, object]]) -> list[dict[str, object]]:
     target = _public_text(getattr(suggestion, "target_identity", "target"))
-    candidates = tuple(getattr(suggestion, "candidates", ()) or ())
-    records: list[dict[str, object]] = []
-    for candidate in candidates:
-        source = _public_text(getattr(candidate, "source_identity", "source"))
-        candidate_ref = _controlled_id("candidate", source)
-        records.append(
-            {
-                "suggestion_id": _controlled_id("suggestion", target, source),
-                "target_ref": _controlled_id("target", target),
-                "target_label": target_labels.get(target, "Целевой этап"),
-                "candidate_ref": candidate_ref,
-                "candidate_label": source_labels.get(source, "Предложенный этап"),
-                "score": _finite_float(getattr(candidate, "score", 0.0)),
-                "requires_manual_review": True,
-                "auto_accepted": False,
-                "effect": "review_journal_only",
-            }
-        )
-    return records
+    return [{"suggestion_id": _controlled_id("suggestion", target, source), "target_ref": _controlled_id("target", target), "target_label": target_labels.get(target, "Целевой этап"), "candidate_ref": _controlled_id("candidate", source), "candidate_label": source_labels.get(source, "Предложенный этап"), "score": _finite_float(getattr(candidate, "score", 0.0)), "requires_manual_review": True, "auto_accepted": False, "effect": "review_journal_only", "context": public_context(contexts.get((target, source), {}))} for candidate in tuple(getattr(suggestion, "candidates", ()) or ()) if (source := _public_text(getattr(candidate, "source_identity", "source")))]
 
 
 def _source_labels(normalized: object) -> dict[str, str]:
-    rows = tuple(getattr(normalized, "rows", ()) or ())
-    labels: dict[str, str] = {}
-    for row in rows:
-        identity = _public_text(getattr(row, "source_row_id", ""))
-        label = _public_text(
-            getattr(row, "work_name", None)
-            or getattr(row, "position_code", None)
-            or "Предложенный этап"
-        )
-        if identity:
-            labels[identity] = label
-    return labels
+    return {_public_text(getattr(row, "source_row_id", "")): _public_text(getattr(row, "work_name", None) or getattr(row, "position_code", None) or "Предложенный этап") for row in tuple(getattr(normalized, "rows", ()) or ()) if _public_text(getattr(row, "source_row_id", ""))}
 
 
 def _target_labels(matches: object) -> dict[str, str]:
-    rows = tuple(matches or ()) if isinstance(matches, Sequence) else ()
-    labels: dict[str, str] = {}
-    for match in rows:
-        identity = _public_text(getattr(match, "result_id", ""))
-        target = getattr(match, "target_row", None)
-        label = _public_text(
-            getattr(target, "stage", None) or getattr(target, "work_name", None) or "Целевой этап"
-        )
-        if identity:
-            labels[identity] = label
-    return labels
+    return {_public_text(getattr(match, "result_id", "")): _public_text(getattr(getattr(match, "target_row", None), "stage", None) or getattr(getattr(match, "target_row", None), "work_name", None) or "Целевой этап") for match in (tuple(matches or ()) if isinstance(matches, Sequence) else ()) if _public_text(getattr(match, "result_id", ""))}
 
 
 def _public_records(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return []
-    return [_public_mapping(item) for item in value if isinstance(item, Mapping)]
+    return [_public_mapping(item) for item in value if isinstance(item, Mapping)] if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)) else []
 
 
 def _public_mapping(value: object) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        return {}
-    return {
-        _public_text(key): _public_value(item)
-        for key, item in value.items()
-        if isinstance(key, str)
-    }
+    return {_public_text(key): _public_value(item) for key, item in value.items() if isinstance(key, str)} if isinstance(value, Mapping) else {}
 
 
 def _public_value(value: object) -> object:
-    if isinstance(value, Mapping):
-        return _public_mapping(value)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_public_value(item) for item in value]
+    if isinstance(value, Mapping): return _public_mapping(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)): return [_public_value(item) for item in value]
     return _public_scalar(value)
 
 
 def _public_scalar(value: object) -> object:
-    if value is None or isinstance(value, (bool, int)):
-        return value
-    if isinstance(value, float):
-        return _finite_float(value)
-    if isinstance(value, Path):
-        return "[private]"
+    if value is None or isinstance(value, (bool, int)): return value
+    if isinstance(value, float): return _finite_float(value)
+    if isinstance(value, Path): return "[private]"
     return _public_text(_enum_value(value))
 
 
 def _public_text(value: object, limit: int = 500) -> str:
-    text = str(value or "").replace("\x00", "").strip()
-    return _ABSOLUTE_PATH.sub("[private]", text)[:limit]
+    return _ABSOLUTE_PATH.sub("[private]", str(value or "").replace("\x00", "").strip())[:limit]
 
 
 def _required_text(value: object, field_name: str) -> str:
     text = _public_text(value, 200)
-    if not text:
-        raise ValueError(f"{field_name} is required")
+    if not text: raise ValueError(f"{field_name} is required")
     return text
 
 
@@ -364,13 +198,12 @@ def _download_url(value: object, job_id: str) -> str | None:
     return expected if value == expected else None
 
 
-def _enum_value(value: object) -> str:
-    return str(value.value if isinstance(value, Enum) else value)
+def _enum_value(value: object) -> str: return str(value.value if isinstance(value, Enum) else value)
 
 
 def _integer(value: object) -> int:
-    raw = value.value if isinstance(value, Enum) else value
-    return int(raw) if isinstance(raw, int) else -1
+    value = value.value if isinstance(value, Enum) else value
+    return int(value) if isinstance(value, int) else -1
 
 
 def _finite_float(value: object) -> float:
@@ -379,5 +212,4 @@ def _finite_float(value: object) -> float:
 
 
 def _controlled_id(*parts: object) -> str:
-    encoded = "\x1f".join(str(part) for part in parts).encode("utf-8", "replace")
-    return hashlib.sha256(encoded).hexdigest()[:24]
+    return hashlib.sha256("\x1f".join(str(part) for part in parts).encode("utf-8", "replace")).hexdigest()[:24]

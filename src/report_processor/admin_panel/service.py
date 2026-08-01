@@ -209,32 +209,92 @@ class AdminPanelService:
         self._prune_terminal_jobs()
         return job
 
+    def record_suggestion_group_decision(
+        self,
+        *,
+        job_id: str,
+        group_id: str,
+        suggestion_id: str | None,
+        decision: str,
+    ) -> AdminJob:
+        """Atomically resolve one currently presented semantic target group."""
+
+        if decision not in {"apply", "reject"} or not isinstance(group_id, str) or not group_id:
+            raise ValueError("invalid suggestion group decision")
+        job = self.get_job(job_id)
+        from .presentation import _controlled_id
+
+        open_groups: dict[str, list[dict[str, object]]] = {}
+        decided = {str(item.get("suggestion_id")) for item in job.decisions}
+        for item in job.suggestions:
+            target_ref = item.get("target_ref")
+            item_id = item.get("suggestion_id")
+            if (
+                item.get("requires_manual_review") is True
+                and isinstance(target_ref, str)
+                and isinstance(item_id, str)
+                and item_id not in decided
+            ):
+                open_groups.setdefault(_controlled_id("suggestion-review-group", target_ref), []).append(item)
+        members = open_groups.get(group_id)
+        if not members:
+            raise ValueError("suggestion group is no longer open")
+        member_ids = {str(item["suggestion_id"]) for item in members}
+        if decision == "apply":
+            if not isinstance(suggestion_id, str) or suggestion_id not in member_ids:
+                raise ValueError("selected suggestion is not in the open group")
+            entries = [
+                {
+                    "suggestion_id": item_id,
+                    "decision": "fit" if item_id == suggestion_id else "not_fit",
+                    "effect": "review_journal_only",
+                }
+                for item_id in sorted(member_ids)
+            ]
+        else:
+            if suggestion_id is not None:
+                raise ValueError("reject does not select a suggestion")
+            entries = [
+                {
+                    "suggestion_id": item_id,
+                    "decision": "not_fit",
+                    "effect": "review_journal_only",
+                }
+                for item_id in sorted(member_ids)
+            ]
+        # All group and selected-member validation precedes this single mutation.
+        job.decisions.extend(entries)
+        self._complete_review_if_resolved(job)
+        self._prune_terminal_jobs()
+        return job
+
     def record_manual_discrepancy_decision(
         self,
         *,
         job_id: str,
         group_id: str,
-        discrepancy_ids: list[str],
+        discrepancy_ids: list[str] | None,
         decision: str,
     ) -> AdminJob:
         if decision not in {"approve", "reject"}:
             raise ValueError("decision must be approve or reject")
         if not isinstance(group_id, str) or not group_id:
             raise ValueError("group is required")
-        if not isinstance(discrepancy_ids, list) or not discrepancy_ids:
+        if discrepancy_ids is not None and not isinstance(discrepancy_ids, list):
             raise ValueError("discrepancy IDs are required")
-        if len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS:
+        if discrepancy_ids is not None and len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS:
             raise ValueError("too many discrepancy IDs")
-        if any(not isinstance(item, str) or not item for item in discrepancy_ids):
+        if discrepancy_ids is not None and any(not isinstance(item, str) or not item for item in discrepancy_ids):
             raise ValueError("invalid discrepancy ID")
-        if len(set(discrepancy_ids)) != len(discrepancy_ids):
+        if discrepancy_ids is not None and len(set(discrepancy_ids)) != len(discrepancy_ids):
             raise ValueError("duplicate discrepancy ID")
         job = self.get_job(job_id)
         from .presentation import manual_review_groups
 
-        groups = manual_review_groups(job.discrepancies, job.decisions)
+        groups = manual_review_groups(job.discrepancies, job.decisions, include_ids=True)
         group = next((item for item in groups if item["group_id"] == group_id), None)
-        if group is None or set(discrepancy_ids) != set(group["discrepancy_ids"]):
+        expected_ids = group["discrepancy_ids"] if group is not None else []
+        if group is None or (discrepancy_ids is not None and set(discrepancy_ids) != set(expected_ids)):
             raise ValueError("decision must match one open group exactly")
         # All validation occurs before mutation so rejected requests remain atomic.
         job.decisions.extend(
@@ -243,7 +303,7 @@ class AdminPanelService:
                 "decision": decision,
                 "effect": "review_journal_only",
             }
-            for discrepancy_id in discrepancy_ids
+            for discrepancy_id in expected_ids
         )
         self._complete_review_if_resolved(job)
         self._prune_terminal_jobs()

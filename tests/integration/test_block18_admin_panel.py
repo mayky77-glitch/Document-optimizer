@@ -300,15 +300,13 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     assert "item.requires_manual_review === true" in javascript
     assert "payload.decisions" in javascript
     assert "manual_review_groups" in javascript
+    assert "suggestion_review_groups" in javascript
     assert "manual-discrepancy-decisions" in javascript
     assert "discrepancy-count" in javascript
     assert "Одобрить" in javascript and "Отклонить" in javascript
     assert "/api/jobs/${encodeURIComponent(jobId)}/decisions" in javascript
     assert "decision })," in javascript
-    assert (
-        '[["Подходит", "fit", "suggestion-fit"], ["Не подходит", "not_fit", "suggestion-not-fit"]]'
-        in javascript
-    )
+    assert '[["Применить", "apply", "suggestion-fit"], ["Отклонить", "reject", "suggestion-not-fit"]]' in javascript
     assert "setSuggestionBusy(card, true)" in javascript
     assert "setSuggestionBusy(card, false)" in javascript
     assert 'card.className = "review-item suggestion-card";' in javascript
@@ -320,9 +318,9 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     assert 'actions.className = "review-decision-actions";' in javascript
     assert 'renderDecisionContext("Охват", `Вся группа · ${count} замечаний`)' in javascript
     assert 'renderDecisionContext("Действие", "Одобрить или отклонить")' in javascript
-    assert 'renderDecisionContext("Тип", "Сопоставление")' in javascript
-    assert 'renderDecisionContext("Действие", "Подтвердить или отклонить связь")' in javascript
-    assert '"Количество замечаний"' in javascript
+    assert 'renderDecisionContext("Эффект", "Только журнал решений")' in javascript
+    assert 'details.className = "review-composition";' in javascript
+    assert "(Array.isArray(members) ? members : []).forEach" in javascript
     assert ".review-item { container-type: inline-size;" in css
     assert ".review-item-head { display: flex; justify-content: space-between;" in css
     assert (
@@ -338,3 +336,4 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
         "minmax(0, 1fr)); }" in css
     )
     assert ".manual-review-card { border-left-color: var(--manual-blue); }" in css
+    assert ".review-composition {" in css

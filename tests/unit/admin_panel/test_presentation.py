@@ -90,7 +90,8 @@ def test_manual_discrepancies_are_grouped_and_removed_from_passive_list() -> Non
     assert payload["suggestions"] == []
     assert len(payload["manual_review_groups"]) == 1
     assert payload["manual_review_groups"][0]["count"] == 492
-    assert len(payload["manual_review_groups"][0]["discrepancy_ids"]) == 492
+    assert len(payload["manual_review_groups"][0]["members"]) == 492
+    assert "discrepancy_ids" not in payload["manual_review_groups"][0]
     assert payload["discrepancies"] == [
         {"discrepancy_id": "warning-1", "category": "unchanged_value", "message": "Без изменения"}
     ]
@@ -132,3 +133,51 @@ def test_repeated_passive_warnings_collapse_to_one_counted_row() -> None:
             "count": 173,
         }
     ]
+
+
+def test_review_records_join_only_safe_context_and_group_semantic_candidates() -> None:
+    normalized = SimpleNamespace(
+        rows=(SimpleNamespace(source_row_id="source-a", work_name="Монтаж", unit="м"),)
+    )
+    match = SimpleNamespace(
+        result_id="target-a",
+        target_row=SimpleNamespace(stage="Целевой этап", unit="шт"),
+        explanation=("Похожее наименование",),
+    )
+    issue = SimpleNamespace(
+        issue_id="issue-a",
+        code="AMBIGUOUS",
+        severity="manual_review",
+        message="Нужна проверка",
+        source_row_ids=("source-a",),
+        match_result_id="target-a",
+        target_row_id=None,
+        calculation_id=None,
+        locations=("private",),
+        evidence={"formula": "secret"},
+    )
+    suggestion = SimpleNamespace(
+        target_identity="target-a",
+        candidates=(SimpleNamespace(source_identity="source-a", score=0.91),),
+    )
+    result = SimpleNamespace(
+        artifacts={
+            "normalized": normalized,
+            "matches": (match,),
+            "quality_report": SimpleNamespace(summary={}, issues=(issue,)),
+            "stage_relation_suggestions": (suggestion,),
+        },
+        state="MANUAL_REVIEW_REQUIRED",
+        exit_code=3,
+        warnings=(),
+        errors=(),
+    )
+
+    _, discrepancies, suggestions = processing_presentation(result)
+    payload = job_payload({"job_id": "job", "stage": "13", "status": "review_required", "summary": {}, "discrepancies": discrepancies, "suggestions": suggestions, "decisions": [], "download_url": None})
+
+    assert discrepancies[0]["context"] == {"work_name": "Монтаж", "source_unit": "м", "target_unit": "шт", "proposed_match": "Целевой этап", "reason": "Похожее наименование"}
+    assert "locations" not in str(payload) and "secret" not in str(payload)
+    group = payload["suggestion_review_groups"][0]
+    assert group["title"] == "Целевой этап"
+    assert group["candidates"][0]["label"] == "Монтаж"

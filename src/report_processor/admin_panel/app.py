@@ -198,6 +198,26 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             return _error("Ожидается JSON с решением", 400)
         suggestion_id = payload.get("suggestion_id")
         value = payload.get("decision")
+        group_id = payload.get("group_id")
+        if group_id is not None:
+            if (
+                not isinstance(group_id, str)
+                or value not in {"apply", "reject"}
+                or (suggestion_id is not None and not isinstance(suggestion_id, str))
+            ):
+                return _error("Недопустимое решение для открытой группы подсказок", 400)
+            try:
+                current = panel.record_suggestion_group_decision(
+                    job_id=request.path_params["job_id"],
+                    group_id=group_id,
+                    suggestion_id=suggestion_id,
+                    decision=value,
+                )
+            except KeyError:
+                return _error("Задача не найдена", 404)
+            except (TypeError, ValueError):
+                return _error("Решение не относится к открытой группе подсказок", 400)
+            return _secure(JSONResponse(job_payload(current)))
         if not isinstance(suggestion_id, str) or value not in {"fit", "not_fit"}:
             return _error("Допустимы только решения fit и not_fit", 400)
         try:
@@ -224,9 +244,9 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
         decision_value = payload.get("decision")
         if (
             not isinstance(group_id, str)
-            or not isinstance(discrepancy_ids, list)
-            or len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS
-            or not all(isinstance(item, str) for item in discrepancy_ids)
+            or (discrepancy_ids is not None and not isinstance(discrepancy_ids, list))
+            or (isinstance(discrepancy_ids, list) and len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS)
+            or (isinstance(discrepancy_ids, list) and not all(isinstance(item, str) for item in discrepancy_ids))
             or decision_value not in {"approve", "reject"}
         ):
             return _error("Допустимы только решения approve и reject для открытой группы", 400)

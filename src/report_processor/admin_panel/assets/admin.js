@@ -94,26 +94,71 @@
     return Number.isFinite(score) ? `${Math.round(score * 100)}%` : "Не указана";
   };
 
-  const unresolvedSuggestions = (payload) => {
-    const decided = new Set(
-      (Array.isArray(payload.decisions) ? payload.decisions : [])
-        .map((item) => item && item.suggestion_id)
-        .filter((item) => typeof item === "string"),
-    );
-    return (Array.isArray(payload.suggestions) ? payload.suggestions : []).filter((item) =>
-      item
-      && item.requires_manual_review === true
-      && typeof item.suggestion_id === "string"
-      && !decided.has(item.suggestion_id),
-    );
-  };
+  const unresolvedSuggestions = (payload) => Array.isArray(payload.suggestion_review_groups)
+    ? payload.suggestion_review_groups.filter((item) => item
+      && typeof item.group_id === "string"
+      && Array.isArray(item.candidates)
+      && item.candidates.length > 0)
+    : [];
 
   const manualGroups = (payload) => Array.isArray(payload.manual_review_groups)
     ? payload.manual_review_groups.filter((item) => item
       && typeof item.group_id === "string"
-      && Array.isArray(item.discrepancy_ids)
-      && item.discrepancy_ids.length > 0)
+      && Number.isInteger(item.count)
+      && item.count > 0)
     : [];
+
+  const contextCells = (context, extras = []) => {
+    const labels = {
+      source_unit: "Ед. в источнике",
+      target_unit: "Ед. в цели",
+      proposed_match: "Предложенное соответствие",
+      reason: "Причина",
+      aggregate_cost: "Расчётная стоимость",
+      confidence: "Уверенность",
+      member_count: "Замечаний в группе",
+    };
+    const cells = [...extras, ...Object.entries(context && typeof context === "object" ? context : {})]
+      .filter(([key, value]) => labels[key] && value !== "" && value !== null && value !== undefined)
+      .slice(0, 6);
+    const list = document.createElement("dl");
+    list.className = "review-context";
+    cells.forEach(([key, value]) => {
+      const entry = document.createElement("div");
+      const term = document.createElement("dt");
+      term.textContent = labels[key];
+      const detail = document.createElement("dd");
+      detail.textContent = key === "aggregate_cost" && Number.isFinite(Number(value))
+        ? `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₽`
+        : String(value);
+      entry.append(term, detail);
+      list.append(entry);
+    });
+    return list;
+  };
+
+  const composition = (members, hasMore) => {
+    const details = document.createElement("details");
+    details.className = "review-composition";
+    const summary = document.createElement("summary");
+    summary.textContent = hasMore ? "Состав группы (показана часть)" : "Состав группы";
+    const table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>Работа</th><th>Ед.</th><th>Количество</th><th>Стоимость</th></tr></thead>";
+    const body = document.createElement("tbody");
+    (Array.isArray(members) ? members : []).forEach((member) => {
+      const row = document.createElement("tr");
+      const context = member && member.context || {};
+      [member && member.title, context.source_unit, context.quantity, context.cost].forEach((value) => {
+        const cell = document.createElement("td");
+        cell.textContent = suggestionText(value, "—");
+        row.append(cell);
+      });
+      body.append(row);
+    });
+    table.append(body);
+    details.append(summary, table);
+    return details;
+  };
 
   const renderSuggestion = (item, jobId) => {
     const card = document.createElement("article");
@@ -122,50 +167,60 @@
     header.className = "review-item-head";
     const kicker = document.createElement("p");
     kicker.className = "review-kicker";
-    kicker.textContent = "Подсказка сопоставления";
+    kicker.textContent = `Подсказки сопоставления · ${item.count || item.candidates.length}`;
     const title = document.createElement("h3");
-    title.textContent = suggestionText(item.target_label, "Целевой этап");
+    title.textContent = suggestionText(item.title, "Целевой этап");
     const status = document.createElement("p");
     status.className = "decision-status";
     status.textContent = "Требует решения";
     header.append(document.createElement("div"), status);
     header.firstElementChild.append(kicker, title);
 
+    const select = document.createElement("select");
+    select.className = "suggestion-candidate";
+    select.setAttribute("aria-label", "Выберите подходящее соответствие");
+    item.candidates.forEach((candidate) => {
+      const option = document.createElement("option");
+      option.value = candidate.suggestion_id;
+      option.textContent = `${suggestionText(candidate.label, "Предложенный этап")} · ${scoreText(candidate.confidence)}`;
+      select.append(option);
+    });
     const actions = document.createElement("div");
     actions.className = "review-decision-actions";
     actions.setAttribute("role", "group");
     actions.setAttribute("aria-label", `Решение для «${title.textContent}»`);
-    [["Подходит", "fit", "suggestion-fit"], ["Не подходит", "not_fit", "suggestion-not-fit"]].forEach(([label, decision, className]) => {
+    [["Применить", "apply", "suggestion-fit"], ["Отклонить", "reject", "suggestion-not-fit"]].forEach(([label, decision, className]) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = className;
       button.textContent = label;
       button.addEventListener("click", () => {
-        void submitSuggestionDecision(card, jobId, item.suggestion_id, decision);
+        void submitSuggestionDecision(card, jobId, item.group_id, decision === "apply" ? select.value : null, decision);
       });
       actions.append(button);
     });
 
-    const context = document.createElement("dl");
-    context.className = "review-context suggestion-context";
-    [["Кандидат", suggestionText(item.candidate_label, "Предложенный этап")], ["Цель", suggestionText(item.target_label, "Целевой этап")], ["Оценка", scoreText(item.score)]].forEach(([label, value]) => {
-      const entry = document.createElement("div");
-      const term = document.createElement("dt");
-      term.textContent = label;
-      const detail = document.createElement("dd");
-      detail.textContent = value;
-      entry.append(term, detail);
-      context.append(entry);
-    });
+    const context = contextCells(item.context);
     const decision = document.createElement("div");
     decision.className = "review-decision";
     decision.setAttribute("aria-label", `Решение для «${title.textContent}»`);
     decision.append(
-      renderDecisionContext("Тип", "Сопоставление"),
-      renderDecisionContext("Действие", "Подтвердить или отклонить связь"),
+      renderDecisionContext("Выбор", select),
+      renderDecisionContext("Эффект", "Только журнал решений"),
       actions,
     );
-    card.append(header, context, decision);
+    card.append(
+      header,
+      context,
+      composition(
+        item.candidates.map((candidate) => ({
+          title: candidate.label,
+          context: { source_unit: candidate.source_unit, quantity: scoreText(candidate.confidence) },
+        })),
+        item.has_more_candidates,
+      ),
+      decision,
+    );
     return card;
   };
 
@@ -175,8 +230,8 @@
     const labelElement = document.createElement("span");
     labelElement.className = "review-decision-label";
     labelElement.textContent = label;
-    const valueElement = document.createElement("strong");
-    valueElement.textContent = value;
+    const valueElement = value instanceof Element ? value : document.createElement("strong");
+    if (!(value instanceof Element)) valueElement.textContent = value;
     context.append(labelElement, valueElement);
     return context;
   };
@@ -200,21 +255,8 @@
 
     const count = Number.isInteger(item.count) && item.count > 0
       ? item.count
-      : item.discrepancy_ids.length;
-    const context = document.createElement("dl");
-    context.className = "review-context manual-review-context";
-    [
-      ["Причина", suggestionText(item.message, "Проверьте замечание и примите решение.")],
-      ["Количество замечаний", String(count)],
-    ].forEach(([label, value]) => {
-      const entry = document.createElement("div");
-      const term = document.createElement("dt");
-      term.textContent = label;
-      const detail = document.createElement("dd");
-      detail.textContent = value;
-      entry.append(term, detail);
-      context.append(entry);
-    });
+      : 0;
+    const context = contextCells(item.context, [["reason", item.message], ["member_count", count]]);
 
     const actions = document.createElement("div");
     actions.className = "review-decision-actions";
@@ -238,7 +280,7 @@
       renderDecisionContext("Действие", "Одобрить или отклонить"),
       actions,
     );
-    card.append(header, context, decisionRegion);
+    card.append(header, context, composition(item.members, item.has_more_members), decisionRegion);
     return card;
   };
 
@@ -272,13 +314,13 @@
   };
 
   const setSuggestionBusy = (card, busy) => {
-    card.querySelectorAll("button").forEach((button) => {
-      button.disabled = busy;
+    card.querySelectorAll("button, select").forEach((control) => {
+      control.disabled = busy;
     });
   };
 
-  const submitSuggestionDecision = async (card, jobId, suggestionId, decision) => {
-    if (typeof jobId !== "string" || !jobId || typeof suggestionId !== "string") {
+  const submitSuggestionDecision = async (card, jobId, groupId, suggestionId, decision) => {
+    if (typeof jobId !== "string" || !jobId || typeof groupId !== "string") {
       setStatus("Не удалось определить подсказку. Обновите страницу и повторите действие.", true);
       return;
     }
@@ -287,7 +329,7 @@
       const payload = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/decisions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suggestion_id: suggestionId, decision }),
+        body: JSON.stringify({ group_id: groupId, suggestion_id: suggestionId, decision }),
       });
       renderJob(payload);
     } catch (error) {
@@ -308,7 +350,6 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           group_id: group.group_id,
-          discrepancy_ids: group.discrepancy_ids,
           decision,
         }),
       });

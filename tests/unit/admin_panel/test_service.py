@@ -114,6 +114,29 @@ def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path
     assert payload["statement"].startswith("Решения оператора записаны отдельно")
 
 
+def test_suggestion_group_decision_is_atomic_and_replay_safe(tmp_path: Path) -> None:
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _manual_result())
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+    )
+    from report_processor.admin_panel.presentation import job_payload
+
+    group = job_payload(job)["suggestion_review_groups"][0]
+    selected = group["candidates"][0]["suggestion_id"]
+    with pytest.raises(ValueError):
+        service.record_suggestion_group_decision(job_id=job.job_id, group_id=group["group_id"], suggestion_id="unknown", decision="apply")
+    assert job.decisions == []
+    service.record_suggestion_group_decision(job_id=job.job_id, group_id=group["group_id"], suggestion_id=selected, decision="apply")
+    assert {item["suggestion_id"] for item in job.decisions} == {item["suggestion_id"] for item in job.suggestions}
+    assert [item["decision"] for item in job.decisions].count("fit") == 1
+    with pytest.raises(ValueError):
+        service.record_suggestion_group_decision(job_id=job.job_id, group_id=group["group_id"], suggestion_id=selected, decision="apply")
+
+
 def test_manual_discrepancy_groups_require_exact_atomic_decisions(tmp_path: Path) -> None:
     service = AdminPanelService(
         tmp_path / "jobs", execute=lambda _job: _manual_discrepancy_result()
