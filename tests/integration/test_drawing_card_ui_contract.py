@@ -9,16 +9,20 @@ ASSETS = Path(__file__).parents[2] / "src" / "report_processor" / "admin_panel" 
 
 def test_theme_toggle_is_direct_accessible_and_persistent() -> None:
     page = (ASSETS / "drawing-card.html").read_text()
-    script = (ASSETS / "drawing-card.js").read_text()
+    main_page = (ASSETS / "index.html").read_text()
+    script = (ASSETS / "theme.js").read_text()
 
     assert 'id="theme-toggle"' in page
     assert 'type="button"' in page
     assert 'aria-pressed="false"' in page
-    assert 'THEME_STORAGE_KEY = "report-processor.drawing-card.theme.v1"' in script
-    assert "localStorage.getItem(THEME_STORAGE_KEY)" in script
-    assert "localStorage.setItem(THEME_STORAGE_KEY" in script
-    assert 'themeToggle.setAttribute("aria-pressed", String(isDark))' in script
-    assert 'themeToggle.addEventListener("click"' in script
+    assert 'src="/static/theme.js"' in page
+    assert 'id="theme-toggle"' in main_page
+    assert 'src="/static/theme.js"' in main_page
+    assert 'STORAGE_KEY = "report-processor.theme.v1"' in script
+    assert "localStorage.getItem(STORAGE_KEY)" in script
+    assert "localStorage.setItem(STORAGE_KEY" in script
+    assert 'toggle.setAttribute("aria-pressed", String(isDark))' in script
+    assert 'toggle?.addEventListener("click"' in script
 
 
 def test_unresolved_cluster_has_one_action_row_without_legacy_duplicate_buttons() -> None:

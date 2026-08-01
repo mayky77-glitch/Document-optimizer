@@ -8,6 +8,7 @@ _ASSET_DIRECTORY = Path(__file__).with_name("assets")
 _PUBLIC_ASSETS = {
     "admin.css": ("text/css; charset=utf-8", _ASSET_DIRECTORY / "admin.css"),
     "admin.js": ("text/javascript; charset=utf-8", _ASSET_DIRECTORY / "admin.js"),
+    "theme.js": ("text/javascript; charset=utf-8", _ASSET_DIRECTORY / "theme.js"),
     "drawing-card.css": (
         "text/css; charset=utf-8",
         _ASSET_DIRECTORY / "drawing-card.css",

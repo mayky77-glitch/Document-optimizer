@@ -183,10 +183,11 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
     test_client, _, _ = client
     page = test_client.get("/")
     stylesheet = test_client.get("/static/admin.css")
+    theme_script = test_client.get("/static/theme.js")
     html = page.text.casefold()
     css = stylesheet.text.casefold()
 
-    assert page.status_code == stylesheet.status_code == 200
+    assert page.status_code == stylesheet.status_code == theme_script.status_code == 200
     for label in (
         "сверка документов",
         "исходные документы",
@@ -198,6 +199,9 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
     assert 'id="target"' in html and 'name="target"' in html
     assert "post /api/jobs" in html
     assert 'name="viewport"' in html and "focus" in css
+    assert 'id="theme-toggle"' in html
+    assert 'src="/static/theme.js"' in html
+    assert "report-processor.theme.v1" in theme_script.text
     assert "#0079c2" in css
     for token in ("unit_conflict", "unchanged_value", "cost_threshold", "manual_review"):
         assert token in css

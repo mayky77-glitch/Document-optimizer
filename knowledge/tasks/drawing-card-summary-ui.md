@@ -78,6 +78,13 @@ links:
   от инвертируемого `--ink`. Семантические `--ledger-*` tokens дают контраст
   12.13:1/4.65:1 в light и 14.83:1/6.60:1 в dark; Chrome подтвердил отсутствие
   mobile overflow и console errors.
+- Follow-up 2026-08-01: тема вынесена в общий `theme.js` и действует на `/` и
+  `/drawing-card`. Главная страница получила тот же доступный прямой toggle;
+  светлые progress/input/warning/disabled/shadow поверхности заменены
+  семантическими tokens. Старый ключ карточки читается для совместимости.
+  Проверка: 10 focused integration tests, `node --check`, `git diff --check`.
+  Browser QA в этом запуске недоступен: sandbox запретил bind локального порта
+  и запуск Chrome; предыдущая проверка карточки остается валидной для ее layout.
 
 ## Knowledge delta
 
