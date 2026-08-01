@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from hashlib import sha256
@@ -48,7 +48,11 @@ class _RuleDecision:
 
 
 def calculate_matches(
-    match_results: Iterable[MatchResult], rule_set: ValidatedRuleSet
+    match_results: Iterable[MatchResult],
+    rule_set: ValidatedRuleSet,
+    candidate_inclusions: Mapping[str, tuple[bool, bool]] | None = None,
+    *,
+    inclusion_flags: Mapping[str, tuple[bool, bool]] | None = None,
 ) -> tuple[CalculationResult, ...]:
     """Calculate accepted matches only; never execute configuration or write state."""
 
@@ -59,8 +63,19 @@ def calculate_matches(
     if any(not isinstance(result, MatchResult) for result in results):
         raise CalculationInputError("INVALID_MATCH_RESULT", "match_results содержит не MatchResult")
     _reject_duplicates(results)
+    if candidate_inclusions is not None and inclusion_flags is not None:
+        raise CalculationInputError("AMBIGUOUS_CANDIDATE_INCLUSIONS", "use one inclusion mapping")
+    inclusions = _validated_inclusions(candidate_inclusions or inclusion_flags)
+    effective_ids = {
+        candidate.candidate_id
+        for result in results
+        for candidate in result.effective_selected_candidates
+    }
+    unknown_ids = sorted(set(inclusions) - effective_ids)
+    if unknown_ids:
+        raise CalculationInputError("UNKNOWN_CANDIDATE_INCLUSION", ",".join(unknown_ids))
     return tuple(
-        _calculate_result(result, rule_set, coefficient, quantum)
+        _calculate_result(result, rule_set, coefficient, quantum, inclusions)
         for result in sorted(results, key=lambda item: item.target_row_id)
     )
 
@@ -86,7 +101,11 @@ def _numeric_defaults(rule_set: ValidatedRuleSet) -> tuple[Decimal, Decimal]:
 
 
 def _calculate_result(
-    match: MatchResult, rule_set: ValidatedRuleSet, coefficient: Decimal, quantum: Decimal
+    match: MatchResult,
+    rule_set: ValidatedRuleSet,
+    coefficient: Decimal,
+    quantum: Decimal,
+    inclusions: Mapping[str, tuple[bool, bool]],
 ) -> CalculationResult:
     if match.status is MatchStatus.AMBIGUOUS:
         return _empty_result(
@@ -101,29 +120,33 @@ def _calculate_result(
         return _empty_result(
             match, rule_set, coefficient, quantum, CalculationStatus.NO_MATCH, "MATCH_UNMATCHED"
         )
-    if match.status is not MatchStatus.MATCHED or match.selected_candidate is None:
+    candidates = match.effective_selected_candidates
+    if match.status is not MatchStatus.MATCHED or not candidates:
         raise CalculationInputError("INVALID_MATCH_STATUS", match.result_id)
-    candidate = match.selected_candidate
-    if candidate.target_row_id != match.target_row_id:
-        raise CalculationInputError("CANDIDATE_TARGET_MISMATCH", candidate.candidate_id)
-    decision = _rule_decision(candidate, match, rule_set)
-    if decision.manual_review or decision.excluded:
-        reason = "RULE_EXCLUDE" if decision.excluded else "RULE_REVIEW"
+    if any(candidate.target_row_id != match.target_row_id for candidate in candidates):
+        raise CalculationInputError("CANDIDATE_TARGET_MISMATCH", match.result_id)
+    decisions = tuple(_rule_decision(candidate, match, rule_set) for candidate in candidates)
+    blocked = next((item for item in decisions if item.manual_review or item.excluded), None)
+    if blocked is not None:
+        reason = "RULE_EXCLUDE" if blocked.excluded else "RULE_REVIEW"
         return _empty_result(
             match, rule_set, coefficient, quantum, CalculationStatus.MANUAL_REVIEW, reason
         )
-    contribution = _contribution(candidate, match, rule_set, decision)
-    totals = _category_totals((contribution,), coefficient, quantum)
-    quantity = _round_sum((contribution.included_quantity,), quantum)
-    raw_cost = _sum_optional((contribution.included_cost,))
+    contributions = tuple(
+        _contribution(candidate, match, rule_set, decision, inclusions.get(candidate.candidate_id))
+        for candidate, decision in zip(candidates, decisions, strict=True)
+    )
+    totals = _category_totals(contributions, coefficient, quantum)
+    quantity = _round_sum(tuple(item.included_quantity for item in contributions), quantum)
+    raw_cost = _sum_optional(tuple(item.included_cost for item in contributions))
     cost = _round_cost(raw_cost, coefficient, quantum)
-    warnings = tuple(sorted(set(contribution.warnings)))
+    warnings = tuple(sorted({warning for item in contributions for warning in item.warnings}))
     status = (
         CalculationStatus.CALCULATED_WITH_WARNINGS if warnings else CalculationStatus.CALCULATED
     )
     if quantity is None and raw_cost is None:
         status = CalculationStatus.NO_VALUES
-    trace = _trace(match, rule_set, coefficient, quantum, (contribution,), totals, warnings)
+    trace = _trace(match, rule_set, coefficient, quantum, contributions, totals, warnings)
     calculation_id = _hash(
         "calculation",
         CALCULATION_CONTRACT_VERSION,
@@ -145,7 +168,7 @@ def _calculate_result(
         category_totals=totals,
         trace=trace,
         warnings=warnings,
-        explanation=("selected_candidate_calculated",),
+        explanation=("selected_candidates_calculated",),
     )
 
 
@@ -282,18 +305,20 @@ def _contribution(
     match: MatchResult,
     rule_set: ValidatedRuleSet,
     decision: _RuleDecision,
+    inclusion: tuple[bool, bool] | None,
 ) -> CalculationContribution:
     source = candidate.source_row
     raw_quantity = _optional_decimal(source.source_row.period_quantity, "period_quantity")
     raw_cost = _optional_decimal(source.source_row.period_cost, "period_cost")
-    quantity_allowed = decision.include_quantity and _quantity_unit_allowed(
+    include_quantity, include_cost = inclusion or (decision.include_quantity, decision.include_cost)
+    quantity_allowed = include_quantity and _quantity_unit_allowed(
         source.unit, match.target_row.unit, rule_set
     )
     warnings: list[str] = []
-    if decision.include_quantity and not quantity_allowed:
+    if include_quantity and not quantity_allowed:
         warnings.append("QUANTITY_UNIT_MISMATCH")
     included_quantity = raw_quantity if quantity_allowed else None
-    included_cost = raw_cost if decision.include_cost else None
+    included_cost = raw_cost if include_cost else None
     for value, label in ((raw_quantity, "QUANTITY"), (raw_cost, "COST")):
         if value is not None and value < 0:
             warnings.append(f"NEGATIVE_{label}")
@@ -322,7 +347,7 @@ def _contribution(
         included_quantity=included_quantity,
         included_cost=included_cost,
         include_quantity=quantity_allowed,
-        include_cost=decision.include_cost,
+        include_cost=include_cost,
         rule_ids=candidate.rule_ids,
         decisions=decision.decisions,
         warnings=tuple(sorted(set(warnings))),
@@ -459,6 +484,27 @@ def _reject_duplicates(results: tuple[MatchResult, ...]) -> None:
         values = [getattr(result, field) for result in results]
         if len(values) != len(set(values)):
             raise CalculationInputError("DUPLICATE_MATCH_IDENTITY", field)
+
+
+def _validated_inclusions(
+    values: Mapping[str, tuple[bool, bool]] | None,
+) -> Mapping[str, tuple[bool, bool]]:
+    if values is None:
+        return {}
+    if not isinstance(values, Mapping):
+        raise CalculationInputError("INVALID_CANDIDATE_INCLUSIONS", "candidate_inclusions")
+    normalized: dict[str, tuple[bool, bool]] = {}
+    for candidate_id, flags in values.items():
+        if (
+            not isinstance(candidate_id, str)
+            or not candidate_id
+            or not isinstance(flags, tuple)
+            or len(flags) != 2
+            or any(not isinstance(flag, bool) for flag in flags)
+        ):
+            raise CalculationInputError("INVALID_CANDIDATE_INCLUSIONS", str(candidate_id))
+        normalized[candidate_id] = flags
+    return normalized
 
 
 def _hash(*parts: object) -> str:

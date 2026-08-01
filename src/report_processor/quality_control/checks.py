@@ -75,19 +75,21 @@ def check_match(match: MatchResult, issues: list) -> None:
             "у target нет work name",
             match=match,
         )
-    candidate = match.selected_candidate
-    if candidate is None:
+    candidates = match.effective_selected_candidates
+    if not candidates:
         return
-    if not getattr(candidate.source_row, "work_name", None):
-        issue(
-            issues,
-            QualityIssueCode.MISSING_WORK_NAME,
-            QualityIssueSeverity.MANUAL_REVIEW,
-            "у source нет work name",
-            match=match,
-        )
-    _check_provenance(match, candidate, issues)
-    _check_units(match, candidate, issues)
+    for candidate in candidates:
+        if not getattr(candidate.source_row, "work_name", None):
+            issue(
+                issues,
+                QualityIssueCode.MISSING_WORK_NAME,
+                QualityIssueSeverity.MANUAL_REVIEW,
+                "у source нет work name",
+                match=match,
+                source_row_ids=(candidate.source_row_id,),
+            )
+        _check_provenance(match, candidate, issues)
+        _check_units(match, candidate, issues)
 
 
 def check_calculation(
@@ -340,7 +342,40 @@ def _check_tolerance(
 
 
 def _check_contributions(match: MatchResult, calculation: CalculationResult, issues: list) -> None:
+    selected_ids = {item.candidate_id for item in match.effective_selected_candidates}
+    contribution_ids = {item.candidate_id for item in calculation.trace.contributions}
+    if (
+        calculation.status
+        in {
+            CalculationStatus.CALCULATED,
+            CalculationStatus.CALCULATED_WITH_WARNINGS,
+            CalculationStatus.NO_VALUES,
+        }
+        and contribution_ids != selected_ids
+    ):
+        issue(
+            issues,
+            QualityIssueCode.CARDINALITY_MISMATCH,
+            QualityIssueSeverity.BLOCKING,
+            "contribution set не совпадает с effective selected candidates",
+            match=match,
+            calculation=calculation,
+            evidence={
+                "selected_candidate_count": len(selected_ids),
+                "contribution_candidate_count": len(contribution_ids),
+            },
+        )
     for contribution in calculation.trace.contributions:
+        if contribution.candidate_id not in selected_ids:
+            issue(
+                issues,
+                QualityIssueCode.IDENTITY_MISMATCH,
+                QualityIssueSeverity.BLOCKING,
+                "contribution не связан с effective selected candidate",
+                match=match,
+                calculation=calculation,
+                source_row_ids=(contribution.source_row_id,),
+            )
         if _negative(contribution.raw_quantity) or _negative(contribution.raw_cost):
             issue(
                 issues,

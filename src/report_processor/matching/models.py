@@ -26,6 +26,7 @@ class MatchStrategy(StrEnum):
     NORMALIZED_NAME_CONTEXT = "normalized_name_context"
     CONFIGURATION_RULE = "configuration_rule"
     FUZZY_REVIEW = "fuzzy_review"
+    AUTHORITATIVE_REVIEW = "authoritative_review"
 
 
 _STRATEGY_ORDER = {strategy: ordinal for ordinal, strategy in enumerate(MatchStrategy)}
@@ -97,21 +98,42 @@ class MatchResult:
     candidates: tuple[MatchCandidate, ...]
     warnings: tuple[str, ...]
     explanation: tuple[str, ...]
+    selected_candidates: tuple[MatchCandidate, ...] = ()
     contract_version: str = field(default=MATCHING_CONTRACT_VERSION, init=False)
 
     def __post_init__(self) -> None:
         ordered = tuple(
             sorted(self.candidates, key=lambda item: (item.strategy_ordinal, item.source_row_id))
         )
-        if self.selected_candidate is not None and not any(
-            item.candidate_id == self.selected_candidate.candidate_id for item in ordered
-        ):
-            raise ValueError("selected_candidate отсутствует среди candidates")
-        if self.status is not MatchStatus.MATCHED and self.selected_candidate is not None:
+        selected = tuple(
+            sorted(
+                self.selected_candidates,
+                key=lambda item: (item.strategy_ordinal, item.source_row_id, item.candidate_id),
+            )
+        )
+        if len({item.candidate_id for item in selected}) != len(selected):
+            raise ValueError("selected_candidates содержит повторяющийся candidate")
+        selected_ids = {item.candidate_id for item in selected}
+        if self.selected_candidate is not None:
+            selected_ids.add(self.selected_candidate.candidate_id)
+        candidate_ids = {item.candidate_id for item in ordered}
+        if not selected_ids <= candidate_ids:
+            raise ValueError("selected candidate отсутствует среди candidates")
+        if self.status is not MatchStatus.MATCHED and selected_ids:
             raise ValueError("только MATCHED может иметь selected candidate")
+        if self.selected_candidate is not None and selected:
+            raise ValueError("multi-selection оставляет legacy selected_candidate пустым")
         object.__setattr__(self, "candidates", ordered)
         object.__setattr__(self, "warnings", tuple(sorted(set(self.warnings))))
         object.__setattr__(self, "explanation", tuple(self.explanation))
+        object.__setattr__(self, "selected_candidates", selected)
+
+    @property
+    def effective_selected_candidates(self) -> tuple[MatchCandidate, ...]:
+        """Return global selections while retaining the legacy singleton contract."""
+        if self.selected_candidates:
+            return self.selected_candidates
+        return (self.selected_candidate,) if self.selected_candidate is not None else ()
 
 
 def strategy_ordinal(strategy: MatchStrategy) -> int:

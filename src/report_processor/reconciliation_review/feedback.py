@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .grouping import normalize_name, normalize_unit
-from .models import FeedbackRecord, ReviewDecision, ReviewGroup
+from .models import FeedbackRecord, ReviewDecision, ReviewGroup, ReviewRow
 
 
 def latest_feedback(
@@ -53,6 +53,25 @@ def feedback_from_decision(
     return FeedbackRecord(
         name_key=group.normalized_name,
         unit_key=group.normalized_unit,
+        action=decision.action,
+        target_category=decision.target_category,
+        mode=decision.mode,
+        sequence=sequence,
+    )
+
+
+def feedback_from_row_decision(
+    row: ReviewRow, decision: ReviewDecision, *, sequence: int
+) -> FeedbackRecord:
+    """Persist a row-level choice using the same normalized feedback key."""
+    if decision.row_id != row.row_id:
+        raise ValueError("feedback requires a decision for this row")
+    name_key = normalize_name(row.display_name)
+    if not name_key:
+        raise ValueError("feedback requires a named row")
+    return FeedbackRecord(
+        name_key=name_key,
+        unit_key=normalize_unit(row.unit),
         action=decision.action,
         target_category=decision.target_category,
         mode=decision.mode,
