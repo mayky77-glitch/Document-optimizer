@@ -35,6 +35,30 @@ def test_unresolved_cluster_has_one_action_row_without_legacy_duplicate_buttons(
     assert 'addAction("Отклонить", "reject", "danger-action")' not in script
 
 
+def test_review_decision_layout_uses_bounded_desktop_columns_and_compact_actions() -> None:
+    styles = (ASSETS / "drawing-card.css").read_text()
+
+    assert (
+        ".review-decision { display: grid; grid-template-columns: minmax(220px, 280px) "
+        "minmax(320px, 390px) max-content;"
+    ) in styles
+    assert (
+        ".review-decision-actions { grid-template-columns: repeat(2, max-content); gap: 8px; }"
+        in styles
+    )
+    assert ".review-decision-actions button { min-width: 112px; min-height: 48px;" in styles
+    assert "@media (max-width: 920px)" in styles
+    assert (
+        ".review-decision-actions { grid-column: 1 / -1; "
+        "grid-template-columns: repeat(2, max-content); }" in styles
+    )
+    assert "@media (max-width: 720px)" in styles
+    assert (
+        ".review-decision-actions { grid-column: auto; "
+        "grid-template-columns: repeat(2, minmax(0, 1fr)); }" in styles
+    )
+
+
 def test_review_action_mapping_preserves_api_contract() -> None:
     script = (ASSETS / "drawing-card-review.js").read_text()
 

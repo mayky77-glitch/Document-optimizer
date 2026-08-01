@@ -28,6 +28,8 @@ from .contract import (
     COST_FORMAT,
     FRACTIONAL_QUANTITY_FORMAT,
     INTEGER_QUANTITY_FORMAT,
+    MAIN_CARD_SHEET_NAME,
+    SUMMARY_SHEET_NAME,
 )
 from .planner import plan_write_operations
 from .styles import clone_block_columns, clone_row_style
@@ -165,7 +167,13 @@ def merge_update_rows(
 
 
 def _ensure_sheets(workbook, layouts: list[ObjectBlockLayout]) -> None:
-    first = workbook["Лист1"] if "Лист1" in workbook.sheetnames else workbook.active
+    first = (
+        workbook[MAIN_CARD_SHEET_NAME]
+        if MAIN_CARD_SHEET_NAME in workbook.sheetnames
+        else workbook["Лист1"]
+        if "Лист1" in workbook.sheetnames
+        else next(sheet for sheet in workbook.worksheets if sheet.title != SUMMARY_SHEET_NAME)
+    )
     required = tuple(dict.fromkeys(layout.sheet_name for layout in layouts))
     if required and first.title != required[0]:
         first.title = required[0]
@@ -331,6 +339,8 @@ def write_card(
                                 new_value=cell.value,
                             )
         _trim_unused_right_template_slots(workbook, layouts)
+        if SUMMARY_SHEET_NAME in workbook.sheetnames:
+            del workbook[SUMMARY_SHEET_NAME]
         add_summary_sheet(workbook, layouts, rows)
         workbook.calculation = CalcProperties(
             calcMode="auto",

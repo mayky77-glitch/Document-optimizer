@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections import defaultdict
 
 from ..models import DrawingCardResultRow, DrawingCodeBlockLayout, ObjectBlockLayout
+from .contract import MAIN_CARD_SHEET_NAME
 
 
 def plan_layout(
     rows: list[DrawingCardResultRow],
     *,
     objects_per_sheet: int = 4,
-    first_sheet_name: str = "Лист1",
+    first_sheet_name: str = MAIN_CARD_SHEET_NAME,
     additional_sheet_prefix: str = "Карточка",
 ) -> list[ObjectBlockLayout]:
     drawings: dict[str, list[str]] = defaultdict(list)
