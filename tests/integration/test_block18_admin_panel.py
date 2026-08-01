@@ -203,6 +203,11 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
     assert 'src="/static/theme.js"' in html
     assert "report-processor.theme.v1" in theme_script.text
     assert "#0079c2" in css
+    assert ".file-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start;" in css
+    assert ".file-field { min-width: 0; align-content: start; }" in css
+    assert 'input[type="file"]::file-selector-button {' in css
+    assert 'input[type="file"]:hover::file-selector-button {' in css
+    assert 'input[type="file"]:focus-visible {' in css
     for token in ("unit_conflict", "unchanged_value", "cost_threshold", "manual_review"):
         assert token in css
     assert "@media" in css

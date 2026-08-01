@@ -25,6 +25,22 @@ def test_theme_toggle_is_direct_accessible_and_persistent() -> None:
     assert 'toggle?.addEventListener("click"' in script
 
 
+def test_file_uploads_use_aligned_labels_and_native_gazprom_buttons() -> None:
+    main_styles = (ASSETS / "admin.css").read_text()
+    drawing_styles = (ASSETS / "drawing-card.css").read_text()
+
+    assert ".file-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start;" in main_styles
+    for styles in (main_styles, drawing_styles):
+        assert ".file-field { min-width: 0; align-content: start; }" in styles
+        assert 'input[type="file"]::file-selector-button {' in styles
+        assert "border: 1px solid var(--gazprom);" in styles
+        assert "background: var(--gazprom);" in styles
+        assert 'input[type="file"]:hover::file-selector-button {' in styles
+        assert 'input[type="file"]:focus-visible {' in styles
+        assert "@media (max-width: 390px)" in styles
+        assert "input[type=\"file\"]::file-selector-button { margin-inline-end: 8px; padding-inline: 8px; font-size: .88rem; }" in styles
+
+
 def test_unresolved_cluster_has_one_action_row_without_legacy_duplicate_buttons() -> None:
     script = (ASSETS / "drawing-card-review.js").read_text()
 

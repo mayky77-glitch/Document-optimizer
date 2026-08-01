@@ -22,6 +22,20 @@ updated: 2026-08-01
 | Поиск периодов | `/api/drawing-card/periods` | `drawing_card/periods.py` | `test_drawing_card_periods.py` |
 | Локальный RAG | внутри карточки | `stage_rag/`, `drawing_card/review.py` | `tests/unit/stage_rag`, `test_block18_rag.py` |
 
+## Компоненты и целевые проверки
+
+| Компонент | Ответственность | Целевая проверка |
+| --- | --- | --- |
+| Сверка документов | `index.html`, `admin.css`, `admin.js`: загрузка, статусы и тема на `/`. | `test_block18_admin_panel.py` + визуальная/file smoke на `/`. |
+| Карточка остатков | `drawing-card.html`, `drawing-card.css`, `drawing-card.js`, `drawing-card-review.js`: загрузка, период и inline review. | `test_drawing_card_ui_contract.py`, `test_drawing_card_admin.py` + визуальная/file smoke на `/drawing-card`. |
+| Admin API и сервис | `admin_panel/app.py`, `service.py`, `drawing_card_service.py`: локальные HTTP-контракты и изолированные задания. | `test_block18_admin_panel.py`, `test_drawing_card_admin.py`, unit-тесты `admin_panel/`. |
+| Сопоставление и feedback | `drawing_card/matching/`, `drawing_card/review/`, `drawing_card/autopilot/`: подбор категории и приоритет явных решений. | `tests/unit/drawing_card/test_*matcher*`, `test_inline_review_flow.py`, `test_block16_feedback.py`. |
+| XLSX-результат | `drawing_card/output/`: шаблон, раскладка, форматы и сводка. | `test_drawing_card_service_contract.py`, `test_summary_report.py`, `test_xlsx_xml_precision.py`. |
+
+Политика проверки: локальное уточнение проверяется целевыми component-тестами и
+визуальной/file smoke; полный suite запускается только для сквозного изменения,
+релиза или явного запроса пользователя.
+
 ## Зафиксированные контракты
 
 - Обе функции принимают 1–32 исходных `.xlsx`, `.xlsm` или `.xlsb`.
