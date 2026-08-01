@@ -21,6 +21,7 @@ from .drawing_card_service import (
     DrawingCardService,
 )
 from .presentation import job_payload
+from .reconciliation_review_routes import reconciliation_review_routes
 from .review_api import (
     ReviewRequestError,
     parse_manual_discrepancy_decision,
@@ -511,6 +512,7 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
                 methods=["POST"],
             ),
             Route("/api/jobs/{job_id}/result", download),
+            *reconciliation_review_routes(panel),
             Route("/api/drawing-card/periods", drawing_card_periods, methods=["POST"]),
             Route("/api/drawing-card/jobs", drawing_card_upload, methods=["POST"]),
             Route("/api/drawing-card/jobs/{job_id}", drawing_card_get_job),

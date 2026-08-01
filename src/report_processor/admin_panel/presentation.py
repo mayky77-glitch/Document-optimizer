@@ -42,6 +42,9 @@ _ABSOLUTE_PATH = re.compile(r"(?<![\w])(?:/[^\s,;]+|[A-Za-z]:\\[^\s,;]+)")
 
 def job_payload(job: object) -> dict[str, object]:
     """Serialize only frozen, client-facing fields from a job or fake mapping."""
+    review_state = getattr(job, "review_state", None)
+    if review_state is not None:
+        return _authoritative_review_payload(job, review_state)
     if isinstance(job, Mapping):
         job_id = _required_text(job.get("job_id"), "job_id")
         discrepancies, decisions = (
@@ -83,6 +86,36 @@ def job_payload(job: object) -> dict[str, object]:
         "suggestions": _public_records(getattr(job, "suggestions", ())),
         "decisions": decisions,
         "download_url": f"/api/jobs/{job_id}/result"
+        if bool(getattr(job, "result_available", False))
+        else None,
+    }
+
+
+def _authoritative_review_payload(job: object, state: object) -> dict[str, object]:
+    from .reconciliation_review_presentation import reconciliation_review_payload
+
+    unresolved_row_ids = state.unresolved_row_ids()
+    groups = reconciliation_review_payload(
+        state.unresolved_groups(), state.rows, state.effective_decisions()
+    )
+    for group in groups:
+        members = group.get("members")
+        group["display_name"] = (
+            members[0].get("display_name")
+            if isinstance(members, list) and members
+            else "Группа строк"
+        )
+    return {
+        "job_id": _required_text(getattr(job, "job_id", None), "job_id"),
+        "status": _required_text(getattr(job, "status", None), "status"),
+        "review_groups": groups,
+        "review_categories": [
+            {"category_id": category_id, "label": _public_text(label, 200)}
+            for category_id, label in sorted(state.categories.items())
+        ],
+        "unresolved_review_count": len(unresolved_row_ids),
+        "review_can_apply": not unresolved_row_ids,
+        "download_url": f"/api/jobs/{job.job_id}/result"
         if bool(getattr(job, "result_available", False))
         else None,
     }

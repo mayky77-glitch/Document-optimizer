@@ -23,8 +23,8 @@ def reconciliation_review_group_payload(
     return {
         "group_id": group.group_id,
         "version": group.version,
-        "proposed_category": group.proposed_category,
-        "selected_category": selected.target_category if selected else None,
+        "proposed_category_id": group.proposed_category,
+        "selected_category_id": selected.target_category if selected else None,
         "action": selected.action.value if selected else None,
         "mode": selected.mode.value if selected and selected.mode else None,
         "members": [_member_payload(row) for row in member_rows],
@@ -52,17 +52,27 @@ def _selected_decision(
     # A group card has one selected decision only when all its members agree.
     if row_choices:
         first = row_choices[0]
-        if len(row_choices) == len(group.member_ids) and all(item == first for item in row_choices):
+        if len(row_choices) == len(group.member_ids) and all(
+            _same_choice(item, first) for item in row_choices
+        ):
             return first
         return None
     return group_choice
+
+
+def _same_choice(left: ReviewDecision, right: ReviewDecision) -> bool:
+    return (
+        left.action is right.action
+        and left.mode is right.mode
+        and left.target_category == right.target_category
+    )
 
 
 def _member_payload(row: ReviewRow) -> dict[str, str | None]:
     return {
         "row_id": row.row_id,
         "display_name": row.display_name or "",
-        "unit": row.unit,
+        "source_unit": row.unit,
         "quantity": _money(row.quantity),
         "cost": _money(row.cost),
     }
