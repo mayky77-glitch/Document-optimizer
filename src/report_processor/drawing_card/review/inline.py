@@ -93,35 +93,34 @@ def append_feedback(
     records = _feedback_records(path)
     for review_id, approval in sorted(approvals.items()):
         row = rows.get(review_id)
-        if row is None or approval.action == "skip":
+        if row is None:
             continue
         source_text = normalize_text(row.work_name_raw)
         if not source_text:
             continue
+        unit = normalize_unit(row.unit_raw) or ""
         record = {
             "example_id": "feedback-"
-            + sha256(
-                (
-                    f"{source_text}|{normalize_unit(row.unit_raw)}|"
-                    f"{approval.category.value if approval.category else ''}|{approval.action}"
-                ).encode()
-            ).hexdigest()[:20],
+            + sha256(f"{source_text}|{unit}".encode()).hexdigest()[:20],
             "source_text": source_text,
             "normalized_text": source_text,
             "category": approval.category.value if approval.category else None,
+            "action": approval.action,
             "quantity_decision": "include"
             if approval.action in {"approve", "change_category", "quantity_only"}
             else "exclude",
             "cost_decision": "include"
             if approval.action in {"approve", "change_category", "cost_only"}
             else "exclude",
-            "unit": normalize_unit(row.unit_raw),
+            "unit": unit or None,
             "source_type": None,
             "confirmed": True,
             "confirmed_by": "inline-review",
             "rule_version": "ReviewFeedbackStore-1.0",
         }
-        records[(source_text, normalize_unit(row.unit_raw) or "", record["example_id"])] = record
+        # A local feedback rule is scoped to stable row identity only.  Replacing
+        # the prior decision makes a user's latest explicit action authoritative.
+        records[(source_text, unit)] = record
     if records:
         _atomic_text(
             path,
@@ -132,17 +131,16 @@ def append_feedback(
         )
 
 
-def _feedback_records(path: Path) -> dict[tuple[str, str, str], dict[str, object]]:
-    records: dict[tuple[str, str, str], dict[str, object]] = {}
+def _feedback_records(path: Path) -> dict[tuple[str, str], dict[str, object]]:
+    records: dict[tuple[str, str], dict[str, object]] = {}
     if not path.exists():
         return records
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             record = json.loads(line)
             key = (
-                str(record["normalized_text"]),
-                str(record.get("unit") or ""),
-                str(record["example_id"]),
+                normalize_text(record["normalized_text"]),
+                normalize_unit(record.get("unit")) or "",
             )
         except (KeyError, TypeError, json.JSONDecodeError):
             continue

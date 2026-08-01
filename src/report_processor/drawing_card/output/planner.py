@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
-
 from openpyxl.utils import get_column_letter
 
 from ..models import CATEGORY_ORDER, DrawingCardResultRow, ObjectBlockLayout, WriteOperation
+from .contract import cost_to_million_rubles
 
 _METRICS = (("unit", 2), ("quantity", 3), ("total_cost", 4))
 
@@ -78,7 +77,7 @@ def _metric_provenance(
         value = (
             None
             if row.remaining_total_cost is None
-            else row.remaining_total_cost / Decimal(cost_scale)
+            else cost_to_million_rubles(row.remaining_total_cost, cost_scale)
         )
         return (
             row.cost_source_rows,

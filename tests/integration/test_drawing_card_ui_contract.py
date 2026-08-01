@@ -35,24 +35,26 @@ def test_unresolved_cluster_has_one_action_row_without_legacy_duplicate_buttons(
     assert 'addAction("Отклонить", "reject", "danger-action")' not in script
 
 
-def test_review_decision_layout_uses_bounded_desktop_columns_and_compact_actions() -> None:
+def test_review_decision_layout_wraps_long_modes_and_moves_actions_to_a_second_row() -> None:
     styles = (ASSETS / "drawing-card.css").read_text()
 
     assert (
         ".review-decision { display: grid; grid-template-columns: minmax(220px, 280px) "
-        "minmax(320px, 390px) max-content;"
+        "minmax(0, 390px) max-content;"
     ) in styles
     assert (
         ".review-decision-actions { grid-template-columns: repeat(2, max-content); gap: 8px; }"
         in styles
     )
     assert ".review-decision-actions button { min-width: 112px; min-height: 48px;" in styles
-    assert "@media (max-width: 920px)" in styles
+    assert ".segmented-control button { min-width: 0;" in styles
+    assert "overflow-wrap: anywhere; white-space: normal;" in styles
+    assert "@container (max-width: 860px)" in styles
     assert (
         ".review-decision-actions { grid-column: 1 / -1; "
-        "grid-template-columns: repeat(2, max-content); }" in styles
+        "}" in styles
     )
-    assert "@media (max-width: 720px)" in styles
+    assert "@container (max-width: 620px)" in styles
     assert (
         ".review-decision-actions { grid-column: auto; "
         "grid-template-columns: repeat(2, minmax(0, 1fr)); }" in styles

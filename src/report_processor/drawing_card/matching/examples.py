@@ -34,10 +34,14 @@ def load_confirmed_examples(path: Path | None) -> tuple[ConfirmedExample, ...]:
     if path is None or not path.exists():
         return ()
     examples: list[ConfirmedExample] = []
+    latest_feedback: dict[tuple[str, str], ConfirmedExample] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        payload = json.loads(line)
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
         if not payload.get("confirmed", False):
             continue
         category = payload.get("category")
@@ -50,8 +54,8 @@ def load_confirmed_examples(path: Path | None) -> tuple[ConfirmedExample, ...]:
             cost = "include"
         if decision == "exclude":
             quantity = cost = "exclude"
-        examples.append(
-            ConfirmedExample(
+        try:
+            example = ConfirmedExample(
                 example_id=str(payload["example_id"]),
                 source_text=str(payload["source_text"]),
                 normalized_text=str(
@@ -65,8 +69,27 @@ def load_confirmed_examples(path: Path | None) -> tuple[ConfirmedExample, ...]:
                 confirmed_by=payload.get("confirmed_by"),
                 rule_version=payload.get("rule_version"),
             )
-        )
-    return tuple(examples)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if _is_review_feedback(example):
+            # Older feedback files used an action-specific id, leaving stale
+            # contradictions behind.  Preserve only the latest JSONL decision.
+            latest_feedback[(example.normalized_text, example.unit or "")] = example
+        else:
+            examples.append(example)
+    return tuple((*examples, *latest_feedback.values()))
+
+
+def _is_review_feedback(example: ConfirmedExample) -> bool:
+    return example.confirmed_by == "inline-review" and (example.rule_version or "").startswith(
+        "ReviewFeedbackStore-"
+    )
+
+
+def _prefer_review_feedback(candidates: list[ConfirmedExample]) -> list[ConfirmedExample]:
+    """A local explicit decision overrides a bundled example with the same row identity."""
+    feedback = [item for item in candidates if _is_review_feedback(item)]
+    return feedback or candidates
 
 
 class LexicalExampleRetriever:
@@ -118,6 +141,7 @@ def exact_example_match(
     candidates = exact_unit or [
         item for item in candidates if item.unit is None and item.category is not None
     ]
+    candidates = _prefer_review_feedback(candidates)
     if not candidates:
         return None
     candidates.sort(
@@ -145,6 +169,7 @@ def has_exact_example_conflict(
         for item in examples
         if item.normalized_text == normalized and item.unit == normalized_unit
     ]
+    candidates = _prefer_review_feedback(candidates)
     return (
         len({(item.category, item.quantity_decision, item.cost_decision) for item in candidates})
         > 1

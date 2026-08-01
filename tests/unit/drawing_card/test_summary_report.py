@@ -26,7 +26,11 @@ from report_processor.drawing_card.output.contract import (
 from report_processor.drawing_card.output.layout import plan_layout
 from report_processor.drawing_card.output.summary import summary_block_position, summary_row_count
 from report_processor.drawing_card.output.validator import validate_card
-from report_processor.drawing_card.output.writer import write_card
+from report_processor.drawing_card.output.writer import (
+    load_existing_values,
+    merge_update_rows,
+    write_card,
+)
 from report_processor.drawing_card.sources.normalization import build_drawing_code
 from report_processor.drawing_card.statuses import Status
 
@@ -49,7 +53,12 @@ def _rows(indices: tuple[str, ...] = ("1001", "1002", "1003"), *, mixed_unit: bo
                     display_name=CATEGORY_DISPLAY_NAMES[category],
                     result_unit=unit,
                     remaining_quantity=Decimal(f"{index_number}.{category_number}"),
-                    remaining_total_cost=Decimal(str(index_number * category_number * 1000)),
+                    # Internal costs stay in rubles.  With cost_scale=100 the
+                    # published values below are whole millions, making unit
+                    # conversion and the 3-decimal display contract observable.
+                    remaining_total_cost=Decimal(
+                        str(index_number * category_number * 100_000_000)
+                    ),
                     quantity_source_rows=(f"row-{object_index}-{category_number}",),
                     cost_source_rows=(f"row-{object_index}-{category_number}",),
                     quantity_rule_id="test-rule",
@@ -79,7 +88,7 @@ def _write(tmp_path: Path, *, mixed_unit: bool = False) -> tuple[Path, list]:
     return output, layouts
 
 
-def test_summary_uses_two_column_index_cards_and_formula_bearing_total_card(
+def test_summary_uses_two_column_index_cards_with_literal_million_ruble_values(
     tmp_path: Path,
 ) -> None:
     output, layouts = _write(tmp_path)
@@ -127,22 +136,24 @@ def test_summary_uses_two_column_index_cards_and_formula_bearing_total_card(
         second_row, second_column = summary_block_position(1)
         third_row, third_column = summary_block_position(2)
         total_row, total_column = summary_block_position(len(layouts))
-        assert summary.cell(first_row + 2, first_column + 2).value.startswith(
-            "=SUMIF('Карточка остатков'!"
+        assert all(
+            cell.data_type != "f" for row in summary.iter_rows() for cell in row
         )
-        assert summary.cell(second_row + 2, second_column + 3).value.startswith(
-            "=SUMIF('Карточка остатков'!"
+        assert all(
+            isinstance(summary.cell(first_row + 2, first_column + offset).value, (int, float))
+            for offset in (2, 3)
         )
-        assert summary.cell(total_row + 2, total_column + 2).value == (
-            f"=SUM({summary.cell(first_row + 2, first_column + 2).coordinate},"
-            f"{summary.cell(second_row + 2, second_column + 2).coordinate},"
-            f"{summary.cell(third_row + 2, third_column + 2).coordinate})"
-        )
-        assert summary.cell(total_row + 2, total_column + 3).value == (
-            f"=SUM({summary.cell(first_row + 2, first_column + 3).coordinate},"
-            f"{summary.cell(second_row + 2, second_column + 3).coordinate},"
-            f"{summary.cell(third_row + 2, third_column + 3).coordinate})"
-        )
+        assert summary.cell(first_row + 2, first_column + 3).value == 1
+        assert summary.cell(second_row + 2, second_column + 3).value == 2
+        assert summary.cell(third_row + 2, third_column + 3).value == 3
+        assert summary.cell(total_row + 2, total_column + 3).value == 6
+        for offset in range(len(CATEGORY_ORDER)):
+            total_cost = summary.cell(total_row + 2 + offset, total_column + 3).value
+            positions = [summary_block_position(number) for number in range(len(layouts))]
+            index_costs = [
+                summary.cell(row + 2 + offset, column + 3).value for row, column in positions
+            ]
+            assert Decimal(str(total_cost)) == sum(Decimal(str(value)) for value in index_costs)
         assert (
             summary.cell(first_row + 2, first_column + 2).number_format
             == FRACTIONAL_QUANTITY_FORMAT
@@ -154,11 +165,34 @@ def test_summary_uses_two_column_index_cards_and_formula_bearing_total_card(
         )
         assert summary.cell(total_row + 2, total_column + 3).number_format == COST_FORMAT
         assert COST_FORMAT == "#,##0.000"
-        assert workbook.calculation.calcMode == "auto"
-        assert workbook.calculation.fullCalcOnLoad is True
-        assert workbook.calculation.forceFullCalc is True
+        assert "млн руб." in SUMMARY_HEADERS[-1]
+        assert "млн руб." in workbook[MAIN_CARD_SHEET_NAME]["F3"].value
     finally:
         workbook.close()
+
+
+def test_update_reads_million_ruble_card_back_as_internal_rubles_without_double_scaling(
+    tmp_path: Path,
+) -> None:
+    output, _layouts = _write(tmp_path)
+    existing = load_existing_values(output, cost_scale=100)
+    source_key = ("1001", "А-001", CATEGORY_DISPLAY_NAMES[CATEGORY_ORDER[0]].casefold())
+
+    assert existing[source_key][2] == Decimal("100000000")
+
+    preserved, warnings = merge_update_rows([], existing, policy="keep_existing")
+    updated = tmp_path / "updated-card.xlsx"
+    write_card(
+        base_path=output,
+        output_path=updated,
+        rows=preserved,
+        layouts=plan_layout(preserved),
+        run_id="summary-update",
+        cost_scale=100,
+    )
+
+    assert warnings == []
+    assert load_existing_values(updated, cost_scale=100)[source_key][2] == Decimal("100000000")
 
 
 def test_three_occupied_slots_trim_only_the_fourth_template_slot(tmp_path: Path) -> None:

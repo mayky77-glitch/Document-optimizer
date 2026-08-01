@@ -12,7 +12,6 @@ from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
-from openpyxl.workbook.properties import CalcProperties
 
 from ..models import (
     CATEGORY_DISPLAY_NAMES,
@@ -26,10 +25,12 @@ from ..statuses import Status
 from .contract import (
     CARD_HEADERS,
     COST_FORMAT,
+    DISPLAY_COST_SCALE,
     FRACTIONAL_QUANTITY_FORMAT,
     INTEGER_QUANTITY_FORMAT,
     MAIN_CARD_SHEET_NAME,
     SUMMARY_SHEET_NAME,
+    cost_to_million_rubles,
 )
 from .planner import plan_write_operations
 from .styles import clone_block_columns, clone_row_style
@@ -43,7 +44,9 @@ def _decimal_or_value(value):
     return value
 
 
-def _existing_values(workbook) -> dict[tuple[str, str, str], tuple[object, object, object]]:
+def _existing_values(
+    workbook, *, cost_scale: int = 1
+) -> dict[tuple[str, str, str], tuple[object, object, object]]:
     result: dict[tuple[str, str, str], tuple[object, object, object]] = {}
     for sheet in workbook.worksheets:
         for start_column in range(2, sheet.max_column + 1, 6):
@@ -63,10 +66,18 @@ def _existing_values(workbook) -> dict[tuple[str, str, str], tuple[object, objec
                     normalize_text(value) for value in CATEGORY_DISPLAY_NAMES.values()
                 }:
                     continue
+                cost = sheet.cell(row, start_column + 4).value
+                cost_header = sheet.cell(3, start_column + 4).value
+                if (
+                    cost is not None
+                    and isinstance(cost_header, str)
+                    and "млн" in normalize_text(cost_header)
+                ):
+                    cost = Decimal(str(cost)) * DISPLAY_COST_SCALE * Decimal(cost_scale)
                 result[(object_index, current_drawing, normalize_text(str(category)))] = (
                     sheet.cell(row, start_column + 2).value,
                     sheet.cell(row, start_column + 3).value,
-                    sheet.cell(row, start_column + 4).value,
+                    cost,
                 )
     return result
 
@@ -298,7 +309,7 @@ def write_card(
                         (
                             None
                             if result.remaining_total_cost is None
-                            else result.remaining_total_cost / cost_scale
+                            else cost_to_million_rubles(result.remaining_total_cost, cost_scale)
                         ),
                     )
                     for column_offset, value in enumerate(values):
@@ -341,11 +352,13 @@ def write_card(
         _trim_unused_right_template_slots(workbook, layouts)
         if SUMMARY_SHEET_NAME in workbook.sheetnames:
             del workbook[SUMMARY_SHEET_NAME]
-        add_summary_sheet(workbook, layouts, rows)
-        workbook.calculation = CalcProperties(
-            calcMode="auto",
-            fullCalcOnLoad=True,
-            forceFullCalc=True,
+        exact_numeric_cells.update(
+            add_summary_sheet(
+                workbook,
+                layouts,
+                rows,
+                cost_scale=cost_scale,
+            )
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -368,9 +381,11 @@ def write_card(
     return operations
 
 
-def load_existing_values(path: Path) -> dict[tuple[str, str, str], tuple[object, object, object]]:
+def load_existing_values(
+    path: Path, *, cost_scale: int = 1
+) -> dict[tuple[str, str, str], tuple[object, object, object]]:
     workbook = load_workbook(path, data_only=True)
     try:
-        return _existing_values(workbook)
+        return _existing_values(workbook, cost_scale=cost_scale)
     finally:
         workbook.close()

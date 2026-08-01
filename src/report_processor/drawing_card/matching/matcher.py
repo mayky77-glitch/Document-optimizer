@@ -247,16 +247,6 @@ class DrawingRowMatcher:
         if approved is not None:
             return approved
         text = normalize_text(row.work_name_raw)
-        if self._has_unresolved_formula(row):
-            return self._review(
-                row,
-                reason="Formula value is unresolved; automatic no-impact exclusion is unsafe",
-                warnings=tuple(
-                    str(item) for item in row.warnings if str(item).startswith("FORMULA_")
-                ),
-            )
-        if self._is_no_impact(row, text):
-            return self._exclude_no_impact(row)
         if has_exact_example_conflict(text, self.examples, unit=row.unit_raw):
             return self._review(
                 row,
@@ -298,6 +288,16 @@ class DrawingRowMatcher:
                 warnings=(Status.UNIT_MISMATCH,),
                 evidence_ids=(exact.example_id,),
             )
+        if self._has_unresolved_formula(row):
+            return self._review(
+                row,
+                reason="Formula value is unresolved; automatic no-impact exclusion is unsafe",
+                warnings=tuple(
+                    str(item) for item in row.warnings if str(item).startswith("FORMULA_")
+                ),
+            )
+        if self._is_no_impact(row, text):
+            return self._exclude_no_impact(row)
         if _has_confirmed_negative(text):
             return self._exclude_negative(row)
         coupling = self._safe_cable_coupling(row, text)

@@ -1,12 +1,12 @@
-"""Formula-bearing card-style summary sheet for published drawing-card workbooks."""
+"""Literal-value card-style summary sheet for published drawing-card workbooks."""
 
 from __future__ import annotations
 
 from collections import defaultdict
+from decimal import Decimal
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.utils.cell import quote_sheetname
 
 from ..models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER, DrawingCardResultRow, ObjectBlockLayout
 from ..sources.normalization import normalize_text
@@ -18,6 +18,7 @@ from .contract import (
     SUMMARY_BLOCKS_PER_ROW,
     SUMMARY_HEADERS,
     SUMMARY_SHEET_NAME,
+    cost_to_million_rubles,
 )
 
 _TITLE_FILL = PatternFill("solid", fgColor="C6E0B4")
@@ -64,27 +65,20 @@ def _single_nonempty_unit(units: tuple[str | None, ...]) -> str | None:
     return units[0] if len(normalized) == 1 else None
 
 
-def _source_formula(
-    layout: ObjectBlockLayout,
-    category_column: int,
-    metric_column: int,
-    summary_row: int,
-    summary_category_column: int = 1,
-) -> str:
-    last_row = layout.drawing_code_blocks[-1].end_row
-    source_sheet = quote_sheetname(layout.sheet_name)
-    category_letter = get_column_letter(category_column)
-    metric_letter = get_column_letter(metric_column)
-    summary_category_letter = get_column_letter(summary_category_column)
-    return (
-        f"=SUMIF({source_sheet}!${category_letter}${layout.data_start_row}:"
-        f"${category_letter}${last_row},${summary_category_letter}${summary_row},{source_sheet}!"
-        f"${metric_letter}${layout.data_start_row}:${metric_letter}${last_row})"
+def _sum_quantity(rows: list[DrawingCardResultRow]) -> Decimal:
+    return sum((row.remaining_quantity or Decimal(0) for row in rows), Decimal(0))
+
+
+def _sum_cost(rows: list[DrawingCardResultRow], cost_scale: int) -> Decimal:
+    """Sum the published row values so summaries reconcile with the main card."""
+
+    return sum(
+        (
+            cost_to_million_rubles(row.remaining_total_cost, cost_scale) or Decimal(0)
+            for row in rows
+        ),
+        Decimal(0),
     )
-
-
-def _all_indices_formula(metric_cells: list[str]) -> str:
-    return f"=SUM({','.join(metric_cells)})"
 
 
 def _style_block(sheet, *, start_row: int, start_column: int, title: str) -> None:
@@ -118,14 +112,23 @@ def add_summary_sheet(
     workbook,
     layouts: list[ObjectBlockLayout],
     rows: list[DrawingCardResultRow],
-) -> None:
-    """Create horizontal index cards and a separate formula-bearing grand-total card."""
+    *,
+    cost_scale: int,
+) -> dict[tuple[str, str], Decimal]:
+    """Create horizontal index cards and a separate literal-value grand-total card."""
 
     if SUMMARY_SHEET_NAME in workbook.sheetnames:
         raise ValueError(f"Summary sheet already exists: {SUMMARY_SHEET_NAME}")
     sheet = workbook.create_sheet(SUMMARY_SHEET_NAME)
     units = _units_by_layout(rows)
-    index_metric_cells: dict[object, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
+    exact_numeric_cells: dict[tuple[str, str], Decimal] = {}
+    rows_by_object_category: dict[tuple[str, object], list[DrawingCardResultRow]] = defaultdict(
+        list
+    )
+    rows_by_category: dict[object, list[DrawingCardResultRow]] = defaultdict(list)
+    for result in rows:
+        rows_by_object_category[(result.object_index, result.category)].append(result)
+        rows_by_category[result.category].append(result)
 
     for block_number, layout in enumerate(layouts):
         start_row, start_column = summary_block_position(block_number)
@@ -138,35 +141,16 @@ def add_summary_sheet(
         for offset, category in enumerate(CATEGORY_ORDER):
             row = start_row + 2 + offset
             category_cell = sheet.cell(row, start_column, CATEGORY_DISPLAY_NAMES[category])
+            index_rows = rows_by_object_category[(layout.object_index, category)]
             unit = _single_nonempty_unit(units.get((layout.object_index, category), ()))
             if unit is not None:
                 sheet.cell(row, start_column + 1, unit)
-                quantity = sheet.cell(
-                    row,
-                    start_column + 2,
-                    _source_formula(
-                        layout,
-                        layout.start_column + 1,
-                        layout.start_column + 3,
-                        row,
-                        start_column,
-                    ),
-                )
+                quantity = sheet.cell(row, start_column + 2, _sum_quantity(index_rows))
                 quantity.number_format = FRACTIONAL_QUANTITY_FORMAT
-                index_metric_cells[category][2].append(quantity.coordinate)
-            cost = sheet.cell(
-                row,
-                start_column + 3,
-                _source_formula(
-                    layout,
-                    layout.start_column + 1,
-                    layout.start_column + 4,
-                    row,
-                    start_column,
-                ),
-            )
+                exact_numeric_cells[(sheet.title, quantity.coordinate)] = quantity.value
+            cost = sheet.cell(row, start_column + 3, _sum_cost(index_rows, cost_scale))
             cost.number_format = COST_FORMAT
-            index_metric_cells[category][3].append(cost.coordinate)
+            exact_numeric_cells[(sheet.title, cost.coordinate)] = cost.value
             category_cell.alignment = Alignment(vertical="top", wrap_text=True)
 
     total_start_row, total_start_column = summary_block_position(len(layouts))
@@ -189,15 +173,17 @@ def add_summary_sheet(
             quantity = sheet.cell(
                 row,
                 total_start_column + 2,
-                _all_indices_formula(index_metric_cells[category][2]),
+                _sum_quantity(rows_by_category[category]),
             )
             quantity.number_format = FRACTIONAL_QUANTITY_FORMAT
+            exact_numeric_cells[(sheet.title, quantity.coordinate)] = quantity.value
         cost = sheet.cell(
             row,
             total_start_column + 3,
-            _all_indices_formula(index_metric_cells[category][3]),
+            _sum_cost(rows_by_category[category], cost_scale),
         )
         cost.number_format = COST_FORMAT
+        exact_numeric_cells[(sheet.title, cost.coordinate)] = cost.value
 
     for column in range(1, sheet.max_column + 1):
         offset = (column - 1) % SUMMARY_BLOCK_COLUMN_SPAN
@@ -211,3 +197,4 @@ def add_summary_sheet(
     sheet.page_setup.fitToHeight = 0
     sheet.print_options.horizontalCentered = True
     sheet.print_area = f"A1:{get_column_letter(sheet.max_column)}{sheet.max_row}"
+    return exact_numeric_cells

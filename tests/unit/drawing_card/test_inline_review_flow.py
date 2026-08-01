@@ -7,11 +7,15 @@ from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from report_processor.drawing_card.aggregation import aggregate_rows
+from report_processor.drawing_card.config import load_rules
 from report_processor.drawing_card.matching.examples import (
     ConfirmedExample,
     exact_example_match,
     has_exact_example_conflict,
+    load_confirmed_examples,
 )
 from report_processor.drawing_card.matching.matcher import DrawingRowMatcher, ReviewApproval
 from report_processor.drawing_card.models import (
@@ -22,6 +26,15 @@ from report_processor.drawing_card.models import (
 )
 from report_processor.drawing_card.review.inline import append_feedback
 from report_processor.drawing_card.statuses import Status
+
+RULES = load_rules(
+    Path(__file__).parents[3]
+    / "src"
+    / "report_processor"
+    / "drawing_card"
+    / "resources"
+    / "rules.json"
+)
 
 
 def _row() -> DrawingSourceRow:
@@ -137,9 +150,12 @@ def test_reject_feedback_is_exact_unit_scoped_and_not_a_category_prediction(tmp_
     assert exact_example_match(text, examples, unit="м", source_type=None) == examples[0]
 
 
-def test_conflicting_exact_feedback_refuses_first_record_wins() -> None:
+def test_latest_local_feedback_overrides_an_older_local_decision_and_bundled_example(
+    tmp_path: Path,
+) -> None:
+    feedback = tmp_path / "review-feedback.jsonl"
     base = ConfirmedExample(
-        example_id="feedback-a",
+        example_id="bundled-example",
         source_text="Монтаж контрольного кабеля",
         normalized_text="монтаж контрольного кабеля",
         category=TargetWorkCategory.LOW_CURRENT_CABLE,
@@ -147,18 +163,63 @@ def test_conflicting_exact_feedback_refuses_first_record_wins() -> None:
         cost_decision="include",
         unit="м",
         source_type=None,
-        confirmed_by="inline-review",
+        confirmed_by="bundled",
         rule_version="1",
     )
-    conflict = replace(
-        base,
-        example_id="feedback-b",
-        category=None,
-        quantity_decision="exclude",
-        cost_decision="exclude",
+    append_feedback(
+        feedback,
+        {"review-row-1": _row()},
+        {
+            "review-row-1": ReviewApproval(
+                "review-row-1", "approve", TargetWorkCategory.LOW_CURRENT_CABLE
+            )
+        },
+    )
+    append_feedback(
+        feedback,
+        {"review-row-1": _row()},
+        {"review-row-1": ReviewApproval("review-row-1", "reject", None)},
+    )
+    examples = (base, *load_confirmed_examples(feedback))
+    decision = DrawingRowMatcher(RULES, examples, rag_mode="off").match(_row())
+
+    assert feedback.read_text(encoding="utf-8").count("\n") == 1
+    assert has_exact_example_conflict(base.source_text, examples, unit="м") is False
+    assert decision.category is None
+    assert (decision.quantity_decision, decision.cost_decision) == ("exclude", "exclude")
+    assert decision.requires_manual_review is False
+
+
+@pytest.mark.parametrize(
+    ("action", "category", "quantity", "cost"),
+    (
+        ("approve", TargetWorkCategory.LOW_CURRENT_CABLE, "include", "include"),
+        ("change_category", TargetWorkCategory.CONCRETE_WORKS, "include", "include"),
+        ("cost_only", TargetWorkCategory.LOW_CURRENT_CABLE, "exclude", "include"),
+        ("reject", None, "exclude", "exclude"),
+        ("skip", None, "exclude", "exclude"),
+    ),
+)
+def test_inline_feedback_replays_every_explicit_action_without_manual_review(
+    tmp_path: Path,
+    action: str,
+    category: TargetWorkCategory | None,
+    quantity: str,
+    cost: str,
+) -> None:
+    feedback = tmp_path / "review-feedback.jsonl"
+    append_feedback(
+        feedback,
+        {"review-row-1": _row()},
+        {"review-row-1": ReviewApproval("review-row-1", action, category)},
     )
 
-    assert has_exact_example_conflict(base.source_text, (base, conflict), unit="м") is True
-    assert (
-        exact_example_match(base.source_text, (base, conflict), unit="м", source_type=None) is None
-    )
+    repeated = replace(_row(), row_id="same-text-next-run")
+    decision = DrawingRowMatcher(
+        RULES, load_confirmed_examples(feedback), rag_mode="off"
+    ).match(repeated)
+
+    assert decision.category is category
+    assert (decision.quantity_decision, decision.cost_decision) == (quantity, cost)
+    assert decision.matching_strategy == "confirmed_dictionary"
+    assert decision.requires_manual_review is False
