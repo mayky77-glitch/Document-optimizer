@@ -26,6 +26,7 @@ class MatchStrategy(StrEnum):
     NORMALIZED_NAME_CONTEXT = "normalized_name_context"
     CONFIGURATION_RULE = "configuration_rule"
     FUZZY_REVIEW = "fuzzy_review"
+    AUTHORITATIVE_REVIEW = "authoritative_review"
 
 
 _STRATEGY_ORDER = {strategy: ordinal for ordinal, strategy in enumerate(MatchStrategy)}
