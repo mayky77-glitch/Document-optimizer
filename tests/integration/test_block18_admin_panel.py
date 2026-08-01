@@ -205,7 +205,10 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
     assert "#0079c2" in css
     assert ".file-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start;" in css
     assert ".file-field { min-width: 0; align-content: start; }" in css
+    assert 'input[type="file"] { min-width: 0; min-height: 76px; padding: 0 12px 0 0;' in css
     assert 'input[type="file"]::file-selector-button {' in css
+    assert "height: 74px; margin-inline-end: 12px;" in css
+    assert "border: 0; border-right: 1px solid var(--gazprom-dark); border-radius: 0;" in css
     assert 'input[type="file"]:hover::file-selector-button {' in css
     assert 'input[type="file"]:focus-visible {' in css
     for token in ("unit_conflict", "unchanged_value", "cost_threshold", "manual_review"):

@@ -7,8 +7,8 @@ agent_role: designer
 owner: "upload-control-designer"
 profile: L2
 routing_grade: P4
-progress_revision: 1
-state_fingerprint: "upload-controls-aligned-browser-verified"
+progress_revision: 2
+state_fingerprint: "upload-controls-flush-browser-verified"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "L2 compatibility profile maps to P4."
@@ -61,18 +61,18 @@ mobile поля складываются в одну колонку. На обе
 - Changed paths: `admin.css`, `drawing-card.css`, два UI-contract теста и
   [[../maps/project-map|project map]].
 - Commands and tests run: `uv run pytest -q tests/integration/test_block18_admin_panel.py tests/integration/test_drawing_card_ui_contract.py` (12 passed); `node --check` для `admin.js` и `drawing-card.js`; `git diff --check`.
-- Result: `align-items: start` устраняет растяжение короткой label сеткой;
-  `::file-selector-button` даёт нативной кнопке Gazprom-стиль, включая
-  hover/focus и компактный 390px-вариант. Browser QA на `127.0.0.1:8765`:
-  на `/` в 1024px source/target имеют top delta 0px и height delta 0px;
-  в 720/390px одинаковую высоту 76px и корректно stack; `/drawing-card` в
-  1024/720/390px, light/dark — 76px, без horizontal overflow; console errors 0.
-  Скриншоты: `/tmp/upload-control-main-1024-focus.png`,
-  `/tmp/upload-control-main-390-light-final.png`,
-  `/tmp/upload-control-drawing-1024-dark.png`.
-- Risks or follow-up: проверен Chromium `::file-selector-button`; старые
-  движки без поддержки сохраняют доступный нативный control без брендовой
-  подложки.
+- Result: `align-items: start` устраняет растяжение короткой label сеткой.
+  Recovery: у `input[type=file]` остаётся padding только справа, а selector
+  имеет высоту 74px внутри 76px control, поэтому кнопка прилегает к верхней,
+  левой и нижней границе с допустимым 1px outer border; перед именем файла
+  остаётся 12px inline gap. Нативные hover/focus и 390px-компактный вариант
+  сохранены. UI-contract assertions фиксируют эти геометрические условия.
+- Risks or follow-up: focused тесты, Node и diff-check проходят. Recovery
+  дополнительно проверен в запущенном приложении через headless Chrome:
+  `/tmp/upload-controls-flush-1024.png`. Кнопки прилегают к рамке, имена файлов
+  имеют нормальный зазор, верхние границы source/target совпадают. Старые
+  движки без `::file-selector-button` сохраняют доступный нативный control без
+  брендовой подложки.
 
 ## Handoff
 
