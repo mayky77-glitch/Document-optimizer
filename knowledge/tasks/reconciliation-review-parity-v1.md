@@ -1,14 +1,14 @@
 ---
 type: task
-status: review
+status: done
 work_id: reconciliation-review-parity-v1
 role: worker
 agent_role: developer
 owner: "reconciliation-review-parity-developer"
 profile: L2
 routing_grade: P4
-progress_revision: 0
-state_fingerprint: ""
+progress_revision: 1
+state_fingerprint: "sha256:f91c5959d62783fb651a4298dee83ac44ada9d18a14d38063b1b04cd13e51aaf"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "Visual parity requires adapting a proven inline-review contract across JS/CSS and focused browser/test verification."
@@ -36,7 +36,7 @@ source_paths:
 depends_on: []
 tags:
   - "task/implementation"
-  - "status/review"
+  - "status/done"
   - "domain/document-processing"
   - "capability/admin-panel"
   - "layer/frontend"
@@ -71,9 +71,10 @@ information architecture used by `/drawing-card`, without changing the API.
   - `.venv/bin/ruff check tests/integration/test_block18_admin_panel.py` — passed.
   - `.venv/bin/ruff format --check tests/integration/test_block18_admin_panel.py` — passed.
   - `git diff --check` — passed.
-  - Browser smoke: local non-production panel could not bind `127.0.0.1:8765`
-    under the sandbox (`[Errno 1] operation not permitted`); desktop/mobile and
-    light/dark browser evidence is unavailable.
+  - Root browser smoke: production CSS and final card markup rendered in Chrome
+    at `1440px` and `390px`, in light and dark themes. Screenshots:
+    `/private/tmp/review-parity-{dark,light}-{desktop,mobile}.png`.
+    Exact mobile DOM checks returned `data-horizontal-overflow="false"` in both themes.
 - Result:
   - Both card types use `review-item`, `review-item-head`, `review-context`, and
     `review-decision`; actions appear only in the lower decision row.
@@ -81,7 +82,7 @@ information architecture used by `/drawing-card`, without changing the API.
     approve/reject action. Suggestions retain candidate, target, score, and
     fit/not-fit action semantics.
 - Risks or follow-up:
-  - Browser rendering needs one local run outside the socket-restricted sandbox.
+  - No backend/API contract changed; the running page only needs a reload.
   - SHA-256 fingerprints:
     - `admin.js`: `f91c5959d62783fb651a4298dee83ac44ada9d18a14d38063b1b04cd13e51aaf`
     - `admin.css`: `9a4a57df7a55d51411a4fdeeb7539f1e690fe676d82582abca2857c1f3c81d50`
@@ -90,4 +91,4 @@ information architecture used by `/drawing-card`, without changing the API.
 
 ## Handoff
 
-Leave this card in `review` until orchestration accepts the result.
+Orchestration and root visual smoke accepted the result.
