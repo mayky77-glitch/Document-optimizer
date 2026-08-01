@@ -211,10 +211,13 @@ class AdminPanelService:
 
     def apply_reconciliation(self, job_id: str) -> AdminJob:
         job = self._review_job(job_id)
+        if job.review_state.unresolved_row_ids():
+            raise ValueError("authoritative review is incomplete")
         _verify_inputs(job)
         job.status = "running"
         try:
             output, feedback = apply_review(job, job.review_state)
+            job.output = output
             self.feedback_store.persist(job.target_digest, feedback)
             os.chmod(output, 0o600)
             job.output, job.result_name, job.status = output, "optimized-report.xlsx", "ready"

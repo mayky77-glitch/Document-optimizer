@@ -52,10 +52,20 @@ def _selected_decision(
     # A group card has one selected decision only when all its members agree.
     if row_choices:
         first = row_choices[0]
-        if len(row_choices) == len(group.member_ids) and all(item == first for item in row_choices):
+        if len(row_choices) == len(group.member_ids) and all(
+            _same_choice(item, first) for item in row_choices
+        ):
             return first
         return None
     return group_choice
+
+
+def _same_choice(left: ReviewDecision, right: ReviewDecision) -> bool:
+    return (
+        left.action is right.action
+        and left.mode is right.mode
+        and left.target_category == right.target_category
+    )
 
 
 def _member_payload(row: ReviewRow) -> dict[str, str | None]:

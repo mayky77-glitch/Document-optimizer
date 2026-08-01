@@ -94,8 +94,9 @@ def job_payload(job: object) -> dict[str, object]:
 def _authoritative_review_payload(job: object, state: object) -> dict[str, object]:
     from .reconciliation_review_presentation import reconciliation_review_payload
 
+    unresolved_row_ids = state.unresolved_row_ids()
     groups = reconciliation_review_payload(
-        state.group_snapshot(), state.rows, state.effective_decisions()
+        state.unresolved_groups(), state.rows, state.effective_decisions()
     )
     for group in groups:
         members = group.get("members")
@@ -112,8 +113,8 @@ def _authoritative_review_payload(job: object, state: object) -> dict[str, objec
             {"category_id": category_id, "label": _public_text(label, 200)}
             for category_id, label in sorted(state.categories.items())
         ],
-        "unresolved_review_count": len(groups),
-        "review_can_apply": True,
+        "unresolved_review_count": len(unresolved_row_ids),
+        "review_can_apply": not unresolved_row_ids,
         "download_url": f"/api/jobs/{job.job_id}/result"
         if bool(getattr(job, "result_available", False))
         else None,

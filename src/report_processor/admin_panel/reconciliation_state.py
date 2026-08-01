@@ -72,6 +72,20 @@ class ReconciliationReviewState:
         )
         return tuple(values)
 
+    def unresolved_row_ids(self) -> tuple[str, ...]:
+        """Return source rows lacking either a group or a row decision."""
+        resolved = set(self.row_decisions)
+        for group_id in self.group_decisions:
+            resolved.update(self.groups[group_id].member_ids)
+        return tuple(sorted(set(self.rows) - resolved))
+
+    def unresolved_groups(self) -> tuple[ReviewGroup, ...]:
+        """Return only cards that still contain a row requiring an operator choice."""
+        unresolved = set(self.unresolved_row_ids())
+        return tuple(
+            group for group in self.group_snapshot() if unresolved.intersection(group.member_ids)
+        )
+
     def _group(self, group_id: str, version: str | None) -> ReviewGroup:
         group = self.groups.get(group_id)
         if group is None or version != self._version(group):

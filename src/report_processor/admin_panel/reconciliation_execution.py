@@ -10,6 +10,9 @@ from report_processor.reconciliation_review import (
     FeedbackRecord,
     ReviewDecision,
     feedback_for_group,
+    latest_feedback,
+    normalize_name,
+    normalize_unit,
 )
 
 from .reconciliation_state import ReconciliationReviewState
@@ -22,17 +25,7 @@ class ReconciliationReviewResult:
 
 def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationReviewResult:
     artifacts, categories = _run(job, ())
-    feedback_decisions = tuple(
-        ReviewDecision(
-            action=record.action,
-            mode=record.mode,
-            target_category=record.target_category,
-            group_id=group.group_id,
-            version=group.version,
-        )
-        for group in artifacts.review_groups
-        if (record := feedback_for_group(group, feedback)) is not None
-    )
+    feedback_decisions = _feedback_decisions(artifacts, feedback)
     if feedback_decisions:
         artifacts, categories = _run(job, feedback_decisions)
     state = ReconciliationReviewState(
@@ -54,6 +47,21 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
                     mode=decision.mode,
                     target_category=decision.target_category,
                     group_id=decision.group_id,
+                    version=group.version,
+                ),
+            )
+    for decision in feedback_decisions:
+        if decision.row_id in state.rows:
+            group = next(
+                item for item in state.group_snapshot() if decision.row_id in item.member_ids
+            )
+            state.put_row(
+                decision.row_id,
+                ReviewDecision(
+                    action=decision.action,
+                    mode=decision.mode,
+                    target_category=decision.target_category,
+                    row_id=decision.row_id,
                     version=group.version,
                 ),
             )
@@ -140,7 +148,7 @@ class _WorkbookAdapter:
             return read_target_report(
                 session,
                 analyze_workbook_schema(session),
-                TargetReportReadRequest(),
+                TargetReportReadRequest(selected_stage=self.job.stage),
             )
 
     def normalized_rows(self, path: Path):
@@ -161,6 +169,40 @@ class _WorkbookAdapter:
 def _source_identity(job, path: Path) -> str:
     index = (job.sources or (job.source,)).index(path)
     return f"source:{index}:{job.source_digests[index]}"
+
+
+def _feedback_decisions(
+    artifacts, feedback: tuple[FeedbackRecord, ...]
+) -> tuple[ReviewDecision, ...]:
+    rows = {row.row_id: row for row in artifacts.review_rows}
+    records = latest_feedback(feedback)
+    decisions: list[ReviewDecision] = []
+    for group in artifacts.review_groups:
+        if (record := feedback_for_group(group, feedback)) is not None:
+            decisions.append(
+                ReviewDecision(
+                    action=record.action,
+                    mode=record.mode,
+                    target_category=record.target_category,
+                    group_id=group.group_id,
+                    version=group.version,
+                )
+            )
+            continue
+        for row_id in group.member_ids:
+            row = rows[row_id]
+            record = records.get((normalize_name(row.display_name), normalize_unit(row.unit)))
+            if record is not None:
+                decisions.append(
+                    ReviewDecision(
+                        action=record.action,
+                        mode=record.mode,
+                        target_category=record.target_category,
+                        row_id=row_id,
+                        version=group.version,
+                    )
+                )
+    return tuple(decisions)
 
 
 def _feedback_records(state: ReconciliationReviewState) -> tuple[FeedbackRecord, ...]:
