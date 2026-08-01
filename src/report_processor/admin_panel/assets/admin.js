@@ -94,6 +94,11 @@
     return Number.isFinite(score) ? `${Math.round(score * 100)}%` : "Не указана";
   };
 
+  const decimalText = (value) => Number(value).toLocaleString("ru-RU", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
   const unresolvedSuggestions = (payload) => Array.isArray(payload.suggestion_review_groups)
     ? payload.suggestion_review_groups.filter((item) => item
       && typeof item.group_id === "string"
@@ -128,29 +133,40 @@
       const term = document.createElement("dt");
       term.textContent = labels[key];
       const detail = document.createElement("dd");
-      detail.textContent = key === "aggregate_cost" && Number.isFinite(Number(value))
-        ? `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₽`
-        : String(value);
+      detail.textContent = key === "confidence"
+        ? scoreText(value)
+        : ["aggregate_cost", "quantity", "cost"].includes(key) && Number.isFinite(Number(value))
+          ? `${decimalText(value)}${key.includes("cost") ? " ₽" : ""}`
+          : String(value);
       entry.append(term, detail);
       list.append(entry);
     });
     return list;
   };
 
-  const composition = (members, hasMore) => {
+  const composition = (members, hasMore, kind = "member") => {
     const details = document.createElement("details");
     details.className = "review-composition";
     const summary = document.createElement("summary");
     summary.textContent = hasMore ? "Состав группы (показана часть)" : "Состав группы";
     const table = document.createElement("table");
-    table.innerHTML = "<thead><tr><th>Работа</th><th>Ед.</th><th>Количество</th><th>Стоимость</th></tr></thead>";
+    table.innerHTML = kind === "candidate"
+      ? "<thead><tr><th>Кандидат</th><th>Ед.</th><th>Уверенность</th></tr></thead>"
+      : "<thead><tr><th>Работа</th><th>Ед.</th><th>Количество</th><th>Стоимость</th></tr></thead>";
     const body = document.createElement("tbody");
     (Array.isArray(members) ? members : []).forEach((member) => {
       const row = document.createElement("tr");
       const context = member && member.context || {};
-      [member && member.title, context.source_unit, context.quantity, context.cost].forEach((value) => {
+      const values = kind === "candidate"
+        ? [member && member.title, context.source_unit, context.confidence]
+        : [member && member.title, context.source_unit, context.quantity, context.cost];
+      values.forEach((value) => {
         const cell = document.createElement("td");
-        cell.textContent = suggestionText(value, "—");
+        cell.textContent = kind === "candidate" && value === context.confidence
+          ? scoreText(value)
+          : [context.quantity, context.cost].includes(value) && Number.isFinite(Number(value))
+            ? `${decimalText(value)}${value === context.cost ? " ₽" : ""}`
+            : suggestionText(value, "—");
         row.append(cell);
       });
       body.append(row);
@@ -215,9 +231,10 @@
       composition(
         item.candidates.map((candidate) => ({
           title: candidate.label,
-          context: { source_unit: candidate.source_unit, quantity: scoreText(candidate.confidence) },
+          context: { source_unit: candidate.source_unit, confidence: candidate.confidence },
         })),
         item.has_more_candidates,
+        "candidate",
       ),
       decision,
     );

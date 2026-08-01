@@ -297,8 +297,6 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     assert 'id="discrepancies"' in html
     assert 'id="suggestion-review"' in html and 'id="suggestions"' in html
     assert "unresolvedSuggestions" in javascript
-    assert "item.requires_manual_review === true" in javascript
-    assert "payload.decisions" in javascript
     assert "manual_review_groups" in javascript
     assert "suggestion_review_groups" in javascript
     assert "manual-discrepancy-decisions" in javascript
@@ -306,14 +304,16 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     assert "Одобрить" in javascript and "Отклонить" in javascript
     assert "/api/jobs/${encodeURIComponent(jobId)}/decisions" in javascript
     assert "decision })," in javascript
-    assert '[["Применить", "apply", "suggestion-fit"], ["Отклонить", "reject", "suggestion-not-fit"]]' in javascript
+    assert (
+        '[["Применить", "apply", "suggestion-fit"], ["Отклонить", "reject", "suggestion-not-fit"]]'
+        in javascript
+    )
     assert "setSuggestionBusy(card, true)" in javascript
     assert "setSuggestionBusy(card, false)" in javascript
     assert 'card.className = "review-item suggestion-card";' in javascript
     assert 'card.className = "review-item manual-review-card";' in javascript
     assert 'header.className = "review-item-head";' in javascript
-    assert 'context.className = "review-context manual-review-context";' in javascript
-    assert 'context.className = "review-context suggestion-context";' in javascript
+    assert 'list.className = "review-context";' in javascript
     assert 'decisionRegion.className = "review-decision";' in javascript
     assert 'actions.className = "review-decision-actions";' in javascript
     assert 'renderDecisionContext("Охват", `Вся группа · ${count} замечаний`)' in javascript
@@ -321,6 +321,8 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     assert 'renderDecisionContext("Эффект", "Только журнал решений")' in javascript
     assert 'details.className = "review-composition";' in javascript
     assert "(Array.isArray(members) ? members : []).forEach" in javascript
+    assert "minimumFractionDigits: 2" in javascript
+    assert "maximumFractionDigits: 2" in javascript
     assert ".review-item { container-type: inline-size;" in css
     assert ".review-item-head { display: flex; justify-content: space-between;" in css
     assert (

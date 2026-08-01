@@ -128,13 +128,21 @@ def test_suggestion_group_decision_is_atomic_and_replay_safe(tmp_path: Path) -> 
     group = job_payload(job)["suggestion_review_groups"][0]
     selected = group["candidates"][0]["suggestion_id"]
     with pytest.raises(ValueError):
-        service.record_suggestion_group_decision(job_id=job.job_id, group_id=group["group_id"], suggestion_id="unknown", decision="apply")
+        service.record_suggestion_group_decision(
+            job_id=job.job_id, group_id=group["group_id"], suggestion_id="unknown", decision="apply"
+        )
     assert job.decisions == []
-    service.record_suggestion_group_decision(job_id=job.job_id, group_id=group["group_id"], suggestion_id=selected, decision="apply")
-    assert {item["suggestion_id"] for item in job.decisions} == {item["suggestion_id"] for item in job.suggestions}
+    service.record_suggestion_group_decision(
+        job_id=job.job_id, group_id=group["group_id"], suggestion_id=selected, decision="apply"
+    )
+    assert {item["suggestion_id"] for item in job.decisions} == {
+        item["suggestion_id"] for item in job.suggestions
+    }
     assert [item["decision"] for item in job.decisions].count("fit") == 1
     with pytest.raises(ValueError):
-        service.record_suggestion_group_decision(job_id=job.job_id, group_id=group["group_id"], suggestion_id=selected, decision="apply")
+        service.record_suggestion_group_decision(
+            job_id=job.job_id, group_id=group["group_id"], suggestion_id=selected, decision="apply"
+        )
 
 
 def test_manual_discrepancy_groups_require_exact_atomic_decisions(tmp_path: Path) -> None:
@@ -150,9 +158,9 @@ def test_manual_discrepancy_groups_require_exact_atomic_decisions(tmp_path: Path
     )
 
     from report_processor.admin_panel.presentation import job_payload
+    from report_processor.admin_panel.review_presentation import manual_review_groups
 
-    payload = job_payload(job)
-    groups = payload["manual_review_groups"]
+    groups = manual_review_groups(job.discrepancies, job.decisions, include_ids=True)
     assert job.status == "review_required"
     assert len(groups) == 2
     first = groups[0]
@@ -191,7 +199,7 @@ def test_manual_discrepancy_groups_require_exact_atomic_decisions(tmp_path: Path
     service.record_manual_discrepancy_decision(
         job_id=job.job_id,
         group_id=remaining[0]["group_id"],
-        discrepancy_ids=remaining[0]["discrepancy_ids"],
+        discrepancy_ids=None,
         decision="reject",
     )
     result_path, _ = service.get_result(job.job_id)

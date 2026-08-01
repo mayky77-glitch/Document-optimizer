@@ -100,13 +100,18 @@ data contract and atomic decision implementation.
   reconstructs and atomically resolves the exact open group. Semantic target
   groups submit a real selected candidate; Apply records one `fit` and sibling
   `not_fit` entries, Reject records `not_fit` for all. Both are journal-only.
-- Commands and tests run: `node --check .../admin.js`, `python3 -m compileall -q
-  src/report_processor/admin_panel`, `git diff --check` — passed. Focused pytest
-  is blocked by missing local `duckdb`; `uv run ruff` is blocked by the sandboxed
-  cache/runtime panic. Browser smoke is unavailable because the skill helper is
-  invoked as `python` but only `python3` exists; no service retry was attempted.
-- SHA-256: `presentation.py` 3844dc7f2e5b8eb422b7254a9b645608df37a0d57a28e6c89a0ce8e6bcb30789;
-  `review_presentation.py` is recorded in the commit diff.
+- Commands and tests run: `.venv/bin/pytest -q tests/unit/admin_panel/test_service.py
+  tests/unit/admin_panel/test_presentation.py tests/unit/admin_panel/test_review_presentation.py
+  tests/integration/test_block18_admin_panel.py` — `35 passed`; `.venv/bin/ruff check`
+  and `.venv/bin/ruff format --check` on all changed Python source/test paths — OK;
+  `node --check src/report_processor/admin_panel/assets/admin.js` and `git diff --check` — OK.
+  Browser smoke remains for root because the helper invocation cannot start here.
+- SHA-256: `presentation.py` `16b4038032bb2841fccc6a11dca1eb9e6163484ad52bab5509979154a9ba9e5f`;
+  `review_presentation.py` `9e051f66ec9e814b5b0662bab2e5d08aa53e52e154fe9f3b297ab0f9e7bd87ad`;
+  `service.py` `faef328b18935a8c900eeeaa47ce348645610e4541a5622956ca0a8fbc13cf90`;
+  `app.py` `e65f5d379ef72e688148e9e2ec8beb313a270750b7b6399603b7ae7ea83a4680`;
+  `admin.js` `1913519a745f8397806118ce1f6b7a878b4f3ef8abd5d2c15f2a59fe252cec8d`;
+  `admin.css` `dc80b83b98d1618c5ee1207d3257f3e2f59bb30247dd4b305388a3b6af65a3d6`.
 - Risks or follow-up: visual desktop/mobile light/dark verification remains for
   an environment with dependencies and browser service access.
 

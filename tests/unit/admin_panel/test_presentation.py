@@ -174,9 +174,26 @@ def test_review_records_join_only_safe_context_and_group_semantic_candidates() -
     )
 
     _, discrepancies, suggestions = processing_presentation(result)
-    payload = job_payload({"job_id": "job", "stage": "13", "status": "review_required", "summary": {}, "discrepancies": discrepancies, "suggestions": suggestions, "decisions": [], "download_url": None})
+    payload = job_payload(
+        {
+            "job_id": "job",
+            "stage": "13",
+            "status": "review_required",
+            "summary": {},
+            "discrepancies": discrepancies,
+            "suggestions": suggestions,
+            "decisions": [],
+            "download_url": None,
+        }
+    )
 
-    assert discrepancies[0]["context"] == {"work_name": "Монтаж", "source_unit": "м", "target_unit": "шт", "proposed_match": "Целевой этап", "reason": "Похожее наименование"}
+    assert discrepancies[0]["context"] == {
+        "work_name": "Монтаж",
+        "source_unit": "м",
+        "target_unit": "шт",
+        "proposed_match": "Целевой этап",
+        "reason": "Похожее наименование",
+    }
     assert "locations" not in str(payload) and "secret" not in str(payload)
     group = payload["suggestion_review_groups"][0]
     assert group["title"] == "Целевой этап"

@@ -245,8 +245,14 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
         if (
             not isinstance(group_id, str)
             or (discrepancy_ids is not None and not isinstance(discrepancy_ids, list))
-            or (isinstance(discrepancy_ids, list) and len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS)
-            or (isinstance(discrepancy_ids, list) and not all(isinstance(item, str) for item in discrepancy_ids))
+            or (
+                isinstance(discrepancy_ids, list)
+                and len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS
+            )
+            or (
+                isinstance(discrepancy_ids, list)
+                and not all(isinstance(item, str) for item in discrepancy_ids)
+            )
             or decision_value not in {"approve", "reject"}
         ):
             return _error("Допустимы только решения approve и reject для открытой группы", 400)

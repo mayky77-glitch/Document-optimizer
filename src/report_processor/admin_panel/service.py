@@ -235,7 +235,9 @@ class AdminPanelService:
                 and isinstance(item_id, str)
                 and item_id not in decided
             ):
-                open_groups.setdefault(_controlled_id("suggestion-review-group", target_ref), []).append(item)
+                open_groups.setdefault(
+                    _controlled_id("suggestion-review-group", target_ref), []
+                ).append(item)
         members = open_groups.get(group_id)
         if not members:
             raise ValueError("suggestion group is no longer open")
@@ -284,7 +286,9 @@ class AdminPanelService:
             raise ValueError("discrepancy IDs are required")
         if discrepancy_ids is not None and len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS:
             raise ValueError("too many discrepancy IDs")
-        if discrepancy_ids is not None and any(not isinstance(item, str) or not item for item in discrepancy_ids):
+        if discrepancy_ids is not None and any(
+            not isinstance(item, str) or not item for item in discrepancy_ids
+        ):
             raise ValueError("invalid discrepancy ID")
         if discrepancy_ids is not None and len(set(discrepancy_ids)) != len(discrepancy_ids):
             raise ValueError("duplicate discrepancy ID")
@@ -294,7 +298,9 @@ class AdminPanelService:
         groups = manual_review_groups(job.discrepancies, job.decisions, include_ids=True)
         group = next((item for item in groups if item["group_id"] == group_id), None)
         expected_ids = group["discrepancy_ids"] if group is not None else []
-        if group is None or (discrepancy_ids is not None and set(discrepancy_ids) != set(expected_ids)):
+        if group is None or (
+            discrepancy_ids is not None and set(discrepancy_ids) != set(expected_ids)
+        ):
             raise ValueError("decision must match one open group exactly")
         # All validation occurs before mutation so rejected requests remain atomic.
         job.decisions.extend(
