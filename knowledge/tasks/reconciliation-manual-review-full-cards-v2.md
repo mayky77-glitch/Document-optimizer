@@ -110,7 +110,7 @@ data contract and atomic decision implementation.
   `review_presentation.py` `9e051f66ec9e814b5b0662bab2e5d08aa53e52e154fe9f3b297ab0f9e7bd87ad`;
   `service.py` `faef328b18935a8c900eeeaa47ce348645610e4541a5622956ca0a8fbc13cf90`;
   `app.py` `e65f5d379ef72e688148e9e2ec8beb313a270750b7b6399603b7ae7ea83a4680`;
-  `admin.js` `1913519a745f8397806118ce1f6b7a878b4f3ef8abd5d2c15f2a59fe252cec8d`;
+  `admin.js` `b773404dc8c9b5da7fa980f98e67cb457f2bab2d58864ee429bec833ef1ab5f7`;
   `admin.css` `dc80b83b98d1618c5ee1207d3257f3e2f59bb30247dd4b305388a3b6af65a3d6`.
 - Risks or follow-up: visual desktop/mobile light/dark verification remains for
   an environment with dependencies and browser service access.
