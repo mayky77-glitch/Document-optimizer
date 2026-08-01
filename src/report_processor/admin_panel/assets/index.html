@@ -57,17 +57,17 @@
 
       <section id="review-panel" class="review-panel" aria-labelledby="review-title" tabindex="-1" hidden>
         <div class="section-heading">
-          <p class="step-label">Шаг 2 · результат проверки</p>
-          <h2 id="review-title">Требует внимания</h2>
-          <p>Проверьте замечания перед скачиванием результата.</p>
+          <p class="step-label">Шаг 2 · решения по строкам</p>
+          <h2 id="review-title">Подтвердите соответствия</h2>
+          <p>Выберите целевую категорию и способ учёта для каждой группы. При необходимости измените отдельную строку.</p>
         </div>
-        <div id="summary" class="summary" aria-label="Итог обработки"></div>
-        <ul id="discrepancies" class="discrepancies" aria-label="Замечания"></ul>
-        <section id="suggestion-review" class="suggestion-review" aria-labelledby="suggestion-title" hidden>
-          <h3 id="suggestion-title">Подсказки сопоставления</h3>
-          <div id="suggestions" class="suggestions" aria-label="Подсказки, ожидающие решения"></div>
-        </section>
-        <p id="empty-review" class="empty-review" hidden>Замечаний нет. Результат готов к скачиванию.</p>
+        <p id="review-state" class="review-state" role="status" aria-live="polite"></p>
+        <div id="review-groups" class="review-groups" aria-label="Группы строк для проверки"></div>
+        <p id="empty-review" class="empty-review" hidden>Строк для решения нет. Результат готов к скачиванию.</p>
+        <div id="review-apply-area" class="review-apply-area" hidden>
+          <button id="review-apply" class="primary" type="button">Применить решения</button>
+          <p>Результат будет пересчитан по выбранным соответствиям.</p>
+        </div>
       </section>
 
       <section class="result-panel" aria-labelledby="result-title">
