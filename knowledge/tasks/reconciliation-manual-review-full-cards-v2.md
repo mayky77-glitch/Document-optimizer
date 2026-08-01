@@ -30,6 +30,7 @@ write_scope:
   - "src/report_processor/admin_panel/assets/admin.js"
   - "src/report_processor/admin_panel/assets/admin.css"
   - "src/report_processor/admin_panel/review_presentation.py"
+  - "src/report_processor/admin_panel/review_api.py"
   - "tests/unit/admin_panel/test_presentation.py"
   - "tests/unit/admin_panel/test_service.py"
   - "tests/unit/admin_panel/test_review_presentation.py"
@@ -42,6 +43,7 @@ source_paths:
   - "src/report_processor/admin_panel/assets/admin.js"
   - "src/report_processor/admin_panel/assets/admin.css"
   - "src/report_processor/admin_panel/review_presentation.py"
+  - "src/report_processor/admin_panel/review_api.py"
   - "tests/unit/admin_panel/test_presentation.py"
   - "tests/unit/admin_panel/test_service.py"
   - "tests/unit/admin_panel/test_review_presentation.py"
@@ -94,8 +96,9 @@ data contract and atomic decision implementation.
 
 ## Completion evidence
 
-- Changed paths: `presentation.py`, new `review_presentation.py`, `service.py`,
-  `app.py`, `assets/admin.js`, `assets/admin.css`, focused tests and project map.
+- Changed paths: `presentation.py`, new `review_presentation.py`, new
+  `review_api.py`, `service.py`, `app.py`, `assets/admin.js`, `assets/admin.css`,
+  focused tests and project map.
 - Decision contract: manual cards submit only their controlled group ID; server
   reconstructs and atomically resolves the exact open group. Semantic target
   groups submit a real selected candidate; Apply records one `fit` and sibling
@@ -109,9 +112,13 @@ data contract and atomic decision implementation.
 - SHA-256: `presentation.py` `16b4038032bb2841fccc6a11dca1eb9e6163484ad52bab5509979154a9ba9e5f`;
   `review_presentation.py` `9e051f66ec9e814b5b0662bab2e5d08aa53e52e154fe9f3b297ab0f9e7bd87ad`;
   `service.py` `faef328b18935a8c900eeeaa47ce348645610e4541a5622956ca0a8fbc13cf90`;
-  `app.py` `e65f5d379ef72e688148e9e2ec8beb313a270750b7b6399603b7ae7ea83a4680`;
+  `review_api.py` `20f999c3ef9280d34533b375a9284d087d178986f5b4e31b2e06c562610087f1`;
+  `app.py` `41f591ef4739b4c7934ca8c825099c50f9f12d75d2d2a64cef65b3c82c53ce5e`;
   `admin.js` `b773404dc8c9b5da7fa980f98e67cb457f2bab2d58864ee429bec833ef1ab5f7`;
   `admin.css` `dc80b83b98d1618c5ee1207d3257f3e2f59bb30247dd4b305388a3b6af65a3d6`.
+- Maintainability follow-up: moved reconciliation decision parsing and validation
+  into `review_api.py`; `app.py` is 669 lines (down from 689) with unchanged
+  endpoint URLs, response statuses, and public error messages.
 - Risks or follow-up: visual desktop/mobile light/dark verification remains for
   an environment with dependencies and browser service access.
 

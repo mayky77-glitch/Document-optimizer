@@ -21,16 +21,20 @@ from .drawing_card_service import (
     DrawingCardService,
 )
 from .presentation import job_payload
+from .review_api import (
+    ReviewRequestError,
+    parse_manual_discrepancy_decision,
+    parse_suggestion_decision,
+)
 from .service import (
-    MAX_MANUAL_DISCREPANCY_DECISIONS,
+    MAX_SOURCES as ADMIN_MAX_SOURCES,
+)
+from .service import (
     MAX_UPLOAD_BYTES,
     AdminPanelService,
     validate_mode,
     validate_stage,
     validate_workbook_upload,
-)
-from .service import (
-    MAX_SOURCES as ADMIN_MAX_SOURCES,
 )
 from .view import drawing_card_page, index_page, static_asset
 
@@ -194,37 +198,28 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             payload = await request.json()
         except ValueError:
             return _error("Ожидается JSON с решением", 400)
-        if not isinstance(payload, Mapping):
-            return _error("Ожидается JSON с решением", 400)
-        suggestion_id = payload.get("suggestion_id")
-        value = payload.get("decision")
-        group_id = payload.get("group_id")
-        if group_id is not None:
-            if (
-                not isinstance(group_id, str)
-                or value not in {"apply", "reject"}
-                or (suggestion_id is not None and not isinstance(suggestion_id, str))
-            ):
-                return _error("Недопустимое решение для открытой группы подсказок", 400)
+        try:
+            review_request = parse_suggestion_decision(payload)
+        except ReviewRequestError as error:
+            return _error(str(error), 400)
+        if review_request.is_group_decision:
             try:
                 current = panel.record_suggestion_group_decision(
                     job_id=request.path_params["job_id"],
-                    group_id=group_id,
-                    suggestion_id=suggestion_id,
-                    decision=value,
+                    group_id=review_request.group_id,
+                    suggestion_id=review_request.suggestion_id,
+                    decision=review_request.decision,
                 )
             except KeyError:
                 return _error("Задача не найдена", 404)
             except (TypeError, ValueError):
                 return _error("Решение не относится к открытой группе подсказок", 400)
             return _secure(JSONResponse(job_payload(current)))
-        if not isinstance(suggestion_id, str) or value not in {"fit", "not_fit"}:
-            return _error("Допустимы только решения fit и not_fit", 400)
         try:
             current = panel.record_decision(
                 job_id=request.path_params["job_id"],
-                suggestion_id=suggestion_id,
-                decision=value,
+                suggestion_id=review_request.suggestion_id,
+                decision=review_request.decision,
             )
         except KeyError:
             return _error("Задача не найдена", 404)
@@ -237,31 +232,16 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             payload = await request.json()
         except ValueError:
             return _error("Ожидается JSON с решением", 400)
-        if not isinstance(payload, Mapping):
-            return _error("Ожидается JSON с решением", 400)
-        group_id = payload.get("group_id")
-        discrepancy_ids = payload.get("discrepancy_ids")
-        decision_value = payload.get("decision")
-        if (
-            not isinstance(group_id, str)
-            or (discrepancy_ids is not None and not isinstance(discrepancy_ids, list))
-            or (
-                isinstance(discrepancy_ids, list)
-                and len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS
-            )
-            or (
-                isinstance(discrepancy_ids, list)
-                and not all(isinstance(item, str) for item in discrepancy_ids)
-            )
-            or decision_value not in {"approve", "reject"}
-        ):
-            return _error("Допустимы только решения approve и reject для открытой группы", 400)
+        try:
+            review_request = parse_manual_discrepancy_decision(payload)
+        except ReviewRequestError as error:
+            return _error(str(error), 400)
         try:
             current = panel.record_manual_discrepancy_decision(
                 job_id=request.path_params["job_id"],
-                group_id=group_id,
-                discrepancy_ids=discrepancy_ids,
-                decision=decision_value,
+                group_id=review_request.group_id,
+                discrepancy_ids=review_request.discrepancy_ids,
+                decision=review_request.decision,
             )
         except KeyError:
             return _error("Задача не найдена", 404)
