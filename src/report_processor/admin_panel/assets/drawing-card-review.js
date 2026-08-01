@@ -188,11 +188,18 @@
         </dl>
         <p class="selected-category" hidden></p>
         <div class="item-actions" aria-label="Решение по группе строк"></div>
-        <div class="category-actions" aria-label="Применить выбранную категорию">
+        <div class="review-decision" aria-label="Выберите решение для группы строк">
           <label>Категория<select class="category-input"></select></label>
-          <div class="category-action-buttons">
-            <button type="button" data-category-action="change_category">Учесть количество и стоимость</button>
-            <button type="button" data-category-action="cost_only">Учесть только стоимость</button>
+          <fieldset class="review-mode">
+            <legend>Учитывать</legend>
+            <div class="segmented-control" role="group" aria-label="Режим учёта">
+              <button type="button" class="is-selected" data-review-mode="full" aria-pressed="true">Количество + стоимость</button>
+              <button type="button" data-review-mode="cost_only" aria-pressed="false">Только стоимость</button>
+            </div>
+          </fieldset>
+          <div class="review-decision-actions">
+            <button type="button" class="apply-cluster-action approve-action">Применить</button>
+            <button type="button" class="reject-cluster-action danger-action">Отклонить</button>
           </div>
         </div>`;
       article.querySelector("h3").textContent = text(cluster.work_name, "Наименование работы не указано");
@@ -277,8 +284,9 @@
 
     configureActions(article, state) {
       const actions = article.querySelector(".item-actions");
-      const categoryActions = article.querySelector(".category-actions");
+      const decision = article.querySelector(".review-decision");
       const category = article.querySelector(".category-input");
+      category.append(new Option("Выберите категорию", ""));
       CATEGORIES.forEach(([value, label]) => category.append(new Option(label, value)));
       category.value = state.proposed;
       const addAction = (label, action, style = "") => {
@@ -291,18 +299,32 @@
       };
       if (state.resolved) {
         addAction("Отменить решение", "undo");
-        categoryActions.hidden = true;
+        decision.hidden = true;
       } else {
-        addAction("Одобрить", "approve", "approve-action");
-        addAction("Отклонить", "reject", "danger-action");
-        categoryActions.querySelectorAll("[data-category-action]").forEach((button) => {
+        let mode = "full";
+        const modeButtons = decision.querySelectorAll("[data-review-mode]");
+        modeButtons.forEach((button) => {
           button.addEventListener("click", () => {
-            if (!category.value) {
-              category.focus();
-              return;
-            }
-            this.save(article, state.id, state.version, button.dataset.categoryAction, category.value);
+            mode = button.dataset.reviewMode;
+            modeButtons.forEach((control) => {
+              const selected = control === button;
+              control.classList.toggle("is-selected", selected);
+              control.setAttribute("aria-pressed", String(selected));
+            });
           });
+        });
+        decision.querySelector(".apply-cluster-action").addEventListener("click", () => {
+          if (!category.value) {
+            category.focus();
+            return;
+          }
+          const action = mode === "cost_only"
+            ? "cost_only"
+            : category.value === state.proposed ? "approve" : "change_category";
+          this.save(article, state.id, state.version, action, action === "approve" ? undefined : category.value);
+        });
+        decision.querySelector(".reject-cluster-action").addEventListener("click", () => {
+          this.save(article, state.id, state.version, "reject");
         });
       }
     }

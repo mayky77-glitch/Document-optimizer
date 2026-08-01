@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
+from openpyxl.workbook.properties import CalcProperties
 
 from ..models import (
     CATEGORY_DISPLAY_NAMES,
@@ -30,6 +31,7 @@ from .contract import (
 )
 from .planner import plan_write_operations
 from .styles import clone_block_columns, clone_row_style
+from .summary import add_summary_sheet
 from .validator import validate_card
 from .xlsx_xml import rewrite_exact_numeric_cells
 
@@ -212,6 +214,26 @@ def _ensure_data_styles(sheet, layout: ObjectBlockLayout) -> None:
         )
 
 
+def _trim_unused_right_template_slots(workbook, layouts: list[ObjectBlockLayout]) -> None:
+    """Remove only unoccupied right-side template slots on the final card sheet."""
+
+    if not layouts:
+        return
+    final_sheet_name = layouts[-1].sheet_name
+    final_layouts = [layout for layout in layouts if layout.sheet_name == final_sheet_name]
+    occupied_starts = {layout.start_column for layout in final_layouts}
+    sheet = workbook[final_sheet_name]
+    for start_column in (20, 14, 8, 2):
+        if start_column in occupied_starts:
+            break
+        merge_range = (
+            f"{get_column_letter(start_column + 3)}2:{get_column_letter(start_column + 4)}2"
+        )
+        if merge_range in {str(item) for item in sheet.merged_cells.ranges}:
+            sheet.unmerge_cells(merge_range)
+        sheet.delete_cols(start_column, 5)
+
+
 def write_card(
     *,
     base_path: Path,
@@ -308,6 +330,13 @@ def write_card(
                                 old_value=old_value,
                                 new_value=cell.value,
                             )
+        _trim_unused_right_template_slots(workbook, layouts)
+        add_summary_sheet(workbook, layouts, rows)
+        workbook.calculation = CalcProperties(
+            calcMode="auto",
+            fullCalcOnLoad=True,
+            forceFullCalc=True,
+        )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             prefix=output_path.stem + ".", suffix=".tmp.xlsx", dir=output_path.parent, delete=False

@@ -18,7 +18,10 @@ from .contract import (
     COST_FORMAT,
     FRACTIONAL_QUANTITY_FORMAT,
     INTEGER_QUANTITY_FORMAT,
+    SUMMARY_HEADERS,
+    SUMMARY_SHEET_NAME,
 )
+from .summary import _all_indices_formula, _source_formula, summary_row_count
 from .xlsx_xml import find_binary_tail_cells
 
 _EXPECTED_CATEGORIES = tuple(
@@ -107,6 +110,130 @@ def _validate_layout_contract(
                     errors.append(f"MISSING_DATA_STYLE:{sheet.title}:{row}")
                 if sheet.row_dimensions[row].height is None:
                     errors.append(f"MISSING_ROW_DIMENSION:{sheet.title}:{row}")
+
+
+def _validate_trimmed_template_slots(
+    workbook,
+    layouts: list[ObjectBlockLayout],
+    errors: list[str],
+) -> None:
+    if not layouts:
+        return
+    final_sheet_name = layouts[-1].sheet_name
+    final_layouts = [layout for layout in layouts if layout.sheet_name == final_sheet_name]
+    last_occupied_column = max(layout.end_column for layout in final_layouts)
+    sheet = workbook[final_sheet_name]
+    for start_column in (8, 14, 20):
+        if start_column <= last_occupied_column:
+            continue
+        if sheet.cell(4, start_column).has_style:
+            errors.append(f"VACANT_TEMPLATE_SLOT:{sheet.title}:{get_column_letter(start_column)}")
+
+
+def _validate_summary_contract(
+    workbook,
+    layouts: list[ObjectBlockLayout],
+    errors: list[str],
+) -> None:
+    if SUMMARY_SHEET_NAME not in workbook.sheetnames:
+        errors.append(f"MISSING_SUMMARY_SHEET:{SUMMARY_SHEET_NAME}")
+        return
+    sheet = workbook[SUMMARY_SHEET_NAME]
+    if tuple(sheet.cell(1, column).value for column in range(1, 6)) != SUMMARY_HEADERS:
+        errors.append("INVALID_SUMMARY_HEADERS")
+    expected_last_row = 1 + summary_row_count(layouts)
+    if sheet.max_row != expected_last_row:
+        errors.append(f"SUMMARY_ROW_COUNT:{sheet.max_row}!={expected_last_row}")
+        return
+    row_number = 2
+    category_unit_status: dict[tuple[str, object], str] = {}
+    for layout in layouts:
+        for category in CATEGORY_ORDER:
+            expected_name = CATEGORY_DISPLAY_NAMES[category]
+            if sheet.cell(row_number, 1).value != layout.object_index:
+                errors.append(f"SUMMARY_INDEX:{row_number}")
+            if sheet.cell(row_number, 2).value != expected_name:
+                errors.append(f"SUMMARY_CATEGORY:{row_number}")
+            quantity = sheet.cell(row_number, 4)
+            cost = sheet.cell(row_number, 5)
+            source_sheet = workbook[layout.sheet_name]
+            source_units = []
+            for block in layout.drawing_code_blocks:
+                source_unit = source_sheet.cell(
+                    block.start_row + CATEGORY_ORDER.index(category), layout.start_column + 2
+                ).value
+                source_units.append(source_unit.strip() if isinstance(source_unit, str) else None)
+            if not source_units or any(unit is None for unit in source_units):
+                category_unit_status[(layout.object_index, category)] = "missing"
+            elif len({normalize_text(unit) for unit in source_units if unit is not None}) != 1:
+                category_unit_status[(layout.object_index, category)] = "mixed"
+            else:
+                category_unit_status[(layout.object_index, category)] = "valid"
+            expected_cost = _source_formula(
+                layout, layout.start_column + 1, layout.start_column + 4, row_number
+            )
+            if cost.value != expected_cost:
+                errors.append(f"SUMMARY_COST_FORMULA:{cost.coordinate}")
+            if category_unit_status[(layout.object_index, category)] == "valid":
+                expected_quantity = _source_formula(
+                    layout, layout.start_column + 1, layout.start_column + 3, row_number
+                )
+                if quantity.value != expected_quantity:
+                    errors.append(f"SUMMARY_QUANTITY_FORMULA:{quantity.coordinate}")
+            elif quantity.value is not None:
+                errors.append(f"SUMMARY_INVALID_UNIT_QUANTITY:{quantity.coordinate}")
+            if quantity.number_format != FRACTIONAL_QUANTITY_FORMAT:
+                errors.append(f"SUMMARY_QUANTITY_FORMAT:{quantity.coordinate}")
+            if cost.number_format != COST_FORMAT:
+                errors.append(f"SUMMARY_COST_FORMAT:{cost.coordinate}")
+            row_number += 1
+    first_summary_row = 2
+    last_index_row = row_number - 1
+    for category in CATEGORY_ORDER:
+        expected_name = CATEGORY_DISPLAY_NAMES[category]
+        if sheet.cell(row_number, 1).value != "Все индексы":
+            errors.append(f"SUMMARY_ALL_INDICES_LABEL:{row_number}")
+        if sheet.cell(row_number, 2).value != expected_name:
+            errors.append(f"SUMMARY_ALL_INDICES_CATEGORY:{row_number}")
+        unit_statuses = [
+            category_unit_status[(layout.object_index, category)] for layout in layouts
+        ]
+        category_units = {
+            normalize_text(sheet.cell(index_row, 3).value)
+            for index_row in range(first_summary_row, last_index_row + 1)
+            if sheet.cell(index_row, 2).value == expected_name
+            and isinstance(sheet.cell(index_row, 3).value, str)
+            and sheet.cell(index_row, 3).value.strip()
+        }
+        quantity = sheet.cell(row_number, 4)
+        if "missing" in unit_statuses:
+            if quantity.value is not None:
+                errors.append(f"SUMMARY_MISSING_UNIT_QUANTITY:{expected_name}")
+            errors.append(f"SUMMARY_MISSING_UNIT:{category.value}")
+        elif "mixed" in unit_statuses or len(category_units) != 1:
+            if quantity.value is not None:
+                errors.append(f"SUMMARY_MIXED_UNIT_QUANTITY:{expected_name}")
+            errors.append(f"SUMMARY_MIXED_UNIT:{category.value}")
+        else:
+            expected_quantity = _all_indices_formula(
+                4,
+                first_summary_row,
+                last_index_row,
+                row_number,
+            )
+            if quantity.value != expected_quantity:
+                errors.append(f"SUMMARY_ALL_INDICES_QUANTITY_FORMULA:{quantity.coordinate}")
+        cost = sheet.cell(row_number, 5)
+        if cost.value != _all_indices_formula(5, first_summary_row, last_index_row, row_number):
+            errors.append(f"SUMMARY_ALL_INDICES_COST_FORMULA:{cost.coordinate}")
+        row_number += 1
+    calculation = workbook.calculation
+    if (
+        calculation.calcMode != "auto"
+        or calculation.fullCalcOnLoad is not True
+        or calculation.forceFullCalc is not True
+    ):
+        errors.append("INVALID_CALCULATION_PROPERTIES")
 
 
 def _validate_sheet_data(
@@ -210,11 +337,15 @@ def validate_card(path: Path, layouts: list[ObjectBlockLayout] | None = None) ->
                 for cell in row:
                     if cell.data_type == "e" or str(cell.value).upper() in _FORMULA_ERRORS:
                         errors.append(f"FORMULA_ERROR:{sheet.title}:{cell.coordinate}:{cell.value}")
+            if sheet.title == SUMMARY_SHEET_NAME:
+                continue
             objects, drawings = _validate_sheet_data(sheet, errors, numeric_targets)
             object_count += objects
             drawing_count += drawings
         if layouts:
             _validate_layout_contract(workbook, layouts, errors)
+            _validate_trimmed_template_slots(workbook, layouts, errors)
+            _validate_summary_contract(workbook, layouts, errors)
             expected_objects = len({layout.object_index for layout in layouts})
             if object_count != expected_objects:
                 errors.append(f"OBJECT_COUNT:{object_count}!={expected_objects}")

@@ -367,9 +367,9 @@ def test_drawing_card_assets_keep_recoverable_review_state_and_use_category_sele
     assert "Уже загружено для текущей карточки" in script.text
     assert "category.focus()" in review_script.text
     assert "selected_category" in review_script.text
-    assert 'addAction("Одобрить", "approve", "approve-action")' in review_script.text
-    assert 'addAction("Отклонить", "reject", "danger-action")' in review_script.text
-    assert 'button.dataset.categoryAction, category.value' in review_script.text
+    assert 'class="apply-cluster-action approve-action">Применить</button>' in review_script.text
+    assert 'class="reject-cluster-action danger-action">Отклонить</button>' in review_script.text
+    assert 'category.value === state.proposed ? "approve" : "change_category"' in review_script.text
     assert 'status === "blocked" || status === "failed"' in review_script.text
     assert 'payload.result_url || status === "ready"' in review_script.text
     assert "extractPeriodFromFilename" in script.text

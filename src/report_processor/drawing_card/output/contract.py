@@ -10,3 +10,11 @@ CARD_HEADERS = (
 INTEGER_QUANTITY_FORMAT = "0"
 FRACTIONAL_QUANTITY_FORMAT = "0.###"
 COST_FORMAT = "#,##0.000"
+SUMMARY_SHEET_NAME = "Сводный отчет"
+SUMMARY_HEADERS = (
+    "Индекс объекта",
+    "Наименование этапа работ",
+    "Ед. изм.",
+    "Количество",
+    "Общая стоимость",
+)

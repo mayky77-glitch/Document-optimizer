@@ -12,9 +12,11 @@
   const createJob = document.querySelector("#create-job");
   const resultDownload = document.querySelector("#result-download");
   const resultHint = document.querySelector("#result-hint");
+  const themeToggle = document.querySelector("#theme-toggle");
 
   const SOURCE_WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xlsb"]);
   const SESSION_STORAGE_KEY = "report-processor.drawing-card.state.v2";
+  const THEME_STORAGE_KEY = "report-processor.drawing-card.theme.v1";
   const RUSSIAN_MONTHS = [
     "январь", "февраль", "март", "апрель", "май", "июнь",
     "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
@@ -32,6 +34,29 @@
   let currentReviewPage = 1;
   let periodScanRevision = 0;
   let uploadedSourceCount = 0;
+
+  const savedTheme = () => {
+    try {
+      const value = localStorage.getItem(THEME_STORAGE_KEY);
+      return value === "dark" || value === "light" ? value : "";
+    } catch {
+      return "";
+    }
+  };
+
+  const setTheme = (theme, persist = true) => {
+    const isDark = theme === "dark";
+    document.documentElement.dataset.theme = isDark ? "dark" : "light";
+    themeToggle.setAttribute("aria-pressed", String(isDark));
+    themeToggle.textContent = isDark ? "Светлая тема" : "Тёмная тема";
+    themeToggle.setAttribute("aria-label", isDark ? "Включить светлую тему" : "Включить тёмную тему");
+    if (!persist) return;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, isDark ? "dark" : "light");
+    } catch {
+      // Browser storage is optional.
+    }
+  };
 
   const sessionState = () => {
     try {
@@ -249,6 +274,8 @@
     persistSession();
   };
 
+  setTheme(savedTheme() || "light", false);
+  themeToggle.addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   document.querySelectorAll("[data-operation]").forEach((button) => button.addEventListener("click", () => setOperation(button.dataset.operation)));
   sourceFiles.addEventListener("change", () => { updateSourceCount(); updatePeriodOptions(); });
   period.addEventListener("change", () => persistSession());
