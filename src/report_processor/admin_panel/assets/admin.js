@@ -150,9 +150,10 @@
     const summary = document.createElement("summary");
     summary.textContent = hasMore ? "Состав группы (показана часть)" : "Состав группы";
     const table = document.createElement("table");
-    table.innerHTML = kind === "candidate"
-      ? "<thead><tr><th>Кандидат</th><th>Ед.</th><th>Уверенность</th></tr></thead>"
-      : "<thead><tr><th>Работа</th><th>Ед.</th><th>Количество</th><th>Стоимость</th></tr></thead>";
+    const headings = kind === "candidate"
+      ? ["Кандидат", "Ед.", "Уверенность"]
+      : ["Работа", "Ед.", "Количество", "Стоимость"];
+    table.innerHTML = `<thead><tr>${headings.map((heading) => `<th>${heading}</th>`).join("")}</tr></thead>`;
     const body = document.createElement("tbody");
     (Array.isArray(members) ? members : []).forEach((member) => {
       const row = document.createElement("tr");
@@ -160,8 +161,9 @@
       const values = kind === "candidate"
         ? [member && member.title, context.source_unit, context.confidence]
         : [member && member.title, context.source_unit, context.quantity, context.cost];
-      values.forEach((value) => {
+      values.forEach((value, index) => {
         const cell = document.createElement("td");
+        cell.dataset.label = headings[index];
         cell.textContent = kind === "candidate" && value === context.confidence
           ? scoreText(value)
           : [context.quantity, context.cost].includes(value) && Number.isFinite(Number(value))

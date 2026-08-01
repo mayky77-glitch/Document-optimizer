@@ -4,8 +4,8 @@ tags:
   - knowledge/map
   - domain/document-processing
   - capability/admin-panel
-last_verified: 2026-08-01
-updated: 2026-08-01
+last_verified: 2026-08-02
+updated: 2026-08-02
 ---
 
 # Карта проекта
@@ -28,7 +28,7 @@ updated: 2026-08-01
 | --- | --- | --- |
 | Сверка документов | `index.html`, `admin.css`, `admin.js`: загрузка, статусы и тема на `/`. | `test_block18_admin_panel.py` + визуальная/file smoke на `/`. |
 | Карточка остатков | `drawing-card.html`, `drawing-card.css`, `drawing-card.js`, `drawing-card-review.js`: загрузка, период и inline review. | `test_drawing_card_ui_contract.py`, `test_drawing_card_admin.py` + визуальная/file smoke на `/drawing-card`. |
-| Admin API и сервис | `admin_panel/app.py`, `service.py`, `drawing_card_service.py`: локальные HTTP-контракты и изолированные задания. | `test_block18_admin_panel.py`, `test_drawing_card_admin.py`, unit-тесты `admin_panel/`. |
+| Admin API и сервис | `admin_panel/app.py`, `review_api.py`, `service.py`, `drawing_card_service.py`: локальные HTTP-контракты и изолированные задания. | `test_block18_admin_panel.py`, `test_drawing_card_admin.py`, unit-тесты `admin_panel/`. |
 | Сопоставление и feedback | `drawing_card/matching/`, `drawing_card/review/`, `drawing_card/autopilot/`: подбор категории и приоритет явных решений. | `tests/unit/drawing_card/test_*matcher*`, `test_inline_review_flow.py`, `test_block16_feedback.py`. |
 | XLSX-результат | `drawing_card/output/`: шаблон, раскладка, форматы и сводка. | `test_drawing_card_service_contract.py`, `test_summary_report.py`, `test_xlsx_xml_precision.py`. |
 
@@ -50,8 +50,9 @@ updated: 2026-08-01
   Полные карточки `review-item` показывают только доступные безопасные факты:
   нормализованные работа/единицы, предложенное соответствие, уверенность,
   объяснение и производную стоимость; `locations`, evidence, пути, листы,
-  координаты и сырые значения не попадают в API. Состав разворачивается в
-  ограниченной таблице, а точные ID группы остаются на сервере. Ручная группа
+  координаты и сырые значения не попадают в API. Состав разворачивается полностью
+  и на узком экране превращается в подписанные мини-строки, а точные ID группы
+  остаются на сервере. Ручная группа
   принимает только атомарные `approve`/`reject`. Семантическая группа цели
   выбирает реального кандидата: `Apply` записывает `fit` выбранному и `not_fit`
   его соседям, `Reject` записывает `not_fit` всем; эффект остаётся

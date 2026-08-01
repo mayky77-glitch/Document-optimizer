@@ -320,6 +320,7 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     assert 'renderDecisionContext("Действие", "Одобрить или отклонить")' in javascript
     assert 'renderDecisionContext("Эффект", "Только журнал решений")' in javascript
     assert 'details.className = "review-composition";' in javascript
+    assert "cell.dataset.label = headings[index];" in javascript
     assert "(Array.isArray(members) ? members : []).forEach" in javascript
     assert "minimumFractionDigits: 2" in javascript
     assert "maximumFractionDigits: 2" in javascript
@@ -339,3 +340,5 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     )
     assert ".manual-review-card { border-left-color: var(--manual-blue); }" in css
     assert ".review-composition {" in css
+    assert ".review-composition td:first-child { grid-column: 1 / -1; }" in css
+    assert "content: attr(data-label);" in css

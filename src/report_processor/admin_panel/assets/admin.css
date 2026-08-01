@@ -159,6 +159,12 @@ button, .download { min-height: 48px; padding: 11px 18px; border: 1px solid var(
   .review-decision-actions { grid-template-columns: 1fr; }
   .review-context, .manual-review-context { grid-template-columns: 1fr; }
   .review-item-head { flex-direction: column; }
+  .review-composition thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .review-composition tbody { display: block; }
+  .review-composition tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+  .review-composition td { display: grid; gap: 3px; border-top: 0; overflow-wrap: break-word; }
+  .review-composition td:first-child { grid-column: 1 / -1; }
+  .review-composition td::before { content: attr(data-label); color: var(--muted); font-size: .7rem; font-weight: 700; }
 }
 .empty-review { margin: 0; padding: 14px; border-left: 4px solid var(--gazprom); background: var(--soft-blue); color: var(--gazprom-dark); }
 
