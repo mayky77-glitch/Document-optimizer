@@ -152,6 +152,6 @@ def test_output_contract_keeps_required_columns_and_numeric_formats() -> None:
         "Количество",
         "Общая стоимость, млн руб.",
     )
-    assert INTEGER_QUANTITY_FORMAT == "0"
-    assert FRACTIONAL_QUANTITY_FORMAT == "0.###"
-    assert COST_FORMAT == "#,##0.000"
+    assert INTEGER_QUANTITY_FORMAT == "0.00"
+    assert FRACTIONAL_QUANTITY_FORMAT == "0.00"
+    assert COST_FORMAT == "#,##0.00"

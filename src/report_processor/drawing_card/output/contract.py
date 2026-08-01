@@ -9,9 +9,12 @@ CARD_HEADERS = (
     "Количество",
     "Общая стоимость, млн руб.",
 )
-INTEGER_QUANTITY_FORMAT = "0"
-FRACTIONAL_QUANTITY_FORMAT = "0.###"
-COST_FORMAT = "#,##0.000"
+# Use display formats only: numeric cell values retain their full precision.
+# Both quantity variants deliberately use the same format so every published
+# value is rendered with exactly two fractional digits.
+INTEGER_QUANTITY_FORMAT = "0.00"
+FRACTIONAL_QUANTITY_FORMAT = "0.00"
+COST_FORMAT = "#,##0.00"
 DISPLAY_COST_SCALE = Decimal("1000000")
 SUMMARY_SHEET_NAME = "Сводный отчет"
 MAIN_CARD_SHEET_NAME = "Карточка остатков"

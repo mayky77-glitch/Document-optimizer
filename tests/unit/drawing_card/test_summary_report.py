@@ -55,10 +55,8 @@ def _rows(indices: tuple[str, ...] = ("1001", "1002", "1003"), *, mixed_unit: bo
                     remaining_quantity=Decimal(f"{index_number}.{category_number}"),
                     # Internal costs stay in rubles.  With cost_scale=100 the
                     # published values below are whole millions, making unit
-                    # conversion and the 3-decimal display contract observable.
-                    remaining_total_cost=Decimal(
-                        str(index_number * category_number * 100_000_000)
-                    ),
+                    # conversion and the two-decimal display contract observable.
+                    remaining_total_cost=Decimal(str(index_number * category_number * 100_000_000)),
                     quantity_source_rows=(f"row-{object_index}-{category_number}",),
                     cost_source_rows=(f"row-{object_index}-{category_number}",),
                     quantity_rule_id="test-rule",
@@ -136,9 +134,7 @@ def test_summary_uses_two_column_index_cards_with_literal_million_ruble_values(
         second_row, second_column = summary_block_position(1)
         third_row, third_column = summary_block_position(2)
         total_row, total_column = summary_block_position(len(layouts))
-        assert all(
-            cell.data_type != "f" for row in summary.iter_rows() for cell in row
-        )
+        assert all(cell.data_type != "f" for row in summary.iter_rows() for cell in row)
         assert all(
             isinstance(summary.cell(first_row + 2, first_column + offset).value, (int, float))
             for offset in (2, 3)
@@ -164,9 +160,46 @@ def test_summary_uses_two_column_index_cards_with_literal_million_ruble_values(
             == FRACTIONAL_QUANTITY_FORMAT
         )
         assert summary.cell(total_row + 2, total_column + 3).number_format == COST_FORMAT
-        assert COST_FORMAT == "#,##0.000"
+        assert COST_FORMAT == "#,##0.00"
         assert "млн руб." in SUMMARY_HEADERS[-1]
         assert "млн руб." in workbook[MAIN_CARD_SHEET_NAME]["F3"].value
+    finally:
+        workbook.close()
+
+
+def test_numeric_display_uses_two_decimals_without_rounding_stored_values(tmp_path: Path) -> None:
+    rows = _rows()
+    rows[0] = replace(
+        rows[0],
+        remaining_quantity=Decimal("24"),
+        remaining_total_cost=Decimal("780901100"),
+    )
+    rows[1] = replace(rows[1], remaining_quantity=Decimal("2704.7755"))
+    layouts = plan_layout(rows)
+    output = tmp_path / "two-decimal-card.xlsx"
+    write_card(
+        base_path=FIXTURES / "default_template.xlsx",
+        output_path=output,
+        rows=rows,
+        layouts=layouts,
+        run_id="two-decimal-test",
+        cost_scale=100,
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    try:
+        card = workbook[MAIN_CARD_SHEET_NAME]
+        summary = workbook[SUMMARY_SHEET_NAME]
+        assert Decimal(str(card["E4"].value)) == Decimal("24")
+        assert card["E4"].number_format == "0.00"
+        assert Decimal(str(card["E5"].value)) == Decimal("2704.7755")
+        assert card["E5"].number_format == "0.00"
+        assert Decimal(str(card["F4"].value)) == Decimal("7.809011")
+        assert card["F4"].number_format == "#,##0.00"
+        assert Decimal(str(summary["C3"].value)) == Decimal("24")
+        assert summary["C3"].number_format == "0.00"
+        assert Decimal(str(summary["D3"].value)) == Decimal("7.809011")
+        assert summary["D3"].number_format == "#,##0.00"
     finally:
         workbook.close()
 
