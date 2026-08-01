@@ -8,7 +8,9 @@ from .grouping import normalize_name, normalize_unit
 from .models import FeedbackRecord, ReviewDecision, ReviewGroup
 
 
-def latest_feedback(records: Iterable[FeedbackRecord]) -> dict[tuple[str, str | None], FeedbackRecord]:
+def latest_feedback(
+    records: Iterable[FeedbackRecord],
+) -> dict[tuple[str, str | None], FeedbackRecord]:
     """Keep the highest-sequence record for each exact/group name and unit key."""
     result: dict[tuple[str, str | None], FeedbackRecord] = {}
     for record in records:
@@ -42,7 +44,9 @@ def suppress_resolved_groups(
     )
 
 
-def feedback_from_decision(group: ReviewGroup, decision: ReviewDecision, *, sequence: int) -> FeedbackRecord:
+def feedback_from_decision(
+    group: ReviewGroup, decision: ReviewDecision, *, sequence: int
+) -> FeedbackRecord:
     """Convert a validated group decision to minimal reusable feedback."""
     if decision.group_id != group.group_id or not group.normalized_name:
         raise ValueError("feedback requires a named decision for this group")

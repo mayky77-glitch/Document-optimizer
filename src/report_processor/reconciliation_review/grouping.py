@@ -51,10 +51,10 @@ def build_review_groups(rows: Iterable[ReviewRow]) -> tuple[ReviewGroup, ...]:
 
 
 def _merge_complete_prefix_groups(
-    groups: list[tuple[str | None, str | None, tuple[ReviewRow, ...]]]
+    groups: list[tuple[str | None, str | None, tuple[ReviewRow, ...]]],
 ) -> list[tuple[str | None, str | None, tuple[ReviewRow, ...]]]:
     pending = list(groups)
-    merged: list[tuple[str | None, str |None, tuple[ReviewRow, ...]]] = []
+    merged: list[tuple[str | None, str | None, tuple[ReviewRow, ...]]] = []
     while pending:
         name, unit, members = pending.pop(0)
         assert name is not None

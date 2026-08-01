@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 from report_processor.reconciliation_review import ReviewDecision, ReviewGroup, ReviewRow
 
@@ -44,7 +44,9 @@ def reconciliation_review_payload(
     ]
 
 
-def _selected_decision(group: ReviewGroup, decisions: Iterable[ReviewDecision]) -> ReviewDecision | None:
+def _selected_decision(
+    group: ReviewGroup, decisions: Iterable[ReviewDecision]
+) -> ReviewDecision | None:
     group_choice = next((item for item in decisions if item.group_id == group.group_id), None)
     row_choices = [item for item in decisions if item.row_id in group.member_ids]
     # A group card has one selected decision only when all its members agree.
