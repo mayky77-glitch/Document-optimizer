@@ -32,11 +32,11 @@ def test_file_uploads_use_aligned_labels_and_native_gazprom_buttons() -> None:
     assert ".file-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start;" in main_styles
     for styles in (main_styles, drawing_styles):
         assert ".file-field { min-width: 0; align-content: start; }" in styles
-        assert 'input[type="file"] { min-width: 0; min-height: 76px; padding: 0 12px 0 0;' in styles
+        assert 'input[type="file"] { min-width: 0; min-height: 56px; padding: 6px 10px;' in styles
         assert 'input[type="file"]::file-selector-button {' in styles
-        assert "height: 74px; margin-inline-end: 12px;" in styles
-        assert "border: 0; border-right: 1px solid var(--gazprom-dark); border-radius: 0;" in styles
-        assert "background: var(--gazprom);" in styles
+        assert "height: 40px; margin-inline-end: 10px;" in styles
+        assert "border: 1px solid var(--input-border); border-radius: 2px; background: var(--soft-blue);" in styles
+        assert "color: var(--gazprom-dark);" in styles
         assert 'input[type="file"]:hover::file-selector-button {' in styles
         assert 'input[type="file"]:focus-visible {' in styles
         assert "@media (max-width: 390px)" in styles

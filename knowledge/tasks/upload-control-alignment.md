@@ -7,8 +7,8 @@ agent_role: designer
 owner: "upload-control-designer"
 profile: L2
 routing_grade: P4
-progress_revision: 2
-state_fingerprint: "upload-controls-flush-browser-verified"
+progress_revision: 3
+state_fingerprint: "upload-controls-secondary-browser-verified"
 no_progress_count: 0
 circuit_state: closed
 routing_reason: "L2 compatibility profile maps to P4."
@@ -58,22 +58,21 @@ mobile поля складываются в одну колонку. На обе
 
 ## Completion evidence
 
-- Changed paths: `admin.css`, `drawing-card.css`, два UI-contract теста и
-  [[../maps/project-map|project map]].
+- Changed paths: `admin.css`, `drawing-card.css` и два UI-contract теста.
 - Commands and tests run: `uv run pytest -q tests/integration/test_block18_admin_panel.py tests/integration/test_drawing_card_ui_contract.py` (12 passed); `node --check` для `admin.js` и `drawing-card.js`; `git diff --check`.
 - Result: `align-items: start` устраняет растяжение короткой label сеткой.
-  Recovery: у `input[type=file]` остаётся padding только справа, а selector
-  имеет высоту 74px внутри 76px control, поэтому кнопка прилегает к верхней,
-  левой и нижней границе с допустимым 1px outer border; перед именем файла
-  остаётся 12px inline gap. Нативные hover/focus и 390px-компактный вариант
-  сохранены. UI-contract assertions фиксируют эти геометрические условия.
-- Risks or follow-up: focused тесты, Node и diff-check проходят. Recovery
-  дополнительно проверен в запущенном приложении через headless Chrome:
-  `/tmp/upload-controls-flush-1024.png`. Кнопки прилегают к рамке, имена файлов
-  имеют нормальный зазор, верхние границы source/target совпадают. Старые
+  Последний recovery заменяет full-height primary selector на компактный
+  secondary upload: outer field 56px, `::file-selector-button` 40px,
+  10px gap до имени файла, `--soft-blue`/`--input-border` вместо синего CTA.
+  Hover, focus и 390px-компактный вариант сохранены; assertions фиксируют
+  геометрию и secondary palette на обеих страницах.
+- Risks or follow-up: focused тесты, Node и diff-check проходят. Root проверил
+  компактный вариант в запущенном приложении и тёмной теме через Chrome:
+  `/tmp/upload-compact-dark.png`. Поля выровнены, filename не конфликтует с
+  кнопкой, selector визуально вторичен относительно основного CTA. Старые
   движки без `::file-selector-button` сохраняют доступный нативный control без
   брендовой подложки.
 
 ## Handoff
 
-Accepted after focused tests and browser verification.
+Accepted after focused tests and dark-theme browser verification.
