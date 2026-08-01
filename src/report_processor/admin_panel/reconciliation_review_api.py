@@ -11,16 +11,24 @@ class ReconciliationReviewRequestError(ValueError):
     """Raised when an untrusted review request is outside the controlled contract."""
 
 
-def parse_reconciliation_review_decision(payload: object) -> ReviewDecision:
+def parse_reconciliation_review_decision(
+    payload: object, *, group_id: str | None = None, row_id: str | None = None
+) -> ReviewDecision:
     """Parse one accept/reject group or per-row decision without route coupling."""
     if not isinstance(payload, Mapping):
         raise ReconciliationReviewRequestError("Expected a JSON decision object")
     action = _enum(ReviewAction, payload.get("action"), "action")
     mode = _optional_enum(ReviewMode, payload.get("mode"), "mode")
-    group_id = _optional_id(payload.get("group_id"), "group_id")
-    row_id = _optional_id(payload.get("row_id"), "row_id")
+    body_group_id = _optional_id(payload.get("group_id"), "group_id")
+    body_row_id = _optional_id(payload.get("row_id"), "row_id")
+    if group_id is not None and body_group_id not in {None, group_id}:
+        raise ReconciliationReviewRequestError("group_id does not match route")
+    if row_id is not None and body_row_id not in {None, row_id}:
+        raise ReconciliationReviewRequestError("row_id does not match route")
+    group_id = group_id or body_group_id
+    row_id = row_id or body_row_id
     version = _optional_id(payload.get("version"), "version")
-    category = _optional_category(payload.get("target_category"))
+    category = _optional_category(payload.get("category_id"))
     try:
         return ReviewDecision(
             action=action,
@@ -61,5 +69,5 @@ def _optional_category(value: object) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip() or len(value.strip()) > 200:
-        raise ReconciliationReviewRequestError("invalid target_category")
+        raise ReconciliationReviewRequestError("invalid category_id")
     return value.strip()

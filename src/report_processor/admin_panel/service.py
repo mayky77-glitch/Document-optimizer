@@ -14,6 +14,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .presentation import journal_payload, processing_presentation
+from .reconciliation_execution import ReconciliationReviewResult, apply_review, prepare_review
+from .reconciliation_feedback_store import ReconciliationFeedbackStore
+from .reconciliation_state import ReconciliationReviewState
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
@@ -46,6 +49,7 @@ class AdminJob:
     decisions: list[dict[str, str]] = field(default_factory=list)
     errors: tuple[str, ...] = ()
     result_name: str | None = None
+    review_state: ReconciliationReviewState | None = None
 
     @property
     def result_available(self) -> bool:
@@ -90,12 +94,13 @@ class AdminPanelService:
         execute: Callable[[AdminJob], object] | None = None,
     ) -> None:
         self.workspace_root = Path(workspace_root)
-        self.execute = execute or _default_execute
+        self.execute = execute
         self.jobs: dict[str, AdminJob] = {}
         if self.workspace_root.is_symlink():
             raise ValueError("workspace root cannot be a symlink")
         self.workspace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.workspace_root, 0o700)
+        self.feedback_store = ReconciliationFeedbackStore(self.workspace_root)
 
     def create_job(
         self,
@@ -159,7 +164,11 @@ class AdminPanelService:
             raise ValueError("job cannot be run from its current state")
         job.status = "running"
         try:
-            execution_result = self.execute(job)
+            execution_result = (
+                self.execute(job)
+                if self.execute is not None
+                else prepare_review(job, self.feedback_store.records(job.target_digest))
+            )
             self._apply_execution_result(job, execution_result)
             _verify_inputs(job)
         except (OSError, TypeError, ValueError, RuntimeError):
@@ -184,6 +193,42 @@ class AdminPanelService:
         """Backward-compatible alias for the frozen in-process service API."""
 
         return self.get_job(job_id)
+
+    def put_reconciliation_group(self, job_id: str, group_id: str, decision) -> AdminJob:
+        job = self._review_job(job_id)
+        job.review_state.put_group(group_id, decision)
+        return job
+
+    def put_reconciliation_row(self, job_id: str, row_id: str, decision) -> AdminJob:
+        job = self._review_job(job_id)
+        job.review_state.put_row(row_id, decision)
+        return job
+
+    def delete_reconciliation_row(self, job_id: str, row_id: str, version: str) -> AdminJob:
+        job = self._review_job(job_id)
+        job.review_state.delete_row(row_id, version)
+        return job
+
+    def apply_reconciliation(self, job_id: str) -> AdminJob:
+        job = self._review_job(job_id)
+        _verify_inputs(job)
+        job.status = "running"
+        try:
+            output, feedback = apply_review(job, job.review_state)
+            self.feedback_store.persist(job.target_digest, feedback)
+            os.chmod(output, 0o600)
+            job.output, job.result_name, job.status = output, "optimized-report.xlsx", "ready"
+        except (OSError, TypeError, ValueError, RuntimeError):
+            _remove_partial_output(job)
+            job.status, job.errors = "failed", ("PROCESSING_FAILED",)
+            raise
+        return job
+
+    def _review_job(self, job_id: str) -> AdminJob:
+        job = self.get_job(job_id)
+        if job.review_state is None or job.status not in {"review_required", "ready"}:
+            raise ValueError("authoritative review is unavailable")
+        return job
 
     def record_decision(self, *, job_id: str, suggestion_id: str, decision: str) -> AdminJob:
         if decision not in {"fit", "not_fit"}:
@@ -345,6 +390,13 @@ class AdminPanelService:
             self.jobs.pop(job_id, None)
 
     def _apply_execution_result(self, job: AdminJob, result: object) -> None:
+        if isinstance(result, ReconciliationReviewResult):
+            job.review_state = result.state
+            job.status = "review_required"
+            job.summary = {}
+            job.discrepancies = []
+            job.suggestions = []
+            return
         if result is None or isinstance(result, Path):
             job.output = result
             if (

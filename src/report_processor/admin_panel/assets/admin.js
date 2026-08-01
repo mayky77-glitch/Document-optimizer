@@ -94,7 +94,7 @@
   const reviewGroupsFrom = (payload) => Array.isArray(payload.review_groups)
     ? payload.review_groups.filter((group) => group
       && typeof group.group_id === "string"
-      && Number.isInteger(group.version)
+      && typeof group.version === "string"
       && Array.isArray(group.members))
     : [];
 
@@ -154,7 +154,7 @@
     });
   };
 
-  const submitReviewDecision = async (card, url, body) => {
+  const submitReviewDecision = async (card, url, body, method = body ? "PUT" : "DELETE") => {
     if (!currentJobId || !url) {
       setStatus("Не удалось определить строку для решения. Обновите страницу и повторите действие.", true);
       return;
@@ -162,7 +162,7 @@
     setReviewBusy(card, true);
     try {
       const payload = await requestJson(url, {
-        method: body ? "PUT" : "DELETE",
+        method,
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
@@ -191,7 +191,7 @@
       button.className = `review-action ${className}`;
       button.textContent = title;
       button.addEventListener("click", () => {
-        const body = decisionBody(scope, Number(scope.dataset.version), action);
+        const body = decisionBody(scope, scope.dataset.version, action);
         if (!body) {
           setStatus("Выберите целевую категорию перед принятием решения.", true);
           return;
@@ -206,7 +206,7 @@
   const renderMemberRow = (member, group, categories) => {
     const row = document.createElement("tr");
     const name = text(member && (member.display_name || member.name || member.title), "Строка без названия");
-    const version = Number.isInteger(member?.version) ? member.version : group.version;
+    const version = typeof member?.version === "string" ? member.version : group.version;
     [["Работа", name], ["Ед.", text(member?.source_unit)], ["Количество", displayNumber(member?.quantity)], ["Стоимость", displayNumber(member?.cost, " ₽")]].forEach(([label, value]) => {
       const cell = document.createElement("td");
       cell.dataset.label = label;
@@ -250,7 +250,8 @@
       void submitReviewDecision(
         row,
         `/api/jobs/${encodeURIComponent(currentJobId)}/review/items/${encodeURIComponent(member.row_id)}`,
-        null,
+        { version },
+        "DELETE",
       );
     });
     body.append(category, mode, actions, remove);

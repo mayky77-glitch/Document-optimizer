@@ -23,8 +23,8 @@ def reconciliation_review_group_payload(
     return {
         "group_id": group.group_id,
         "version": group.version,
-        "proposed_category": group.proposed_category,
-        "selected_category": selected.target_category if selected else None,
+        "proposed_category_id": group.proposed_category,
+        "selected_category_id": selected.target_category if selected else None,
         "action": selected.action.value if selected else None,
         "mode": selected.mode.value if selected and selected.mode else None,
         "members": [_member_payload(row) for row in member_rows],
@@ -62,7 +62,7 @@ def _member_payload(row: ReviewRow) -> dict[str, str | None]:
     return {
         "row_id": row.row_id,
         "display_name": row.display_name or "",
-        "unit": row.unit,
+        "source_unit": row.unit,
         "quantity": _money(row.quantity),
         "cost": _money(row.cost),
     }
