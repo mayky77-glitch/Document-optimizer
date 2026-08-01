@@ -51,6 +51,29 @@ def _manual_result():
     )
 
 
+def _manual_discrepancy_result():
+    issues = tuple(
+        SimpleNamespace(
+            issue_id=f"issue-{index}",
+            code="AMBIGUOUS" if index < 3 else "UNMATCHED",
+            severity="manual_review",
+            message="Связь требует ручной проверки" if index < 3 else "Позиция не сопоставлена",
+        )
+        for index in range(4)
+    )
+    return SimpleNamespace(
+        artifacts={
+            "quality_report": SimpleNamespace(
+                summary={"manual_review_issue_count": 4}, issues=issues
+            )
+        },
+        state="MANUAL_REVIEW_REQUIRED",
+        exit_code=3,
+        warnings=(),
+        errors=(),
+    )
+
+
 def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path: Path) -> None:
     source_content = b"PK\x03\x04source"
     target_content = b"PK\x03\x04target"
@@ -89,6 +112,69 @@ def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path
     assert [item["decision"] for item in payload["decisions"]] == ["fit", "not_fit"]
     assert str(tmp_path) not in result_path.read_text(encoding="utf-8")
     assert payload["statement"].startswith("Решения оператора записаны отдельно")
+
+
+def test_manual_discrepancy_groups_require_exact_atomic_decisions(tmp_path: Path) -> None:
+    service = AdminPanelService(
+        tmp_path / "jobs", execute=lambda _job: _manual_discrepancy_result()
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+    )
+
+    from report_processor.admin_panel.presentation import job_payload
+
+    payload = job_payload(job)
+    groups = payload["manual_review_groups"]
+    assert job.status == "review_required"
+    assert len(groups) == 2
+    first = groups[0]
+    ids = first["discrepancy_ids"]
+    with pytest.raises(ValueError, match="exactly"):
+        service.record_manual_discrepancy_decision(
+            job_id=job.job_id,
+            group_id=first["group_id"],
+            discrepancy_ids=ids[:-1],
+            decision="approve",
+        )
+    assert job.decisions == []
+    with pytest.raises(ValueError, match="duplicate"):
+        service.record_manual_discrepancy_decision(
+            job_id=job.job_id,
+            group_id=first["group_id"],
+            discrepancy_ids=[ids[0], ids[0]],
+            decision="approve",
+        )
+    assert job.decisions == []
+    service.record_manual_discrepancy_decision(
+        job_id=job.job_id,
+        group_id=first["group_id"],
+        discrepancy_ids=ids,
+        decision="approve",
+    )
+    assert {item["discrepancy_id"] for item in job.decisions} == set(ids)
+    with pytest.raises(ValueError, match="exactly"):
+        service.record_manual_discrepancy_decision(
+            job_id=job.job_id,
+            group_id=first["group_id"],
+            discrepancy_ids=ids,
+            decision="approve",
+        )
+    remaining = job_payload(job)["manual_review_groups"]
+    service.record_manual_discrepancy_decision(
+        job_id=job.job_id,
+        group_id=remaining[0]["group_id"],
+        discrepancy_ids=remaining[0]["discrepancy_ids"],
+        decision="reject",
+    )
+    result_path, _ = service.get_result(job.job_id)
+    journal = result_path.read_text(encoding="utf-8")
+    assert job.unresolved_manual_discrepancy_ids == set()
+    assert "source.xlsx" not in journal and str(tmp_path) not in journal
 
 
 def test_failed_executor_removes_private_uploads_and_exposes_controlled_state(

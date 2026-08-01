@@ -38,35 +38,84 @@ def job_payload(job: object) -> dict[str, object]:
     if isinstance(job, Mapping):
         job_id = _required_text(job.get("job_id"), "job_id")
         status = _required_text(job.get("status"), "status")
+        discrepancies = _public_records(job.get("discrepancies"))
+        decisions = _public_records(job.get("decisions"))
         output = {
             "job_id": job_id,
             "stage": _required_text(job.get("stage"), "stage"),
             "status": status,
             "summary": _public_mapping(job.get("summary")),
-            "discrepancies": _public_records(job.get("discrepancies")),
+            "discrepancies": passive_discrepancies(discrepancies),
+            "manual_review_groups": manual_review_groups(discrepancies, decisions),
             "suggestions": _public_records(job.get("suggestions")),
             "download_url": _download_url(job.get("download_url"), job_id),
         }
         if "mode" in job:
             output["mode"] = _public_text(job.get("mode"))
         if "decisions" in job:
-            output["decisions"] = _public_records(job.get("decisions"))
+            output["decisions"] = decisions
         return output
 
     job_id = _required_text(getattr(job, "job_id", None), "job_id")
+    discrepancies = _public_records(getattr(job, "discrepancies", ()))
+    decisions = _public_records(getattr(job, "decisions", ()))
     return {
         "job_id": job_id,
         "stage": _required_text(getattr(job, "stage", None), "stage"),
         "mode": _public_text(getattr(job, "mode", "")),
         "status": _required_text(getattr(job, "status", None), "status"),
         "summary": _public_mapping(getattr(job, "summary", {})),
-        "discrepancies": _public_records(getattr(job, "discrepancies", ())),
+        "discrepancies": passive_discrepancies(discrepancies),
+        "manual_review_groups": manual_review_groups(discrepancies, decisions),
         "suggestions": _public_records(getattr(job, "suggestions", ())),
-        "decisions": _public_records(getattr(job, "decisions", ())),
+        "decisions": decisions,
         "download_url": (
             f"/api/jobs/{job_id}/result" if bool(getattr(job, "result_available", False)) else None
         ),
     }
+
+
+def manual_review_groups(
+    discrepancies: Sequence[Mapping[str, object]], decisions: Sequence[Mapping[str, object]]
+) -> list[dict[str, object]]:
+    """Return unresolved manual-review issues as stable, compact decision groups."""
+
+    decided = {
+        _public_text(item.get("discrepancy_id"))
+        for item in decisions
+        if _public_text(item.get("decision")) in {"approve", "reject"}
+    }
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for item in discrepancies:
+        if not _is_manual_discrepancy(item):
+            continue
+        discrepancy_id = _public_text(item.get("discrepancy_id"), 200)
+        if not discrepancy_id or discrepancy_id in decided:
+            continue
+        code = _public_text(item.get("code"), 120) or "MANUAL_REVIEW"
+        message = _public_text(item.get("message")) or "Требуется ручная проверка."
+        grouped.setdefault((code, message), []).append(discrepancy_id)
+    return [
+        {
+            "group_id": _controlled_id("manual-review-group", code, message),
+            "code": code,
+            "title": "Нужна ручная проверка",
+            "message": message,
+            "count": len(ids),
+            "discrepancy_ids": sorted(ids),
+        }
+        for (code, message), ids in sorted(grouped.items())
+    ]
+
+
+def passive_discrepancies(discrepancies: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Keep actionable manual discrepancies out of the passive warning list."""
+
+    return [dict(item) for item in discrepancies if not _is_manual_discrepancy(item)]
+
+
+def _is_manual_discrepancy(item: Mapping[str, object]) -> bool:
+    return _public_text(item.get("severity")) == "manual_review"
 
 
 def processing_presentation(

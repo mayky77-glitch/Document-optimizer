@@ -18,6 +18,7 @@ class FakeAdminService:
         self.result_path = result_path
         self.create_calls: list[dict[str, object]] = []
         self.decision_calls: list[dict[str, str]] = []
+        self.manual_decision_calls: list[dict[str, object]] = []
         self.jobs = {
             "job-001": {
                 "job_id": "job-001",
@@ -28,7 +29,13 @@ class FakeAdminService:
                     {"category": "unit_conflict", "color": "red"},
                     {"category": "unchanged_value", "color": "yellow"},
                     {"category": "cost_threshold", "color": "orange"},
-                    {"category": "manual_review", "color": "blue"},
+                    {
+                        "discrepancy_id": "manual-001",
+                        "code": "AMBIGUOUS",
+                        "category": "manual_review",
+                        "severity": "manual_review",
+                        "message": "Связь требует ручной проверки",
+                    },
                 ],
                 "suggestions": [
                     {
@@ -82,12 +89,26 @@ class FakeAdminService:
             {"job_id": job_id, "suggestion_id": suggestion_id, "decision": decision}
         )
         job = dict(self.jobs[job_id])
-        job["decisions"] = [
-            {"suggestion_id": suggestion_id, "decision": decision}
-        ]
+        job["decisions"] = [{"suggestion_id": suggestion_id, "decision": decision}]
         job.update(status="ready", download_url=f"/api/jobs/{job_id}/result")
         self.jobs[job_id] = job
         return job
+
+    def record_manual_discrepancy_decision(
+        self, *, job_id: str, group_id: str, discrepancy_ids: list[str], decision: str
+    ) -> Mapping[str, object]:
+        if job_id not in self.jobs:
+            raise KeyError(job_id)
+        expected = {
+            "group_id": "manual-group",
+            "discrepancy_ids": ["manual-001"],
+            "decision": "approve",
+        }
+        received = {"group_id": group_id, "discrepancy_ids": discrepancy_ids, "decision": decision}
+        if received != expected:
+            raise ValueError("invalid controlled manual decision")
+        self.manual_decision_calls.append(received)
+        return self.jobs[job_id]
 
     def get_result(self, job_id: str) -> tuple[Path, str]:
         if job_id not in self.jobs or self.jobs[job_id]["status"] != "ready":
@@ -176,13 +197,29 @@ def test_review_needs_explicit_fit_or_not_fit_and_download_is_safe(client) -> No
         {"job_id": "job-001", "suggestion_id": "suggestion-001", "decision": "fit"}
     ]
     assert accepted.json()["download_url"] == "/api/jobs/job-001/result"
-    assert accepted.json()["decisions"] == [
-        {"suggestion_id": "suggestion-001", "decision": "fit"}
-    ]
+    assert accepted.json()["decisions"] == [{"suggestion_id": "suggestion-001", "decision": "fit"}]
     assert download.status_code == 200 and download.content == b"controlled-result"
     assert "optimized-report.xlsx" in download.headers["content-disposition"]
     assert str(tmp_path) not in download.headers["content-disposition"]
     assert "private-result.bin" not in download.headers["content-disposition"]
+
+
+def test_manual_discrepancy_decision_uses_a_bounded_group_contract(client) -> None:
+    test_client, service, _ = client
+    invalid = test_client.post(
+        "/api/jobs/job-001/manual-discrepancy-decisions",
+        json={"group_id": "manual-group", "discrepancy_ids": ["manual-001"], "decision": "fit"},
+    )
+    accepted = test_client.post(
+        "/api/jobs/job-001/manual-discrepancy-decisions",
+        json={"group_id": "manual-group", "discrepancy_ids": ["manual-001"], "decision": "approve"},
+    )
+
+    assert invalid.status_code == 400
+    assert accepted.status_code == 200
+    assert service.manual_decision_calls == [
+        {"group_id": "manual-group", "discrepancy_ids": ["manual-001"], "decision": "approve"}
+    ]
 
 
 @pytest.mark.parametrize("path", ("/api/jobs/unknown", "/api/jobs/unknown/result"))
@@ -216,12 +253,18 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
     assert 'src="/static/theme.js"' in html
     assert "report-processor.theme.v1" in theme_script.text
     assert "#0079c2" in css
-    assert ".file-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start;" in css
+    assert (
+        ".file-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); "
+        "align-items: start;" in css
+    )
     assert ".file-field { min-width: 0; align-content: start; }" in css
     assert 'input[type="file"] { min-width: 0; min-height: 56px; padding: 6px 10px;' in css
     assert 'input[type="file"]::file-selector-button {' in css
     assert "height: 40px; margin-inline-end: 10px;" in css
-    assert "border: 1px solid var(--input-border); border-radius: 2px; background: var(--soft-blue);" in css
+    assert (
+        "border: 1px solid var(--input-border); border-radius: 2px; background: var(--soft-blue);"
+        in css
+    )
     assert 'input[type="file"]:hover::file-selector-button {' in css
     assert 'input[type="file"]:focus-visible {' in css
     for token in ("unit_conflict", "unchanged_value", "cost_threshold", "manual_review"):
@@ -241,11 +284,18 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     assert "unresolvedSuggestions" in javascript
     assert "item.requires_manual_review === true" in javascript
     assert "payload.decisions" in javascript
+    assert "manual_review_groups" in javascript
+    assert "manual-discrepancy-decisions" in javascript
+    assert "Одобрить" in javascript and "Отклонить" in javascript
     assert "/api/jobs/${encodeURIComponent(jobId)}/decisions" in javascript
-    assert 'decision }),' in javascript
-    assert '[["Подходит", "fit", "suggestion-fit"], ["Не подходит", "not_fit", "suggestion-not-fit"]]' in javascript
+    assert "decision })," in javascript
+    assert (
+        '[["Подходит", "fit", "suggestion-fit"], ["Не подходит", "not_fit", "suggestion-not-fit"]]'
+        in javascript
+    )
     assert "setSuggestionBusy(card, true)" in javascript
     assert "setSuggestionBusy(card, false)" in javascript
     assert ".suggestion-card { container-type: inline-size;" in css
     assert "@container (max-width: 560px)" in css
-    assert ".suggestion-actions { grid-row: 2;" in css
+    assert ".suggestion-actions, .manual-review-actions { grid-row: 2;" in css
+    assert ".manual-review-card { container-type: inline-size;" in css

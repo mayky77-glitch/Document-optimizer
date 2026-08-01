@@ -108,6 +108,13 @@
     );
   };
 
+  const manualGroups = (payload) => Array.isArray(payload.manual_review_groups)
+    ? payload.manual_review_groups.filter((item) => item
+      && typeof item.group_id === "string"
+      && Array.isArray(item.discrepancy_ids)
+      && item.discrepancy_ids.length > 0)
+    : [];
+
   const renderSuggestion = (item, jobId) => {
     const card = document.createElement("article");
     card.className = "suggestion-card";
@@ -150,6 +157,42 @@
     return card;
   };
 
+  const renderManualGroup = (item, jobId) => {
+    const card = document.createElement("article");
+    card.className = "manual-review-card";
+    const header = document.createElement("header");
+    header.className = "manual-review-card-head";
+    const kicker = document.createElement("p");
+    kicker.className = "suggestion-kicker";
+    kicker.textContent = "Ручное замечание";
+    const title = document.createElement("h4");
+    title.textContent = suggestionText(item.title, "Нужна ручная проверка");
+    const message = document.createElement("p");
+    message.className = "manual-review-message";
+    message.textContent = suggestionText(item.message, "Проверьте замечание и примите решение.");
+    const count = document.createElement("p");
+    count.className = "manual-review-count";
+    count.textContent = `Замечаний: ${item.count || item.discrepancy_ids.length}`;
+    header.append(kicker, title, message, count);
+
+    const actions = document.createElement("div");
+    actions.className = "manual-review-actions";
+    actions.setAttribute("role", "group");
+    actions.setAttribute("aria-label", `Решение для «${title.textContent}»`);
+    [["Одобрить", "approve", "manual-review-approve"], ["Отклонить", "reject", "manual-review-reject"]].forEach(([label, decision, className]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = className;
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        void submitManualDecision(card, jobId, item, decision);
+      });
+      actions.append(button);
+    });
+    card.append(header, actions);
+    return card;
+  };
+
   const renderDiscrepancies = (items, payload) => {
     discrepancies.replaceChildren();
     (Array.isArray(items) ? items : []).forEach((item) => {
@@ -163,9 +206,14 @@
       discrepancies.append(row);
     });
     const pendingSuggestions = unresolvedSuggestions(payload);
-    suggestions.replaceChildren(...pendingSuggestions.map((item) => renderSuggestion(item, payload.job_id)));
-    suggestionReview.hidden = pendingSuggestions.length === 0;
-    emptyReview.hidden = discrepancies.children.length !== 0 || pendingSuggestions.length !== 0;
+    const pendingManualGroups = manualGroups(payload);
+    suggestions.replaceChildren(
+      ...pendingManualGroups.map((item) => renderManualGroup(item, payload.job_id)),
+      ...pendingSuggestions.map((item) => renderSuggestion(item, payload.job_id)),
+    );
+    suggestionReview.hidden = pendingSuggestions.length + pendingManualGroups.length === 0;
+    emptyReview.hidden = discrepancies.children.length !== 0
+      || pendingSuggestions.length !== 0 || pendingManualGroups.length !== 0;
   };
 
   const setSuggestionBusy = (card, busy) => {
@@ -185,6 +233,29 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ suggestion_id: suggestionId, decision }),
+      });
+      renderJob(payload);
+    } catch (error) {
+      setSuggestionBusy(card, false);
+      setStatus(error.message, true);
+    }
+  };
+
+  const submitManualDecision = async (card, jobId, group, decision) => {
+    if (typeof jobId !== "string" || !jobId || typeof group.group_id !== "string") {
+      setStatus("Не удалось определить группу замечаний. Обновите страницу и повторите действие.", true);
+      return;
+    }
+    setSuggestionBusy(card, true);
+    try {
+      const payload = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/manual-discrepancy-decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          group_id: group.group_id,
+          discrepancy_ids: group.discrepancy_ids,
+          decision,
+        }),
       });
       renderJob(payload);
     } catch (error) {

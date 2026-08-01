@@ -211,6 +211,36 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             return _error("Решение не относится к открытой рекомендации", 400)
         return _secure(JSONResponse(job_payload(current)))
 
+    async def manual_discrepancy_decision(request):
+        try:
+            payload = await request.json()
+        except ValueError:
+            return _error("Ожидается JSON с решением", 400)
+        if not isinstance(payload, Mapping):
+            return _error("Ожидается JSON с решением", 400)
+        group_id = payload.get("group_id")
+        discrepancy_ids = payload.get("discrepancy_ids")
+        decision_value = payload.get("decision")
+        if (
+            not isinstance(group_id, str)
+            or not isinstance(discrepancy_ids, list)
+            or not all(isinstance(item, str) for item in discrepancy_ids)
+            or decision_value not in {"approve", "reject"}
+        ):
+            return _error("Допустимы только решения approve и reject для открытой группы", 400)
+        try:
+            current = panel.record_manual_discrepancy_decision(
+                job_id=request.path_params["job_id"],
+                group_id=group_id,
+                discrepancy_ids=discrepancy_ids,
+                decision=decision_value,
+            )
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Решение не относится к открытой группе замечаний", 400)
+        return _secure(JSONResponse(job_payload(current)))
+
     async def download(request):
         try:
             path, filename = panel.get_result(request.path_params["job_id"])
@@ -467,6 +497,11 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
             Route("/api/jobs", upload, methods=["POST"]),
             Route("/api/jobs/{job_id}", get_job),
             Route("/api/jobs/{job_id}/decisions", decision, methods=["POST"]),
+            Route(
+                "/api/jobs/{job_id}/manual-discrepancy-decisions",
+                manual_discrepancy_decision,
+                methods=["POST"],
+            ),
             Route("/api/jobs/{job_id}/result", download),
             Route("/api/drawing-card/periods", drawing_card_periods, methods=["POST"]),
             Route("/api/drawing-card/jobs", drawing_card_upload, methods=["POST"]),

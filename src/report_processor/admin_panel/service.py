@@ -52,16 +52,31 @@ class AdminJob:
             self.output is not None
             and self.output.is_file()
             and not self.unresolved_suggestion_ids
+            and not self.unresolved_manual_discrepancy_ids
             and self.status not in {"pending", "running", "failed"}
         )
 
     @property
     def unresolved_suggestion_ids(self) -> set[str]:
-        decided = {item["suggestion_id"] for item in self.decisions}
+        decided = {item.get("suggestion_id") for item in self.decisions}
         return {
             str(item.get("suggestion_id"))
             for item in self.suggestions
             if item.get("requires_manual_review") is True
+        } - decided
+
+    @property
+    def unresolved_manual_discrepancy_ids(self) -> set[str]:
+        decided = {
+            item.get("discrepancy_id")
+            for item in self.decisions
+            if item.get("decision") in {"approve", "reject"}
+        }
+        return {
+            str(item.get("discrepancy_id"))
+            for item in self.discrepancies
+            if item.get("severity") == "manual_review"
+            and isinstance(item.get("discrepancy_id"), str)
         } - decided
 
 
@@ -180,7 +195,7 @@ class AdminPanelService:
         }
         if suggestion_id not in available:
             raise ValueError("unknown suggestion")
-        if any(item["suggestion_id"] == suggestion_id for item in job.decisions):
+        if any(item.get("suggestion_id") == suggestion_id for item in job.decisions):
             raise ValueError("suggestion already decided")
         job.decisions.append(
             {
@@ -189,16 +204,59 @@ class AdminPanelService:
                 "effect": "review_journal_only",
             }
         )
-        if not job.unresolved_suggestion_ids:
-            if job.output is None:
-                job.output = job.directory / "review-journal.json"
-                _private_write(job.output, journal_payload(job))
-                job.result_name = "review-journal.json"
-                job.status = "review_recorded"
-            elif job.status == "review_required":
-                job.status = "ready"
+        self._complete_review_if_resolved(job)
         self._prune_terminal_jobs()
         return job
+
+    def record_manual_discrepancy_decision(
+        self,
+        *,
+        job_id: str,
+        group_id: str,
+        discrepancy_ids: list[str],
+        decision: str,
+    ) -> AdminJob:
+        if decision not in {"approve", "reject"}:
+            raise ValueError("decision must be approve or reject")
+        if not isinstance(group_id, str) or not group_id:
+            raise ValueError("group is required")
+        if not isinstance(discrepancy_ids, list) or not discrepancy_ids:
+            raise ValueError("discrepancy IDs are required")
+        if any(not isinstance(item, str) or not item for item in discrepancy_ids):
+            raise ValueError("invalid discrepancy ID")
+        if len(set(discrepancy_ids)) != len(discrepancy_ids):
+            raise ValueError("duplicate discrepancy ID")
+        job = self.get_job(job_id)
+        from .presentation import manual_review_groups
+
+        groups = manual_review_groups(job.discrepancies, job.decisions)
+        group = next((item for item in groups if item["group_id"] == group_id), None)
+        if group is None or set(discrepancy_ids) != set(group["discrepancy_ids"]):
+            raise ValueError("decision must match one open group exactly")
+        # All validation occurs before mutation so rejected requests remain atomic.
+        job.decisions.extend(
+            {
+                "discrepancy_id": discrepancy_id,
+                "decision": decision,
+                "effect": "review_journal_only",
+            }
+            for discrepancy_id in discrepancy_ids
+        )
+        self._complete_review_if_resolved(job)
+        self._prune_terminal_jobs()
+        return job
+
+    @staticmethod
+    def _complete_review_if_resolved(job: AdminJob) -> None:
+        if job.unresolved_suggestion_ids or job.unresolved_manual_discrepancy_ids:
+            return
+        if job.output is None:
+            job.output = job.directory / "review-journal.json"
+            _private_write(job.output, journal_payload(job))
+            job.result_name = "review-journal.json"
+            job.status = "review_recorded"
+        elif job.status == "review_required":
+            job.status = "ready"
 
     def get_result(self, job_id: str) -> tuple[Path, str]:
         job = self.get_job(job_id)
@@ -247,18 +305,22 @@ class AdminPanelService:
 
         exit_code = _exit_code(result)
         if exit_code in {0, 1}:
-            job.status = "review_required" if job.unresolved_suggestion_ids else "ready"
+            job.status = "review_required" if _has_unresolved_reviews(job) else "ready"
         elif exit_code in {3, 4}:
-            job.status = "review_required" if job.unresolved_suggestion_ids else "blocked"
+            job.status = "review_required" if _has_unresolved_reviews(job) else "blocked"
         else:
             job.status = "failed"
             job.errors = job.errors or ("PROCESSING_FAILED",)
             _remove_partial_output(job)
             return
-        if job.output is None and not job.unresolved_suggestion_ids:
+        if job.output is None and not _has_unresolved_reviews(job):
             job.output = job.directory / "review-journal.json"
             _private_write(job.output, journal_payload(job))
             job.result_name = "review-journal.json"
+
+
+def _has_unresolved_reviews(job: AdminJob) -> bool:
+    return bool(job.unresolved_suggestion_ids or job.unresolved_manual_discrepancy_ids)
 
 
 def validate_workbook_upload(name: str, content: bytes) -> None:
