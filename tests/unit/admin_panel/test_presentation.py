@@ -94,3 +94,41 @@ def test_manual_discrepancies_are_grouped_and_removed_from_passive_list() -> Non
     assert payload["discrepancies"] == [
         {"discrepancy_id": "warning-1", "category": "unchanged_value", "message": "Без изменения"}
     ]
+
+
+def test_repeated_passive_warnings_collapse_to_one_counted_row() -> None:
+    job = {
+        "job_id": "job-1",
+        "stage": "13.1",
+        "status": "ready",
+        "summary": {},
+        "discrepancies": [
+            {
+                "discrepancy_id": f"warning-{index}",
+                "code": "UPSTREAM_WARNING",
+                "category": "unchanged_value",
+                "severity": "warning",
+                "color": "yellow",
+                "message": "Исходное значение представлено без изменения.",
+            }
+            for index in range(173)
+        ],
+        "suggestions": [],
+        "decisions": [],
+        "download_url": "/api/jobs/job-1/result",
+    }
+
+    payload = job_payload(job)
+
+    assert payload["manual_review_groups"] == []
+    assert payload["discrepancies"] == [
+        {
+            "discrepancy_id": "warning-0",
+            "code": "UPSTREAM_WARNING",
+            "category": "unchanged_value",
+            "severity": "warning",
+            "color": "yellow",
+            "message": "Исходное значение представлено без изменения.",
+            "count": 173,
+        }
+    ]

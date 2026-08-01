@@ -18,6 +18,7 @@ from .presentation import journal_payload, processing_presentation
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
 MAX_RETAINED_TERMINAL_JOBS = 64
+MAX_MANUAL_DISCREPANCY_DECISIONS = 5_000
 _ALLOWED_SUFFIXES = {".xlsx", ".xlsm"}
 _ALLOWED_MODES = {"inspect", "dry-run", "write"}
 _STAGE_PATTERN = re.compile(r"^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё._ -]{0,63}$")
@@ -222,6 +223,8 @@ class AdminPanelService:
             raise ValueError("group is required")
         if not isinstance(discrepancy_ids, list) or not discrepancy_ids:
             raise ValueError("discrepancy IDs are required")
+        if len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS:
+            raise ValueError("too many discrepancy IDs")
         if any(not isinstance(item, str) or not item for item in discrepancy_ids):
             raise ValueError("invalid discrepancy ID")
         if len(set(discrepancy_ids)) != len(discrepancy_ids):

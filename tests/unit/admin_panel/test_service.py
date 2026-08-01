@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from report_processor.admin_panel.service import AdminPanelService
+from report_processor.admin_panel.service import MAX_MANUAL_DISCREPANCY_DECISIONS, AdminPanelService
 
 
 def _manual_result():
@@ -175,6 +175,31 @@ def test_manual_discrepancy_groups_require_exact_atomic_decisions(tmp_path: Path
     journal = result_path.read_text(encoding="utf-8")
     assert job.unresolved_manual_discrepancy_ids == set()
     assert "source.xlsx" not in journal and str(tmp_path) not in journal
+
+
+def test_manual_discrepancy_decision_rejects_oversized_request_before_mutation(
+    tmp_path: Path,
+) -> None:
+    service = AdminPanelService(
+        tmp_path / "jobs", execute=lambda _job: _manual_discrepancy_result()
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+    )
+
+    with pytest.raises(ValueError, match="too many"):
+        service.record_manual_discrepancy_decision(
+            job_id=job.job_id,
+            group_id="any-group",
+            discrepancy_ids=["issue"] * (MAX_MANUAL_DISCREPANCY_DECISIONS + 1),
+            decision="approve",
+        )
+
+    assert job.decisions == []
 
 
 def test_failed_executor_removes_private_uploads_and_exposes_controlled_state(

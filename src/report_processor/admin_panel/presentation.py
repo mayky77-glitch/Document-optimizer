@@ -109,9 +109,29 @@ def manual_review_groups(
 
 
 def passive_discrepancies(discrepancies: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
-    """Keep actionable manual discrepancies out of the passive warning list."""
+    """Keep manual decisions separate and collapse identical passive warnings."""
 
-    return [dict(item) for item in discrepancies if not _is_manual_discrepancy(item)]
+    grouped: dict[str, dict[str, object]] = {}
+    for item in discrepancies:
+        if _is_manual_discrepancy(item):
+            continue
+        record = dict(item)
+        record.pop("discrepancy_id", None)
+        key = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        existing = grouped.get(key)
+        if existing is None:
+            grouped[key] = {"record": dict(item), "count": 1}
+        else:
+            existing["count"] = int(existing["count"]) + 1
+    output: list[dict[str, object]] = []
+    for key in sorted(grouped):
+        group = grouped[key]
+        record = dict(group["record"])
+        count = int(group["count"])
+        if count > 1:
+            record["count"] = count
+        output.append(record)
+    return output
 
 
 def _is_manual_discrepancy(item: Mapping[str, object]) -> bool:

@@ -222,6 +222,21 @@ def test_manual_discrepancy_decision_uses_a_bounded_group_contract(client) -> No
     ]
 
 
+def test_manual_discrepancy_decision_rejects_a_list_above_the_api_cap(client) -> None:
+    test_client, service, _ = client
+    response = test_client.post(
+        "/api/jobs/job-001/manual-discrepancy-decisions",
+        json={
+            "group_id": "manual-group",
+            "discrepancy_ids": ["manual-001"] * 5_001,
+            "decision": "approve",
+        },
+    )
+
+    assert response.status_code == 400
+    assert service.manual_decision_calls == []
+
+
 @pytest.mark.parametrize("path", ("/api/jobs/unknown", "/api/jobs/unknown/result"))
 def test_unknown_job_tokens_have_controlled_not_found_responses(client, path: str) -> None:
     response = client[0].get(path)
@@ -286,6 +301,7 @@ def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(
     assert "payload.decisions" in javascript
     assert "manual_review_groups" in javascript
     assert "manual-discrepancy-decisions" in javascript
+    assert "discrepancy-count" in javascript
     assert "Одобрить" in javascript and "Отклонить" in javascript
     assert "/api/jobs/${encodeURIComponent(jobId)}/decisions" in javascript
     assert "decision })," in javascript

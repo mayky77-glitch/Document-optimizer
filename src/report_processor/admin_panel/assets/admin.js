@@ -203,6 +203,12 @@
       const detail = document.createElement("span");
       detail.textContent = typeof item.message === "string" && item.message ? item.message : "Проверьте строку в исходном документе и целевом отчёте.";
       row.append(title, detail);
+      if (Number.isInteger(item.count) && item.count > 1) {
+        const count = document.createElement("span");
+        count.className = "discrepancy-count";
+        count.textContent = `Повторяется: ${item.count}`;
+        row.append(count);
+      }
       discrepancies.append(row);
     });
     const pendingSuggestions = unresolvedSuggestions(payload);

@@ -22,14 +22,15 @@ from .drawing_card_service import (
 )
 from .presentation import job_payload
 from .service import (
-    MAX_SOURCES as ADMIN_MAX_SOURCES,
-)
-from .service import (
+    MAX_MANUAL_DISCREPANCY_DECISIONS,
     MAX_UPLOAD_BYTES,
     AdminPanelService,
     validate_mode,
     validate_stage,
     validate_workbook_upload,
+)
+from .service import (
+    MAX_SOURCES as ADMIN_MAX_SOURCES,
 )
 from .view import drawing_card_page, index_page, static_asset
 
@@ -224,6 +225,7 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
         if (
             not isinstance(group_id, str)
             or not isinstance(discrepancy_ids, list)
+            or len(discrepancy_ids) > MAX_MANUAL_DISCREPANCY_DECISIONS
             or not all(isinstance(item, str) for item in discrepancy_ids)
             or decision_value not in {"approve", "reject"}
         ):

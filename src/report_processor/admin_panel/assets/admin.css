@@ -109,6 +109,7 @@ button, .download { min-height: 48px; padding: 11px 18px; border: 1px solid var(
 .discrepancies { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .discrepancies li { display: grid; gap: 4px; padding: 11px 13px; border-left: 4px solid var(--orange); background: var(--surface-warning); color: var(--warning-ink); }
 .discrepancies li span { color: inherit; }
+.discrepancy-count { font-weight: 800; }
 .unit_conflict { border-color: var(--red) !important; }
 .unchanged_value { border-color: var(--yellow) !important; }
 .cost_threshold { border-color: var(--orange) !important; }
