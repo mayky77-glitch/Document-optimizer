@@ -7,15 +7,16 @@
   const sourceCount = document.querySelector("#source-count");
   const status = document.querySelector("#status");
   const reviewPanel = document.querySelector("#review-panel");
-  const summary = document.querySelector("#summary");
-  const discrepancies = document.querySelector("#discrepancies");
-  const suggestionReview = document.querySelector("#suggestion-review");
-  const suggestions = document.querySelector("#suggestions");
+  const reviewState = document.querySelector("#review-state");
+  const reviewGroups = document.querySelector("#review-groups");
   const emptyReview = document.querySelector("#empty-review");
+  const applyArea = document.querySelector("#review-apply-area");
+  const applyButton = document.querySelector("#review-apply");
   const download = document.querySelector("#download");
   const resultHint = document.querySelector("#result-hint");
   const submit = form.querySelector('button[type="submit"]');
   const workbookExtensions = new Set([".xlsx", ".xlsm", ".xlsb"]);
+  let currentJobId = "";
 
   const setProgress = (step) => {
     const order = ["files", "run", "result"];
@@ -68,315 +69,274 @@
     return payload;
   };
 
-  const humanCategory = (category) => ({
-    unit_conflict: "Единицы измерения не совпадают",
-    unchanged_value: "Значение не изменилось",
-    cost_threshold: "Сумма требует проверки",
-    manual_review: "Нужна ручная проверка",
-  }[category] || "Требуется проверка");
-
-  const renderSummary = (values) => {
-    summary.replaceChildren();
-    if (!values || typeof values !== "object" || Array.isArray(values)) return;
-    Object.entries(values).forEach(([label, value]) => {
-      if (typeof value !== "string" && typeof value !== "number") return;
-      const item = document.createElement("span");
-      item.textContent = `${label}: ${value}`;
-      summary.append(item);
-    });
-  };
-
-  const suggestionText = (value, fallback) =>
-    typeof value === "string" && value.trim() ? value : fallback;
-
-  const scoreText = (value) => {
-    const score = Number(value);
-    return Number.isFinite(score) ? `${Math.round(score * 100)}%` : "Не указана";
-  };
-
   const decimalText = (value) => Number(value).toLocaleString("ru-RU", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 
-  const unresolvedSuggestions = (payload) => Array.isArray(payload.suggestion_review_groups)
-    ? payload.suggestion_review_groups.filter((item) => item
-      && typeof item.group_id === "string"
-      && Array.isArray(item.candidates)
-      && item.candidates.length > 0)
-    : [];
+  const text = (value, fallback = "—") =>
+    typeof value === "string" && value.trim() ? value : fallback;
 
-  const manualGroups = (payload) => Array.isArray(payload.manual_review_groups)
-    ? payload.manual_review_groups.filter((item) => item
-      && typeof item.group_id === "string"
-      && Number.isInteger(item.count)
-      && item.count > 0)
-    : [];
-
-  const contextCells = (context, extras = []) => {
-    const labels = {
-      source_unit: "Ед. в источнике",
-      target_unit: "Ед. в цели",
-      proposed_match: "Предложенное соответствие",
-      reason: "Причина",
-      aggregate_cost: "Расчётная стоимость",
-      confidence: "Уверенность",
-      member_count: "Замечаний в группе",
-    };
-    const cells = [...extras, ...Object.entries(context && typeof context === "object" ? context : {})]
-      .filter(([key, value]) => labels[key] && value !== "" && value !== null && value !== undefined)
-      .slice(0, 6);
-    const list = document.createElement("dl");
-    list.className = "review-context";
-    cells.forEach(([key, value]) => {
-      const entry = document.createElement("div");
-      const term = document.createElement("dt");
-      term.textContent = labels[key];
-      const detail = document.createElement("dd");
-      detail.textContent = key === "confidence"
-        ? scoreText(value)
-        : ["aggregate_cost", "quantity", "cost"].includes(key) && Number.isFinite(Number(value))
-          ? `${decimalText(value)}${key.includes("cost") ? " ₽" : ""}`
-          : String(value);
-      entry.append(term, detail);
-      list.append(entry);
-    });
-    return list;
+  const displayNumber = (value, suffix = "") => {
+    const number = Number(value);
+    return Number.isFinite(number) ? `${decimalText(number)}${suffix}` : "—";
   };
 
-  const composition = (members, hasMore, kind = "member") => {
-    const details = document.createElement("details");
-    details.className = "review-composition";
-    const summary = document.createElement("summary");
-    summary.textContent = hasMore ? "Состав группы (показана часть)" : "Состав группы";
-    const table = document.createElement("table");
-    const headings = kind === "candidate"
-      ? ["Кандидат", "Ед.", "Уверенность"]
-      : ["Работа", "Ед.", "Количество", "Стоимость"];
-    table.innerHTML = `<thead><tr>${headings.map((heading) => `<th>${heading}</th>`).join("")}</tr></thead>`;
-    const body = document.createElement("tbody");
-    (Array.isArray(members) ? members : []).forEach((member) => {
-      const row = document.createElement("tr");
-      const context = member && member.context || {};
-      const values = kind === "candidate"
-        ? [member && member.title, context.source_unit, context.confidence]
-        : [member && member.title, context.source_unit, context.quantity, context.cost];
-      values.forEach((value, index) => {
-        const cell = document.createElement("td");
-        cell.dataset.label = headings[index];
-        cell.textContent = kind === "candidate" && value === context.confidence
-          ? scoreText(value)
-          : [context.quantity, context.cost].includes(value) && Number.isFinite(Number(value))
-            ? `${decimalText(value)}${value === context.cost ? " ₽" : ""}`
-            : suggestionText(value, "—");
-        row.append(cell);
-      });
-      body.append(row);
-    });
-    table.append(body);
-    details.append(summary, table);
-    return details;
-  };
+  const reviewCategories = (payload) => Array.isArray(payload.review_categories)
+    ? payload.review_categories
+      .map((category) => ({
+        id: text(category && (category.category_id || category.id), ""),
+        label: text(category && (category.label || category.display_name || category.name || category.title), ""),
+      }))
+      .filter((category) => category.id && category.label)
+    : [];
 
-  const renderSuggestion = (item, jobId) => {
-    const card = document.createElement("article");
-    card.className = "review-item suggestion-card";
-    const header = document.createElement("header");
-    header.className = "review-item-head";
-    const kicker = document.createElement("p");
-    kicker.className = "review-kicker";
-    kicker.textContent = `Подсказки сопоставления · ${item.count || item.candidates.length}`;
-    const title = document.createElement("h3");
-    title.textContent = suggestionText(item.title, "Целевой этап");
-    const status = document.createElement("p");
-    status.className = "decision-status";
-    status.textContent = "Требует решения";
-    header.append(document.createElement("div"), status);
-    header.firstElementChild.append(kicker, title);
+  const reviewGroupsFrom = (payload) => Array.isArray(payload.review_groups)
+    ? payload.review_groups.filter((group) => group
+      && typeof group.group_id === "string"
+      && Number.isInteger(group.version)
+      && Array.isArray(group.members))
+    : [];
 
+  const groupCategoryId = (group) => text(
+    group.selected_category_id || group.category_id || group.proposed_category_id,
+    "",
+  );
+
+  const groupMode = (group) => group.mode === "cost_only" ? "cost_only" : "quantity_cost";
+
+  const categoryLabel = (categories, id) =>
+    categories.find((category) => category.id === id)?.label || "Не выбрана";
+
+  const createCategorySelect = (categories, selectedId, label) => {
     const select = document.createElement("select");
-    select.className = "suggestion-candidate";
-    select.setAttribute("aria-label", "Выберите подходящее соответствие");
-    item.candidates.forEach((candidate) => {
-      const option = document.createElement("option");
-      option.value = candidate.suggestion_id;
-      option.textContent = `${suggestionText(candidate.label, "Предложенный этап")} · ${scoreText(candidate.confidence)}`;
-      select.append(option);
-    });
-    const actions = document.createElement("div");
-    actions.className = "review-decision-actions";
-    actions.setAttribute("role", "group");
-    actions.setAttribute("aria-label", `Решение для «${title.textContent}»`);
-    [["Применить", "apply", "suggestion-fit"], ["Отклонить", "reject", "suggestion-not-fit"]].forEach(([label, decision, className]) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = className;
-      button.textContent = label;
-      button.addEventListener("click", () => {
-        void submitSuggestionDecision(card, jobId, item.group_id, decision === "apply" ? select.value : null, decision);
-      });
-      actions.append(button);
-    });
-
-    const context = contextCells(item.context);
-    const decision = document.createElement("div");
-    decision.className = "review-decision";
-    decision.setAttribute("aria-label", `Решение для «${title.textContent}»`);
-    decision.append(
-      renderDecisionContext("Выбор", select),
-      renderDecisionContext("Эффект", "Только журнал решений"),
-      actions,
-    );
-    card.append(
-      header,
-      context,
-      composition(
-        item.candidates.map((candidate) => ({
-          title: candidate.label,
-          context: { source_unit: candidate.source_unit, confidence: candidate.confidence },
-        })),
-        item.has_more_candidates,
-        "candidate",
-      ),
-      decision,
-    );
-    return card;
+    select.className = "review-category";
+    select.setAttribute("aria-label", label);
+    const empty = new Option("Выберите категорию", "");
+    empty.disabled = true;
+    select.append(empty);
+    categories.forEach((category) => select.append(new Option(category.label, category.id)));
+    select.value = selectedId;
+    if (!select.value) select.value = categories[0]?.id || "";
+    return select;
   };
 
-  const renderDecisionContext = (label, value) => {
-    const context = document.createElement("div");
-    context.className = "review-decision-context";
-    const labelElement = document.createElement("span");
-    labelElement.className = "review-decision-label";
-    labelElement.textContent = label;
-    const valueElement = value instanceof Element ? value : document.createElement("strong");
-    if (!(value instanceof Element)) valueElement.textContent = value;
-    context.append(labelElement, valueElement);
-    return context;
-  };
-
-  const renderManualGroup = (item, jobId) => {
-    const card = document.createElement("article");
-    card.className = "review-item manual-review-card";
-    const header = document.createElement("header");
-    header.className = "review-item-head";
-    const kicker = document.createElement("p");
-    kicker.className = "review-kicker";
-    kicker.textContent = "Ручное замечание";
-    const title = document.createElement("h3");
-    title.textContent = suggestionText(item.title, "Нужна ручная проверка");
-    const status = document.createElement("p");
-    status.className = "decision-status";
-    status.textContent = "Требует решения";
-    const headerContent = document.createElement("div");
-    headerContent.append(kicker, title);
-    header.append(headerContent, status);
-
-    const count = Number.isInteger(item.count) && item.count > 0
-      ? item.count
-      : 0;
-    const context = contextCells(item.context, [["reason", item.message], ["member_count", count]]);
-
-    const actions = document.createElement("div");
-    actions.className = "review-decision-actions";
-    actions.setAttribute("role", "group");
-    actions.setAttribute("aria-label", `Решение для «${title.textContent}»`);
-    [["Одобрить", "approve", "manual-review-approve"], ["Отклонить", "reject", "manual-review-reject"]].forEach(([label, decision, className]) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = className;
-      button.textContent = label;
-      button.addEventListener("click", () => {
-        void submitManualDecision(card, jobId, item, decision);
-      });
-      actions.append(button);
+  const createModeSwitch = (name, selectedMode, label) => {
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "mode-switch";
+    const legend = document.createElement("legend");
+    legend.textContent = label;
+    const options = document.createElement("div");
+    options.className = "mode-options";
+    [["quantity_cost", "Количество + стоимость"], ["cost_only", "Только стоимость"]].forEach(([value, optionLabel]) => {
+      const option = document.createElement("label");
+      option.className = "mode-option";
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = name;
+      input.value = value;
+      input.checked = value === selectedMode;
+      const visible = document.createElement("span");
+      visible.textContent = optionLabel;
+      option.append(input, visible);
+      options.append(option);
     });
-    const decisionRegion = document.createElement("div");
-    decisionRegion.className = "review-decision";
-    decisionRegion.setAttribute("aria-label", `Решение для «${title.textContent}»`);
-    decisionRegion.append(
-      renderDecisionContext("Охват", `Вся группа · ${count} замечаний`),
-      renderDecisionContext("Действие", "Одобрить или отклонить"),
-      actions,
-    );
-    card.append(header, context, composition(item.members, item.has_more_members), decisionRegion);
-    return card;
+    fieldset.append(legend, options);
+    return fieldset;
   };
 
-  const renderDiscrepancies = (items, payload) => {
-    discrepancies.replaceChildren();
-    (Array.isArray(items) ? items : []).forEach((item) => {
-      const row = document.createElement("li");
-      row.className = item.category || "manual_review";
-      const title = document.createElement("strong");
-      title.textContent = humanCategory(item.category);
-      const detail = document.createElement("span");
-      detail.textContent = typeof item.message === "string" && item.message ? item.message : "Проверьте строку в исходном документе и целевом отчёте.";
-      row.append(title, detail);
-      if (Number.isInteger(item.count) && item.count > 1) {
-        const count = document.createElement("span");
-        count.className = "discrepancy-count";
-        count.textContent = `Повторяется: ${item.count}`;
-        row.append(count);
-      }
-      discrepancies.append(row);
-    });
-    const pendingSuggestions = unresolvedSuggestions(payload);
-    const pendingManualGroups = manualGroups(payload);
-    suggestions.replaceChildren(
-      ...pendingManualGroups.map((item) => renderManualGroup(item, payload.job_id)),
-      ...pendingSuggestions.map((item) => renderSuggestion(item, payload.job_id)),
-    );
-    suggestionReview.hidden = pendingSuggestions.length + pendingManualGroups.length === 0;
-    emptyReview.hidden = discrepancies.children.length !== 0
-      || pendingSuggestions.length !== 0 || pendingManualGroups.length !== 0;
-  };
+  const selectedMode = (scope) =>
+    scope.querySelector('input[type="radio"]:checked')?.value || "quantity_cost";
 
-  const setSuggestionBusy = (card, busy) => {
-    card.querySelectorAll("button, select").forEach((control) => {
+  const setReviewBusy = (card, busy) => {
+    card.querySelectorAll("button, select, input").forEach((control) => {
       control.disabled = busy;
     });
   };
 
-  const submitSuggestionDecision = async (card, jobId, groupId, suggestionId, decision) => {
-    if (typeof jobId !== "string" || !jobId || typeof groupId !== "string") {
-      setStatus("Не удалось определить подсказку. Обновите страницу и повторите действие.", true);
+  const submitReviewDecision = async (card, url, body) => {
+    if (!currentJobId || !url) {
+      setStatus("Не удалось определить строку для решения. Обновите страницу и повторите действие.", true);
       return;
     }
-    setSuggestionBusy(card, true);
+    setReviewBusy(card, true);
     try {
-      const payload = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/decisions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ group_id: groupId, suggestion_id: suggestionId, decision }),
+      const payload = await requestJson(url, {
+        method: body ? "PUT" : "DELETE",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
       });
       renderJob(payload);
     } catch (error) {
-      setSuggestionBusy(card, false);
+      setReviewBusy(card, false);
       setStatus(error.message, true);
     }
   };
 
-  const submitManualDecision = async (card, jobId, group, decision) => {
-    if (typeof jobId !== "string" || !jobId || typeof group.group_id !== "string") {
-      setStatus("Не удалось определить группу замечаний. Обновите страницу и повторите действие.", true);
-      return;
-    }
-    setSuggestionBusy(card, true);
-    try {
-      const payload = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/manual-discrepancy-decisions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          group_id: group.group_id,
-          decision,
-        }),
+  const decisionBody = (scope, version, action) => {
+    if (action === "reject") return { version, action };
+    const categoryId = scope.querySelector("select")?.value;
+    if (!categoryId) return null;
+    return { version, action, category_id: categoryId, mode: selectedMode(scope) };
+  };
+
+  const createDecisionActions = (scope, label, submitDecision) => {
+    const actions = document.createElement("div");
+    actions.className = "review-actions";
+    actions.setAttribute("role", "group");
+    actions.setAttribute("aria-label", label);
+    [["Принять", "accept", "accept"], ["Отклонить", "reject", "reject"]].forEach(([title, action, className]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `review-action ${className}`;
+      button.textContent = title;
+      button.addEventListener("click", () => {
+        const body = decisionBody(scope, Number(scope.dataset.version), action);
+        if (!body) {
+          setStatus("Выберите целевую категорию перед принятием решения.", true);
+          return;
+        }
+        void submitDecision(body);
       });
-      renderJob(payload);
-    } catch (error) {
-      setSuggestionBusy(card, false);
-      setStatus(error.message, true);
-    }
+      actions.append(button);
+    });
+    return actions;
+  };
+
+  const renderMemberRow = (member, group, categories) => {
+    const row = document.createElement("tr");
+    const name = text(member && (member.display_name || member.name || member.title), "Строка без названия");
+    const version = Number.isInteger(member?.version) ? member.version : group.version;
+    [["Работа", name], ["Ед.", text(member?.source_unit)], ["Количество", displayNumber(member?.quantity)], ["Стоимость", displayNumber(member?.cost, " ₽")]].forEach(([label, value]) => {
+      const cell = document.createElement("td");
+      cell.dataset.label = label;
+      cell.textContent = value;
+      row.append(cell);
+    });
+    const controls = document.createElement("td");
+    controls.className = "member-controls-cell";
+    controls.dataset.label = "Изменение";
+    const details = document.createElement("details");
+    details.className = "member-override";
+    const summary = document.createElement("summary");
+    summary.textContent = "Изменить строку";
+    const body = document.createElement("div");
+    body.className = "member-override-body";
+    body.dataset.version = String(version);
+    const category = createCategorySelect(
+      categories,
+      text(member?.category_id || member?.selected_category_id || groupCategoryId(group), ""),
+      `Целевая категория для «${name}»`,
+    );
+    const mode = createModeSwitch(
+      `row-${text(member?.row_id, "item")}`,
+      member?.mode === "cost_only" ? "cost_only" : groupMode(group),
+      "Учесть строку",
+    );
+    const actions = createDecisionActions(
+      body,
+      `Решение для строки «${name}»`,
+      (decision) => submitReviewDecision(
+        row,
+        `/api/jobs/${encodeURIComponent(currentJobId)}/review/items/${encodeURIComponent(member.row_id)}`,
+        decision,
+      ),
+    );
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-override";
+    remove.textContent = "Убрать изменение";
+    remove.addEventListener("click", () => {
+      void submitReviewDecision(
+        row,
+        `/api/jobs/${encodeURIComponent(currentJobId)}/review/items/${encodeURIComponent(member.row_id)}`,
+        null,
+      );
+    });
+    body.append(category, mode, actions, remove);
+    details.append(summary, body);
+    controls.append(details);
+    row.append(controls);
+    return row;
+  };
+
+  const renderGroup = (group, categories) => {
+    const card = document.createElement("article");
+    card.className = "review-group";
+    card.dataset.version = String(group.version);
+    const heading = document.createElement("header");
+    heading.className = "review-group-head";
+    const headingCopy = document.createElement("div");
+    const kicker = document.createElement("p");
+    kicker.className = "review-kicker";
+    kicker.textContent = `Одна группа · ${group.members.length} ${group.members.length === 1 ? "строка" : "строк"}`;
+    const title = document.createElement("h3");
+    title.textContent = text(group.display_name || group.name || group.title, "Группа строк");
+    const proposed = document.createElement("p");
+    proposed.className = "proposed-category";
+    proposed.textContent = `Предложено: ${categoryLabel(categories, text(group.proposed_category_id, ""))}`;
+    headingCopy.append(kicker, title, proposed);
+    const chosen = document.createElement("p");
+    chosen.className = "chosen-category";
+    chosen.textContent = `Выбрано: ${categoryLabel(categories, groupCategoryId(group))}`;
+    heading.append(headingCopy, chosen);
+
+    const decision = document.createElement("div");
+    decision.className = "group-decision";
+    const category = createCategorySelect(categories, groupCategoryId(group), "Целевая категория для группы");
+    const categoryField = document.createElement("label");
+    categoryField.className = "category-field";
+    categoryField.append("Целевая категория", category);
+    category.addEventListener("change", () => {
+      chosen.textContent = `Выбрано: ${categoryLabel(categories, category.value)}`;
+    });
+    const mode = createModeSwitch(`group-${group.group_id}`, groupMode(group), "Учесть группу");
+    const actions = createDecisionActions(
+      card,
+      `Решение для группы «${title.textContent}»`,
+      (body) => submitReviewDecision(
+        card,
+        `/api/jobs/${encodeURIComponent(currentJobId)}/review/groups/${encodeURIComponent(group.group_id)}`,
+        body,
+      ),
+    );
+    decision.append(categoryField, mode, actions);
+
+    const composition = document.createElement("details");
+    composition.className = "review-composition";
+    const compositionSummary = document.createElement("summary");
+    compositionSummary.textContent = `Все строки группы (${group.members.length})`;
+    const table = document.createElement("table");
+    const headings = ["Работа", "Ед.", "Количество", "Стоимость", "Изменение"];
+    const head = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    headings.forEach((label) => {
+      const cell = document.createElement("th");
+      cell.textContent = label;
+      headRow.append(cell);
+    });
+    head.append(headRow);
+    const body = document.createElement("tbody");
+    group.members
+      .filter((member) => member && typeof member.row_id === "string")
+      .forEach((member) => body.append(renderMemberRow(member, group, categories)));
+    table.append(head, body);
+    composition.append(compositionSummary, table);
+    card.append(heading, decision, composition);
+    return card;
+  };
+
+  const renderReview = (payload) => {
+    const categories = reviewCategories(payload);
+    const groups = reviewGroupsFrom(payload);
+    reviewGroups.replaceChildren(...groups.map((group) => renderGroup(group, categories)));
+    const unresolved = Number(payload.unresolved_review_count);
+    const unresolvedCount = Number.isInteger(unresolved) && unresolved >= 0 ? unresolved : groups.length;
+    reviewState.textContent = unresolvedCount
+      ? `Осталось решить: ${unresolvedCount}`
+      : payload.review_can_apply === true ? "Все решения готовы к применению." : "Проверка не требует решений.";
+    emptyReview.hidden = groups.length !== 0;
+    applyArea.hidden = payload.review_can_apply !== true;
   };
 
   const renderDownload = (payload) => {
@@ -396,8 +356,8 @@
   };
 
   const renderJob = (payload) => {
-    renderSummary(payload.summary);
-    renderDiscrepancies(payload.discrepancies, payload);
+    currentJobId = typeof payload.job_id === "string" ? payload.job_id : currentJobId;
+    renderReview(payload);
     renderDownload(payload);
     reviewPanel.hidden = false;
     reviewPanel.focus({ preventScroll: true });
@@ -410,6 +370,17 @@
   };
 
   sourceFiles.addEventListener("change", updateSourceCount);
+
+  applyButton.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    applyButton.disabled = true;
+    try {
+      renderJob(await requestJson(`/api/jobs/${encodeURIComponent(currentJobId)}/review/apply`, { method: "POST" }));
+    } catch (error) {
+      applyButton.disabled = false;
+      setStatus(error.message, true);
+    }
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
