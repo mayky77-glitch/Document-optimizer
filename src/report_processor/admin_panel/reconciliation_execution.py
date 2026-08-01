@@ -188,7 +188,6 @@ def _feedback_decisions(
                     version=group.version,
                 )
             )
-            continue
         for row_id in group.member_ids:
             row = rows[row_id]
             record = records.get((normalize_name(row.display_name), normalize_unit(row.unit)))
