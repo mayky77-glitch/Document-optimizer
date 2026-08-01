@@ -9,6 +9,8 @@
   const reviewPanel = document.querySelector("#review-panel");
   const summary = document.querySelector("#summary");
   const discrepancies = document.querySelector("#discrepancies");
+  const suggestionReview = document.querySelector("#suggestion-review");
+  const suggestions = document.querySelector("#suggestions");
   const emptyReview = document.querySelector("#empty-review");
   const download = document.querySelector("#download");
   const resultHint = document.querySelector("#result-hint");
@@ -84,7 +86,71 @@
     });
   };
 
-  const renderDiscrepancies = (items) => {
+  const suggestionText = (value, fallback) =>
+    typeof value === "string" && value.trim() ? value : fallback;
+
+  const scoreText = (value) => {
+    const score = Number(value);
+    return Number.isFinite(score) ? `${Math.round(score * 100)}%` : "Не указана";
+  };
+
+  const unresolvedSuggestions = (payload) => {
+    const decided = new Set(
+      (Array.isArray(payload.decisions) ? payload.decisions : [])
+        .map((item) => item && item.suggestion_id)
+        .filter((item) => typeof item === "string"),
+    );
+    return (Array.isArray(payload.suggestions) ? payload.suggestions : []).filter((item) =>
+      item
+      && item.requires_manual_review === true
+      && typeof item.suggestion_id === "string"
+      && !decided.has(item.suggestion_id),
+    );
+  };
+
+  const renderSuggestion = (item, jobId) => {
+    const card = document.createElement("article");
+    card.className = "suggestion-card";
+    const header = document.createElement("header");
+    header.className = "suggestion-card-head";
+    const kicker = document.createElement("p");
+    kicker.className = "suggestion-kicker";
+    kicker.textContent = "Подсказка сопоставления";
+    const title = document.createElement("h4");
+    title.textContent = suggestionText(item.target_label, "Целевой этап");
+    header.append(kicker, title);
+
+    const actions = document.createElement("div");
+    actions.className = "suggestion-actions";
+    actions.setAttribute("role", "group");
+    actions.setAttribute("aria-label", `Решение для «${title.textContent}»`);
+    [["Подходит", "fit", "suggestion-fit"], ["Не подходит", "not_fit", "suggestion-not-fit"]].forEach(([label, decision, className]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = className;
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        void submitSuggestionDecision(card, jobId, item.suggestion_id, decision);
+      });
+      actions.append(button);
+    });
+
+    const context = document.createElement("dl");
+    context.className = "suggestion-context";
+    [["Кандидат", suggestionText(item.candidate_label, "Предложенный этап")], ["Цель", suggestionText(item.target_label, "Целевой этап")], ["Оценка", scoreText(item.score)]].forEach(([label, value]) => {
+      const entry = document.createElement("div");
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const detail = document.createElement("dd");
+      detail.textContent = value;
+      entry.append(term, detail);
+      context.append(entry);
+    });
+    card.append(header, actions, context);
+    return card;
+  };
+
+  const renderDiscrepancies = (items, payload) => {
     discrepancies.replaceChildren();
     (Array.isArray(items) ? items : []).forEach((item) => {
       const row = document.createElement("li");
@@ -96,7 +162,35 @@
       row.append(title, detail);
       discrepancies.append(row);
     });
-    emptyReview.hidden = discrepancies.children.length !== 0;
+    const pendingSuggestions = unresolvedSuggestions(payload);
+    suggestions.replaceChildren(...pendingSuggestions.map((item) => renderSuggestion(item, payload.job_id)));
+    suggestionReview.hidden = pendingSuggestions.length === 0;
+    emptyReview.hidden = discrepancies.children.length !== 0 || pendingSuggestions.length !== 0;
+  };
+
+  const setSuggestionBusy = (card, busy) => {
+    card.querySelectorAll("button").forEach((button) => {
+      button.disabled = busy;
+    });
+  };
+
+  const submitSuggestionDecision = async (card, jobId, suggestionId, decision) => {
+    if (typeof jobId !== "string" || !jobId || typeof suggestionId !== "string") {
+      setStatus("Не удалось определить подсказку. Обновите страницу и повторите действие.", true);
+      return;
+    }
+    setSuggestionBusy(card, true);
+    try {
+      const payload = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suggestion_id: suggestionId, decision }),
+      });
+      renderJob(payload);
+    } catch (error) {
+      setSuggestionBusy(card, false);
+      setStatus(error.message, true);
+    }
   };
 
   const renderDownload = (payload) => {
@@ -117,7 +211,7 @@
 
   const renderJob = (payload) => {
     renderSummary(payload.summary);
-    renderDiscrepancies(payload.discrepancies);
+    renderDiscrepancies(payload.discrepancies, payload);
     renderDownload(payload);
     reviewPanel.hidden = false;
     reviewPanel.focus({ preventScroll: true });

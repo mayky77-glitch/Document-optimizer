@@ -31,8 +31,15 @@ class FakeAdminService:
                     {"category": "manual_review", "color": "blue"},
                 ],
                 "suggestions": [
-                    {"suggestion_id": "suggestion-001", "requires_manual_review": True}
+                    {
+                        "suggestion_id": "suggestion-001",
+                        "candidate_label": "Предложенный этап",
+                        "target_label": "Целевой этап",
+                        "score": 0.91,
+                        "requires_manual_review": True,
+                    }
                 ],
+                "decisions": [],
                 "download_url": None,
             }
         }
@@ -75,6 +82,9 @@ class FakeAdminService:
             {"job_id": job_id, "suggestion_id": suggestion_id, "decision": decision}
         )
         job = dict(self.jobs[job_id])
+        job["decisions"] = [
+            {"suggestion_id": suggestion_id, "decision": decision}
+        ]
         job.update(status="ready", download_url=f"/api/jobs/{job_id}/result")
         self.jobs[job_id] = job
         return job
@@ -166,6 +176,9 @@ def test_review_needs_explicit_fit_or_not_fit_and_download_is_safe(client) -> No
         {"job_id": "job-001", "suggestion_id": "suggestion-001", "decision": "fit"}
     ]
     assert accepted.json()["download_url"] == "/api/jobs/job-001/result"
+    assert accepted.json()["decisions"] == [
+        {"suggestion_id": "suggestion-001", "decision": "fit"}
+    ]
     assert download.status_code == 200 and download.content == b"controlled-result"
     assert "optimized-report.xlsx" in download.headers["content-disposition"]
     assert str(tmp_path) not in download.headers["content-disposition"]
@@ -215,3 +228,24 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
         assert token in css
     assert "@media" in css
     assert "http://" not in html + css and "https://" not in html + css
+
+
+def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(client) -> None:
+    test_client, _, _ = client
+    javascript = test_client.get("/static/admin.js").text
+    css = test_client.get("/static/admin.css").text
+    html = test_client.get("/").text
+
+    assert 'id="discrepancies"' in html
+    assert 'id="suggestion-review"' in html and 'id="suggestions"' in html
+    assert "unresolvedSuggestions" in javascript
+    assert "item.requires_manual_review === true" in javascript
+    assert "payload.decisions" in javascript
+    assert "/api/jobs/${encodeURIComponent(jobId)}/decisions" in javascript
+    assert 'decision }),' in javascript
+    assert '[["Подходит", "fit", "suggestion-fit"], ["Не подходит", "not_fit", "suggestion-not-fit"]]' in javascript
+    assert "setSuggestionBusy(card, true)" in javascript
+    assert "setSuggestionBusy(card, false)" in javascript
+    assert ".suggestion-card { container-type: inline-size;" in css
+    assert "@container (max-width: 560px)" in css
+    assert ".suggestion-actions { grid-row: 2;" in css
