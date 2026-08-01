@@ -282,63 +282,34 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
     )
     assert 'input[type="file"]:hover::file-selector-button {' in css
     assert 'input[type="file"]:focus-visible {' in css
-    for token in ("unit_conflict", "unchanged_value", "cost_threshold", "manual_review"):
+    for token in ("review-panel", "review-group", "mode-switch", "review-actions"):
         assert token in css
     assert "@media" in css
     assert "http://" not in html + css and "https://" not in html + css
 
 
-def test_admin_review_cards_keep_passive_discrepancies_and_controlled_decisions(client) -> None:
+def test_admin_review_cards_expose_authoritative_group_and_row_controls(client) -> None:
     test_client, _, _ = client
     javascript = test_client.get("/static/admin.js").text
     css = test_client.get("/static/admin.css").text
     html = test_client.get("/").text
 
-    assert 'id="discrepancies"' in html
-    assert 'id="suggestion-review"' in html and 'id="suggestions"' in html
-    assert "unresolvedSuggestions" in javascript
-    assert "manual_review_groups" in javascript
-    assert "suggestion_review_groups" in javascript
-    assert "manual-discrepancy-decisions" in javascript
-    assert "discrepancy-count" in javascript
-    assert "Одобрить" in javascript and "Отклонить" in javascript
-    assert "/api/jobs/${encodeURIComponent(jobId)}/decisions" in javascript
-    assert "decision })," in javascript
-    assert (
-        '[["Применить", "apply", "suggestion-fit"], ["Отклонить", "reject", "suggestion-not-fit"]]'
-        in javascript
-    )
-    assert "setSuggestionBusy(card, true)" in javascript
-    assert "setSuggestionBusy(card, false)" in javascript
-    assert 'card.className = "review-item suggestion-card";' in javascript
-    assert 'card.className = "review-item manual-review-card";' in javascript
-    assert 'header.className = "review-item-head";' in javascript
-    assert 'list.className = "review-context";' in javascript
-    assert 'decisionRegion.className = "review-decision";' in javascript
-    assert 'actions.className = "review-decision-actions";' in javascript
-    assert 'renderDecisionContext("Охват", `Вся группа · ${count} замечаний`)' in javascript
-    assert 'renderDecisionContext("Действие", "Одобрить или отклонить")' in javascript
-    assert 'renderDecisionContext("Эффект", "Только журнал решений")' in javascript
-    assert 'details.className = "review-composition";' in javascript
-    assert "cell.dataset.label = headings[index];" in javascript
-    assert "(Array.isArray(members) ? members : []).forEach" in javascript
+    assert 'id="review-panel"' in html and 'id="review-groups"' in html
+    assert 'id="review-apply"' in html and 'id="review-state"' in html
+    assert "reviewGroupsFrom" in javascript and "unresolved_review_count" in javascript
+    assert "/review/groups/${encodeURIComponent(group.group_id)}" in javascript
+    assert "/review/items/${encodeURIComponent(member.row_id)}" in javascript
+    assert "mode-switch" in javascript and "review-category" in javascript
+    assert "Принять" in javascript and "Отклонить" in javascript
+    assert "Убрать изменение" in javascript and "Применить решения" in html
+    assert 'composition.className = "review-composition";' in javascript
+    assert "cell.dataset.label = label;" in javascript
     assert "minimumFractionDigits: 2" in javascript
     assert "maximumFractionDigits: 2" in javascript
-    assert ".review-item { container-type: inline-size;" in css
-    assert ".review-item-head { display: flex; justify-content: space-between;" in css
-    assert (
-        ".review-context { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));" in css
-    )
-    assert (
-        ".review-decision { display: grid; grid-template-columns: minmax(220px, 280px) "
-        "minmax(0, 390px) max-content;" in css
-    )
+    assert ".review-group { container-type: inline-size;" in css
+    assert ".review-group-head { display: flex; justify-content: space-between;" in css
+    assert ".group-decision { display: grid;" in css
     assert "@container (max-width: 620px)" in css
-    assert (
-        ".review-decision-actions { grid-column: auto; grid-template-columns: repeat(2, "
-        "minmax(0, 1fr)); }" in css
-    )
-    assert ".manual-review-card { border-left-color: var(--manual-blue); }" in css
     assert ".review-composition {" in css
     assert ".review-composition td:first-child { grid-column: 1 / -1; }" in css
     assert "content: attr(data-label);" in css
