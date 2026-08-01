@@ -64,6 +64,10 @@ links:
 
 # Полные карточки ручной сверки
 
+> Историческая задача. Journal-only контракт заменён
+> [[reconciliation-authoritative-classification-v3-final|авторитетной классификацией]].
+> Не использовать эту карту как текущий продуктовый контракт.
+
 ## Goal
 
 Deliver privacy-safe, information-complete reconciliation review cards at `/`.

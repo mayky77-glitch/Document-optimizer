@@ -17,7 +17,7 @@ updated: 2026-08-02
 
 | Функция | URL | Основной код | Проверки |
 | --- | --- | --- | --- |
-| Сверка документов | `/` | `admin_panel/service.py`, `assets/admin.*` | `tests/unit/admin_panel`, `test_block18_admin_panel.py` |
+| Сверка документов | `/` | `admin_panel/reconciliation_*`, `reconciliation_review/`, `processing/reconciliation.py`, `assets/admin.*` | `test_reconciliation_authoritative_flow.py`, `test_authoritative_core.py`, unit-тесты `admin_panel/` |
 | Карточка остатков | `/drawing-card` | `admin_panel/drawing_card_*`, `drawing_card/`, `assets/drawing-card.*` | `tests/unit/drawing_card`, `test_drawing_card_admin.py` |
 | Поиск периодов | `/api/drawing-card/periods` | `drawing_card/periods.py` | `test_drawing_card_periods.py` |
 | Локальный RAG | внутри карточки | `stage_rag/`, `drawing_card/review.py` | `tests/unit/stage_rag`, `test_block18_rag.py` |
@@ -26,7 +26,7 @@ updated: 2026-08-02
 
 | Компонент | Ответственность | Целевая проверка |
 | --- | --- | --- |
-| Сверка документов | `index.html`, `admin.css`, `admin.js`: загрузка, статусы и тема на `/`. | `test_block18_admin_panel.py` + визуальная/file smoke на `/`. |
+| Сверка документов | Глобальные группы, групповые/построчные решения, feedback и authoritative-расчёт. | `test_reconciliation_review_ui_contract.py`, `test_reconciliation_authoritative_flow.py` + визуальная smoke на `/`. |
 | Карточка остатков | `drawing-card.html`, `drawing-card.css`, `drawing-card.js`, `drawing-card-review.js`: загрузка, период и inline review. | `test_drawing_card_ui_contract.py`, `test_drawing_card_admin.py` + визуальная/file smoke на `/drawing-card`. |
 | Admin API и сервис | `admin_panel/app.py`, `review_api.py`, `service.py`, `drawing_card_service.py`: локальные HTTP-контракты и изолированные задания. | `test_block18_admin_panel.py`, `test_drawing_card_admin.py`, unit-тесты `admin_panel/`. |
 | Сопоставление и feedback | `drawing_card/matching/`, `drawing_card/review/`, `drawing_card/autopilot/`: подбор категории и приоритет явных решений. | `tests/unit/drawing_card/test_*matcher*`, `test_inline_review_flow.py`, `test_block16_feedback.py`. |
@@ -46,17 +46,14 @@ updated: 2026-08-02
   подсказка не принимается автоматически.
 - Проверка спорных строк выполняется внутри панели: общее и построчное решение,
   смена категории, режим «учитывать только стоимость», отмена.
-- В сверке документов пассивные замечания отделены от нерешённых решений.
-  Полные карточки `review-item` показывают только доступные безопасные факты:
-  нормализованные работа/единицы, предложенное соответствие, уверенность,
-  объяснение и производную стоимость; `locations`, evidence, пути, листы,
-  координаты и сырые значения не попадают в API. Состав разворачивается полностью
-  и на узком экране превращается в подписанные мини-строки, а точные ID группы
-  остаются на сервере. Ручная группа
-  принимает только атомарные `approve`/`reject`. Семантическая группа цели
-  выбирает реального кандидата: `Apply` записывает `fit` выбранному и `not_fit`
-  его соседям, `Reject` записывает `not_fit` всем; эффект остаётся
-  `review_journal_only`. Выгрузка доступна лишь после закрытия обоих наборов.
+- В сверке одна карточка представляет глобальную группу всех исходных строк
+  с общим нормализованным наименованием/началом и единицей. Внутри видны
+  все строки, но не пути, листы, формулы, provenance и evidence.
+- Группа и строка принимают категорию, отклонение и прямой двухпозиционный режим
+  `quantity_cost` / `cost_only`; построчное решение приоритетнее группового.
+- Применение доступно только при нуле нерешённых строк. Решения меняют выбор
+  исходных строк, расчёт и итоговый XLSX. После успешной записи XLSX feedback
+  сохраняется в приватном SQLite store; повторные решённые группы не появляются.
 - Явные решения сохраняются в приватном feedback store без путей, имён файлов
   и содержимого ячеек. Последнее решение по нормализованному наименованию и
   единице заменяет старое, имеет приоритет над встроенным примером и применяется
@@ -110,6 +107,10 @@ uv run pytest -q
 
 ## Связанные задачи
 
+- [[../tasks/reconciliation-authoritative-classification-v3-final]]
+- [[../tasks/reconciliation-authoritative-core-v3]]
+- [[../tasks/reconciliation-authoritative-admin-v3]]
+- [[../tasks/reconciliation-authoritative-tests-v3]]
 - [[../tasks/bulk-reconciliation-v1-core]]
 - [[../tasks/bulk-reconciliation-v1-ui]]
 - [[../tasks/bulk-reconciliation-v1-tests]]
