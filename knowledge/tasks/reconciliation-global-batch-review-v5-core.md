@@ -1,7 +1,7 @@
 ---
 type: task
-status: review
-orda_status: review
+status: done
+orda_status: done
 card_id: reconciliation-global-batch-review-v5-core
 version: 1
 work_id: reconciliation-global-batch-review-v5
@@ -57,7 +57,7 @@ last_verified: 2026-08-02
 updated: 2026-08-02
 tags:
   - task/implementation
-  - status/review
+  - status/done
   - domain/document-processing
   - risk/high
 links:
@@ -102,7 +102,8 @@ links:
   target, catalog, feature, rule and local-model revision context. Conflict checks
   stay inside a package boundary; exception paths leave a safe remainder available.
   Exception families now consolidate into one non-safe manual package per unchanged
-  hard package boundary, preventing one top-level package per exception family.
+  hard package boundary. Families with an unknown action or object remain isolated
+  and manual; they are never combined merely to meet a compression target.
 - Risks or follow-up: This core is intentionally not wired to admin lifecycle,
   persistence, presentation or `stage_rag`; later scoped waves must use the
   `rank_with_local_assist` boundary rather than giving model output decision authority.
@@ -111,4 +112,5 @@ links:
 
 ## Handoff
 
-Leave this card in `review` until ORDA integration accepts the feature and merge SHAs.
+Accepted feature `121dfab` through integration `c2c2259` and final hardening
+`318cca9`.

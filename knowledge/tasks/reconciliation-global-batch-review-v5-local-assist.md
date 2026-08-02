@@ -1,7 +1,7 @@
 ---
 type: task
-status: review
-orda_status: review
+status: done
+orda_status: done
 card_id: reconciliation-global-batch-review-v5-local-assist
 version: 1
 work_id: reconciliation-global-batch-review-v5-wave3
@@ -13,6 +13,7 @@ owner: reconciliation-v5-local-assist
 profile: L2
 routing_grade: P4
 progress_revision: 2
+state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
 routing_reason: Local-only model lifecycle, timeout and privacy boundaries require consequential integration work.
@@ -59,7 +60,7 @@ last_verified: 2026-08-02
 updated: 2026-08-02
 tags:
   - task/implementation
-  - status/review
+  - status/done
   - domain/document-processing
   - capability/local-ai
   - risk/high
@@ -108,6 +109,11 @@ links:
   result, so singleton and empty-similarity runs remain silent.
   Grouping, package safety, decisions, calculation and XLSX inputs are unchanged
   across available, unavailable, invalid and timed-out model outcomes.
-- Risks or follow-up: live pinned-model smoke is intentionally skipped without
-  `RUN_RAG_MODEL=1`; the adapter remains fail-soft when its local cache or optional
-  RAG dependencies are unavailable.
+- Live pinned-model smoke passed with `RUN_RAG_MODEL=1`: the local-only
+  `cointegrated/rubert-tiny2` revision produced 312-dimensional embeddings. The
+  adapter remains fail-soft when its local cache or optional RAG dependencies are
+  unavailable.
+
+## Handoff
+
+Accepted feature `ac81791` through integration `e948c2e`.

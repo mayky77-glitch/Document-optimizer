@@ -156,6 +156,21 @@ def test_package_without_a_proposed_category_is_never_mass_acceptable() -> None:
     assert result.packages[0].safe is False
 
 
+def test_unrelated_unknown_work_types_remain_isolated_and_manual() -> None:
+    first = _row("row-clean", "Очистка поверхности")
+    second = _row("row-paint", "Покраска поверхности")
+    groups = (_group("group-clean", first), _group("group-paint", second))
+
+    result = _build((first, second), groups)
+
+    assert len(result.families) == len(result.packages) == 2
+    assert {package.member_group_ids for package in result.packages} == {
+        ("group-clean",),
+        ("group-paint",),
+    }
+    assert not any(package.safe for package in result.packages)
+
+
 def test_exceptions_are_separate_from_a_mass_acceptable_safe_remainder() -> None:
     first = _row("row-a", "Монтаж силового кабеля")
     second = _row("row-b", "Монтаж силового кабеля")

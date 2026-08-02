@@ -171,8 +171,11 @@ def _build_packages(
 ) -> tuple[DecisionPackage, ...]:
     grouped: dict[tuple[object, ...], list[SemanticFamily]] = defaultdict(list)
     for family in families:
+        has_known_work_type = bool(family.package_key[3] and family.package_key[4])
         key: tuple[object, ...] = (*family.package_key, "safe")
-        if family.exception_reasons:
+        if not has_known_work_type:
+            key = (*family.package_key, "unknown", family.family_id)
+        elif family.exception_reasons:
             key = (*family.package_key, "manual")
         grouped[key].append(family)
     packages: list[DecisionPackage] = []
@@ -198,7 +201,7 @@ def _build_packages(
                 package_key=key,
                 family_ids=family_ids,
                 member_group_ids=group_ids,
-                safe=bool(key[0]) and not reasons,
+                safe=bool(key[0] and key[3] and key[4]) and not reasons,
                 exception_reasons=reasons,
             )
         )

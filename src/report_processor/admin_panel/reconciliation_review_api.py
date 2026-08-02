@@ -53,7 +53,7 @@ def parse_reconciliation_batch_decision(payload: object) -> BatchReviewDecision:
             action=_enum(ReviewAction, payload.get("action"), "action"),
             mode=_optional_enum(ReviewMode, payload.get("mode"), "mode"),
             target_category=_optional_category(payload.get("category_id")),
-            version=_optional_id(payload.get("version"), "version"),
+            version=_required_id(payload.get("version"), "version"),
         )
     except ValueError as error:
         raise ReconciliationReviewRequestError(str(error)) from error
@@ -97,6 +97,13 @@ def _optional_id(value: object, field: str) -> str | None:
     if not isinstance(value, str) or not value.strip() or len(value) > 256:
         raise ReconciliationReviewRequestError(f"invalid {field}")
     return value.strip()
+
+
+def _required_id(value: object, field: str) -> str:
+    parsed = _optional_id(value, field)
+    if parsed is None:
+        raise ReconciliationReviewRequestError(f"{field} is required")
+    return parsed
 
 
 def _optional_category(value: object) -> str | None:

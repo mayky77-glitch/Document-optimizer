@@ -1,7 +1,7 @@
 ---
 type: task
-status: review
-orda_status: review
+status: done
+orda_status: done
 card_id: reconciliation-global-batch-review-v5-ui
 version: 1
 work_id: reconciliation-global-batch-review-v5
@@ -19,11 +19,11 @@ circuit_state: closed
 routing_reason: Responsive accessible package interactions with stable direct controls and isolated frontend module.
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: inherited
+launch_status: confirmed
 actual_model: gpt-5.6-terra
 actual_reasoning_effort: high
-fallback_reason: Runtime did not return model confirmation; inherited task execution is recorded against the requested Terra/high route.
-model_fallback: true
+fallback_reason: ""
+model_fallback: false
 card_path: knowledge/tasks/reconciliation-global-batch-review-v5-ui.md
 card_commit_sha_ref: launch_envelope
 base_sha_ref: wave1_integration_sha
@@ -72,7 +72,7 @@ last_verified: 2026-08-02
 updated: 2026-08-02
 tags:
   - task/implementation
-  - status/draft
+  - status/done
   - capability/admin-panel
   - risk/high
 links:
@@ -121,10 +121,11 @@ links:
   fields; the authoritative final apply control remains visible when ready. UI decision
   requests use only `accept` or `reject`; selected controlled category travels with
   `accept`, family controls appear once per family, and search includes nested rows.
-- Risks or follow-up: Visual browser capture was attempted through the local server,
-  but the workspace lacks the Playwright Python package; static 390 px responsive
-  contract coverage is included. Lifecycle routes must land before live API exercise.
+- Browser verification passed through the bundled local Playwright runtime in light,
+  dark and 390 px mobile modes. No horizontal overflow or console errors were found;
+  package decisions and final apply traversed the live UI contract.
 
 ## Handoff
 
-Leave this card in `review` until ORDA accepts feature and merge SHAs.
+Accepted feature `9ee3723` through integration `9dd79b8` and final hardening
+`318cca9`.

@@ -1,7 +1,7 @@
 ---
 type: task
 card_id: reconciliation-global-batch-review-v5-plan
-status: draft
+status: done
 version: 1
 work_id: reconciliation-global-batch-review-v5
 task_id: gate0
@@ -10,16 +10,16 @@ role: worker
 agent_role: architect
 profile: L3
 routing_grade: P6
-progress_revision: 0
+progress_revision: 5
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
 routing_reason: Cross-component architecture and high-risk classification boundaries.
 assigned_model: gpt-5.6-sol
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-sol
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 card_path: knowledge/tasks/reconciliation-global-batch-review-v5-plan.md
@@ -46,7 +46,7 @@ acceptance_commands:
   - "git diff --check"
 tags:
   - task/implementation
-  - status/draft
+  - status/done
   - domain/document-processing
   - capability/admin-panel
   - risk/high
@@ -60,6 +60,5 @@ links:
 Canonical product and implementation plan:
 `docs/reconciliation-global-batch-review-v5-plan.md`.
 
-This card freezes planning scope only. New task must verify source/tests, initialize
-ORDA state, create exact non-overlapping implementation cards, commit the Gate 0
-manifest and publish its exact base SHA before launching write workers.
+Gate 0, three dependency waves and final integration are accepted. Final evidence:
+[[reconciliation-global-batch-review-v5-final]].

@@ -28,6 +28,7 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[maps/project-map|Project map]] — product surfaces, contracts, and focused checks.
 - [[maps/active-work|Active work]] — live task links.
 - [[DECISIONS]] — accepted cross-cutting decisions.
+- [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 
 ## Freshness
 

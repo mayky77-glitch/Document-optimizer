@@ -11,14 +11,10 @@ updated: 2026-08-02
 
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
-Active plan: [[../tasks/reconciliation-global-batch-review-v5-plan|Reconciliation global batch review v5]].
+No active reconciliation implementation wave.
 
-Frozen Wave 1: [[../tasks/reconciliation-global-batch-review-v5-core|deterministic package core]].
-
-Frozen Wave 2: [[../tasks/reconciliation-global-batch-review-v5-lifecycle|authoritative lifecycle]]
-and [[../tasks/reconciliation-global-batch-review-v5-ui|package review UI]].
-
-Frozen Wave 3: [[../tasks/reconciliation-global-batch-review-v5-local-assist|bounded local semantic assist]].
+Completed global package review:
+[[../tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]].
 
 Completed reconciliation handoff: [[../tasks/reconciliation-real-data-resilience-v4-final]].
 

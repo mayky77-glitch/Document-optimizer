@@ -17,7 +17,11 @@ def reconciliation_batch_payload(state: ReconciliationReviewState) -> dict[str, 
     for package in state.grouping.packages if state.grouping else ():
         direct = state.package_decisions.get(package.package_id)
         package_groups = _groups(state, package.member_group_ids)
-        manually_changed = _manually_changed(state, package.member_group_ids)
+        manually_changed = _manually_changed(
+            state,
+            package.package_id,
+            package.member_group_ids,
+        )
         has_exceptions = bool(package.exception_reasons)
         category = package.package_key[0] or None
         queue = _queue(package.safe, category)
@@ -145,7 +149,11 @@ def _queue(safe: bool, category: str | None) -> str:
     return "safe" if safe else "clarify"
 
 
-def _manually_changed(state: ReconciliationReviewState, group_ids: tuple[str, ...]) -> bool:
+def _manually_changed(
+    state: ReconciliationReviewState,
+    package_id: str,
+    group_ids: tuple[str, ...],
+) -> bool:
     row_ids = {row_id for group_id in group_ids for row_id in state.groups[group_id].member_ids}
     family_ids = {
         family.family_id
@@ -154,7 +162,8 @@ def _manually_changed(state: ReconciliationReviewState, group_ids: tuple[str, ..
         if set(family.member_group_ids).intersection(group_ids)
     }
     return bool(
-        set(group_ids).intersection(state.group_decisions)
+        package_id in state.package_decisions
+        or set(group_ids).intersection(state.group_decisions)
         or row_ids.intersection(state.row_decisions)
         or family_ids.intersection(state.family_decisions)
     )

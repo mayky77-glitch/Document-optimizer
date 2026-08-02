@@ -123,6 +123,8 @@ class ReconciliationReviewState:
         resolved = [self._package(package_id, version) for package_id, version in packages]
         if any(not package.safe for package in resolved):
             raise ValueError("only safe packages may be accepted together")
+        if any(self._package_has_manual_decisions(package) for package in resolved):
+            raise ValueError("safe package already has an explicit decision")
         decisions: dict[str, BatchReviewDecision] = {}
         for package in resolved:
             category, mode = package.package_key[0], package.package_key[1]
@@ -286,15 +288,30 @@ class ReconciliationReviewState:
 
     def _package(self, package_id: str, version: str | None) -> DecisionPackage:
         package = next((item for item in self._packages() if item.package_id == package_id), None)
-        if package is None or (version is not None and version != package.version):
+        if package is None or version != package.version:
             raise ValueError("review version is stale")
         return package
 
     def _family(self, family_id: str, version: str | None) -> SemanticFamily:
         family = next((item for item in self._families() if item.family_id == family_id), None)
-        if family is None or (version is not None and version != family.version):
+        if family is None or version != family.version:
             raise ValueError("review version is stale")
         return family
+
+    def _package_has_manual_decisions(self, package: DecisionPackage) -> bool:
+        group_ids = set(package.member_group_ids)
+        row_ids = {row_id for group_id in group_ids for row_id in self.groups[group_id].member_ids}
+        family_ids = {
+            family.family_id
+            for family in self._families()
+            if set(family.member_group_ids).intersection(group_ids)
+        }
+        return bool(
+            package.package_id in self.package_decisions
+            or group_ids.intersection(self.group_decisions)
+            or row_ids.intersection(self.row_decisions)
+            or family_ids.intersection(self.family_decisions)
+        )
 
     def _packages(self) -> tuple[DecisionPackage, ...]:
         return self.grouping.packages if self.grouping is not None else ()

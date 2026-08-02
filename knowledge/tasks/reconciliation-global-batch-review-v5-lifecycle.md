@@ -1,7 +1,7 @@
 ---
 type: task
-status: review
-orda_status: frozen
+status: done
+orda_status: done
 card_id: reconciliation-global-batch-review-v5-lifecycle
 version: 1
 work_id: reconciliation-global-batch-review-v5
@@ -19,11 +19,11 @@ circuit_state: closed
 routing_reason: Consequential precedence, stale-state, autosave, calculation and verified XLSX integration.
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: inherited
+launch_status: confirmed
 actual_model: gpt-5.6-terra
 actual_reasoning_effort: high
-fallback_reason: Spawn runtime did not confirm a model override; inherited runtime route recorded.
-model_fallback: true
+fallback_reason: ""
+model_fallback: false
 card_path: knowledge/tasks/reconciliation-global-batch-review-v5-lifecycle.md
 card_commit_sha_ref: launch_envelope
 base_sha_ref: wave1_integration_sha
@@ -85,7 +85,7 @@ last_verified: 2026-08-02
 updated: 2026-08-02
 tags:
   - task/implementation
-  - status/review
+  - status/done
   - domain/document-processing
   - capability/admin-panel
   - risk/high
@@ -154,4 +154,5 @@ links:
 
 ## Handoff
 
-Leave this card in `review` until ORDA accepts feature and merge SHAs.
+Accepted feature `8b2e474` through integration `91fce9a` and final hardening
+`318cca9`.

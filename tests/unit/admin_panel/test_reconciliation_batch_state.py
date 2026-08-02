@@ -111,6 +111,23 @@ def test_stale_safe_package_is_rejected_before_mutation() -> None:
     assert state.package_decisions == {}
 
 
+def test_mass_accept_cannot_overwrite_an_explicit_package_rejection() -> None:
+    state = _state()
+    package = state.grouping.packages[0]
+    state.put_package(
+        package.package_id,
+        BatchReviewDecision(ReviewAction.REJECT, version=package.version),
+    )
+
+    payload = reconciliation_batch_payload(state)["review_packages"][0]
+    with pytest.raises(ValueError, match="explicit decision"):
+        state.accept_safe_packages(((package.package_id, package.version),))
+
+    assert payload["manually_changed"] is True
+    assert payload["ready_for_mass_accept"] is False
+    assert state.package_decisions[package.package_id].action is ReviewAction.REJECT
+
+
 def test_autosave_restore_and_mass_accept_match_sequential_decision(tmp_path) -> None:
     mass = _state()
     package = mass.grouping.packages[0]

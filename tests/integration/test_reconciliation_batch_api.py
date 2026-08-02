@@ -113,3 +113,32 @@ def test_package_route_accepts_an_explicit_alternative_category(tmp_path: Path) 
     assert changed["selected_category_id"] == "target-2"
     assert changed["mode"] == "cost_only"
     assert response.json()["review_can_apply"] is True
+
+
+def test_package_and_family_routes_require_versions_without_mutation(tmp_path: Path) -> None:
+    service = AdminPanelService(tmp_path, execute=lambda _job: _result())
+    app = create_app(service=service, workspace_root=tmp_path)
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/jobs",
+            files={
+                "sources": ("source.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+                "target": ("target.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+            },
+        ).json()
+        package = created["review_packages"][0]
+        family = package["families"][0]
+        package_response = client.put(
+            f"/api/jobs/{created['job_id']}/review/packages/{package['package_id']}",
+            json={"action": "reject"},
+        )
+        family_response = client.put(
+            f"/api/jobs/{created['job_id']}/review/families/{family['family_id']}",
+            json={"action": "reject"},
+        )
+        unchanged = client.get(f"/api/jobs/{created['job_id']}").json()
+
+    assert package_response.status_code == family_response.status_code == 409
+    unchanged_package = unchanged["review_packages"][0]
+    assert unchanged_package["action"] is None
+    assert unchanged_package["families"][0]["action"] is None
