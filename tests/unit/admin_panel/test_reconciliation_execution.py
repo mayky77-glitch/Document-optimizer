@@ -87,6 +87,7 @@ def test_apply_review_all_rejected_writes_unchanged_target_and_feedback(
     workbook.close()
     input_bytes = input_stream.getvalue()
     job.target.write_bytes(input_bytes)
+    job.target_digest = sha256(input_bytes).hexdigest()
     output = tmp_path / "result.xlsx"
     monkeypatch.setattr(
         "report_processor.admin_panel.reconciliation_execution.read_reconciliation_target",
