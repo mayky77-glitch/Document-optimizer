@@ -73,6 +73,11 @@ links:
 4. A final read-only reviewer checks calculation correctness, privacy and fail-soft
    behavior. No auditor is authorized.
 
+Wave 1 was accepted at merge `3145c8cb74e673bb67f097e773f869573c90afc1`.
+The target-layout diagnosis is routed through successor Gate 0
+`reconciliation-real-data-lifecycle-ui-v4` so its expanded scope is frozen before
+implementation.
+
 ## Baseline
 
 On parent `9abfbc9e3773c1474b4caef21faf3164507d8fb9`:
@@ -96,4 +101,3 @@ On parent `9abfbc9e3773c1474b4caef21faf3164507d8fb9`:
 - Ruff/format, Node syntax and `git diff --check` pass. Full suite is not run.
 - Knowledge is updated, the local service is restarted, and the final branch is
   committed and pushed.
-
