@@ -13,6 +13,8 @@ Link only active task cards here. Remove or move links after orchestration accep
 
 Active plan: [[../tasks/reconciliation-global-batch-review-v5-plan|Reconciliation global batch review v5]].
 
+Frozen Wave 1: [[../tasks/reconciliation-global-batch-review-v5-core|deterministic package core]].
+
 Completed reconciliation handoff: [[../tasks/reconciliation-real-data-resilience-v4-final]].
 
 - [[../ORCHESTRATION|Orchestration rules]]

@@ -1,0 +1,42 @@
+status: frozen
+work_id: reconciliation-global-batch-review-v5
+objective: Replace 500 reconciliation cards with safe global decision packages while preserving authoritative XLSX behavior.
+project_root: /Users/x/Documents/Сооотношение документов/Document-optimizer-ready
+published_plan_sha: 9e435694079a6ff2b5ad24e4472db9bbd884202a
+gate0_commit_sha_ref: launch_envelope
+wave_base_sha_ref: gate0_commit_sha_ref
+shared_contract_blob_sha: eda713d70dc328edb57911b1e370855e6fc19b4c
+wave: 1
+max_parallel: 2
+max_spawns: 5
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - uv run pytest -q tests/unit/reconciliation_review/test_authoritative_core.py tests/unit/admin_panel/test_reconciliation_state.py tests/unit/admin_panel/test_reconciliation_execution.py tests/integration/test_reconciliation_authoritative_flow.py tests/integration/test_reconciliation_review_ui_contract.py
+  - uv run ruff check src/report_processor/reconciliation_review src/report_processor/admin_panel/reconciliation_*.py tests/unit/reconciliation_review tests/unit/admin_panel/test_reconciliation_* tests/integration/test_reconciliation_*
+  - uv run ruff format --check src/report_processor/reconciliation_review src/report_processor/admin_panel/reconciliation_*.py tests/unit/reconciliation_review tests/unit/admin_panel/test_reconciliation_* tests/integration/test_reconciliation_*
+  - node --check src/report_processor/admin_panel/assets/admin.js
+baseline_results:
+  - 16 passed
+  - Ruff passed
+  - Ruff format passed
+  - Node syntax passed
+shared_paths_owner: integration
+data_classification: restricted
+created_at: 2026-08-02T09:44:12Z
+contracts:
+  feature: ReconciliationFeatureContract-1.0
+  package: ReconciliationPackageContract-1.0
+  decision: ReconciliationBatchDecision-1.0
+  autosave: ReconciliationBatchAutosave-1.0
+  payload: ReconciliationBatchPayload-1.0
+  semantic_assist: ReconciliationSemanticAssist-1.0
+acceptance_gates:
+  - zero_activity requires finite Decimal quantity and cost both equal to 0.00
+  - every visible relevant row has exactly one group, family and package path
+  - row decisions override group, family and package decisions
+  - package decisions resolve through existing authoritative calculation and verified XLSX writer
+  - mass and sequential equivalent decisions produce equivalent XLSX
+  - public payload excludes private and technical fields
+  - local model is optional, local-only, fail-soft and never authoritative
+
