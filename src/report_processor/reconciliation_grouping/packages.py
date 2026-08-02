@@ -173,7 +173,7 @@ def _build_packages(
     for family in families:
         key: tuple[object, ...] = (*family.package_key, "safe")
         if family.exception_reasons:
-            key = (*family.package_key, "exception", family.family_id)
+            key = (*family.package_key, "manual")
         grouped[key].append(family)
     packages: list[DecisionPackage] = []
     for _key, members in sorted(grouped.items(), key=lambda item: repr(item[0])):
