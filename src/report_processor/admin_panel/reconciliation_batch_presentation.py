@@ -29,7 +29,7 @@ def reconciliation_batch_payload(state: ReconciliationReviewState) -> dict[str, 
                 "package_id": package.package_id,
                 "version": package.version,
                 "queue": queue,
-                "label": _package_label(queue),
+                "label": _work_label(state, package_groups, _package_label(queue)),
                 "proposed_category_id": category,
                 "selected_category_id": direct.target_category if direct else None,
                 "action": direct.action.value if direct else None,
@@ -80,20 +80,32 @@ def _family_payload(state: ReconciliationReviewState, family) -> dict[str, objec
     return {
         "family_id": family.family_id,
         "version": family.version,
-        "label": "Семейство работ",
+        "label": _work_label(state, groups, "Семейство работ"),
         "member_group_ids": list(family.member_group_ids),
         "groups": [
             reconciliation_review_group_payload(group, state.rows, state.effective_decisions())
             for group in groups
         ],
+        "proposed_category_id": family.package_key[0] or None,
         "selected_category_id": decision.target_category if decision else None,
         "action": decision.action.value if decision else None,
-        "mode": decision.mode.value if decision and decision.mode else None,
+        "mode": decision.mode.value if decision and decision.mode else family.package_key[1],
     }
 
 
 def _groups(state: ReconciliationReviewState, group_ids: tuple[str, ...]):
     return tuple(state.groups[group_id] for group_id in group_ids)
+
+
+def _work_label(state: ReconciliationReviewState, groups, fallback: str) -> str:
+    for group in groups:
+        payload = reconciliation_review_group_payload(group, state.rows)
+        members = payload["members"]
+        if isinstance(members, list) and members:
+            name = members[0].get("display_name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()[:200]
+    return fallback
 
 
 def _total(state: ReconciliationReviewState, group_ids: tuple[str, ...], field: str) -> str:

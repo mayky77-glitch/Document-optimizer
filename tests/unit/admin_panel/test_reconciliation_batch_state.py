@@ -162,6 +162,7 @@ def test_payload_uses_the_exact_filter_schema_without_private_facts() -> None:
         "families",
     }
     assert package["queue"] == "safe"
+    assert package["label"] == "Монтаж силового кабеля"
     assert package["category"] == "target-1"
     assert package["mode"] == "quantity_cost"
     assert package["unit_family"] == "length"
@@ -174,6 +175,21 @@ def test_payload_uses_the_exact_filter_schema_without_private_facts() -> None:
     assert package["quantity"] == "2.00" and package["cost"] == "4.00"
     assert package["row_count"] == "2.00"
     assert payload["review_last_action"] == {"message": "Решения не сохранены."}
+    family = package["families"][0]
+    assert set(family) == {
+        "family_id",
+        "version",
+        "label",
+        "member_group_ids",
+        "groups",
+        "proposed_category_id",
+        "selected_category_id",
+        "action",
+        "mode",
+    }
+    assert family["label"] == "Монтаж силового кабеля"
+    assert family["proposed_category_id"] == "target-1"
+    assert family["mode"] == "quantity_cost"
     serialized = repr(payload)
     assert all(value not in serialized for value in ("digest", "path", "warning", "confidence"))
 

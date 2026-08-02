@@ -12,7 +12,7 @@ agent_role: developer
 owner: reconciliation-v5-lifecycle
 profile: L2
 routing_grade: P4
-progress_revision: 2
+progress_revision: 3
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -143,6 +143,14 @@ links:
 - Commands and tests run: focused card pytest set — 29 passed, 1 opt-in
   real-data test skipped because its environment variables are absent; Ruff
   check and format check — passed; `git diff --check` — passed.
+
+## Presentation alignment evidence
+
+- Family payload now always carries its deterministic proposed category and
+  default accounting mode. Package and family labels use a short existing
+  public work display name when one is available.
+- Focused tests: 15 passed; Ruff check and format check — passed;
+  `git diff --check` — passed.
 
 ## Handoff
 
