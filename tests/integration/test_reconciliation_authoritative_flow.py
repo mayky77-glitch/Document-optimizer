@@ -5,6 +5,7 @@ import pytest
 
 from fixtures.calculation.builders import calculation_rule_set, calculation_source_row, match_result
 from report_processor.admin_panel.reconciliation_state import ReconciliationReviewState
+from report_processor.admin_panel.reconciliation_target import _bindings, writer_calculations
 from report_processor.admin_panel.service import AdminJob, AdminPanelService
 from report_processor.calculation import calculate_matches
 from report_processor.matching import MatchResult, MatchStatus
@@ -38,6 +39,30 @@ def test_two_accepted_source_rows_contribute_once_to_one_target_aggregate() -> N
 
     assert result.quantity == Decimal("5.00")
     assert result.cost == Decimal("25.00")
+
+
+def test_reconciliation_target_binds_only_a_b_c_d_e_f_j_k_and_scales_writer_values() -> None:
+    source = calculation_source_row(
+        "source:1", quantity=Decimal("1.005"), cost=Decimal("1000000.005")
+    )
+    calculated = calculate_matches(
+        (match_result(source),), calculation_rule_set(coefficient=Decimal("2.7"))
+    )
+
+    (written,) = writer_calculations(calculated)
+
+    assert [(binding.logical_column.value, binding.column_letter) for binding in _bindings()] == [
+        ("object_code", "A"),
+        ("document_index", "B"),
+        ("stage", "C"),
+        ("row_number", "D"),
+        ("work_name", "E"),
+        ("unit", "F"),
+        ("current_period_quantity", "J"),
+        ("current_period_cost", "K"),
+    ]
+    assert written.quantity == Decimal("1.01")
+    assert written.cost == Decimal("2.70")
 
 
 def _review_job(tmp_path) -> tuple[AdminPanelService, AdminJob, str]:
