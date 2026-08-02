@@ -30,7 +30,12 @@ from report_processor.reconciliation_review import (
 
 from .reconciliation_sources import AllReconciliationSourcesUnusableError, ReconciliationSourceBatch
 from .reconciliation_state import ReconciliationReviewState
-from .reconciliation_target import category_id, read_reconciliation_target, terminal_index
+from .reconciliation_target import (
+    category_id,
+    read_reconciliation_target,
+    terminal_index,
+    writer_calculations,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +98,9 @@ def apply_review(
             if (override := overrides[candidate.source_row_id]) is not None
         },
     )
-    selected = tuple(item for item in calculations if item.status.value.startswith("calculated"))
+    selected = writer_calculations(
+        item for item in calculations if item.status.value.startswith("calculated")
+    )
     if not selected:
         raise ValueError("NO_CALCULATED_ROWS")
     result = write_target_report(

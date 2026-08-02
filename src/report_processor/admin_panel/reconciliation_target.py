@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import replace
+from decimal import ROUND_HALF_UP, Decimal
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.processing.adapters import _materialized
@@ -45,6 +47,28 @@ def category_id(label: str) -> str:
 def terminal_index(value: object) -> str | None:
     match = _INDEX_RE.search(str(value or ""))
     return match.group(1) if match else None
+
+
+def writer_calculations(calculations: Iterable[object]) -> tuple[object, ...]:
+    """Adapt reconciliation values to the target's two-decimal, million-RUB cells."""
+    return tuple(
+        replace(
+            calculation,
+            quantity=_quantize(calculation.quantity),
+            cost=_million_rub(calculation.cost),
+        )
+        for calculation in calculations
+    )
+
+
+def _quantize(value: Decimal | None) -> Decimal | None:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if value is not None else None
+
+
+def _million_rub(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    return (value / Decimal(1_000_000)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _bindings() -> tuple[TargetColumnBinding, ...]:
