@@ -1,7 +1,7 @@
 ---
 type: task
-status: active
-orda_status: frozen
+status: review
+orda_status: review
 card_id: reconciliation-global-batch-review-v5-local-assist
 version: 1
 work_id: reconciliation-global-batch-review-v5-wave3
@@ -12,13 +12,16 @@ agent_role: developer
 owner: reconciliation-v5-local-assist
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 2
 no_progress_count: 0
 circuit_state: closed
 routing_reason: Local-only model lifecycle, timeout and privacy boundaries require consequential integration work.
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: pending
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
+fallback_reason: ""
 card_path: knowledge/tasks/reconciliation-global-batch-review-v5-local-assist.md
 base_sha_ref: wave3_card_commit_sha
 branch: codex/reconciliation-v5-local-assist
@@ -56,7 +59,7 @@ last_verified: 2026-08-02
 updated: 2026-08-02
 tags:
   - task/implementation
-  - status/active
+  - status/review
   - domain/document-processing
   - capability/local-ai
   - risk/high
@@ -91,3 +94,20 @@ links:
   embeddings; a missing cache remains fail-soft.
 - Public payload privacy contract remains unchanged except for a controlled hint.
 
+## Completion evidence
+
+- Changed paths: `reconciliation_semantic_assist.py`, bounded execution/state/
+  presentation wiring, and the three owned admin-panel unit suites.
+- Commands and tests run: frozen-card pytest (`25 passed, 1 skipped`; local model
+  smoke requires `RUN_RAG_MODEL=1`), frozen-card Ruff check, Ruff format check,
+  and `git diff --check`.
+- Result: a deterministic maximum of eight ambiguous feature groups is sent in one
+  local-only RuBERT batch with a bounded 10-second cold-load timeout. Similarities
+  and technical failures are discarded; only a controlled Russian hint and opaque
+  selected IDs remain in job state. The hint requires an actual comparable local
+  result, so singleton and empty-similarity runs remain silent.
+  Grouping, package safety, decisions, calculation and XLSX inputs are unchanged
+  across available, unavailable, invalid and timed-out model outcomes.
+- Risks or follow-up: live pinned-model smoke is intentionally skipped without
+  `RUN_RAG_MODEL=1`; the adapter remains fail-soft when its local cache or optional
+  RAG dependencies are unavailable.

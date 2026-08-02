@@ -71,6 +71,7 @@ def reconciliation_batch_payload(state: ReconciliationReviewState) -> dict[str, 
         ],
         "review_can_apply": not state.unresolved_row_ids(),
         "review_last_action": {"message": state.last_action or "Решения не сохранены."},
+        "review_semantic_hint": state.semantic_assist_hint,
     }
 
 

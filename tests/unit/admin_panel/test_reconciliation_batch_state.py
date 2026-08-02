@@ -7,6 +7,7 @@ from report_processor.admin_panel.reconciliation_batch_presentation import (
     reconciliation_batch_payload,
 )
 from report_processor.admin_panel.reconciliation_batch_store import ReconciliationBatchStore
+from report_processor.admin_panel.reconciliation_semantic_assist import CONTROLLED_SEMANTIC_HINT
 from report_processor.admin_panel.reconciliation_sources import ReconciliationSourceIssue
 from report_processor.admin_panel.reconciliation_state import (
     BatchReviewDecision,
@@ -175,6 +176,7 @@ def test_payload_uses_the_exact_filter_schema_without_private_facts() -> None:
     assert package["quantity"] == "2.00" and package["cost"] == "4.00"
     assert package["row_count"] == "2.00"
     assert payload["review_last_action"] == {"message": "Решения не сохранены."}
+    assert payload["review_semantic_hint"] is None
     family = package["families"][0]
     assert set(family) == {
         "family_id",
@@ -192,6 +194,20 @@ def test_payload_uses_the_exact_filter_schema_without_private_facts() -> None:
     assert family["mode"] == "quantity_cost"
     serialized = repr(payload)
     assert all(value not in serialized for value in ("digest", "path", "warning", "confidence"))
+
+
+def test_semantic_assist_state_exposes_only_a_controlled_hint() -> None:
+    state = _state()
+    group_id = next(iter(state.groups))
+    state.set_semantic_assist((group_id,), CONTROLLED_SEMANTIC_HINT)
+
+    payload = reconciliation_batch_payload(state)
+
+    assert payload["review_semantic_hint"] == CONTROLLED_SEMANTIC_HINT
+    assert "semantic_assist_group_ids" not in payload
+    assert all(value not in repr(payload) for value in ("similarities", "timeout", "unavailable"))
+    with pytest.raises(ValueError, match="unknown"):
+        state.set_semantic_assist(("unknown-group",), CONTROLLED_SEMANTIC_HINT)
 
 
 def test_source_issue_dataclass_projects_only_operator_safe_fields() -> None:

@@ -16,6 +16,8 @@ from report_processor.reconciliation_review import (
     ReviewRow,
 )
 
+from .reconciliation_semantic_assist import CONTROLLED_SEMANTIC_HINT
+
 
 @dataclass(frozen=True, slots=True)
 class BatchReviewDecision:
@@ -62,12 +64,26 @@ class ReconciliationReviewState:
     package_decisions: dict[str, BatchReviewDecision] = field(default_factory=dict)
     family_decisions: dict[str, BatchReviewDecision] = field(default_factory=dict)
     familiar_group_ids: set[str] = field(default_factory=set)
+    semantic_assist_group_ids: set[str] = field(default_factory=set)
+    semantic_assist_hint: str | None = None
     last_action: str | None = None
     _undo: _DecisionSnapshot | None = None
     _autosave: Callable[[ReconciliationReviewState], None] | None = None
 
     def set_autosave(self, callback: Callable[[ReconciliationReviewState], None]) -> None:
         self._autosave = callback
+
+    def set_semantic_assist(self, group_ids: Iterable[str], hint: str | None) -> None:
+        """Keep only a controlled local-assist marker; it never affects decisions."""
+        values = set(group_ids)
+        if not values.issubset(self.groups):
+            raise ValueError("semantic assist references an unknown group")
+        if hint not in {None, CONTROLLED_SEMANTIC_HINT}:
+            raise ValueError("semantic assist hint is not controlled")
+        if bool(values) != bool(hint):
+            raise ValueError("semantic assist IDs and hint must be present together")
+        self.semantic_assist_group_ids = values
+        self.semantic_assist_hint = hint
 
     @property
     def version_fingerprint(self) -> str:

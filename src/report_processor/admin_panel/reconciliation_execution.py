@@ -34,6 +34,7 @@ from report_processor.reconciliation_review import (
 )
 
 from .reconciliation_batch_store import ReconciliationBatchStore
+from .reconciliation_semantic_assist import RUBERT_TINY2_MODEL_REVISION, run_local_semantic_assist
 from .reconciliation_sources import AllReconciliationSourcesUnusableError, ReconciliationSourceBatch
 from .reconciliation_state import ReconciliationReviewState
 from .reconciliation_target import (
@@ -77,6 +78,7 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
             _normalized_source_digests(job.source_digests),
             job.target_digest,
             _catalog_version(catalog),
+            model_revision=RUBERT_TINY2_MODEL_REVISION,
         ),
     )
     state = ReconciliationReviewState(
@@ -88,6 +90,8 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         available_categories=_available_categories(batch.rows, catalog, job),
         grouping=grouping,
     )
+    semantic_assist = run_local_semantic_assist(grouping)
+    state.set_semantic_assist(semantic_assist.group_ids, semantic_assist.hint)
     _restore_feedback(state, feedback)
     store = ReconciliationBatchStore(job.directory)
     store.restore(state)
