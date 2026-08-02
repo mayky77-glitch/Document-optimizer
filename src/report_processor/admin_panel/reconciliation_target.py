@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import shutil
+import tempfile
 from collections.abc import Iterable
 from dataclasses import replace
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.processing.adapters import _materialized
@@ -24,6 +29,45 @@ from report_processor.target_report.reader import _cell_snapshot
 
 _INDEX_RE = re.compile(r"(\d{4})(?!.*\d)")
 _STAGE_RE = re.compile(r"этап\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
+
+
+def publish_unchanged_target(source, output, expected_sha256: str) -> str:
+    """Atomically publish one verified byte-identical target copy without clobbering."""
+    source_path, output_path = Path(source), Path(output)
+    if output_path.exists() or output_path.is_symlink():
+        raise ValueError("RECONCILIATION_OUTPUT_EXISTS")
+    source_sha256 = _sha256(source_path)
+    if source_sha256 != expected_sha256:
+        raise ValueError("RECONCILIATION_TARGET_CHANGED")
+    _reopen_xlsx(source_path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".reconciliation-", suffix=".xlsx", dir=output_path.parent
+    )
+    temporary = Path(temporary_name)
+    published = False
+    try:
+        with os.fdopen(descriptor, "wb") as destination, source_path.open("rb") as input_stream:
+            shutil.copyfileobj(input_stream, destination, length=1_048_576)
+            destination.flush()
+            os.fsync(destination.fileno())
+        if _sha256(temporary) != source_sha256 or _sha256(source_path) != source_sha256:
+            raise ValueError("RECONCILIATION_TARGET_CHANGED")
+        _reopen_xlsx(temporary)
+        os.link(temporary, output_path)
+        published = True
+        output_sha256 = _sha256(output_path)
+        if output_sha256 != source_sha256:
+            raise ValueError("RECONCILIATION_OUTPUT_VERIFY_FAILED")
+        _reopen_xlsx(output_path)
+        return output_sha256
+    except OSError as error:
+        if error.errno == 17:
+            raise ValueError("RECONCILIATION_OUTPUT_EXISTS") from None
+        raise RuntimeError("RECONCILIATION_NO_CHANGE_PUBLISH_FAILED") from error
+    finally:
+        temporary.unlink(missing_ok=True)
+        if published and _sha256(output_path) != source_sha256:
+            output_path.unlink(missing_ok=True)
 
 
 def read_reconciliation_target(path, digest: str, stage: str):
@@ -159,3 +203,21 @@ def _numeric(cell):
     if cell is None:
         return None
     return TargetNumericCell(cell.numeric_value, cell.raw_lexeme, "NOT_FORMULA", cell.status)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1_048_576), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _reopen_xlsx(path: Path) -> None:
+    from openpyxl import load_workbook
+
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=False, keep_links=True)
+        workbook.close()
+    except Exception as error:
+        raise ValueError("RECONCILIATION_OUTPUT_VERIFY_FAILED") from error

@@ -32,6 +32,7 @@ from .reconciliation_sources import AllReconciliationSourcesUnusableError, Recon
 from .reconciliation_state import ReconciliationReviewState
 from .reconciliation_target import (
     category_id,
+    publish_unchanged_target,
     read_reconciliation_target,
     terminal_index,
     writer_calculations,
@@ -102,7 +103,8 @@ def apply_review(
         item for item in calculations if item.status.value.startswith("calculated")
     )
     if not selected:
-        raise ValueError("NO_CALCULATED_ROWS")
+        publish_unchanged_target(job.target, job.directory / "result.xlsx", job.target_digest)
+        return job.directory / "result.xlsx", _feedback_records(state)
     result = write_target_report(
         job.target, job.directory / "result.xlsx", WriteDecision.ALLOW_WRITE, selected, schema
     )

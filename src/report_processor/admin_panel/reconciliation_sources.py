@@ -164,15 +164,14 @@ def _extract_ks2_rows(sheet, source_id: str, descriptor: ReconciliationSourceDes
     unit_column = _unit_column(header_rows)
     if work_column is None or unit_column is None:
         return ()
-    quantity_column, cost_column = _ks2_metric_pair(header_rows)
+    quantity_column, cost_column, metrics_header_row = _ks2_metric_pair(header_rows)
     if quantity_column is None or cost_column is None:
         return ()
     data_start = (
         max(
-            _last_header_row(header_rows, work_column),
-            _last_header_row(header_rows, unit_column),
-            _last_header_row(header_rows, quantity_column),
-            _last_header_row(header_rows, cost_column),
+            _token_header_row(header_rows, work_column, "наименование работ"),
+            _unit_header_row(header_rows, unit_column),
+            metrics_header_row,
         )
         + 1
     )
@@ -212,18 +211,32 @@ def _unit_column(rows: tuple[tuple[object, ...], ...]) -> int | None:
 
 def _ks2_metric_pair(
     rows: tuple[tuple[object, ...], ...],
-) -> tuple[int | None, int | None]:
+) -> tuple[int | None, int | None, int]:
     """Require one explicit quantity / total-cost pair; unit prices are ineligible."""
-    for row in rows:
+    for row_number, row in enumerate(rows, 1):
         quantity = _column_within(row, 1, len(row), "количество")
         cost = _column_within(row, 1, len(row), "общая стоимость")
         if quantity is not None and cost is not None and quantity < cost:
-            return quantity, cost
-    return None, None
+            return quantity, cost, row_number
+    return None, None, 1
 
 
-def _last_header_row(rows: tuple[tuple[object, ...], ...], column: int) -> int:
-    return max((number for number, row in enumerate(rows, 1) if _text_at(row, column)), default=1)
+def _token_header_row(rows: tuple[tuple[object, ...], ...], column: int, token: str) -> int:
+    return max(
+        (number for number, row in enumerate(rows, 1) if token in _text_at(row, column)),
+        default=1,
+    )
+
+
+def _unit_header_row(rows: tuple[tuple[object, ...], ...], column: int) -> int:
+    return max(
+        (
+            number
+            for number, row in enumerate(rows, 1)
+            if _header_text(_value_at(row, column)) in _UNIT_ALIASES
+        ),
+        default=1,
+    )
 
 
 def _metric_pair(
