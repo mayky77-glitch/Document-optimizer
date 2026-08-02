@@ -167,7 +167,7 @@ button, .download { min-height: 48px; padding: 11px 18px; border: 1px solid var(
   .review-group-head { flex-direction: column; }
   .chosen-category { text-align: left; }
   .review-actions, .member-override-body .review-actions { grid-template-columns: 1fr; }
-  .review-composition thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .review-composition thead { display: none; }
   .review-composition tbody { display: block; }
   .review-composition tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
   .review-composition td { display: grid; gap: 3px; border-top: 0; overflow-wrap: break-word; }
