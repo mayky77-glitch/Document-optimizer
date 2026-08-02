@@ -158,8 +158,12 @@ def test_exceptions_are_separate_from_a_mass_acceptable_safe_remainder() -> None
     result = _build((first, second, safe), groups, negative_pairs=(("group-a", "group-b"),))
 
     safe_packages = [package for package in result.packages if package.safe]
+    manual_packages = [package for package in result.packages if not package.safe]
     assert len(safe_packages) == 1
     assert safe_packages[0].member_group_ids == ("group-c",)
+    assert len(manual_packages) == 1
+    assert manual_packages[0].member_group_ids == ("group-a", "group-b")
+    assert len(manual_packages[0].family_ids) == 2
     assert {exception.reason for exception in result.exceptions} == {"explicit_negative_feedback"}
     assert {
         group_id
@@ -170,6 +174,39 @@ def test_exceptions_are_separate_from_a_mass_acceptable_safe_remainder() -> None
         "group-a",
         "group-b",
     }
+
+
+def test_manual_exception_packages_never_merge_across_hard_boundaries() -> None:
+    first_a = _row("row-a", "Монтаж силового кабеля", category="Категория A")
+    first_b = _row("row-b", "Монтаж силового кабеля", category="Категория A")
+    second_a = _row("row-c", "Монтаж силового кабеля", category="Категория B")
+    second_b = _row("row-d", "Монтаж силового кабеля", category="Категория B")
+    groups = (
+        _group("group-a", first_a),
+        _group("group-b", first_b),
+        _group("group-c", second_a),
+        _group("group-d", second_b),
+    )
+
+    first_result = _build(
+        (first_a, first_b, second_a, second_b),
+        groups,
+        negative_pairs=(("group-a", "group-b"), ("group-c", "group-d")),
+    )
+    second_result = _build(
+        (second_b, second_a, first_b, first_a),
+        tuple(reversed(groups)),
+        negative_pairs=(("group-a", "group-b"), ("group-c", "group-d")),
+    )
+
+    manual_packages = [package for package in first_result.packages if not package.safe]
+    assert first_result.packages == second_result.packages
+    assert len(manual_packages) == 2
+    assert {package.member_group_ids for package in manual_packages} == {
+        ("group-a", "group-b"),
+        ("group-c", "group-d"),
+    }
+    assert all(len(package.family_ids) == 2 for package in manual_packages)
 
 
 def test_package_versions_bind_every_consequential_version_input() -> None:
