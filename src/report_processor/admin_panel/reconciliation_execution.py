@@ -65,6 +65,7 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         categories={key: value for key, value in catalog.labels.items()},
         source_digests=job.source_digests,
         target_digest=job.target_digest,
+        available_categories=_available_categories(batch.rows, catalog, job),
     )
     _restore_feedback(state, feedback)
     return ReconciliationReviewResult(state, batch, batch.issues)
@@ -87,7 +88,7 @@ def apply_review(
     schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
     catalog = _catalog(targets)
     overrides = apply_overrides(state.rows.values(), state.groups.values(), state.core_decisions())
-    source_rows = {row.source_row_id: row for row in _sources(job).rows}
+    source_rows = {_review_row_id(job, row.source_row_id): row for row in _sources(job).rows}
     matches = _selected_matches(state, overrides, catalog, job, source_rows)
     calculations = calculate_matches(
         matches,
@@ -151,7 +152,7 @@ def _sources(job) -> ReconciliationSourceBatch:
         (path, f"source:{index}:{job.source_digests[index]}", descriptor)
         for index, (path, descriptor) in enumerate(zip(paths, descriptors, strict=True))
     )
-    return extract_reconciliation_sources(workbooks)
+    return extract_reconciliation_sources(workbooks, require_document_index=True)
 
 
 def _review_rows(rows, targets, catalog: _Catalog, job) -> tuple[ReviewRow, ...]:
@@ -183,7 +184,7 @@ def _review_rows(rows, targets, catalog: _Catalog, job) -> tuple[ReviewRow, ...]
                 proposals.setdefault(candidate.source_row_id, set()).add(category)
     return tuple(
         ReviewRow(
-            row.source_row_id,
+            _review_row_id(job, row.source_row_id),
             row.work_name,
             row.unit,
             row.source_row.period_quantity,
@@ -197,6 +198,18 @@ def _review_rows(rows, targets, catalog: _Catalog, job) -> tuple[ReviewRow, ...]
 def _unique(values: set[str], catalog: _Catalog) -> str | None:
     eligible = values.intersection(catalog.labels)
     return next(iter(eligible)) if len(eligible) == 1 else None
+
+
+def _available_categories(rows, catalog: _Catalog, job) -> dict[str, frozenset[str]]:
+    by_index: dict[str, set[str]] = {}
+    for index, category in catalog.targets:
+        by_index.setdefault(index, set()).add(category)
+    return {
+        _review_row_id(job, row.source_row_id): frozenset(
+            by_index.get(_source_index(row.source_filename) or "", set())
+        )
+        for row in rows
+    }
 
 
 def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows):
@@ -241,8 +254,10 @@ def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows):
 
 
 def _source_index(filename: str) -> str | None:
+    from .reconciliation_sources import document_index_from_basename
+
     index = extract_document_index(filename).value
-    return index.main if index is not None else None
+    return index.main if index is not None else document_index_from_basename(filename)
 
 
 def _target_id(job, target) -> str:
@@ -256,6 +271,18 @@ def _target_id(job, target) -> str:
     )
 
 
+def _review_row_id(job, source_row_id: str) -> str:
+    return (
+        "review-row-"
+        + _hash(
+            "ReconciliationReviewRow-1.0",
+            job.target_digest,
+            *job.source_digests,
+            source_row_id,
+        )[:32]
+    )
+
+
 def _hash(*parts) -> str:
     return sha256(
         json.dumps(parts, ensure_ascii=False, separators=(",", ":"), default=str).encode()
@@ -266,19 +293,29 @@ def _restore_feedback(state, feedback) -> None:
     rows = state.rows
     for group in state.groups.values():
         if record := feedback_for_group(group, feedback):
-            state.group_decisions[group.group_id] = ReviewDecision(
+            decision = ReviewDecision(
                 record.action,
                 record.mode,
                 record.target_category,
                 group_id=group.group_id,
                 version=group.version,
             )
+            try:
+                state.validate_decision(decision, group_id=group.group_id)
+            except ValueError:
+                continue
+            state.group_decisions[group.group_id] = decision
     records = latest_feedback(feedback)
     for row in rows.values():
         if record := records.get((normalize_name(row.display_name), normalize_unit(row.unit))):
-            state.row_decisions[row.row_id] = ReviewDecision(
+            decision = ReviewDecision(
                 record.action, record.mode, record.target_category, row_id=row.row_id
             )
+            try:
+                state.validate_decision(decision, row_id=row.row_id)
+            except ValueError:
+                continue
+            state.row_decisions[row.row_id] = decision
 
 
 def _feedback_records(state) -> tuple[FeedbackRecord, ...]:

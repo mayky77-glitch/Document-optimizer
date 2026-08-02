@@ -81,3 +81,37 @@ def test_row_override_changes_only_its_member_and_delete_restores_group_resoluti
     state.delete_row(row_id, state.group_snapshot()[0].version)
     assert state.row_decisions == {}
     assert state.unresolved_row_ids() == ()
+
+
+def test_category_must_exist_for_every_group_member_but_row_override_is_scoped() -> None:
+    state, group_id, row_id = _state()
+    other_row_id = next(value for value in state.rows if value != row_id)
+    state.available_categories = {
+        row_id: frozenset({"target-1", "target-2"}),
+        other_row_id: frozenset({"target-1"}),
+    }
+    version = state.group_snapshot()[0].version
+
+    with pytest.raises(ValueError, match="unavailable for this group"):
+        state.put_group(
+            group_id,
+            ReviewDecision(
+                ReviewAction.ACCEPT,
+                ReviewMode.QUANTITY_COST,
+                "target-2",
+                group_id=group_id,
+                version=version,
+            ),
+        )
+
+    state.put_row(
+        row_id,
+        ReviewDecision(
+            ReviewAction.ACCEPT,
+            ReviewMode.COST_ONLY,
+            "target-2",
+            row_id=row_id,
+            version=version,
+        ),
+    )
+    assert state.row_decisions[row_id].target_category == "target-2"

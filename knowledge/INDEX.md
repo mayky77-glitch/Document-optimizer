@@ -2,8 +2,8 @@
 type: index
 tags:
   - knowledge/index
-last_verified: 2026-07-30
-updated: 2026-07-30
+last_verified: 2026-08-02
+updated: 2026-08-02
 ---
 
 # Project knowledge index

@@ -19,6 +19,7 @@ class ReconciliationReviewState:
     categories: Mapping[str, str]
     source_digests: tuple[str, ...]
     target_digest: str
+    available_categories: Mapping[str, frozenset[str]] = field(default_factory=dict)
     group_decisions: dict[str, ReviewDecision] = field(default_factory=dict)
     row_decisions: dict[str, ReviewDecision] = field(default_factory=dict)
 
@@ -30,12 +31,12 @@ class ReconciliationReviewState:
 
     def put_group(self, group_id: str, decision: ReviewDecision) -> None:
         group = self._group(group_id, decision.version)
-        self._validate_decision(decision, group_id=group.group_id)
+        self.validate_decision(decision, group_id=group.group_id)
         self.group_decisions[group_id] = replace(decision, group_id=group_id, row_id=None)
 
     def put_row(self, row_id: str, decision: ReviewDecision) -> None:
         self._row_group(row_id, decision.version)
-        self._validate_decision(decision, row_id=row_id)
+        self.validate_decision(decision, row_id=row_id)
         self.row_decisions[row_id] = replace(decision, group_id=None, row_id=row_id)
 
     def delete_row(self, row_id: str, version: str) -> None:
@@ -100,12 +101,27 @@ class ReconciliationReviewState:
             raise ValueError("review version is stale")
         return group
 
-    def _validate_decision(
+    def validate_decision(
         self, decision: ReviewDecision, *, group_id: str | None = None, row_id: str | None = None
     ) -> None:
         category_id = decision.target_category
         if decision.action.value == "accept" and category_id not in self.categories:
             raise ValueError("unknown target category")
+        if decision.action.value == "accept" and group_id is not None:
+            member_ids = self.groups[group_id].member_ids
+            if any(
+                member_id in self.available_categories
+                and category_id not in self.available_categories[member_id]
+                for member_id in member_ids
+            ):
+                raise ValueError("target category is unavailable for this group")
+        if (
+            decision.action.value == "accept"
+            and row_id is not None
+            and row_id in self.available_categories
+            and category_id not in self.available_categories[row_id]
+        ):
+            raise ValueError("target category is unavailable for this row")
         if group_id is not None and decision.group_id not in {None, group_id}:
             raise ValueError("group identity does not match route")
         if row_id is not None and decision.row_id not in {None, row_id}:

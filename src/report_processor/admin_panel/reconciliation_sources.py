@@ -17,6 +17,8 @@ from report_processor.training_data import prepare_training_data
 
 _UNIT_ALIASES = frozenset({"ед изм", "единица измерения", "единица"})
 _HIERARCHY_VALUE_RE = re.compile(r"^\d+(?:\.\d+)+\.?$")
+_BARE_DOCUMENT_INDEX_RE = re.compile(r"(?<!\d)(\d{4})(?!\d)")
+_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +40,21 @@ def descriptor_from_upload_basename(safe_basename: str) -> ReconciliationSourceD
     period = extract_period_from_filename(safe_basename).value
     return ReconciliationSourceDescriptor(
         safe_basename=safe_basename,
-        document_index=index.normalized if index is not None else None,
+        document_index=(
+            index.normalized if index is not None else document_index_from_basename(safe_basename)
+        ),
         document_period=period.normalized if period is not None else None,
     )
+
+
+def document_index_from_basename(safe_basename: str) -> str | None:
+    """Return a strict index or one unambiguous non-year four-digit main index."""
+    parsed = extract_document_index(safe_basename).value
+    if parsed is not None:
+        return parsed.main
+    candidates = tuple(dict.fromkeys(_BARE_DOCUMENT_INDEX_RE.findall(Path(safe_basename).stem)))
+    non_year = tuple(value for value in candidates if _YEAR_RE.fullmatch(value) is None)
+    return non_year[0] if len(non_year) == 1 else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,12 +96,17 @@ class AllReconciliationSourcesUnusableError(ValueError):
 
 def extract_reconciliation_sources(
     workbooks: tuple[tuple[Path, str, ReconciliationSourceDescriptor], ...],
+    *,
+    require_document_index: bool = False,
 ) -> ReconciliationSourceBatch:
     """Choose one usable cumulative source per workbook without cross-file failure."""
     rows: list[NormalizedSourceRow] = []
     issues: list[ReconciliationSourceIssue] = []
     selections: list[ReconciliationSourceSelection] = []
     for path, source_id, descriptor in workbooks:
+        if require_document_index and not _has_usable_document_index(descriptor):
+            issues.append(_issue("DOCUMENT_INDEX_MISSING", descriptor))
+            continue
         try:
             selected = _extract_one(path, source_id, descriptor)
         except Exception:
@@ -366,6 +385,17 @@ def _decimal(value: object | None) -> Decimal | None:
 
 
 def _issue(code: str, descriptor: ReconciliationSourceDescriptor) -> ReconciliationSourceIssue:
+    if code == "DOCUMENT_INDEX_MISSING":
+        return ReconciliationSourceIssue(
+            code=code,
+            safe_basename=descriptor.safe_basename,
+            comment="В имени файла не найден четырёхзначный индекс документа.",
+            repair_hint=(
+                "Добавьте один индекс из целевого отчёта, например «1234», "
+                "в имя файла и загрузите его снова."
+            ),
+            can_continue=True,
+        )
     if code == "WORKBOOK_UNREADABLE":
         return ReconciliationSourceIssue(
             code=code,
@@ -381,3 +411,10 @@ def _issue(code: str, descriptor: ReconciliationSourceDescriptor) -> Reconciliat
         repair_hint="Загрузите источник с заполненными строками КС-6а или КС-2.",
         can_continue=True,
     )
+
+
+def _has_usable_document_index(descriptor: ReconciliationSourceDescriptor) -> bool:
+    raw = descriptor.document_index or ""
+    parsed = extract_document_index(raw).value
+    main = parsed.main if parsed is not None else raw
+    return re.fullmatch(r"\d{4}", main) is not None

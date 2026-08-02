@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import Workbook
 
-from report_processor.admin_panel.reconciliation_execution import prepare_review
+from report_processor.admin_panel.reconciliation_execution import _sources, prepare_review
 from report_processor.admin_panel.reconciliation_sources import (
     AllReconciliationSourcesUnusableError,
     ReconciliationSourceDescriptor,
@@ -66,6 +66,50 @@ def test_all_bad_sources_return_only_controlled_safe_basename_guidance(tmp_path:
     assert issue.safe_basename == "input.xlsx"
     assert issue.comment and issue.repair_hint and issue.can_continue is True
     assert str(tmp_path) not in repr(issue)
+
+
+def test_missing_document_index_is_excluded_with_safe_repair_guidance(tmp_path: Path) -> None:
+    usable = tmp_path / "source-1234.xlsx"
+    missing_index = tmp_path / "source.xlsx"
+    _ks2(usable)
+    _ks2(missing_index, work_name="Монтаж без индекса")
+
+    batch = extract_reconciliation_sources(
+        (
+            (
+                usable,
+                "source:good",
+                ReconciliationSourceDescriptor("source-1234.xlsx", document_index="1234"),
+            ),
+            _source_input(missing_index, "source:missing", "source.xlsx"),
+        ),
+        require_document_index=True,
+    )
+
+    assert len(batch.rows) == 1
+    assert batch.selections[0].safe_basename == "source-1234.xlsx"
+    assert batch.issues[0].code == "DOCUMENT_INDEX_MISSING"
+    assert batch.issues[0].safe_basename == "source.xlsx"
+    assert "индекс" in batch.issues[0].comment.casefold()
+    assert "индекс" in batch.issues[0].repair_hint.casefold()
+    assert str(tmp_path) not in repr(batch.issues)
+
+
+def test_bare_four_digit_upload_name_survives_production_source_path(tmp_path: Path) -> None:
+    usable = tmp_path / "stored-source.xlsx"
+    _ks2(usable)
+    job = SimpleNamespace(
+        sources=(usable,),
+        source=usable,
+        source_names=("source-1234.xlsx",),
+        source_digests=(sha256(usable.read_bytes()).hexdigest(),),
+    )
+
+    batch = _sources(job)
+
+    assert len(batch.rows) == 1
+    assert batch.selections[0].safe_basename == "source-1234.xlsx"
+    assert batch.issues == ()
 
 
 def test_opt_in_real_workbooks_leave_all_input_bytes_unchanged() -> None:

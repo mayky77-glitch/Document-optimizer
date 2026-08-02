@@ -216,6 +216,12 @@ class AdminPanelService:
         return job
 
     def apply_reconciliation(self, job_id: str) -> AdminJob:
+        job = self.get_job(job_id)
+        if job.status == "ready":
+            _verify_inputs(job)
+            if not job.result_available:
+                raise ValueError("authoritative result is unavailable")
+            return job
         job = self._review_job(job_id)
         if job.review_state.unresolved_row_ids():
             raise ValueError("authoritative review is incomplete")
@@ -235,7 +241,7 @@ class AdminPanelService:
 
     def _review_job(self, job_id: str) -> AdminJob:
         job = self.get_job(job_id)
-        if job.review_state is None or job.status not in {"review_required", "ready"}:
+        if job.review_state is None or job.status != "review_required":
             raise ValueError("authoritative review is unavailable")
         return job
 

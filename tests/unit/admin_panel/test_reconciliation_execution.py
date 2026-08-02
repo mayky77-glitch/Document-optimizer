@@ -3,9 +3,15 @@ from hashlib import sha256
 from io import BytesIO
 from types import SimpleNamespace
 
+import pytest
 from openpyxl import Workbook, load_workbook
 
-from report_processor.admin_panel.reconciliation_execution import _feedback_records, apply_review
+from report_processor.admin_panel.reconciliation_execution import (
+    _feedback_records,
+    _review_row_id,
+    apply_review,
+)
+from report_processor.admin_panel.reconciliation_target import publish_unchanged_target
 from report_processor.reconciliation_review import (
     FeedbackRecord,
     ReviewAction,
@@ -52,6 +58,70 @@ def test_feedback_records_restore_row_feedback_over_group_feedback() -> None:
         ),
         FeedbackRecord("монтаж трубы", "м", ReviewAction.REJECT, sequence=2),
     )
+
+
+def test_review_row_id_is_stable_and_hides_source_provenance() -> None:
+    source_digest = "a" * 64
+    source_row_id = f"source:0:{source_digest}:ks6a:455"
+    job = SimpleNamespace(target_digest="b" * 64, source_digests=(source_digest,))
+
+    row_id = _review_row_id(job, source_row_id)
+
+    assert row_id == _review_row_id(job, source_row_id)
+    assert row_id.startswith("review-row-")
+    assert source_digest not in row_id
+    assert "ks6a" not in row_id
+    assert ":455" not in row_id
+
+
+def test_unchanged_publisher_removes_link_after_final_verification_failure(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "target.xlsx"
+    output = tmp_path / "result.xlsx"
+    workbook = Workbook()
+    workbook.save(source)
+    workbook.close()
+    digest = sha256(source.read_bytes()).hexdigest()
+    calls = 0
+
+    def fail_final_reopen(_path):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise ValueError("final reopen failed")
+
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_target._reopen_xlsx",
+        fail_final_reopen,
+    )
+
+    with pytest.raises(ValueError, match="final reopen failed"):
+        publish_unchanged_target(source, output, digest)
+
+    assert output.exists() is False
+    assert sha256(source.read_bytes()).hexdigest() == digest
+
+
+def test_unchanged_publisher_never_links_output_when_identity_probe_fails(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "target.xlsx"
+    output = tmp_path / "result.xlsx"
+    workbook = Workbook()
+    workbook.save(source)
+    workbook.close()
+    digest = sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_target._file_identity",
+        lambda _path: (_ for _ in ()).throw(OSError("stat failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="PUBLISH_FAILED"):
+        publish_unchanged_target(source, output, digest)
+
+    assert output.exists() is False
+    assert sha256(source.read_bytes()).hexdigest() == digest
 
 
 def test_apply_review_all_rejected_writes_unchanged_target_and_feedback(

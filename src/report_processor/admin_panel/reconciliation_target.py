@@ -45,6 +45,8 @@ def publish_unchanged_target(source, output, expected_sha256: str) -> str:
     )
     temporary = Path(temporary_name)
     published = False
+    completed = False
+    linked_identity: tuple[int, int] | None = None
     try:
         with os.fdopen(descriptor, "wb") as destination, source_path.open("rb") as input_stream:
             shutil.copyfileobj(input_stream, destination, length=1_048_576)
@@ -53,21 +55,23 @@ def publish_unchanged_target(source, output, expected_sha256: str) -> str:
         if _sha256(temporary) != source_sha256 or _sha256(source_path) != source_sha256:
             raise ValueError("RECONCILIATION_TARGET_CHANGED")
         _reopen_xlsx(temporary)
+        linked_identity = _file_identity(temporary)
         os.link(temporary, output_path)
         published = True
         output_sha256 = _sha256(output_path)
         if output_sha256 != source_sha256:
             raise ValueError("RECONCILIATION_OUTPUT_VERIFY_FAILED")
         _reopen_xlsx(output_path)
+        completed = True
         return output_sha256
     except OSError as error:
         if error.errno == 17:
             raise ValueError("RECONCILIATION_OUTPUT_EXISTS") from None
         raise RuntimeError("RECONCILIATION_NO_CHANGE_PUBLISH_FAILED") from error
     finally:
-        temporary.unlink(missing_ok=True)
-        if published and _sha256(output_path) != source_sha256:
+        if published and not completed and _same_inode(output_path, linked_identity):
             output_path.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
 
 
 def read_reconciliation_target(path, digest: str, stage: str):
@@ -221,3 +225,18 @@ def _reopen_xlsx(path: Path) -> None:
         workbook.close()
     except Exception as error:
         raise ValueError("RECONCILIATION_OUTPUT_VERIFY_FAILED") from error
+
+
+def _same_inode(path: Path, identity: tuple[int, int] | None) -> bool:
+    if identity is None:
+        return False
+    try:
+        current = path.stat()
+    except OSError:
+        return False
+    return (current.st_dev, current.st_ino) == identity
+
+
+def _file_identity(path: Path) -> tuple[int, int]:
+    current = path.stat()
+    return current.st_dev, current.st_ino

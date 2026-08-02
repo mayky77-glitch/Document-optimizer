@@ -155,3 +155,27 @@ def test_feedback_failure_removes_written_output_and_never_marks_job_ready(
 
     assert output.exists() is False
     assert job.output is None and job.status == "failed"
+
+
+def test_repeated_apply_keeps_verified_ready_result_unchanged(tmp_path, monkeypatch) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    calls = 0
+
+    def write_once(*_args):
+        nonlocal calls
+        calls += 1
+        output.write_bytes(b"verified-result")
+        return output, ()
+
+    monkeypatch.setattr("report_processor.admin_panel.service.apply_review", write_once)
+
+    first = service.apply_reconciliation(job.job_id)
+    before = output.read_bytes()
+    second = service.apply_reconciliation(job.job_id)
+
+    assert first is second is job
+    assert calls == 1
+    assert output.read_bytes() == before
+    assert job.status == "ready" and job.result_available is True
