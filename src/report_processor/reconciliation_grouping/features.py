@@ -6,7 +6,13 @@ import re
 import unicodedata
 from collections.abc import Iterable
 
-from .models import FEATURE_RULE_VERSION, FeatureVector, GroupInput, UnitFamily
+from .models import (
+    FEATURE_CONTRACT_VERSION,
+    FEATURE_RULE_VERSION,
+    FeatureVector,
+    GroupInput,
+    UnitFamily,
+)
 
 _SPACE = re.compile(r"\s+")
 _PUNCTUATION = re.compile(r"[^\w№]+", re.UNICODE)
@@ -73,7 +79,12 @@ def unit_family(unit: str | None) -> UnitFamily:
     return UnitFamily.UNKNOWN
 
 
-def extract_features(item: GroupInput) -> FeatureVector:
+def extract_features(
+    item: GroupInput,
+    *,
+    feature_contract_version: str = FEATURE_CONTRACT_VERSION,
+    rule_version: str = FEATURE_RULE_VERSION,
+) -> FeatureVector:
     """Extract conservative semantic fields; no model result can alter them."""
     normalized_name = normalize_text(item.group.normalized_name)
     tokens = tuple(_TOKEN.findall(normalized_name))
@@ -90,13 +101,29 @@ def extract_features(item: GroupInput) -> FeatureVector:
         typed_modifiers=_typed_modifiers(normalized_name),
         unit_family=unit_family(item.group.normalized_unit),
         token_ngrams=_character_ngrams(normalized_name),
-        rule_version=FEATURE_RULE_VERSION,
+        feature_contract_version=feature_contract_version,
+        rule_version=rule_version,
     )
 
 
-def extract_all(items: Iterable[GroupInput]) -> tuple[FeatureVector, ...]:
+def extract_all(
+    items: Iterable[GroupInput],
+    *,
+    feature_contract_version: str = FEATURE_CONTRACT_VERSION,
+    rule_version: str = FEATURE_RULE_VERSION,
+) -> tuple[FeatureVector, ...]:
     return tuple(
-        sorted((extract_features(item) for item in items), key=lambda feature: feature.group_id)
+        sorted(
+            (
+                extract_features(
+                    item,
+                    feature_contract_version=feature_contract_version,
+                    rule_version=rule_version,
+                )
+                for item in items
+            ),
+            key=lambda feature: feature.group_id,
+        )
     )
 
 

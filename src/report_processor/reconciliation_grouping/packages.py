@@ -11,13 +11,13 @@ from report_processor.reconciliation_review.models import ReviewGroup, ReviewMod
 from .constraints import normalize_negative_pairs, validate_hard_constraints
 from .features import extract_all
 from .models import (
-    FEATURE_CONTRACT_VERSION,
     PACKAGE_CONTRACT_VERSION,
     DecisionPackage,
     FeatureVector,
     GroupingException,
     GroupingResult,
     GroupInput,
+    PackageVersionContext,
     SemanticFamily,
 )
 from .semantic_model import LocalSemanticAssist, SemanticAssistResult
@@ -31,6 +31,7 @@ def build_reconciliation_packages(
     modes: Mapping[str, ReviewMode] | None = None,
     category_availability: Mapping[str, frozenset[str]] | None = None,
     negative_pairs: Iterable[tuple[str, str]] = (),
+    version_context: PackageVersionContext,
 ) -> GroupingResult:
     """Build deterministic packages after zero rows are excluded from review groups.
 
@@ -44,17 +45,22 @@ def build_reconciliation_packages(
         modes=modes or {},
         category_availability=category_availability or {},
     )
-    features = extract_all(inputs)
+    features = extract_all(
+        inputs,
+        feature_contract_version=version_context.feature_contract_version,
+        rule_version=version_context.rule_version,
+    )
     inputs_by_id = {item.group.group_id: item for item in inputs}
     exceptions = validate_hard_constraints(
         features,
         inputs_by_id,
         negative_pairs=normalize_negative_pairs(negative_pairs),
     )
-    families = _build_families(features, exceptions)
-    packages = _build_packages(families)
+    families = _build_families(features, exceptions, version_context=version_context)
+    packages = _build_packages(families, version_context=version_context)
     return GroupingResult(
         partition=partition,
+        version_context=version_context,
         features=features,
         families=families,
         packages=packages,
@@ -115,23 +121,38 @@ def _default_mode(rows: tuple[ReviewRow, ...]) -> ReviewMode:
 
 
 def _build_families(
-    features: tuple[FeatureVector, ...], exceptions: tuple[GroupingException, ...]
+    features: tuple[FeatureVector, ...],
+    exceptions: tuple[GroupingException, ...],
+    *,
+    version_context: PackageVersionContext,
 ) -> tuple[SemanticFamily, ...]:
     reasons_by_group: dict[str, set[str]] = defaultdict(set)
     for exception in exceptions:
         for group_id in exception.group_ids:
             reasons_by_group[group_id].add(exception.reason)
+    exception_group_ids = {group_id for exception in exceptions for group_id in exception.group_ids}
     grouped: dict[tuple[object, ...], list[FeatureVector]] = defaultdict(list)
     for feature in features:
-        grouped[feature.family_key].append(feature)
+        key = feature.family_key
+        if feature.group_id in exception_group_ids:
+            key = (*key, "explicit-exception", feature.group_id)
+        grouped[key].append(feature)
     families: list[SemanticFamily] = []
     for key, members in sorted(grouped.items(), key=lambda item: repr(item[0])):
         member_ids = tuple(sorted(feature.group_id for feature in members))
         reasons = tuple(
             sorted({reason for group_id in member_ids for reason in reasons_by_group[group_id]})
         )
+        member_versions = tuple(
+            f"{feature.group_id}:{feature.group_version}"
+            for feature in sorted(members, key=lambda feature: feature.group_id)
+        )
         version = _digest(
-            PACKAGE_CONTRACT_VERSION, FEATURE_CONTRACT_VERSION, *member_ids, repr(key)
+            PACKAGE_CONTRACT_VERSION,
+            version_context.fingerprint,
+            *member_ids,
+            *member_versions,
+            repr(key),
         )
         families.append(
             SemanticFamily(
@@ -145,12 +166,18 @@ def _build_families(
     return tuple(sorted(families, key=lambda family: family.family_id))
 
 
-def _build_packages(families: tuple[SemanticFamily, ...]) -> tuple[DecisionPackage, ...]:
-    grouped: dict[tuple[str, str, str, str, str], list[SemanticFamily]] = defaultdict(list)
+def _build_packages(
+    families: tuple[SemanticFamily, ...], *, version_context: PackageVersionContext
+) -> tuple[DecisionPackage, ...]:
+    grouped: dict[tuple[object, ...], list[SemanticFamily]] = defaultdict(list)
     for family in families:
-        grouped[family.package_key].append(family)
+        key: tuple[object, ...] = (*family.package_key, "safe")
+        if family.exception_reasons:
+            key = (*family.package_key, "exception", family.family_id)
+        grouped[key].append(family)
     packages: list[DecisionPackage] = []
-    for key, members in sorted(grouped.items()):
+    for _key, members in sorted(grouped.items(), key=lambda item: repr(item[0])):
+        key = members[0].package_key
         family_ids = tuple(sorted(family.family_id for family in members))
         group_ids = tuple(
             sorted(group_id for family in members for group_id in family.member_group_ids)
@@ -159,7 +186,10 @@ def _build_packages(families: tuple[SemanticFamily, ...]) -> tuple[DecisionPacka
             sorted({reason for family in members for reason in family.exception_reasons})
         )
         version = _digest(
-            PACKAGE_CONTRACT_VERSION, FEATURE_CONTRACT_VERSION, *family_ids, *group_ids
+            PACKAGE_CONTRACT_VERSION,
+            version_context.fingerprint,
+            *family_ids,
+            *group_ids,
         )
         packages.append(
             DecisionPackage(

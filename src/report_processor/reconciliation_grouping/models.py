@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -20,6 +21,42 @@ class UnitFamily(StrEnum):
     VOLUME = "volume"
     MASS = "mass"
     UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class PackageVersionContext:
+    """Immutable versions that stale a package whenever any consequential input changes."""
+
+    source_digests: tuple[str, ...]
+    target_digest: str
+    category_catalog_version: str
+    feature_contract_version: str = FEATURE_CONTRACT_VERSION
+    rule_version: str = FEATURE_RULE_VERSION
+    model_revision: str = "local-model-not-used"
+
+    def __post_init__(self) -> None:
+        if (
+            not self.source_digests
+            or tuple(sorted(set(self.source_digests))) != self.source_digests
+        ):
+            raise ValueError("source digests must be non-empty, unique and sorted")
+        if any(not value.strip() for value in self.version_parts):
+            raise ValueError("package version context values must not be empty")
+
+    @property
+    def version_parts(self) -> tuple[str, ...]:
+        return (
+            *self.source_digests,
+            self.target_digest,
+            self.category_catalog_version,
+            self.feature_contract_version,
+            self.rule_version,
+            self.model_revision,
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        return hashlib.sha256("\x1f".join(self.version_parts).encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +193,7 @@ class GroupingResult:
     """Internal grouping result with a deliberately narrow public projection."""
 
     partition: RowPartition
+    version_context: PackageVersionContext
     features: tuple[FeatureVector, ...]
     families: tuple[SemanticFamily, ...]
     packages: tuple[DecisionPackage, ...]
@@ -164,10 +202,7 @@ class GroupingResult:
     def public_payload(self) -> dict[str, object]:
         """Return opaque IDs and aggregate-safe fields only, never source facts."""
         return {
-            "feature_contract_version": FEATURE_CONTRACT_VERSION,
-            "package_contract_version": PACKAGE_CONTRACT_VERSION,
             "visible_row_ids": tuple(row.row_id for row in self.partition.visible_rows),
-            "hidden_row_ids": tuple(row.row_id for row in self.partition.hidden_rows),
             "packages": tuple(
                 {
                     "package_id": package.package_id,
@@ -175,13 +210,13 @@ class GroupingResult:
                     "family_ids": package.family_ids,
                     "member_group_ids": package.member_group_ids,
                     "safe": package.safe,
-                    "exception_reasons": package.exception_reasons,
                 }
                 for package in self.packages
             ),
-            "exceptions": tuple(
-                {"group_ids": exception.group_ids, "reason": exception.reason}
-                for exception in self.exceptions
+            "exception_group_ids": tuple(
+                sorted(
+                    {group_id for exception in self.exceptions for group_id in exception.group_ids}
+                )
             ),
         }
 

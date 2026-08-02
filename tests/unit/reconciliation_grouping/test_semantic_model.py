@@ -4,7 +4,7 @@ import time
 from decimal import Decimal
 
 from report_processor.reconciliation_grouping.features import extract_features
-from report_processor.reconciliation_grouping.models import GroupInput
+from report_processor.reconciliation_grouping.models import GroupInput, PackageVersionContext
 from report_processor.reconciliation_grouping.packages import (
     build_reconciliation_packages,
     rank_with_local_assist,
@@ -36,6 +36,10 @@ def _feature():
     return extract_features(GroupInput(group, (row,), ReviewMode.QUANTITY_COST)), row, group
 
 
+def _context() -> PackageVersionContext:
+    return PackageVersionContext(("source-digest-a",), "target-digest-a", "catalog-v1")
+
+
 class _TimeoutEncoder:
     def encode(self, texts: tuple[str, ...]):
         time.sleep(0.05)
@@ -49,7 +53,7 @@ class _BrokenEncoder:
 
 def test_local_assist_times_out_and_errors_without_affecting_deterministic_packages() -> None:
     feature, row, group = _feature()
-    baseline = build_reconciliation_packages((row,), (group,))
+    baseline = build_reconciliation_packages((row,), (group,), version_context=_context())
 
     timeout = LocalSemanticAssist(
         _TimeoutEncoder(), model_revision="local-r1", timeout_seconds=0.001
@@ -58,7 +62,10 @@ def test_local_assist_times_out_and_errors_without_affecting_deterministic_packa
 
     assert timeout.rank((feature,)).unavailable_reason == "local_model_timeout"
     assert broken.rank((feature,)).unavailable_reason == "local_model_unavailable"
-    assert build_reconciliation_packages((row,), (group,)).packages == baseline.packages
+    assert (
+        build_reconciliation_packages((row,), (group,), version_context=_context()).packages
+        == baseline.packages
+    )
 
 
 def test_cache_is_reused_only_inside_the_same_strict_version_boundary() -> None:
@@ -70,7 +77,7 @@ def test_cache_is_reused_only_inside_the_same_strict_version_boundary() -> None:
     assert cache.get(feature, model_revision="local-r2") is None
     assert (
         rank_with_local_assist(
-            build_reconciliation_packages((_row,), (_group,)), None
+            build_reconciliation_packages((_row,), (_group,), version_context=_context()), None
         ).unavailable_reason
         == "local_model_not_configured"
     )

@@ -73,11 +73,15 @@ def validate_hard_constraints(
         for feature in materialized
         if (exception := unavailable_category_exception(items_by_id[feature.group_id])) is not None
     ]
-    for index, left in enumerate(materialized):
-        for right in materialized[index + 1 :]:
-            reason = hard_conflict(left, right, negative_pairs=negative_pairs)
-            if reason:
-                exceptions.append(GroupingException((left.group_id, right.group_id), reason))
+    by_boundary: dict[tuple[str, str, str, str, str], list[FeatureVector]] = {}
+    for feature in materialized:
+        by_boundary.setdefault(feature.package_key, []).append(feature)
+    for boundary in by_boundary.values():
+        for index, left in enumerate(boundary):
+            for right in boundary[index + 1 :]:
+                reason = hard_conflict(left, right, negative_pairs=negative_pairs)
+                if reason:
+                    exceptions.append(GroupingException((left.group_id, right.group_id), reason))
     return tuple(sorted(set(exceptions), key=lambda value: (value.group_ids, value.reason)))
 
 

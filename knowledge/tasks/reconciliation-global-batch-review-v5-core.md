@@ -12,7 +12,7 @@ agent_role: developer
 owner: reconciliation-v5-core
 profile: L2
 routing_grade: P4
-progress_revision: 1
+progress_revision: 2
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -89,7 +89,7 @@ links:
   `tests/contract/test_reconciliation_grouping_contract.py`.
 - Commands and tests run: `uv run pytest -q tests/unit/reconciliation_grouping
   tests/contract/test_reconciliation_grouping_contract.py tests/integration/test_block18_rag.py`
-  (`13 passed, 1 skipped` because `RUN_RAG_MODEL=1` is required); `uv run ruff
+  (`16 passed, 1 skipped` because `RUN_RAG_MODEL=1` is required); `uv run ruff
   check src/report_processor/reconciliation_grouping tests/unit/reconciliation_grouping
   tests/contract/test_reconciliation_grouping_contract.py`; `uv run ruff format
   --check src/report_processor/reconciliation_grouping tests/unit/reconciliation_grouping
@@ -98,7 +98,9 @@ links:
   are implemented with ephemeral finite-Decimal zero filtering, deterministic
   feature and hard-conflict extraction, exact ReviewGroup membership, stable IDs
   and ordering, opaque public projection, and an injected local-only fail-soft
-  encoder/cache boundary.
+  encoder/cache boundary. Package and family versions bind immutable source,
+  target, catalog, feature, rule and local-model revision context. Conflict checks
+  stay inside a package boundary; exception paths leave a safe remainder available.
 - Risks or follow-up: This core is intentionally not wired to admin lifecycle,
   persistence, presentation or `stage_rag`; later scoped waves must use the
   `rank_with_local_assist` boundary rather than giving model output decision authority.

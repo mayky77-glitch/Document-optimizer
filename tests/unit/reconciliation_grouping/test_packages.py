@@ -1,21 +1,49 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 
+from report_processor.reconciliation_grouping.models import (
+    FEATURE_CONTRACT_VERSION,
+    FEATURE_RULE_VERSION,
+    PackageVersionContext,
+)
 from report_processor.reconciliation_grouping.packages import build_reconciliation_packages
-from report_processor.reconciliation_review.models import ReviewGroup, ReviewRow
+from report_processor.reconciliation_review.models import ReviewGroup, ReviewMode, ReviewRow
 
 
-def _row(row_id: str, name: str, *, quantity: str = "1", cost: str = "2") -> ReviewRow:
+def _context() -> PackageVersionContext:
+    return PackageVersionContext(
+        source_digests=("source-digest-a",),
+        target_digest="target-digest-a",
+        category_catalog_version="catalog-v1",
+        feature_contract_version=FEATURE_CONTRACT_VERSION,
+        rule_version=FEATURE_RULE_VERSION,
+        model_revision="local-model-r1",
+    )
+
+
+def _build(rows: tuple[ReviewRow, ...], groups: tuple[ReviewGroup, ...], **kwargs):
+    return build_reconciliation_packages(rows, groups, version_context=_context(), **kwargs)
+
+
+def _row(
+    row_id: str,
+    name: str,
+    *,
+    quantity: str = "1",
+    cost: str = "2",
+    category: str = "Кабельные работы",
+) -> ReviewRow:
     return ReviewRow(
         row_id=row_id,
         display_name=name,
         unit="м",
         quantity=Decimal(quantity),
         cost=Decimal(cost),
-        proposed_category="Кабельные работы",
+        proposed_category=category,
     )
 
 
@@ -35,11 +63,14 @@ def test_hard_power_low_current_conflict_is_explicit_and_never_safe() -> None:
     low_current = _row("row-low", "Монтаж слаботочного кабеля")
     groups = (_group("group-power", power), _group("group-low", low_current))
 
-    result = build_reconciliation_packages((power, low_current), groups)
+    result = _build((power, low_current), groups)
 
     assert any(exception.reason == "hard_low_current_vs_power" for exception in result.exceptions)
-    assert result.packages[0].safe is False
-    assert result.packages[0].member_group_ids == ("group-low", "group-power")
+    assert not any(package.safe for package in result.packages)
+    assert {group_id for package in result.packages for group_id in package.member_group_ids} == {
+        "group-low",
+        "group-power",
+    }
 
 
 def test_installation_and_cost_conflict_is_explicit_before_any_similarity() -> None:
@@ -47,7 +78,7 @@ def test_installation_and_cost_conflict_is_explicit_before_any_similarity() -> N
     price = _row("row-price", "Стоимость монтажа силового кабеля")
     groups = (_group("group-work", work), _group("group-price", price))
 
-    result = build_reconciliation_packages((work, price), groups)
+    result = _build((work, price), groups)
 
     assert any(exception.reason == "hard_cost_vs_installation" for exception in result.exceptions)
 
@@ -57,8 +88,8 @@ def test_visible_rows_have_one_exact_group_family_and_package_path_in_stable_ord
     second = _row("row-a", "Монтаж силового кабеля")
     groups = (_group("group-b", first), _group("group-a", second))
 
-    first_result = build_reconciliation_packages((first, second), groups)
-    second_result = build_reconciliation_packages((second, first), tuple(reversed(groups)))
+    first_result = _build((first, second), groups)
+    second_result = _build((second, first), tuple(reversed(groups)))
 
     assert first_result.packages == second_result.packages
     assert first_result.families == second_result.families
@@ -76,7 +107,7 @@ def test_zero_rows_must_be_removed_before_exact_review_grouping() -> None:
     group = _group("group-zero", zero)
 
     with pytest.raises(ValueError, match="zero-activity"):
-        build_reconciliation_packages((zero,), (group,))
+        _build((zero,), (group,))
 
 
 def test_explicit_negative_feedback_and_category_availability_become_exceptions() -> None:
@@ -84,7 +115,7 @@ def test_explicit_negative_feedback_and_category_availability_become_exceptions(
     second = _row("row-b", "Монтаж силового кабеля")
     groups = (_group("group-a", first), _group("group-b", second))
 
-    result = build_reconciliation_packages(
+    result = _build(
         (first, second),
         groups,
         category_availability={"group-a": frozenset({"Другая категория"})},
@@ -95,4 +126,68 @@ def test_explicit_negative_feedback_and_category_availability_become_exceptions(
         "category_unavailable",
         "explicit_negative_feedback",
     }
-    assert result.packages[0].safe is False
+    assert any(not package.safe for package in result.packages)
+
+
+def test_cross_boundary_categories_and_modes_remain_independently_safe() -> None:
+    quantity = _row("row-quantity", "Монтаж силового кабеля", category="Категория A")
+    cost_only = _row("row-cost", "Монтаж силового кабеля", category="Категория B")
+    groups = (_group("group-quantity", quantity), _group("group-cost", cost_only))
+
+    result = _build(
+        (quantity, cost_only),
+        groups,
+        modes={"group-cost": ReviewMode.COST_ONLY},
+    )
+
+    assert not result.exceptions
+    assert len(result.packages) == 2
+    assert all(package.safe for package in result.packages)
+
+
+def test_exceptions_are_separate_from_a_mass_acceptable_safe_remainder() -> None:
+    first = _row("row-a", "Монтаж силового кабеля")
+    second = _row("row-b", "Монтаж силового кабеля")
+    safe = _row("row-c", "Монтаж силового кабеля")
+    groups = (
+        _group("group-a", first),
+        _group("group-b", second),
+        _group("group-c", safe),
+    )
+
+    result = _build((first, second, safe), groups, negative_pairs=(("group-a", "group-b"),))
+
+    safe_packages = [package for package in result.packages if package.safe]
+    assert len(safe_packages) == 1
+    assert safe_packages[0].member_group_ids == ("group-c",)
+    assert {exception.reason for exception in result.exceptions} == {"explicit_negative_feedback"}
+    assert {
+        group_id
+        for package in result.packages
+        if not package.safe
+        for group_id in package.member_group_ids
+    } == {
+        "group-a",
+        "group-b",
+    }
+
+
+def test_package_versions_bind_every_consequential_version_input() -> None:
+    row = _row("row-a", "Монтаж силового кабеля")
+    group = _group("group-a", row)
+    baseline_context = _context()
+    baseline = build_reconciliation_packages((row,), (group,), version_context=baseline_context)
+    expected = (baseline.families[0].version, baseline.packages[0].version)
+
+    changed_contexts = (
+        replace(baseline_context, source_digests=("source-digest-b",)),
+        replace(baseline_context, target_digest="target-digest-b"),
+        replace(baseline_context, category_catalog_version="catalog-v2"),
+        replace(baseline_context, feature_contract_version="ReconciliationFeatureContract-1.1"),
+        replace(baseline_context, rule_version="reconciliation-features-2"),
+        replace(baseline_context, model_revision="local-model-r2"),
+    )
+
+    for context in changed_contexts:
+        changed = build_reconciliation_packages((row,), (group,), version_context=context)
+        assert (changed.families[0].version, changed.packages[0].version) != expected
