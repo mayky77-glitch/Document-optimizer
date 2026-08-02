@@ -33,7 +33,10 @@ def _result() -> ReconciliationReviewResult:
         ReconciliationReviewState(
             rows=rows,
             groups={group.group_id: group for group in groups},
-            categories={"target-1": "Целевая категория"},
+            categories={
+                "target-1": "Целевая категория",
+                "target-2": "Другая категория",
+            },
             source_digests=("source",),
             target_digest="target",
             grouping=grouping,
@@ -80,3 +83,33 @@ def test_package_routes_mass_accept_undo_and_private_payload(tmp_path: Path) -> 
     assert all(
         value not in serialized for value in ("digest", "path", "sheet", "formula", "warning")
     )
+
+
+def test_package_route_accepts_an_explicit_alternative_category(tmp_path: Path) -> None:
+    service = AdminPanelService(tmp_path, execute=lambda _job: _result())
+    app = create_app(service=service, workspace_root=tmp_path)
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/jobs",
+            files={
+                "sources": ("source.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+                "target": ("target.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+            },
+        ).json()
+        package = created["review_packages"][0]
+        response = client.put(
+            f"/api/jobs/{created['job_id']}/review/packages/{package['package_id']}",
+            json={
+                "version": package["version"],
+                "action": "accept",
+                "category_id": "target-2",
+                "mode": "cost_only",
+            },
+        )
+
+    assert response.status_code == 200
+    changed = response.json()["review_packages"][0]
+    assert changed["action"] == "accept"
+    assert changed["selected_category_id"] == "target-2"
+    assert changed["mode"] == "cost_only"
+    assert response.json()["review_can_apply"] is True
