@@ -14,15 +14,19 @@
     : "";
   const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
   const value = (item, key) => typeof item?.[key] === "string" ? item[key] : "";
+  const boolean = (item, key) => typeof item?.[key] === "boolean" ? item[key] : null;
   const modeOf = (item) => value(item, "mode") === "cost_only" ? "cost_only" : "quantity_cost";
   const categoryOf = (item) => value(item, "selected_category_id") || value(item, "proposed_category_id");
   const unitFamilyOf = (item) => value(item, "unit_family") || value(item, "unit") || "";
-  const isKnown = (item) => item?.known === true || item?.is_known === true;
+  const isKnown = (item) => boolean(item, "is_familiar") ?? (item?.known === true || item?.is_known === true);
+  const readyForMass = (item) => boolean(item, "ready_for_mass_accept") ?? item?.safe === true;
   const isSuspicious = (item) => item?.suspicious === true
     || item?.has_suspicious_values === true
     || number(item?.suspicious_value_count) > 0;
-  const isManuallyChanged = (item) => value(item, "action") === "change_category"
-    || (Boolean(value(item, "selected_category_id")) && categoryOf(item) !== value(item, "proposed_category_id"));
+  const isManuallyChanged = (item) => boolean(item, "manually_changed") ?? (
+    value(item, "action") === "change_category"
+      || (Boolean(value(item, "selected_category_id")) && categoryOf(item) !== value(item, "proposed_category_id"))
+  );
   const sizeOf = (item) => {
     const rows = number(item?.row_count);
     if (rows <= 3) return "small";
@@ -128,8 +132,10 @@
     && (!state.unitFamily || unitFamilyOf(item) === state.unitFamily)
     && (!state.size || sizeOf(item) === state.size)
     && (!state.exceptions || (state.exceptions === "yes") === (number(item?.exception_count) > 0))
-    && (!state.readyForMass || (state.readyForMass === "yes") === (item?.safe === true))
+    && (!state.readyForMass || (state.readyForMass === "yes") === readyForMass(item))
     && (!state.manuallyChanged || (state.manuallyChanged === "yes") === isManuallyChanged(item));
 
-  window.ReconciliationBatchFilters = { build, defaults, matches, primaryFilters: PRIMARY_FILTERS, queueOf };
+  window.ReconciliationBatchFilters = {
+    build, defaults, matches, primaryFilters: PRIMARY_FILTERS, queueOf, readyForMass,
+  };
 })();

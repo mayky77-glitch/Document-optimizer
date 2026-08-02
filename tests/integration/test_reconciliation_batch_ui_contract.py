@@ -44,6 +44,7 @@ def test_package_review_uses_only_the_frozen_public_payload_and_routes() -> None
     ):
         assert route in script
     assert "package_id: item.package_id, version: item.version" in script
+    assert "change_category" not in script
     assert "http://" not in script and "https://" not in script
 
 
@@ -91,4 +92,17 @@ def test_canonical_primary_and_compact_secondary_filters_have_fail_soft_defaults
     ):
         assert field in filters
     assert '["safe", "clarify", "new"].includes(item?.queue)' in filters
+    for field in ("is_familiar", "ready_for_mass_accept", "manually_changed"):
+        assert field in filters
     assert "window.ReconciliationBatchFilters" in filters
+
+
+def test_package_controls_keep_authoritative_actions_and_one_family_scope_per_family() -> None:
+    script = (ASSETS / "reconciliation-batches.js").read_text(encoding="utf-8")
+
+    assert "action: resolvedAction" not in script
+    assert "body.append(this.buildFamilyActions(family));" in script
+    assert "groups.forEach((group) => body.append(this.buildGroup(group)));" in script
+    assert "body.append(this.buildFamilyActions(family, group));" not in script
+    assert "group?.members" in script
+    assert "member?.display_name || member?.name || member?.title" in script

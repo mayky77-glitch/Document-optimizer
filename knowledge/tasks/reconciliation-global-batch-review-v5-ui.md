@@ -111,14 +111,16 @@ links:
   `node --check src/report_processor/admin_panel/assets/reconciliation-batches.js`;
   `node --check src/report_processor/admin_panel/assets/reconciliation-batch-filters.js`;
   `uv run pytest -q tests/integration/test_reconciliation_batch_ui_contract.py tests/integration/test_reconciliation_review_ui_contract.py`
-  (`6 passed`); `uv run ruff check tests/integration/test_reconciliation_batch_ui_contract.py tests/integration/test_reconciliation_review_ui_contract.py`;
+  (`7 passed`); `uv run ruff check tests/integration/test_reconciliation_batch_ui_contract.py tests/integration/test_reconciliation_review_ui_contract.py`;
   `git diff --check`.
 - Result: Package queues consume `ReconciliationBatchPayload-1.0`, with safe-first
   preview/apply, frozen IDs and versions, direct category/mode/action controls at
   package/family/group/row scope, details-based exact membership, keyboard shortcuts,
   session job restoration, undo and responsive light/dark styles. Canonical primary
   filters and compact secondary filters use stable queue values with fail-soft optional
-  fields; the authoritative final apply control remains visible when ready.
+  fields; the authoritative final apply control remains visible when ready. UI decision
+  requests use only `accept` or `reject`; selected controlled category travels with
+  `accept`, family controls appear once per family, and search includes nested rows.
 - Risks or follow-up: Visual browser capture was attempted through the local server,
   but the workspace lacks the Playwright Python package; static 390 px responsive
   contract coverage is included. Lifecycle routes must land before live API exercise.

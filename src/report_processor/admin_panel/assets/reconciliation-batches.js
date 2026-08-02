@@ -177,8 +177,15 @@
       return this.packages.filter((item) => {
         if (!window.ReconciliationBatchFilters.matches(item, this.filters)) return false;
         if (!this.query) return true;
+        const nestedNames = asArray(item.families).flatMap((family) => [
+          family?.label,
+          ...asArray(family?.groups).flatMap((group) => [
+            group?.label, group?.display_name, group?.name,
+            ...asArray(group?.members).map((member) => member?.display_name || member?.name || member?.title),
+          ]),
+        ]);
         const haystack = [item.label, item.reason, item.proposed_category_id, item.selected_category_id]
-          .concat(asArray(item.families).map((family) => family?.label))
+          .concat(nestedNames)
           .join(" ")
           .toLocaleLowerCase("ru-RU");
         return haystack.includes(this.query);
@@ -212,7 +219,7 @@
     }
 
     buildMassAction(items) {
-      const safe = items.filter((item) => item.safe === true);
+      const safe = items.filter((item) => window.ReconciliationBatchFilters.readyForMass(item));
       const section = document.createElement("section");
       section.className = "batch-mass-action";
       if (!safe.length) {
@@ -263,7 +270,9 @@
       copy.append(queue, title, proposed);
       const status = document.createElement("span");
       status.className = "batch-status";
-      status.textContent = item.package_id === this.settledId ? "Готово" : item.safe === true ? "Можно принять" : "Проверьте";
+      status.textContent = item.package_id === this.settledId
+        ? "Готово"
+        : window.ReconciliationBatchFilters.readyForMass(item) ? "Можно принять" : "Проверьте";
       head.append(copy, status);
 
       const totals = document.createElement("dl");
@@ -358,12 +367,13 @@
       const body = document.createElement("div");
       body.className = "batch-family-body";
       const groups = asArray(family?.groups);
-      groups.forEach((group) => body.append(this.buildGroup(family, group)));
+      body.append(this.buildFamilyActions(family));
+      groups.forEach((group) => body.append(this.buildGroup(group)));
       details.append(summary, body);
       return details;
     }
 
-    buildGroup(family, group) {
+    buildGroup(group) {
       const details = document.createElement("details");
       details.className = "batch-group";
       const summary = document.createElement("summary");
@@ -371,7 +381,6 @@
       summary.textContent = `${text(group?.label || group?.display_name || group?.name, "Группа строк")} · ${members.length} ${plural(members.length, "строка", "строки", "строк")}`;
       const body = document.createElement("div");
       body.className = "batch-group-body";
-      body.append(this.buildFamilyActions(family, group));
       body.append(this.buildGroupActions(group));
       const rows = document.createElement("ul");
       rows.className = "batch-rows";
@@ -387,7 +396,7 @@
       return details;
     }
 
-    buildFamilyActions(family, group) {
+    buildFamilyActions(family) {
       const section = document.createElement("div");
       section.className = "batch-family-actions";
       const label = document.createElement("span");
@@ -442,10 +451,9 @@
     async savePackage(item, categoryId, mode, action, scope) {
       const jobId = this.getJobId();
       if (!jobId) return this.report("Не удалось восстановить сверку. Обновите страницу.", true);
-      const resolvedAction = action === "reject" ? "reject" : categoryId === item.proposed_category_id ? "accept" : "change_category";
       const body = action === "reject"
-        ? { version: item.version, action: resolvedAction }
-        : { version: item.version, action: resolvedAction, category_id: categoryId, mode };
+        ? { version: item.version, action }
+        : { version: item.version, action, category_id: categoryId, mode };
       this.setBusy(scope, true);
       try {
         this.settledId = item.package_id;
@@ -461,10 +469,9 @@
     async saveFamily(family, categoryId, mode, action, scope) {
       const jobId = this.getJobId();
       if (!jobId || typeof family?.family_id !== "string") return this.report("Не удалось определить семейство. Обновите страницу.", true);
-      const resolvedAction = action === "reject" ? "reject" : categoryId === family.proposed_category_id ? "accept" : "change_category";
       const body = action === "reject"
-        ? { version: family.version, action: resolvedAction }
-        : { version: family.version, action: resolvedAction, category_id: categoryId, mode };
+        ? { version: family.version, action }
+        : { version: family.version, action, category_id: categoryId, mode };
       this.setBusy(scope, true);
       try {
         this.renderPayload(await this.request(`/api/jobs/${encodeURIComponent(jobId)}/review/families/${encodeURIComponent(family.family_id)}`, {
@@ -479,10 +486,9 @@
     async saveGroup(group, categoryId, mode, action, scope) {
       const jobId = this.getJobId();
       if (!jobId || typeof group?.group_id !== "string") return this.report("Не удалось определить группу. Обновите страницу.", true);
-      const resolvedAction = action === "reject" ? "reject" : categoryId === group.proposed_category_id ? "accept" : "change_category";
       const body = action === "reject"
-        ? { version: group.version, action: resolvedAction }
-        : { version: group.version, action: resolvedAction, category_id: categoryId, mode };
+        ? { version: group.version, action }
+        : { version: group.version, action, category_id: categoryId, mode };
       this.setBusy(scope, true);
       try {
         this.renderPayload(await this.request(`/api/jobs/${encodeURIComponent(jobId)}/review/groups/${encodeURIComponent(group.group_id)}`, {
@@ -497,10 +503,9 @@
     async saveItem(member, group, categoryId, mode, action, scope) {
       const jobId = this.getJobId();
       if (!jobId || typeof member?.row_id !== "string") return this.report("Не удалось определить строку. Обновите страницу.", true);
-      const resolvedAction = action === "reject" ? "reject" : categoryId === group?.proposed_category_id ? "accept" : "change_category";
       const body = action === "reject"
-        ? { version: text(member.version || group?.version, ""), action: resolvedAction }
-        : { version: text(member.version || group?.version, ""), action: resolvedAction, category_id: categoryId, mode };
+        ? { version: text(member.version || group?.version, ""), action }
+        : { version: text(member.version || group?.version, ""), action, category_id: categoryId, mode };
       this.setBusy(scope, true);
       try {
         this.renderPayload(await this.request(`/api/jobs/${encodeURIComponent(jobId)}/review/items/${encodeURIComponent(member.row_id)}`, {
