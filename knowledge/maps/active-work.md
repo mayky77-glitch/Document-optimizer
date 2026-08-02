@@ -15,6 +15,9 @@ Active plan: [[../tasks/reconciliation-global-batch-review-v5-plan|Reconciliatio
 
 Frozen Wave 1: [[../tasks/reconciliation-global-batch-review-v5-core|deterministic package core]].
 
+Frozen Wave 2: [[../tasks/reconciliation-global-batch-review-v5-lifecycle|authoritative lifecycle]]
+and [[../tasks/reconciliation-global-batch-review-v5-ui|package review UI]].
+
 Completed reconciliation handoff: [[../tasks/reconciliation-real-data-resilience-v4-final]].
 
 - [[../ORCHESTRATION|Orchestration rules]]
