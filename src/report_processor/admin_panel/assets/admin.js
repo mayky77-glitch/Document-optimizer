@@ -9,13 +9,14 @@
   const reviewPanel = document.querySelector("#review-panel");
   const reviewState = document.querySelector("#review-state");
   const reviewGroups = document.querySelector("#review-groups");
+  const sourceIssues = document.querySelector("#source-issues");
   const emptyReview = document.querySelector("#empty-review");
   const applyArea = document.querySelector("#review-apply-area");
   const applyButton = document.querySelector("#review-apply");
   const download = document.querySelector("#download");
   const resultHint = document.querySelector("#result-hint");
   const submit = form.querySelector('button[type="submit"]');
-  const workbookExtensions = new Set([".xlsx", ".xlsm", ".xlsb"]);
+  const workbookExtensions = new Set([".xlsx", ".xlsm"]);
   let currentJobId = "";
 
   const setProgress = (step) => {
@@ -46,9 +47,9 @@
     const sources = [...sourceFiles.files];
     if (!sources.length) return "Добавьте хотя бы один исходный документ.";
     if (sources.length > 32) return "Можно выбрать не больше 32 исходных документов. Уберите лишние файлы.";
-    if (sources.some((file) => !workbookExtensions.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx, .xlsm или .xlsb.";
+    if (sources.some((file) => !workbookExtensions.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx или .xlsm.";
     if (!targetFile.files.length) return "Выберите один целевой отчёт.";
-    if (!workbookExtensions.has(fileExtension(targetFile.files[0]))) return "Целевой отчёт должен быть Excel-файлом .xlsx, .xlsm или .xlsb.";
+    if (!workbookExtensions.has(fileExtension(targetFile.files[0]))) return "Целевой отчёт должен быть Excel-файлом .xlsx или .xlsm.";
     return "";
   };
 
@@ -336,8 +337,27 @@
     reviewState.textContent = unresolvedCount
       ? `Осталось решить: ${unresolvedCount}`
       : payload.review_can_apply === true ? "Все решения готовы к применению." : "Проверка не требует решений.";
-    emptyReview.hidden = groups.length !== 0;
+    emptyReview.hidden = groups.length !== 0 || payload.status === "failed";
     applyArea.hidden = payload.review_can_apply !== true;
+  };
+
+  const renderSourceIssues = (payload) => {
+    const issues = Array.isArray(payload.source_issues) ? payload.source_issues : [];
+    sourceIssues.replaceChildren(...issues.map((issue) => {
+      const card = document.createElement("article");
+      card.className = "source-issue";
+      const title = document.createElement("h3");
+      title.textContent = text(issue && issue.basename, "Проблемный файл");
+      const comment = document.createElement("p");
+      comment.textContent = text(issue && issue.comment, "Файл не удалось обработать.");
+      const hint = document.createElement("p");
+      hint.className = "source-issue-hint";
+      hint.textContent = text(issue && issue.repair_hint, "Исправьте файл и загрузите его снова.");
+      const continuation = document.createElement("small");
+      continuation.textContent = issue && issue.can_continue === true ? "Остальные файлы продолжают обрабатываться." : "Исправьте файл и повторите сверку.";
+      card.append(title, comment, hint, continuation);
+      return card;
+    }));
   };
 
   const renderDownload = (payload) => {
@@ -359,6 +379,7 @@
   const renderJob = (payload) => {
     currentJobId = typeof payload.job_id === "string" ? payload.job_id : currentJobId;
     renderReview(payload);
+    renderSourceIssues(payload);
     renderDownload(payload);
     reviewPanel.hidden = false;
     reviewPanel.focus({ preventScroll: true });

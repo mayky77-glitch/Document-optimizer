@@ -106,6 +106,12 @@ button, .download { min-height: 48px; padding: 11px 18px; border: 1px solid var(
 .review-panel { margin-top: 18px; }
 .review-state { display: inline-block; margin: 0 0 16px; padding: 6px 10px; border-left: 3px solid var(--gazprom); background: var(--soft-blue); color: var(--gazprom-dark); font-size: .88rem; font-weight: 800; }
 .review-groups { display: grid; gap: 14px; }
+.source-issues { display: grid; gap: 10px; margin: 0 0 16px; }
+.source-issue { min-width: 0; padding: 14px; border: 1px solid var(--red); border-left-width: 4px; background: var(--surface-warning); }
+.source-issue h3 { margin: 0 0 5px; overflow-wrap: anywhere; font-size: 1rem; }
+.source-issue p { margin: 0 0 5px; }
+.source-issue-hint { color: var(--warning-ink); font-weight: 750; }
+.source-issue small { color: var(--muted); }
 .review-group { container-type: inline-size; min-width: 0; padding: clamp(16px, 3vw, 22px); border: 1px solid var(--input-border); border-left: 5px solid var(--gazprom); background: var(--white); }
 .review-group-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .review-group-head > div { min-width: 0; }

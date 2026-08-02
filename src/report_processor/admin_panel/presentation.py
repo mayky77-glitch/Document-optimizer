@@ -45,6 +45,7 @@ def job_payload(job: object) -> dict[str, object]:
     review_state = getattr(job, "review_state", None)
     if review_state is not None:
         return _authoritative_review_payload(job, review_state)
+    source_issues = _source_issues(getattr(job, "source_issues", ()))
     if isinstance(job, Mapping):
         job_id = _required_text(job.get("job_id"), "job_id")
         discrepancies, decisions = (
@@ -88,15 +89,16 @@ def job_payload(job: object) -> dict[str, object]:
         "download_url": f"/api/jobs/{job_id}/result"
         if bool(getattr(job, "result_available", False))
         else None,
+        "source_issues": source_issues,
     }
 
 
 def _authoritative_review_payload(job: object, state: object) -> dict[str, object]:
     from .reconciliation_review_presentation import reconciliation_review_payload
 
-    unresolved_row_ids = state.unresolved_row_ids()
+    unresolved_groups = state.unresolved_groups()
     groups = reconciliation_review_payload(
-        state.unresolved_groups(), state.rows, state.effective_decisions()
+        unresolved_groups, state.rows, state.effective_decisions()
     )
     for group in groups:
         members = group.get("members")
@@ -113,12 +115,36 @@ def _authoritative_review_payload(job: object, state: object) -> dict[str, objec
             {"category_id": category_id, "label": _public_text(label, 200)}
             for category_id, label in sorted(state.categories.items())
         ],
-        "unresolved_review_count": len(unresolved_row_ids),
-        "review_can_apply": not unresolved_row_ids,
+        "unresolved_review_count": len(unresolved_groups),
+        "review_can_apply": not state.unresolved_row_ids(),
+        "source_issues": _source_issues(getattr(job, "source_issues", ())),
         "download_url": f"/api/jobs/{job.job_id}/result"
         if bool(getattr(job, "result_available", False))
         else None,
     }
+
+
+def _source_issues(values: object) -> list[dict[str, object]]:
+    if not isinstance(values, (list, tuple)):
+        return []
+    result = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            continue
+        basename = _public_text(value.get("basename"), 200)
+        comment = _public_text(value.get("comment"), 240)
+        repair_hint = _public_text(value.get("repair_hint"), 240)
+        can_continue = value.get("can_continue") is True
+        if basename and comment and repair_hint:
+            result.append(
+                {
+                    "basename": basename,
+                    "comment": comment,
+                    "repair_hint": repair_hint,
+                    "can_continue": can_continue,
+                }
+            )
+    return result
 
 
 def passive_discrepancies(discrepancies: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:

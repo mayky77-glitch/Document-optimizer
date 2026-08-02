@@ -5,10 +5,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import re
 import secrets
 import shutil
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,15 +15,18 @@ from .presentation import journal_payload, processing_presentation
 from .reconciliation_execution import ReconciliationReviewResult, apply_review, prepare_review
 from .reconciliation_feedback_store import ReconciliationFeedbackStore
 from .reconciliation_state import ReconciliationReviewState
+from .reconciliation_uploads import digest as _digest
+from .reconciliation_uploads import (
+    validate_mode,
+    validate_stage,
+    validate_workbook_upload,
+    validated_sources,
+)
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
 MAX_RETAINED_TERMINAL_JOBS = 64
 MAX_MANUAL_DISCREPANCY_DECISIONS = 5_000
-_ALLOWED_SUFFIXES = {".xlsx", ".xlsm"}
-_ALLOWED_MODES = {"inspect", "dry-run", "write"}
-_STAGE_PATTERN = re.compile(r"^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё._ -]{0,63}$")
-_ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 LOGGER = logging.getLogger(__name__)
 
 
@@ -41,6 +42,9 @@ class AdminJob:
     target_digest: str
     sources: tuple[Path, ...] = ()
     source_digests: tuple[str, ...] = ()
+    source_names: tuple[str, ...] = ()
+    target_name: str = ""
+    source_issues: tuple[dict[str, object], ...] = ()
     status: str = "pending"
     output: Path | None = None
     summary: dict[str, object] = field(default_factory=dict)
@@ -113,7 +117,7 @@ class AdminPanelService:
         stage: str,
         mode: str = "write",
     ) -> AdminJob:
-        upload_sources = _validated_sources(sources, source_name, source_content)
+        upload_sources = validated_sources(sources, source_name, source_content)
         validate_workbook_upload(target_name, target_content)
         if (
             sum(len(content) for _name, content in upload_sources) + len(target_content)
@@ -146,6 +150,8 @@ class AdminPanelService:
                 target_digest=_digest(target_content),
                 sources=source_paths,
                 source_digests=tuple(_digest(content) for _name, content in upload_sources),
+                source_names=tuple(name for name, _content in upload_sources),
+                target_name=target_name,
             )
             self.jobs[job_id] = job
             registered = True
@@ -395,7 +401,25 @@ class AdminPanelService:
     def _apply_execution_result(self, job: AdminJob, result: object) -> None:
         if isinstance(result, ReconciliationReviewResult):
             job.review_state = result.state
-            job.status = "review_required"
+            job.source_issues = tuple(
+                {
+                    "basename": item.safe_basename,
+                    "comment": item.comment,
+                    "repair_hint": item.repair_hint,
+                    "can_continue": item.can_continue,
+                }
+                for item in result.source_issues
+            )
+            job.status = "failed" if result.state is None else "review_required"
+            if result.target_error:
+                job.source_issues = (
+                    {
+                        "basename": job.target_name,
+                        "comment": "Не удалось прочитать структуру целевого отчёта.",
+                        "repair_hint": "Проверьте шаблон отчёта и повторите загрузку.",
+                        "can_continue": False,
+                    },
+                )
             job.summary = {}
             job.discrepancies = []
             job.suggestions = []
@@ -445,34 +469,6 @@ class AdminPanelService:
 
 def _has_unresolved_reviews(job: AdminJob) -> bool:
     return bool(job.unresolved_suggestion_ids or job.unresolved_manual_discrepancy_ids)
-
-
-def validate_workbook_upload(name: str, content: bytes) -> None:
-    if not isinstance(name, str) or not name or "\x00" in name or not _safe_basename(name):
-        raise ValueError("invalid filename")
-    if Path(name).suffix.casefold() not in _ALLOWED_SUFFIXES:
-        raise ValueError("only .xlsx and .xlsm workbooks are accepted")
-    if not isinstance(content, bytes) or not content:
-        raise ValueError("empty upload")
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise ValueError("upload too large")
-    if not content.startswith(_ZIP_SIGNATURES):
-        raise ValueError("invalid Excel container signature")
-
-
-def validate_stage(stage: object) -> str:
-    if not isinstance(stage, str):
-        raise ValueError("invalid stage")
-    clean = stage.strip()
-    if not _STAGE_PATTERN.fullmatch(clean):
-        raise ValueError("invalid stage")
-    return clean
-
-
-def validate_mode(mode: object) -> str:
-    if not isinstance(mode, str) or mode not in _ALLOWED_MODES:
-        raise ValueError("invalid mode")
-    return mode
 
 
 def _private_write(path: Path, content: bytes) -> None:
@@ -536,10 +532,6 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _digest(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
-
-
 def _exit_code(result: object) -> int:
     value = getattr(result, "exit_code", -1)
     return int(value.value if hasattr(value, "value") else value)
@@ -550,34 +542,3 @@ def _remove_partial_output(job: AdminJob) -> None:
     candidate.unlink(missing_ok=True)
     job.output = None
     job.result_name = None
-
-
-def _validated_sources(
-    sources: list[tuple[str, bytes]] | None,
-    source_name: str | None,
-    source_content: bytes | None,
-) -> list[tuple[str, bytes]]:
-    """Accept the legacy singular upload or the bounded bulk contract, never both."""
-    if sources is not None and (source_name is not None or source_content is not None):
-        raise ValueError("provide sources or legacy source_name/source_content, not both")
-    values = sources if sources is not None else [(source_name, source_content)]
-    if not isinstance(values, list) or not 1 <= len(values) <= MAX_SOURCES:
-        raise ValueError("provide from 1 to 32 source workbooks")
-    validated: list[tuple[str, bytes]] = []
-    basenames: set[str] = set()
-    for value in values:
-        if not isinstance(value, tuple) or len(value) != 2:
-            raise ValueError("invalid source upload")
-        name, content = value
-        validate_workbook_upload(name, content)
-        basename = unicodedata.normalize("NFC", name)
-        canonical_name = basename.casefold()
-        if canonical_name in basenames:
-            raise ValueError("duplicate source filename")
-        basenames.add(canonical_name)
-        validated.append((basename, content))
-    return sorted(validated, key=lambda item: (item[0].casefold(), _digest(item[1])))
-
-
-def _safe_basename(name: str) -> bool:
-    return name == Path(name).name and "/" not in name and "\\" not in name

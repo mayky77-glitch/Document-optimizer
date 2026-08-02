@@ -40,13 +40,13 @@
           <div class="file-grid">
             <label class="file-field" for="sources">
               <span>Исходные документы <em>обязательно</em></span>
-              <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm,.xlsb" multiple required aria-describedby="sources-help source-count">
-              <small id="sources-help">Excel-файлы .xlsx, .xlsm или .xlsb · от 1 до 32 файлов.</small>
+              <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm" multiple required aria-describedby="sources-help source-count">
+              <small id="sources-help">Excel-файлы .xlsx или .xlsm · от 1 до 32 файлов.</small>
               <strong id="source-count" class="file-count" aria-live="polite">Файлы пока не выбраны</strong>
             </label>
             <label class="file-field" for="target">
               <span>Целевой отчёт <em>обязательно</em></span>
-              <input id="target" name="target" type="file" accept=".xlsx,.xlsm,.xlsb" required aria-describedby="target-help">
+              <input id="target" name="target" type="file" accept=".xlsx,.xlsm" required aria-describedby="target-help">
               <small id="target-help">Один Excel-файл, с которым нужно выполнить сверку.</small>
             </label>
           </div>
@@ -62,6 +62,7 @@
           <p>Выберите целевую категорию и способ учёта для каждой группы. При необходимости измените отдельную строку.</p>
         </div>
         <p id="review-state" class="review-state" role="status" aria-live="polite"></p>
+        <div id="source-issues" class="source-issues" aria-live="polite"></div>
         <div id="review-groups" class="review-groups" aria-label="Группы строк для проверки"></div>
         <p id="empty-review" class="empty-review" hidden>Строк для решения нет. Результат готов к скачиванию.</p>
         <div id="review-apply-area" class="review-apply-area" hidden>
