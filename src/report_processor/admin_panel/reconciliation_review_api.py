@@ -6,6 +6,8 @@ from collections.abc import Mapping
 
 from report_processor.reconciliation_review import ReviewAction, ReviewDecision, ReviewMode
 
+from .reconciliation_state import BatchReviewDecision
+
 
 class ReconciliationReviewRequestError(ValueError):
     """Raised when an untrusted review request is outside the controlled contract."""
@@ -40,6 +42,38 @@ def parse_reconciliation_review_decision(
         )
     except ValueError as error:
         raise ReconciliationReviewRequestError(str(error)) from error
+
+
+def parse_reconciliation_batch_decision(payload: object) -> BatchReviewDecision:
+    """Parse a package/family decision without accepting route-unrelated facts."""
+    if not isinstance(payload, Mapping):
+        raise ReconciliationReviewRequestError("Expected a JSON decision object")
+    try:
+        return BatchReviewDecision(
+            action=_enum(ReviewAction, payload.get("action"), "action"),
+            mode=_optional_enum(ReviewMode, payload.get("mode"), "mode"),
+            target_category=_optional_category(payload.get("category_id")),
+            version=_optional_id(payload.get("version"), "version"),
+        )
+    except ValueError as error:
+        raise ReconciliationReviewRequestError(str(error)) from error
+
+
+def parse_safe_package_ids(payload: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("packages"), list):
+        raise ReconciliationReviewRequestError("packages are required")
+    values: list[tuple[str, str]] = []
+    for value in payload["packages"]:
+        if not isinstance(value, Mapping):
+            raise ReconciliationReviewRequestError("invalid package")
+        package_id = _optional_id(value.get("package_id"), "package_id")
+        version = _optional_id(value.get("version"), "version")
+        if package_id is None or version is None:
+            raise ReconciliationReviewRequestError("package_id and version are required")
+        values.append((package_id, version))
+    if not values or len({item[0] for item in values}) != len(values):
+        raise ReconciliationReviewRequestError("packages must be unique and non-empty")
+    return tuple(values)
 
 
 def _enum(enum_type: type[ReviewAction] | type[ReviewMode], value: object, field: str):

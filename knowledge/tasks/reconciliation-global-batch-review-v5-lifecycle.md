@@ -1,6 +1,6 @@
 ---
 type: task
-status: draft
+status: review
 orda_status: frozen
 card_id: reconciliation-global-batch-review-v5-lifecycle
 version: 1
@@ -12,18 +12,18 @@ agent_role: developer
 owner: reconciliation-v5-lifecycle
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 3
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
 routing_reason: Consequential precedence, stale-state, autosave, calculation and verified XLSX integration.
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
-fallback_reason: ""
-model_fallback: false
+launch_status: inherited
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
+fallback_reason: Spawn runtime did not confirm a model override; inherited runtime route recorded.
+model_fallback: true
 card_path: knowledge/tasks/reconciliation-global-batch-review-v5-lifecycle.md
 card_commit_sha_ref: launch_envelope
 base_sha_ref: wave1_integration_sha
@@ -85,7 +85,7 @@ last_verified: 2026-08-02
 updated: 2026-08-02
 tags:
   - task/implementation
-  - status/draft
+  - status/review
   - domain/document-processing
   - capability/admin-panel
   - risk/high
@@ -116,12 +116,42 @@ links:
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: `reconciliation_state.py`, `reconciliation_batch_store.py`,
+  `reconciliation_batch_presentation.py`, `reconciliation_execution.py`,
+  `reconciliation_review_api.py`, `reconciliation_review_routes.py`,
+  `presentation.py`, focused lifecycle tests.
+- Commands and tests run: card pytest set — 25 passed, 1 skipped only because
+  real-data environment variables are absent; card ruff set — passed;
+  `git diff --check` — passed.
+- Result: deterministic package decisions resolve package → family → group →
+  row into the existing `apply_overrides` calculation/write path. Decisions
+  autosave per job, restore only with a matching fingerprint, reject stale
+  writes before mutation, and retain a one-level undo snapshot.
+- Risks or follow-up: existing browser controls still use the compatibility
+  `review_groups` view; the new `review_packages` schema is available for its
+  dedicated UI integration.
+
+## Wave 2 evidence
+
+- Stable package queues are `safe`, `clarify` and `new`; `new` is emitted only
+  when the existing package has no known category. Public primary and secondary
+  filter fields derive solely from package boundaries, explicit decisions and
+  restored feedback.
+- `review_last_action` is a stable object with a short `message` field.
+  Source-issue projection accepts both its controlled dataclass and mapping
+  form, exposing only basename, comment, repair hint and continuation status.
+- Commands and tests run: focused card pytest set — 29 passed, 1 opt-in
+  real-data test skipped because its environment variables are absent; Ruff
+  check and format check — passed; `git diff --check` — passed.
+
+## Presentation alignment evidence
+
+- Family payload now always carries its deterministic proposed category and
+  default accounting mode. Package and family labels use a short existing
+  public work display name when one is available.
+- Focused tests: 15 passed; Ruff check and format check — passed;
+  `git diff --check` — passed.
 
 ## Handoff
 
 Leave this card in `review` until ORDA accepts feature and merge SHAs.
-

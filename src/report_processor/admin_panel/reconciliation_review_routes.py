@@ -7,7 +7,9 @@ from collections.abc import Mapping
 from .presentation import job_payload
 from .reconciliation_review_api import (
     ReconciliationReviewRequestError,
+    parse_reconciliation_batch_decision,
     parse_reconciliation_review_decision,
+    parse_safe_package_ids,
 )
 
 
@@ -22,6 +24,33 @@ def reconciliation_review_routes(panel):
             return await _delete(request, panel)
         return await _put(request, panel, "row")
 
+    async def package(request):
+        return await _put(request, panel, "package")
+
+    async def family(request):
+        return await _put(request, panel, "family")
+
+    async def accept_safe(request):
+        try:
+            payload = await request.json()
+            state, current = _state(panel, request.path_params["job_id"])
+            state.accept_safe_packages(parse_safe_package_ids(payload))
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (ReconciliationReviewRequestError, TypeError, ValueError):
+            return _error("Решение устарело или содержит недопустимую категорию", 409)
+        return _json(job_payload(current))
+
+    async def undo(request):
+        try:
+            state, current = _state(panel, request.path_params["job_id"])
+            state.undo()
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Нет решения для отмены", 409)
+        return _json(job_payload(current))
+
     async def apply(request):
         try:
             current = panel.apply_reconciliation(request.path_params["job_id"])
@@ -34,6 +63,10 @@ def reconciliation_review_routes(panel):
     return [
         Route("/api/jobs/{job_id}/review/groups/{group_id}", group, methods=["PUT"]),
         Route("/api/jobs/{job_id}/review/items/{row_id}", row, methods=["PUT", "DELETE"]),
+        Route("/api/jobs/{job_id}/review/packages/accept-safe", accept_safe, methods=["POST"]),
+        Route("/api/jobs/{job_id}/review/undo", undo, methods=["POST"]),
+        Route("/api/jobs/{job_id}/review/packages/{package_id}", package, methods=["PUT"]),
+        Route("/api/jobs/{job_id}/review/families/{family_id}", family, methods=["PUT"]),
         Route("/api/jobs/{job_id}/review/apply", apply, methods=["POST"]),
     ]
 
@@ -41,19 +74,25 @@ def reconciliation_review_routes(panel):
 async def _put(request, panel, scope: str):
     try:
         payload = await request.json()
-        decision = parse_reconciliation_review_decision(
-            payload,
-            group_id=request.path_params["group_id"] if scope == "group" else None,
-            row_id=request.path_params["row_id"] if scope == "row" else None,
-        )
-        if scope == "group":
-            current = panel.put_reconciliation_group(
-                request.path_params["job_id"], request.path_params["group_id"], decision
-            )
+        job_id = request.path_params["job_id"]
+        if scope in {"package", "family"}:
+            decision = parse_reconciliation_batch_decision(payload)
+            state, current = _state(panel, job_id)
+            if scope == "package":
+                state.put_package(request.path_params["package_id"], decision)
+            else:
+                state.put_family(request.path_params["family_id"], decision)
         else:
-            current = panel.put_reconciliation_row(
-                request.path_params["job_id"], request.path_params["row_id"], decision
+            decision = parse_reconciliation_review_decision(
+                payload,
+                group_id=request.path_params["group_id"] if scope == "group" else None,
+                row_id=request.path_params["row_id"] if scope == "row" else None,
             )
+            state, current = _state(panel, job_id)
+            if scope == "group":
+                state.put_group(request.path_params["group_id"], decision)
+            else:
+                state.put_row(request.path_params["row_id"], decision)
     except KeyError:
         return _error("Задача не найдена", 404)
     except (ReconciliationReviewRequestError, TypeError, ValueError):
@@ -67,9 +106,8 @@ async def _delete(request, panel):
         version = payload.get("version") if isinstance(payload, Mapping) else None
         if not isinstance(version, str):
             raise ValueError("version is required")
-        current = panel.delete_reconciliation_row(
-            request.path_params["job_id"], request.path_params["row_id"], version
-        )
+        state, current = _state(panel, request.path_params["job_id"])
+        state.delete_row(request.path_params["row_id"], version)
     except KeyError:
         return _error("Задача не найдена", 404)
     except (TypeError, ValueError):
@@ -81,6 +119,14 @@ def _json(payload):
     from starlette.responses import JSONResponse
 
     return _secure(JSONResponse(payload))
+
+
+def _state(panel, job_id: str):
+    job = panel.get_job(job_id)
+    state = getattr(job, "review_state", None)
+    if state is None or getattr(job, "status", None) != "review_required":
+        raise ValueError("authoritative review is unavailable")
+    return state, job
 
 
 def _error(message: str, status_code: int):
