@@ -110,6 +110,12 @@
         ? "Все решения сохранены. Проверьте последний шаг или примените готовую сверку."
         : "Сначала показаны безопасные пакеты. Одно решение применяется к точному составу семей и групп.";
       heading.append(title, explanation);
+      if (typeof this.payload.review_semantic_hint === "string" && this.payload.review_semantic_hint) {
+        const hint = document.createElement("p");
+        hint.className = "batch-semantic-hint";
+        hint.textContent = this.payload.review_semantic_hint;
+        heading.append(hint);
+      }
 
       panel.append(heading, this.buildSummary(), this.buildToolbar(), this.buildShortcuts(), this.buildQueue());
       if (this.payload.review_last_action) panel.append(this.buildLastAction());
@@ -402,6 +408,7 @@
       const label = document.createElement("span");
       label.textContent = "Для всего семейства";
       const category = document.createElement("select");
+      category.setAttribute("aria-label", `Категория для семейства «${text(family?.label)}»`);
       this.categories.forEach((entry) => category.append(new Option(entry.label, entry.id)));
       category.value = text(family?.selected_category_id || family?.proposed_category_id || this.payload.review_categories?.[0]?.category_id, "");
       const mode = this.buildMode(`family-${text(family?.family_id, "family")}`, family?.mode, "Способ учёта семейства");
@@ -417,6 +424,7 @@
       const label = document.createElement("span");
       label.textContent = "Для всей группы";
       const category = document.createElement("select");
+      category.setAttribute("aria-label", `Категория для группы «${text(group?.label || group?.display_name || group?.name, "Группа строк")}»`);
       this.categories.forEach((entry) => category.append(new Option(entry.label, entry.id)));
       category.value = text(group?.selected_category_id || group?.proposed_category_id, "");
       const mode = this.buildMode(`group-${text(group?.group_id, "group")}`, group?.mode, "Способ учёта группы");

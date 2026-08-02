@@ -7,6 +7,10 @@ from report_processor.admin_panel.reconciliation_batch_presentation import (
     reconciliation_batch_payload,
 )
 from report_processor.admin_panel.reconciliation_batch_store import ReconciliationBatchStore
+from report_processor.admin_panel.reconciliation_execution import (
+    _feedback_records,
+    _restore_feedback,
+)
 from report_processor.admin_panel.reconciliation_semantic_assist import CONTROLLED_SEMANTIC_HINT
 from report_processor.admin_panel.reconciliation_sources import ReconciliationSourceIssue
 from report_processor.admin_panel.reconciliation_state import (
@@ -128,6 +132,20 @@ def test_autosave_restore_and_mass_accept_match_sequential_decision(tmp_path) ->
     )
 
     assert restored.core_decisions() == mass.core_decisions() == sequential.core_decisions()
+
+
+def test_package_decisions_become_reusable_feedback_only_after_expansion() -> None:
+    first = _state()
+    package = first.grouping.packages[0]
+    first.accept_safe_packages(((package.package_id, package.version),))
+
+    feedback = _feedback_records(first)
+    second = _state()
+    _restore_feedback(second, feedback)
+
+    assert len(feedback) == len(first.groups)
+    assert second.unresolved_row_ids() == ()
+    assert second.familiar_group_ids == set(second.groups)
 
 
 def test_payload_uses_the_exact_filter_schema_without_private_facts() -> None:

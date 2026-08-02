@@ -40,6 +40,22 @@ def test_targeted_cell_replacement_preserves_style_formula_and_other_cell_bytes(
     assert _SHEET_XML[_SHEET_XML.index(b'<c r="E30"') :] == updated[updated.index(b'<c r="E30"') :]
 
 
+def test_self_closing_target_cell_does_not_capture_the_next_cell_value() -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row r="30"><c r="D30" s="5"/>'
+        b'<c r="E30" s="7"><v>40</v></c></row></sheetData></worksheet>'
+    )
+
+    cell, lexeme, is_formula, has_style, cell_type = inspect_cell(xml, "D30")
+    updated = replace_cell_value(xml, "D30", "0.00")
+
+    assert cell == b'<c r="D30" s="5"/>'
+    assert lexeme is None and not is_formula and has_style and cell_type is None
+    assert b'<c r="D30" s="5"><v>0.00</v></c>' in updated
+    assert updated[updated.index(b'<c r="E30"') :] == xml[xml.index(b'<c r="E30"') :]
+
+
 def test_formula_and_missing_cells_remain_rejectable() -> None:
     _, _, is_formula, _, _ = inspect_cell(_SHEET_XML, "E30")
     assert is_formula

@@ -15,7 +15,7 @@ from report_processor.target_report.ooxml import worksheet_parts
 
 from .exceptions import ExcelWriterAtomicError, ExcelWriterIntegrityError, ExcelWriterSafetyError
 
-_CELL = re.compile(rb"<c\b[^>]*(?:/>|>.*?</c>)", re.DOTALL)
+_CELL = re.compile(rb"<c\b[^>]*?(?:/>|>.*?</c>)", re.DOTALL)
 _REFERENCE = re.compile(rb"\br\s*=\s*([\"'])([^\"']+)\1")
 _STYLE = re.compile(rb"\bs\s*=\s*([\"'])([^\"']+)\1")
 _TYPE = re.compile(rb"\bt\s*=\s*([\"'])([^\"']+)\1")

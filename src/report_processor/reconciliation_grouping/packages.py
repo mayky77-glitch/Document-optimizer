@@ -198,7 +198,7 @@ def _build_packages(
                 package_key=key,
                 family_ids=family_ids,
                 member_group_ids=group_ids,
-                safe=not reasons,
+                safe=bool(key[0]) and not reasons,
                 exception_reasons=reasons,
             )
         )

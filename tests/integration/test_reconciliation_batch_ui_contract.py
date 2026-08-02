@@ -27,6 +27,7 @@ def test_package_review_uses_only_the_frozen_public_payload_and_routes() -> None
         "review_categories",
         "review_can_apply",
         "review_last_action",
+        "review_semantic_hint",
         "package_id",
         "family_id",
         "group_id",

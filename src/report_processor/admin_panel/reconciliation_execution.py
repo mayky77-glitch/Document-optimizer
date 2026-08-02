@@ -383,15 +383,32 @@ def _feedback_records(state) -> tuple[FeedbackRecord, ...]:
         feedback_from_row_decision,
     )
 
+    effective_decisions = getattr(state, "effective_decisions", None)
+    effective = (
+        tuple(effective_decisions())
+        if callable(effective_decisions)
+        else (*state.group_decisions.values(), *state.row_decisions.values())
+    )
+    group_decisions = sorted(
+        (decision for decision in effective if decision.group_id is not None),
+        key=lambda decision: decision.group_id or "",
+    )
+    row_decisions = sorted(
+        (decision for decision in effective if decision.row_id is not None),
+        key=lambda decision: decision.row_id or "",
+    )
     groups = state.groups
     values = [
-        feedback_from_decision(groups[key], decision, sequence=index)
-        for index, (key, decision) in enumerate(sorted(state.group_decisions.items()), 1)
+        feedback_from_decision(groups[decision.group_id], decision, sequence=index)
+        for index, decision in enumerate(group_decisions, 1)
+        if decision.group_id is not None
     ]
     values.extend(
-        feedback_from_row_decision(state.rows[key], decision, sequence=index)
-        for index, (key, decision) in enumerate(
-            sorted(state.row_decisions.items()), len(values) + 1
+        feedback_from_row_decision(state.rows[decision.row_id], decision, sequence=index)
+        for index, decision in enumerate(
+            row_decisions,
+            len(values) + 1,
         )
+        if decision.row_id is not None
     )
     return tuple(values)

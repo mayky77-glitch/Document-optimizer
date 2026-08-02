@@ -35,7 +35,7 @@ def _row(
     *,
     quantity: str = "1",
     cost: str = "2",
-    category: str = "Кабельные работы",
+    category: str | None = "Кабельные работы",
 ) -> ReviewRow:
     return ReviewRow(
         row_id=row_id,
@@ -143,6 +143,17 @@ def test_cross_boundary_categories_and_modes_remain_independently_safe() -> None
     assert not result.exceptions
     assert len(result.packages) == 2
     assert all(package.safe for package in result.packages)
+
+
+def test_package_without_a_proposed_category_is_never_mass_acceptable() -> None:
+    row = _row("row-new", "Новая работа", category=None)
+    group = _group("group-new", row)
+
+    result = _build((row,), (group,))
+
+    assert len(result.packages) == 1
+    assert result.packages[0].package_key[0] == ""
+    assert result.packages[0].safe is False
 
 
 def test_exceptions_are_separate_from_a_mass_acceptable_safe_remainder() -> None:
