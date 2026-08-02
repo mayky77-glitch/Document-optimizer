@@ -1,5 +1,9 @@
 from decimal import Decimal
+from hashlib import sha256
+from io import BytesIO
 from types import SimpleNamespace
+
+from openpyxl import Workbook, load_workbook
 
 from report_processor.admin_panel.reconciliation_execution import _feedback_records, apply_review
 from report_processor.reconciliation_review import (
@@ -76,7 +80,13 @@ def test_apply_review_all_rejected_writes_unchanged_target_and_feedback(
         directory=tmp_path,
         rules_path=None,
     )
-    job.target.write_bytes(b"target")
+    workbook = Workbook()
+    workbook.active["A1"] = "unchanged"
+    input_stream = BytesIO()
+    workbook.save(input_stream)
+    workbook.close()
+    input_bytes = input_stream.getvalue()
+    job.target.write_bytes(input_bytes)
     output = tmp_path / "result.xlsx"
     monkeypatch.setattr(
         "report_processor.admin_panel.reconciliation_execution.read_reconciliation_target",
@@ -86,12 +96,21 @@ def test_apply_review_all_rejected_writes_unchanged_target_and_feedback(
         "report_processor.admin_panel.reconciliation_execution._sources",
         lambda _job: SimpleNamespace(rows=()),
     )
-    monkeypatch.setattr(
-        "report_processor.excel_writer.write_target_report",
-        lambda *_args: SimpleNamespace(output_sha256="verified"),
-    )
+
+    def write_unchanged(source, destination, *_args):
+        destination.write_bytes(source.read_bytes())
+        return SimpleNamespace(output_sha256=sha256(destination.read_bytes()).hexdigest())
+
+    monkeypatch.setattr("report_processor.excel_writer.write_target_report", write_unchanged)
 
     written, feedback = apply_review(job, rejected)
 
     assert written == output
+    assert written.read_bytes() == input_bytes
+    assert sha256(written.read_bytes()).hexdigest() == sha256(input_bytes).hexdigest()
+    reopened = load_workbook(written, read_only=True, data_only=True)
+    try:
+        assert reopened.active["A1"].value == "unchanged"
+    finally:
+        reopened.close()
     assert feedback[0].action is ReviewAction.REJECT
