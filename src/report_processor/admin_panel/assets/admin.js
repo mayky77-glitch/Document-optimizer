@@ -118,7 +118,7 @@
     select.append(empty);
     categories.forEach((category) => select.append(new Option(category.label, category.id)));
     select.value = selectedId;
-    if (!select.value) select.value = categories[0]?.id || "";
+    if (!select.value) select.value = "";
     return select;
   };
 
@@ -354,7 +354,9 @@
       hint.className = "source-issue-hint";
       hint.textContent = text(issue && issue.repair_hint, "Исправьте файл и загрузите его снова.");
       const continuation = document.createElement("small");
-      continuation.textContent = issue && issue.can_continue === true ? "Остальные файлы продолжают обрабатываться." : "Исправьте файл и повторите сверку.";
+      continuation.textContent = issue && issue.can_continue === true && payload.status !== "failed"
+        ? "Остальные файлы продолжают обрабатываться."
+        : "Исправьте файл и повторите сверку.";
       card.append(title, comment, hint, continuation);
       return card;
     }));
