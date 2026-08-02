@@ -91,3 +91,14 @@ def test_authoritative_review_payload_and_local_responsive_controls(tmp_path: Pa
     assert 'document.createElement("details")' in javascript
     assert "member-override" in javascript and "renderMemberRow" in javascript
     assert "http://" not in javascript + css and "https://" not in javascript + css
+
+
+def test_main_review_hands_package_payloads_to_the_dedicated_batch_module() -> None:
+    asset = Path(__file__).parents[2] / "src" / "report_processor" / "admin_panel" / "assets"
+    javascript = (asset / "admin.js").read_text()
+
+    assert "window.ReconciliationBatchReview?.supports(payload)" in javascript
+    assert "restoredJobId" in javascript
+    assert "batchReview.render(payload)" in javascript
+    assert "applyArea.hidden = payload.review_can_apply !== true" in javascript
+    assert 'applyButton.textContent = "Сформировать результат"' in javascript

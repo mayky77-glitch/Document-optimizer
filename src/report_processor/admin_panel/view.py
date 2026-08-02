@@ -8,6 +8,14 @@ _ASSET_DIRECTORY = Path(__file__).with_name("assets")
 _PUBLIC_ASSETS = {
     "admin.css": ("text/css; charset=utf-8", _ASSET_DIRECTORY / "admin.css"),
     "admin.js": ("text/javascript; charset=utf-8", _ASSET_DIRECTORY / "admin.js"),
+    "reconciliation-batches.js": (
+        "text/javascript; charset=utf-8",
+        _ASSET_DIRECTORY / "reconciliation-batches.js",
+    ),
+    "reconciliation-batch-filters.js": (
+        "text/javascript; charset=utf-8",
+        _ASSET_DIRECTORY / "reconciliation-batch-filters.js",
+    ),
     "theme.js": ("text/javascript; charset=utf-8", _ASSET_DIRECTORY / "theme.js"),
     "drawing-card.css": (
         "text/css; charset=utf-8",

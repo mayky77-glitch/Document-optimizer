@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-orda_status: frozen
+status: review
+orda_status: review
 card_id: reconciliation-global-batch-review-v5-ui
 version: 1
 work_id: reconciliation-global-batch-review-v5
@@ -19,11 +19,11 @@ circuit_state: closed
 routing_reason: Responsive accessible package interactions with stable direct controls and isolated frontend module.
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
-fallback_reason: ""
-model_fallback: false
+launch_status: inherited
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
+fallback_reason: Runtime did not return model confirmation; inherited task execution is recorded against the requested Terra/high route.
+model_fallback: true
 card_path: knowledge/tasks/reconciliation-global-batch-review-v5-ui.md
 card_commit_sha_ref: launch_envelope
 base_sha_ref: wave1_integration_sha
@@ -99,12 +99,32 @@ links:
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: `src/report_processor/admin_panel/assets/reconciliation-batches.js`,
+  `src/report_processor/admin_panel/assets/reconciliation-batch-filters.js`,
+  `src/report_processor/admin_panel/assets/admin.js`,
+  `src/report_processor/admin_panel/assets/admin.css`,
+  `src/report_processor/admin_panel/assets/index.html`,
+  `src/report_processor/admin_panel/view.py`,
+  `tests/integration/test_reconciliation_batch_ui_contract.py`,
+  `tests/integration/test_reconciliation_review_ui_contract.py`.
+- Commands and tests run: `node --check src/report_processor/admin_panel/assets/admin.js`;
+  `node --check src/report_processor/admin_panel/assets/reconciliation-batches.js`;
+  `node --check src/report_processor/admin_panel/assets/reconciliation-batch-filters.js`;
+  `uv run pytest -q tests/integration/test_reconciliation_batch_ui_contract.py tests/integration/test_reconciliation_review_ui_contract.py`
+  (`7 passed`); `uv run ruff check tests/integration/test_reconciliation_batch_ui_contract.py tests/integration/test_reconciliation_review_ui_contract.py`;
+  `git diff --check`.
+- Result: Package queues consume `ReconciliationBatchPayload-1.0`, with safe-first
+  preview/apply, frozen IDs and versions, direct category/mode/action controls at
+  package/family/group/row scope, details-based exact membership, keyboard shortcuts,
+  session job restoration, undo and responsive light/dark styles. Canonical primary
+  filters and compact secondary filters use stable queue values with fail-soft optional
+  fields; the authoritative final apply control remains visible when ready. UI decision
+  requests use only `accept` or `reject`; selected controlled category travels with
+  `accept`, family controls appear once per family, and search includes nested rows.
+- Risks or follow-up: Visual browser capture was attempted through the local server,
+  but the workspace lacks the Playwright Python package; static 390 px responsive
+  contract coverage is included. Lifecycle routes must land before live API exercise.
 
 ## Handoff
 
 Leave this card in `review` until ORDA accepts feature and merge SHAs.
-
