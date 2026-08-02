@@ -15,19 +15,26 @@ from report_processor.reconciliation_review import (
     normalize_unit,
 )
 
+from .reconciliation_sources import (
+    ReconciliationSourceBatch,
+    ReconciliationSourceDescriptor,
+    descriptor_from_upload_basename,
+    extract_reconciliation_sources,
+)
 from .reconciliation_state import ReconciliationReviewState
 
 
 @dataclass(frozen=True, slots=True)
 class ReconciliationReviewResult:
     state: ReconciliationReviewState
+    source_batch: ReconciliationSourceBatch
 
 
 def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationReviewResult:
-    artifacts, categories = _run(job, ())
+    artifacts, categories, source_batch = _run(job, ())
     feedback_decisions = _feedback_decisions(artifacts, feedback)
     if feedback_decisions:
-        artifacts, categories = _run(job, feedback_decisions)
+        artifacts, categories, source_batch = _run(job, feedback_decisions)
     state = ReconciliationReviewState(
         rows={row.row_id: row for row in artifacts.review_rows},
         groups={group.group_id: group for group in artifacts.review_groups},
@@ -65,13 +72,13 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
                     version=group.version,
                 ),
             )
-    return ReconciliationReviewResult(state)
+    return ReconciliationReviewResult(state, source_batch)
 
 
 def apply_review(
     job, state: ReconciliationReviewState
 ) -> tuple[object, tuple[FeedbackRecord, ...]]:
-    artifacts, _categories = _run(job, state.core_decisions(), write=True)
+    artifacts, _categories, _source_batch = _run(job, state.core_decisions(), write=True)
     output = job.directory / "result.xlsx"
     written = artifacts.write_result
     if written is None or not output.is_file() or getattr(written, "output_sha256", None) is None:
@@ -92,6 +99,7 @@ def _run(job, decisions: tuple[ReviewDecision, ...], *, write: bool = False):
     if not validation.valid or validation.rule_set is None:
         raise ValueError("RULE_CONFIGURATION_INVALID")
     adapter = _WorkbookAdapter(job)
+    source_batch = adapter.sources()
     captured: dict[str, object] = {}
 
     def inspect(target: Path):
@@ -114,11 +122,11 @@ def _run(job, decisions: tuple[ReviewDecision, ...], *, write: bool = False):
         )
 
     artifacts = execute_reconciliation(
-        tuple(job.sources or (job.source,)),
+        (source_batch.rows,),
         job.target,
         validation.rule_set,
         inspect_target=inspect,
-        normalize_source=adapter.normalized_rows,
+        normalize_source=lambda rows: rows,
         target_source_id=f"target:{job.target_digest}",
         target_fingerprint=f"sha256:{job.target_digest}",
         decisions=decisions,
@@ -130,7 +138,7 @@ def _run(job, decisions: tuple[ReviewDecision, ...], *, write: bool = False):
         )
         for match in artifacts.matches
     }
-    return artifacts, categories
+    return artifacts, categories, source_batch
 
 
 class _WorkbookAdapter:
@@ -152,18 +160,26 @@ class _WorkbookAdapter:
             )
 
     def normalized_rows(self, path: Path):
-        from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
-        from report_processor.extraction import extract_supported_workbook_rows
-        from report_processor.normalization import normalize_training_rows
-        from report_processor.processing.adapters import _materialized
-        from report_processor.schema import analyze_workbook_schema
-        from report_processor.training_data import prepare_training_data
+        return self.sources().rows
 
-        source = _materialized(path, _source_identity(self.job, path))
-        with open_dual_workbook(WorkbookOpenRequest(source)) as session:
-            extracted = extract_supported_workbook_rows(session, analyze_workbook_schema(session))
-        training = prepare_training_data(tuple(row for result in extracted for row in result.rows))
-        return normalize_training_rows(training.rows).rows
+    def sources(self) -> ReconciliationSourceBatch:
+        paths = self.job.sources or (self.job.source,)
+        upload_names = tuple(getattr(self.job, "source_names", ()) or ())
+        descriptors = (
+            tuple(descriptor_from_upload_basename(name) for name in upload_names)
+            if len(upload_names) == len(paths)
+            else tuple(ReconciliationSourceDescriptor(safe_basename=path.name) for path in paths)
+        )
+        return extract_reconciliation_sources(
+            tuple(
+                (
+                    path,
+                    _source_identity(self.job, path),
+                    descriptor,
+                )
+                for path, descriptor in zip(paths, descriptors, strict=True)
+            )
+        )
 
 
 def _source_identity(job, path: Path) -> str:

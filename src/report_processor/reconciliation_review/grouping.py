@@ -43,11 +43,14 @@ def build_review_groups(rows: Iterable[ReviewRow]) -> tuple[ReviewGroup, ...]:
             by_exact[name, normalize_unit(row.unit)].append(row)
 
     grouped: list[tuple[str | None, str | None, tuple[ReviewRow, ...]]] = []
-    for (name, unit), members in sorted(by_exact.items()):
+    for (name, unit), members in sorted(by_exact.items(), key=_exact_group_sort_key):
         grouped.append((name, unit, tuple(members)))
     grouped = _merge_complete_prefix_groups(grouped)
     grouped.extend((None, normalize_unit(row.unit), (row,)) for row in empty_rows)
-    return tuple(_review_group(name, unit, members) for name, unit, members in grouped)
+    return tuple(
+        _review_group(name, unit, members)
+        for name, unit, members in sorted(grouped, key=_group_sort_key)
+    )
 
 
 def _merge_complete_prefix_groups(
@@ -64,6 +67,20 @@ def _merge_complete_prefix_groups(
             members = (*members, *(row for _n, _u, part in compatible for row in part))
         merged.append((name, unit, tuple(members)))
     return merged
+
+
+def _exact_group_sort_key(
+    item: tuple[tuple[str, str | None], list[ReviewRow]],
+) -> tuple[str, str]:
+    (name, unit), _members = item
+    return name, unit or ""
+
+
+def _group_sort_key(
+    item: tuple[str | None, str | None, tuple[ReviewRow, ...]],
+) -> tuple[bool, str, str, tuple[str, ...]]:
+    name, unit, members = item
+    return name is None, name or "", unit or "", tuple(sorted(row.row_id for row in members))
 
 
 def _is_variant(base: str, candidate: str | None) -> bool:
