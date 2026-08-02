@@ -18,6 +18,7 @@
   const submit = form.querySelector('button[type="submit"]');
   const workbookExtensions = new Set([".xlsx", ".xlsm"]);
   let currentJobId = "";
+  let batchReview = null;
 
   const setProgress = (step) => {
     const order = ["files", "run", "result"];
@@ -329,6 +330,25 @@
   };
 
   const renderReview = (payload) => {
+    if (window.ReconciliationBatchReview?.supports(payload)) {
+      if (!batchReview) {
+        batchReview = new window.ReconciliationBatchReview({
+          root: reviewGroups,
+          getJobId: () => currentJobId,
+          renderPayload: renderJob,
+          report: setStatus,
+        });
+      }
+      batchReview.render(payload);
+      emptyReview.hidden = true;
+      applyArea.hidden = true;
+      reviewState.textContent = payload.review_can_apply === true
+        ? "Все решения готовы к применению."
+        : "Выберите решение для пакета или точного семейства.";
+      return;
+    }
+    batchReview?.destroy();
+    batchReview = null;
     const categories = reviewCategories(payload);
     const groups = reviewGroupsFrom(payload);
     reviewGroups.replaceChildren(...groups.map((group) => renderGroup(group, categories)));
@@ -429,4 +449,13 @@
       submit.disabled = false;
     }
   });
+
+  const restoredJobId = window.ReconciliationBatchReview?.restoredJobId();
+  if (restoredJobId) {
+    void requestJson(`/api/jobs/${encodeURIComponent(restoredJobId)}`)
+      .then(renderJob)
+      .catch(() => {
+        // A local job can expire; the upload screen remains ready for a new run.
+      });
+  }
 })();
