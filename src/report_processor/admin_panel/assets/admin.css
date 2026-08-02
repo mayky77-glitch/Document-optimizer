@@ -190,11 +190,23 @@ button, .download { min-height: 48px; padding: 11px 18px; border: 1px solid var(
 .batch-summary > div + div { border-left: 1px solid var(--line); }
 .batch-summary dt { color: var(--muted); font-size: .73rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
 .batch-summary dd { margin: 3px 0 0; overflow-wrap: anywhere; color: var(--ink); font-size: 1.08rem; font-weight: 850; }
-.batch-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 12px; align-items: center; }
+.batch-toolbar { display: grid; gap: 12px; }
 .batch-search { min-width: 0; }
-.batch-filters { display: flex; flex-wrap: wrap; gap: 5px; }
+.batch-filter-controls { display: grid; gap: 8px; }
+.batch-primary-filters { display: flex; flex-wrap: wrap; gap: 5px; }
 .batch-filter { min-height: 40px; padding: 7px 10px; border-color: var(--input-border); background: var(--white); color: var(--gazprom-dark); font-size: .8rem; }
 .batch-filter.is-selected { border-color: var(--gazprom); background: var(--soft-blue); color: var(--ink); box-shadow: inset 0 -3px var(--gazprom); }
+.batch-secondary-filters { min-width: 0; border: 1px solid var(--line); background: var(--surface-input); }
+.batch-secondary-filters > summary { padding: 8px 10px; color: var(--gazprom-dark); font-size: .85rem; font-weight: 800; cursor: pointer; }
+.batch-secondary-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; padding: 0 10px 10px; }
+.batch-secondary-field { min-width: 0; color: var(--muted); font-size: .74rem; }
+.batch-secondary-field select { min-height: 40px; padding: 7px 8px; font-size: .84rem; }
+.batch-secondary-mode { min-width: 0; margin: 0; padding: 0; border: 0; }
+.batch-secondary-mode legend { margin-bottom: 5px; color: var(--muted); font-size: .74rem; font-weight: 750; }
+.batch-secondary-mode > div { display: flex; min-height: 40px; border: 1px solid var(--input-border); }
+.batch-secondary-mode button { min-width: 0; min-height: 38px; padding: 5px 7px; border: 0; background: var(--white); color: var(--gazprom-dark); font-size: .72rem; line-height: 1.15; }
+.batch-secondary-mode button + button { border-left: 1px solid var(--input-border); }
+.batch-secondary-mode button.is-selected { background: var(--gazprom); color: var(--white); }
 .batch-shortcuts { margin: -5px 0 0; color: var(--muted); font-size: .78rem; }
 kbd { display: inline-block; min-width: 1.45em; padding: 1px 4px; border: 1px solid var(--line); background: var(--surface-input); color: var(--ink); font: 700 .82em/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; }
 .batch-queue { display: grid; gap: 12px; min-width: 0; }
@@ -283,7 +295,8 @@ button:disabled { cursor: default; opacity: .62; }
   .result-panel { align-items: stretch; flex-direction: column; }
   .download { width: 100%; }
   .batch-toolbar { grid-template-columns: 1fr; }
-  .batch-filters { display: grid; grid-template-columns: 1fr; }
+  .batch-primary-filters { display: grid; grid-template-columns: 1fr; }
+  .batch-secondary-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .batch-summary, .batch-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .batch-summary > div:nth-child(3), .batch-totals > div:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
   .batch-summary > div:nth-child(4), .batch-totals > div:nth-child(4) { border-top: 1px solid var(--line); }
@@ -304,6 +317,9 @@ button:disabled { cursor: default; opacity: .62; }
   .batch-mode-options { grid-template-columns: 1fr; }
   .batch-mode-options label + label { border-top: 1px solid var(--input-border); border-left: 0; }
   .batch-family-actions > span, .batch-scope-actions > span, .batch-family-actions .batch-mode, .batch-scope-actions .batch-mode { grid-column: auto; }
+  .batch-secondary-fields { grid-template-columns: 1fr; }
+  .batch-secondary-mode > div { display: grid; grid-template-columns: 1fr; }
+  .batch-secondary-mode button + button { border-top: 1px solid var(--input-border); border-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

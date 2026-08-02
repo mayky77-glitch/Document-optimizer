@@ -341,9 +341,10 @@
       }
       batchReview.render(payload);
       emptyReview.hidden = true;
-      applyArea.hidden = true;
+      applyArea.hidden = payload.review_can_apply !== true;
+      applyButton.textContent = "Сформировать результат";
       reviewState.textContent = payload.review_can_apply === true
-        ? "Все решения готовы к применению."
+        ? "Все решения готовы. Сформируйте итоговый файл."
         : "Выберите решение для пакета или точного семейства.";
       return;
     }

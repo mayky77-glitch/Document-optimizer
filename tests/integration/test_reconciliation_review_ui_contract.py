@@ -100,3 +100,5 @@ def test_main_review_hands_package_payloads_to_the_dedicated_batch_module() -> N
     assert "window.ReconciliationBatchReview?.supports(payload)" in javascript
     assert "restoredJobId" in javascript
     assert "batchReview.render(payload)" in javascript
+    assert "applyArea.hidden = payload.review_can_apply !== true" in javascript
+    assert 'applyButton.textContent = "Сформировать результат"' in javascript

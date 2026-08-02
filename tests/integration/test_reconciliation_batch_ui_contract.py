@@ -7,13 +7,15 @@ from report_processor.admin_panel.view import static_asset
 ASSETS = Path(__file__).parents[2] / "src" / "report_processor" / "admin_panel" / "assets"
 
 
-def test_package_review_asset_is_published_and_registered_by_the_main_screen() -> None:
+def test_package_review_assets_are_published_and_registered_by_the_main_screen() -> None:
     page = (ASSETS / "index.html").read_text(encoding="utf-8")
-    media_type, content = static_asset("reconciliation-batches.js")
 
     assert 'src="/static/reconciliation-batches.js" defer' in page
-    assert media_type == "text/javascript; charset=utf-8"
-    assert content == (ASSETS / "reconciliation-batches.js").read_bytes()
+    assert 'src="/static/reconciliation-batch-filters.js" defer' in page
+    for asset_name in ("reconciliation-batches.js", "reconciliation-batch-filters.js"):
+        media_type, content = static_asset(asset_name)
+        assert media_type == "text/javascript; charset=utf-8"
+        assert content == (ASSETS / asset_name).read_bytes()
 
 
 def test_package_review_uses_only_the_frozen_public_payload_and_routes() -> None:
@@ -51,6 +53,7 @@ def test_package_review_keeps_direct_accessible_controls_and_mobile_rules() -> N
 
     assert 'input.type = "radio"' in script
     assert '"Количество + стоимость"' in script and '"Только стоимость"' in script
+    assert "Принять пакет" in script
     assert "Принять все безопасные" in script and "Применить ${safe.length}" in script
     for shortcut in ("A</kbd>", "R</kbd>", "J</kbd>", "U</kbd>"):
         assert shortcut in script
@@ -63,3 +66,29 @@ def test_package_review_keeps_direct_accessible_controls_and_mobile_rules() -> N
     )
     assert mobile_grid in styles
     assert "@media (max-width: 390px)" in styles
+
+
+def test_canonical_primary_and_compact_secondary_filters_have_fail_soft_defaults() -> None:
+    filters = (ASSETS / "reconciliation-batch-filters.js").read_text(encoding="utf-8")
+
+    for label in (
+        "Можно принять пакетом",
+        "Есть расхождения",
+        "Новые формулировки",
+        "Уже знакомые",
+        "Только стоимость",
+        "Подозрительные значения",
+    ):
+        assert label in filters
+    for field in (
+        "category",
+        "mode",
+        "unitFamily",
+        "size",
+        "exceptions",
+        "readyForMass",
+        "manuallyChanged",
+    ):
+        assert field in filters
+    assert '["safe", "clarify", "new"].includes(item?.queue)' in filters
+    assert "window.ReconciliationBatchFilters" in filters

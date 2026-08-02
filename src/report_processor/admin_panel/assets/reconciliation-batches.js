@@ -2,12 +2,6 @@
   "use strict";
 
   const STORAGE_KEY = "report-processor.reconciliation-batches.job.v1";
-  const QUEUES = [
-    { id: "safe", title: "Можно принять пакетом", hint: "Без конфликтов" },
-    { id: "clarify", title: "Нужны уточнения", hint: "Требуют решения" },
-    { id: "new", title: "Новые виды работ", hint: "Проверьте категорию" },
-  ];
-
   const asArray = (value) => Array.isArray(value) ? value : [];
   const text = (value, fallback = "—") => typeof value === "string" && value.trim() ? value : fallback;
   const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -21,13 +15,6 @@
     return tail > 10 && tail < 20 ? many : last === 1 ? one : last > 1 && last < 5 ? few : many;
   };
 
-  const queueId = (value) => {
-    const normalized = String(value || "").toLowerCase();
-    if (["safe", "can_apply", "accept_safe", "можно принять пакетом"].includes(normalized)) return "safe";
-    if (["new", "new_work", "new_category", "новые виды работ"].includes(normalized)) return "new";
-    return "clarify";
-  };
-
   class ReconciliationBatchReview {
     constructor({ root, getJobId, renderPayload, report }) {
       this.root = root;
@@ -35,7 +22,7 @@
       this.renderPayload = renderPayload;
       this.report = report;
       this.query = "";
-      this.queue = "safe";
+      this.filters = window.ReconciliationBatchFilters.defaults();
       this.selectedId = "";
       this.previewingSafe = false;
       this.settledId = "";
@@ -165,23 +152,15 @@
         this.query = search.value.trim().toLocaleLowerCase("ru-RU");
         this.render(this.payload);
       });
-      const filters = document.createElement("div");
-      filters.className = "batch-filters";
-      filters.setAttribute("role", "group");
-      filters.setAttribute("aria-label", "Очередь проверки");
-      QUEUES.forEach((queue) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "batch-filter";
-        button.textContent = queue.title;
-        button.setAttribute("aria-pressed", String(this.queue === queue.id));
-        button.classList.toggle("is-selected", this.queue === queue.id);
-        button.addEventListener("click", () => {
-          this.queue = queue.id;
+      const filters = window.ReconciliationBatchFilters.build({
+        packages: this.packages,
+        categories: this.categories,
+        state: this.filters,
+        onChange: (next) => {
+          this.filters = { ...this.filters, ...next };
           this.previewingSafe = false;
           this.render(this.payload);
-        });
-        filters.append(button);
+        },
       });
       toolbar.append(search, filters);
       return toolbar;
@@ -196,7 +175,7 @@
 
     visiblePackages() {
       return this.packages.filter((item) => {
-        if (queueId(item.queue) !== this.queue) return false;
+        if (!window.ReconciliationBatchFilters.matches(item, this.filters)) return false;
         if (!this.query) return true;
         const haystack = [item.label, item.reason, item.proposed_category_id, item.selected_category_id]
           .concat(asArray(item.families).map((family) => family?.label))
@@ -210,17 +189,18 @@
       const area = document.createElement("div");
       area.className = "batch-queue";
       area.setAttribute("aria-live", "polite");
-      const queue = QUEUES.find((item) => item.id === this.queue);
+      const filter = window.ReconciliationBatchFilters.primaryFilters
+        .find((item) => item.id === this.filters.primary);
       const heading = document.createElement("div");
       heading.className = "batch-queue-heading";
       const title = document.createElement("h4");
-      title.textContent = queue.title;
+      title.textContent = filter?.label || "Пакеты";
       const hint = document.createElement("p");
-      hint.textContent = queue.hint;
+      hint.textContent = "Можно уточнить выбор дополнительными фильтрами.";
       heading.append(title, hint);
       area.append(heading);
       const items = this.visiblePackages();
-      if (this.queue === "safe") area.append(this.buildMassAction(items));
+      if (this.filters.primary === "safe") area.append(this.buildMassAction(items));
       if (!items.length) {
         const empty = document.createElement("p");
         empty.className = "batch-empty";
@@ -314,7 +294,7 @@
       const mode = this.buildMode(`package-${item.package_id}`, item.mode, `Способ учёта пакета «${text(item.label)}»`);
       const actions = document.createElement("div");
       actions.className = "batch-actions";
-      const accept = this.actionButton("Принять", "accept", () => this.savePackage(item, category.value, this.modeOf(mode), "accept", decision));
+      const accept = this.actionButton("Принять пакет", "accept", () => this.savePackage(item, category.value, this.modeOf(mode), "accept", decision));
       const reject = this.actionButton("Отклонить", "reject", () => this.savePackage(item, category.value, this.modeOf(mode), "reject", decision));
       actions.append(accept, reject);
       decision.append(categoryLabel, mode, actions);
@@ -552,7 +532,7 @@
       const section = document.createElement("section");
       section.className = "batch-last-action";
       const copy = document.createElement("p");
-      copy.textContent = text(this.payload.review_last_action?.label || this.payload.review_last_action?.message, "Последнее решение можно отменить.");
+      copy.textContent = this.lastActionText();
       const undo = document.createElement("button");
       undo.type = "button";
       undo.className = "batch-undo";
@@ -560,6 +540,15 @@
       undo.addEventListener("click", () => this.undo(undo));
       section.append(copy, undo);
       return section;
+    }
+
+    lastActionText() {
+      const action = this.payload.review_last_action;
+      if (typeof action === "string") return text(action, "Последнее решение можно отменить.");
+      if (action && typeof action === "object") {
+        return text(action.label || action.message || action.description, "Последнее решение можно отменить.");
+      }
+      return "Последнее решение можно отменить.";
     }
 
     async undo(scope) {

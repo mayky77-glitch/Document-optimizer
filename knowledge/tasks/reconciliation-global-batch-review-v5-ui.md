@@ -100,6 +100,7 @@ links:
 ## Completion evidence
 
 - Changed paths: `src/report_processor/admin_panel/assets/reconciliation-batches.js`,
+  `src/report_processor/admin_panel/assets/reconciliation-batch-filters.js`,
   `src/report_processor/admin_panel/assets/admin.js`,
   `src/report_processor/admin_panel/assets/admin.css`,
   `src/report_processor/admin_panel/assets/index.html`,
@@ -108,13 +109,16 @@ links:
   `tests/integration/test_reconciliation_review_ui_contract.py`.
 - Commands and tests run: `node --check src/report_processor/admin_panel/assets/admin.js`;
   `node --check src/report_processor/admin_panel/assets/reconciliation-batches.js`;
+  `node --check src/report_processor/admin_panel/assets/reconciliation-batch-filters.js`;
   `uv run pytest -q tests/integration/test_reconciliation_batch_ui_contract.py tests/integration/test_reconciliation_review_ui_contract.py`
-  (`5 passed`); `uv run ruff check tests/integration/test_reconciliation_batch_ui_contract.py tests/integration/test_reconciliation_review_ui_contract.py`;
+  (`6 passed`); `uv run ruff check tests/integration/test_reconciliation_batch_ui_contract.py tests/integration/test_reconciliation_review_ui_contract.py`;
   `git diff --check`.
 - Result: Package queues consume `ReconciliationBatchPayload-1.0`, with safe-first
   preview/apply, frozen IDs and versions, direct category/mode/action controls at
   package/family/group/row scope, details-based exact membership, keyboard shortcuts,
-  session job restoration, undo and responsive light/dark styles.
+  session job restoration, undo and responsive light/dark styles. Canonical primary
+  filters and compact secondary filters use stable queue values with fail-soft optional
+  fields; the authoritative final apply control remains visible when ready.
 - Risks or follow-up: Visual browser capture was attempted through the local server,
   but the workspace lacks the Playwright Python package; static 390 px responsive
   contract coverage is included. Lifecycle routes must land before live API exercise.

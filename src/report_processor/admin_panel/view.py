@@ -12,6 +12,10 @@ _PUBLIC_ASSETS = {
         "text/javascript; charset=utf-8",
         _ASSET_DIRECTORY / "reconciliation-batches.js",
     ),
+    "reconciliation-batch-filters.js": (
+        "text/javascript; charset=utf-8",
+        _ASSET_DIRECTORY / "reconciliation-batch-filters.js",
+    ),
     "theme.js": ("text/javascript; charset=utf-8", _ASSET_DIRECTORY / "theme.js"),
     "drawing-card.css": (
         "text/css; charset=utf-8",
