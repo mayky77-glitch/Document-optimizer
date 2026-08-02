@@ -12,7 +12,7 @@ agent_role: developer
 owner: reconciliation-v5-lifecycle
 profile: L2
 routing_grade: P4
-progress_revision: 1
+progress_revision: 2
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -130,6 +130,19 @@ links:
 - Risks or follow-up: existing browser controls still use the compatibility
   `review_groups` view; the new `review_packages` schema is available for its
   dedicated UI integration.
+
+## Wave 2 evidence
+
+- Stable package queues are `safe`, `clarify` and `new`; `new` is emitted only
+  when the existing package has no known category. Public primary and secondary
+  filter fields derive solely from package boundaries, explicit decisions and
+  restored feedback.
+- `review_last_action` is a stable object with a short `message` field.
+  Source-issue projection accepts both its controlled dataclass and mapping
+  form, exposing only basename, comment, repair hint and continuation status.
+- Commands and tests run: focused card pytest set — 29 passed, 1 opt-in
+  real-data test skipped because its environment variables are absent; Ruff
+  check and format check — passed; `git diff --check` — passed.
 
 ## Handoff
 

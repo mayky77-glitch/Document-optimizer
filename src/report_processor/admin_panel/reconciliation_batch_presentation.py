@@ -17,6 +17,10 @@ def reconciliation_batch_payload(state: ReconciliationReviewState) -> dict[str, 
     for package in state.grouping.packages if state.grouping else ():
         direct = state.package_decisions.get(package.package_id)
         package_groups = _groups(state, package.member_group_ids)
+        manually_changed = _manually_changed(state, package.member_group_ids)
+        has_exceptions = bool(package.exception_reasons)
+        category = package.package_key[0] or None
+        queue = _queue(package.safe, category)
         family_payloads = [
             _family_payload(state, families[family_id]) for family_id in package.family_ids
         ]
@@ -24,20 +28,32 @@ def reconciliation_batch_payload(state: ReconciliationReviewState) -> dict[str, 
             {
                 "package_id": package.package_id,
                 "version": package.version,
-                "queue": "Безопасная обработка" if package.safe else "Ручная проверка",
-                "label": _package_label(package.safe),
-                "proposed_category_id": package.package_key[0] or None,
+                "queue": queue,
+                "label": _package_label(queue),
+                "proposed_category_id": category,
                 "selected_category_id": direct.target_category if direct else None,
                 "action": direct.action.value if direct else None,
-                "mode": direct.mode.value if direct and direct.mode else None,
+                "mode": direct.mode.value if direct and direct.mode else package.package_key[1],
                 "family_count": _number(len(package.family_ids)),
                 "group_count": _number(len(package.member_group_ids)),
                 "row_count": _number(sum(len(group.member_ids) for group in package_groups)),
                 "exception_count": _number(len(package.exception_reasons)),
                 "quantity": _total(state, package.member_group_ids, "quantity"),
                 "cost": _total(state, package.member_group_ids, "cost"),
-                "reason": _package_reason(package.safe),
+                "reason": _package_reason(queue),
                 "safe": package.safe,
+                "category": category,
+                "unit_family": package.package_key[2],
+                "package_size": _number(sum(len(group.member_ids) for group in package_groups)),
+                "has_exceptions": has_exceptions,
+                "ready_for_mass_accept": package.safe
+                and not manually_changed
+                and category is not None,
+                "manually_changed": manually_changed,
+                "is_familiar": any(
+                    group_id in state.familiar_group_ids for group_id in package.member_group_ids
+                ),
+                "suspicious": has_exceptions,
                 "families": family_payloads,
             }
         )
@@ -54,7 +70,7 @@ def reconciliation_batch_payload(state: ReconciliationReviewState) -> dict[str, 
             for category_id, label in sorted(state.categories.items())
         ],
         "review_can_apply": not state.unresolved_row_ids(),
-        "review_last_action": state.last_action or "Решения не сохранены.",
+        "review_last_action": {"message": state.last_action or "Решения не сохранены."},
     }
 
 
@@ -94,9 +110,38 @@ def _number(value: int) -> str:
     return _decimal(Decimal(value))
 
 
-def _package_label(safe: bool) -> str:
-    return "Пакет для применения" if safe else "Пакет для ручной проверки"
+def _package_label(queue: str) -> str:
+    if queue == "safe":
+        return "Пакет для применения"
+    if queue == "new":
+        return "Новый вид работ"
+    return "Пакет для ручной проверки"
 
 
-def _package_reason(safe: bool) -> str:
-    return "Ограничения соблюдены." if safe else "Требуется отдельное решение оператора."
+def _package_reason(queue: str) -> str:
+    if queue == "safe":
+        return "Ограничения соблюдены."
+    if queue == "new":
+        return "Категория для работы не определена."
+    return "Требуется отдельное решение оператора."
+
+
+def _queue(safe: bool, category: str | None) -> str:
+    if category is None:
+        return "new"
+    return "safe" if safe else "clarify"
+
+
+def _manually_changed(state: ReconciliationReviewState, group_ids: tuple[str, ...]) -> bool:
+    row_ids = {row_id for group_id in group_ids for row_id in state.groups[group_id].member_ids}
+    family_ids = {
+        family.family_id
+        for family in state.grouping.families
+        if state.grouping is not None
+        if set(family.member_group_ids).intersection(group_ids)
+    }
+    return bool(
+        set(group_ids).intersection(state.group_decisions)
+        or row_ids.intersection(state.row_decisions)
+        or family_ids.intersection(state.family_decisions)
+    )

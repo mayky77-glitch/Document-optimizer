@@ -61,6 +61,7 @@ class ReconciliationReviewState:
     row_decisions: dict[str, ReviewDecision] = field(default_factory=dict)
     package_decisions: dict[str, BatchReviewDecision] = field(default_factory=dict)
     family_decisions: dict[str, BatchReviewDecision] = field(default_factory=dict)
+    familiar_group_ids: set[str] = field(default_factory=set)
     last_action: str | None = None
     _undo: _DecisionSnapshot | None = None
     _autosave: Callable[[ReconciliationReviewState], None] | None = None

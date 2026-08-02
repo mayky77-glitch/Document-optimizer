@@ -134,21 +134,33 @@ def _source_issues(values: object) -> list[dict[str, object]]:
         return []
     result = []
     for value in values:
-        if not isinstance(value, Mapping):
+        if isinstance(value, Mapping):
+            basename_value = value.get("basename")
+            comment_value = value.get("comment")
+            repair_hint_value = value.get("repair_hint")
+            can_continue = value.get("can_continue") is True
+        else:
+            from .reconciliation_sources import ReconciliationSourceIssue
+
+            if not isinstance(value, ReconciliationSourceIssue):
+                continue
+            basename_value = value.safe_basename
+            comment_value = value.comment
+            repair_hint_value = value.repair_hint
+            can_continue = value.can_continue
+        basename = _public_text(basename_value, 200)
+        comment = _public_text(comment_value, 240)
+        repair_hint = _public_text(repair_hint_value, 240)
+        if not basename or not comment or not repair_hint:
             continue
-        basename = _public_text(value.get("basename"), 200)
-        comment = _public_text(value.get("comment"), 240)
-        repair_hint = _public_text(value.get("repair_hint"), 240)
-        can_continue = value.get("can_continue") is True
-        if basename and comment and repair_hint:
-            result.append(
-                {
-                    "basename": basename,
-                    "comment": comment,
-                    "repair_hint": repair_hint,
-                    "can_continue": can_continue,
-                }
-            )
+        result.append(
+            {
+                "basename": basename,
+                "comment": comment,
+                "repair_hint": repair_hint,
+                "can_continue": can_continue,
+            }
+        )
     return result
 
 

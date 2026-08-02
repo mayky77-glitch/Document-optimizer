@@ -66,9 +66,7 @@ def test_package_routes_mass_accept_undo_and_private_payload(tmp_path: Path) -> 
         accepted = client.post(
             f"/api/jobs/{payload['job_id']}/review/packages/accept-safe",
             json={
-                "packages": [
-                    {"package_id": package["package_id"], "version": package["version"]}
-                ]
+                "packages": [{"package_id": package["package_id"], "version": package["version"]}]
             },
         )
         undone = client.post(f"/api/jobs/{payload['job_id']}/review/undo")
@@ -77,9 +75,8 @@ def test_package_routes_mass_accept_undo_and_private_payload(tmp_path: Path) -> 
     assert accepted.status_code == undone.status_code == 200
     assert accepted.json()["review_can_apply"] is True
     assert undone.json()["review_can_apply"] is False
-    assert "Последнее решение отменено" in undone.json()["review_last_action"]
+    assert "Последнее решение отменено" in undone.json()["review_last_action"]["message"]
     serialized = repr(accepted.json())
     assert all(
-        value not in serialized
-        for value in ("digest", "path", "sheet", "formula", "warning")
+        value not in serialized for value in ("digest", "path", "sheet", "formula", "warning")
     )
