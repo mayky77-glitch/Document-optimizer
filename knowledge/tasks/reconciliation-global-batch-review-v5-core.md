@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-orda_status: frozen
+status: review
+orda_status: review
 card_id: reconciliation-global-batch-review-v5-core
 version: 1
 work_id: reconciliation-global-batch-review-v5
@@ -12,16 +12,16 @@ agent_role: developer
 owner: reconciliation-v5-core
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 1
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
 routing_reason: Difficult multi-file domain implementation with hard safety constraints and optional local-model fallback.
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 card_path: knowledge/tasks/reconciliation-global-batch-review-v5-core.md
@@ -57,7 +57,7 @@ last_verified: 2026-08-02
 updated: 2026-08-02
 tags:
   - task/implementation
-  - status/draft
+  - status/review
   - domain/document-processing
   - risk/high
 links:
@@ -84,10 +84,24 @@ links:
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: `src/report_processor/reconciliation_grouping/**`,
+  `tests/unit/reconciliation_grouping/**`,
+  `tests/contract/test_reconciliation_grouping_contract.py`.
+- Commands and tests run: `uv run pytest -q tests/unit/reconciliation_grouping
+  tests/contract/test_reconciliation_grouping_contract.py tests/integration/test_block18_rag.py`
+  (`13 passed, 1 skipped` because `RUN_RAG_MODEL=1` is required); `uv run ruff
+  check src/report_processor/reconciliation_grouping tests/unit/reconciliation_grouping
+  tests/contract/test_reconciliation_grouping_contract.py`; `uv run ruff format
+  --check src/report_processor/reconciliation_grouping tests/unit/reconciliation_grouping
+  tests/contract/test_reconciliation_grouping_contract.py`; `git diff --check`.
+- Result: ReconciliationFeatureContract-1.0 and ReconciliationPackageContract-1.0
+  are implemented with ephemeral finite-Decimal zero filtering, deterministic
+  feature and hard-conflict extraction, exact ReviewGroup membership, stable IDs
+  and ordering, opaque public projection, and an injected local-only fail-soft
+  encoder/cache boundary.
+- Risks or follow-up: This core is intentionally not wired to admin lifecycle,
+  persistence, presentation or `stage_rag`; later scoped waves must use the
+  `rank_with_local_assist` boundary rather than giving model output decision authority.
 
 ## Handoff
 
