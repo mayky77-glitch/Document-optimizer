@@ -1,0 +1,85 @@
+from decimal import Decimal
+from io import BytesIO
+from pathlib import Path
+
+from openpyxl import Workbook
+from starlette.testclient import TestClient
+
+from report_processor.admin_panel import create_app
+from report_processor.admin_panel.reconciliation_execution import ReconciliationReviewResult
+from report_processor.admin_panel.reconciliation_state import ReconciliationReviewState
+from report_processor.admin_panel.service import AdminPanelService
+from report_processor.reconciliation_grouping import (
+    PackageVersionContext,
+    build_reconciliation_packages,
+)
+from report_processor.reconciliation_review import ReviewRow, build_review_groups
+
+
+def _result() -> ReconciliationReviewResult:
+    rows = {
+        row_id: ReviewRow(
+            row_id, "Монтаж силового кабеля", "м", Decimal("1"), Decimal("2"), "target-1"
+        )
+        for row_id in ("row-a", "row-b")
+    }
+    groups = build_review_groups(rows.values())
+    grouping = build_reconciliation_packages(
+        rows.values(),
+        groups,
+        version_context=PackageVersionContext(("source",), "target", "catalog"),
+    )
+    return ReconciliationReviewResult(
+        ReconciliationReviewState(
+            rows=rows,
+            groups={group.group_id: group for group in groups},
+            categories={"target-1": "Целевая категория"},
+            source_digests=("source",),
+            target_digest="target",
+            grouping=grouping,
+        ),
+        None,
+    )
+
+
+def _workbook_bytes() -> bytes:
+    workbook = Workbook()
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
+
+
+def test_package_routes_mass_accept_undo_and_private_payload(tmp_path: Path) -> None:
+    service = AdminPanelService(tmp_path, execute=lambda _job: _result())
+    app = create_app(service=service, workspace_root=tmp_path)
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/jobs",
+            files={
+                "sources": ("source.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+                "target": ("target.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+            },
+        )
+        payload = created.json()
+        package = payload["review_packages"][0]
+        accepted = client.post(
+            f"/api/jobs/{payload['job_id']}/review/packages/accept-safe",
+            json={
+                "packages": [
+                    {"package_id": package["package_id"], "version": package["version"]}
+                ]
+            },
+        )
+        undone = client.post(f"/api/jobs/{payload['job_id']}/review/undo")
+
+    assert created.status_code == 201
+    assert accepted.status_code == undone.status_code == 200
+    assert accepted.json()["review_can_apply"] is True
+    assert undone.json()["review_can_apply"] is False
+    assert "Последнее решение отменено" in undone.json()["review_last_action"]
+    serialized = repr(accepted.json())
+    assert all(
+        value not in serialized
+        for value in ("digest", "path", "sheet", "formula", "warning")
+    )

@@ -16,6 +16,11 @@ from report_processor.matching import (
     MatchStrategy,
     match_rows,
 )
+from report_processor.reconciliation_grouping import (
+    PackageVersionContext,
+    build_reconciliation_packages,
+    partition_rows,
+)
 from report_processor.reconciliation_review import (
     FeedbackRecord,
     ReviewDecision,
@@ -28,6 +33,7 @@ from report_processor.reconciliation_review import (
     normalize_unit,
 )
 
+from .reconciliation_batch_store import ReconciliationBatchStore
 from .reconciliation_sources import AllReconciliationSourcesUnusableError, ReconciliationSourceBatch
 from .reconciliation_state import ReconciliationReviewState
 from .reconciliation_target import (
@@ -57,8 +63,22 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
     except Exception:
         return ReconciliationReviewResult(None, batch, batch.issues, True)
     catalog = _catalog(targets)
-    rows = _review_rows(batch.rows, targets, catalog, job)
+    source_rows = _review_rows(batch.rows, targets, catalog, job)
+    partition = partition_rows(source_rows)
+    # Zero-activity rows remain internal source facts.  They must never reach
+    # grouping, feedback or an operator decision surface.
+    rows = partition.visible_rows
     groups = build_review_groups(rows)
+    grouping = build_reconciliation_packages(
+        source_rows,
+        groups,
+        category_availability=_group_category_availability(groups, batch.rows, catalog, job),
+        version_context=PackageVersionContext(
+            tuple(sorted(f"{index}:{digest}" for index, digest in enumerate(job.source_digests))),
+            job.target_digest,
+            _catalog_version(catalog),
+        ),
+    )
     state = ReconciliationReviewState(
         rows={row.row_id: row for row in rows},
         groups={group.group_id: group for group in groups},
@@ -66,8 +86,12 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         source_digests=job.source_digests,
         target_digest=job.target_digest,
         available_categories=_available_categories(batch.rows, catalog, job),
+        grouping=grouping,
     )
     _restore_feedback(state, feedback)
+    store = ReconciliationBatchStore(job.directory)
+    store.restore(state)
+    state.set_autosave(store.save)
     return ReconciliationReviewResult(state, batch, batch.issues)
 
 
@@ -210,6 +234,24 @@ def _available_categories(rows, catalog: _Catalog, job) -> dict[str, frozenset[s
         )
         for row in rows
     }
+
+
+def _group_category_availability(groups, rows, catalog: _Catalog, job) -> dict[str, frozenset[str]]:
+    available = _available_categories(rows, catalog, job)
+    return {
+        group.group_id: frozenset.intersection(
+            *(available.get(row_id, frozenset()) for row_id in group.member_ids)
+        )
+        for group in groups
+    }
+
+
+def _catalog_version(catalog: _Catalog) -> str:
+    return sha256(
+        json.dumps(
+            sorted(catalog.labels.items()), ensure_ascii=False, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
 
 
 def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows):

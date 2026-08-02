@@ -7,9 +7,11 @@ import pytest
 from openpyxl import Workbook, load_workbook
 
 from report_processor.admin_panel.reconciliation_execution import (
+    _Catalog,
     _feedback_records,
     _review_row_id,
     apply_review,
+    prepare_review,
 )
 from report_processor.admin_panel.reconciliation_target import publish_unchanged_target
 from report_processor.reconciliation_review import (
@@ -20,6 +22,46 @@ from report_processor.reconciliation_review import (
     ReviewRow,
     build_review_groups,
 )
+
+
+def test_prepare_review_hides_leading_zero_row_without_hiding_later_nonzero_row(
+    tmp_path, monkeypatch
+) -> None:
+    zero = ReviewRow("zero", "Монтаж кабеля", "м", Decimal("0"), Decimal("0"), "target-1")
+    nonzero = ReviewRow("nonzero", "Монтаж кабеля", "м", Decimal("1"), Decimal("2"), "target-1")
+    job = SimpleNamespace(
+        source_digests=("source",),
+        target_digest="target",
+        target=tmp_path / "target.xlsx",
+        stage="13.1",
+        directory=tmp_path,
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution._sources",
+        lambda _job: SimpleNamespace(rows=(), issues=()),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution.read_reconciliation_target",
+        lambda *_args: (object(), ()),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution._catalog",
+        lambda _targets: _Catalog({"target-1": "Цель"}, {}),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution._review_rows",
+        lambda *_args: (zero, nonzero),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution._available_categories",
+        lambda *_args: {"zero": frozenset({"target-1"}), "nonzero": frozenset({"target-1"})},
+    )
+
+    result = prepare_review(job, ())
+
+    assert result.state is not None
+    assert tuple(result.state.rows) == ("nonzero",)
+    assert result.state.grouping.partition.hidden_rows == (zero,)
 
 
 def test_feedback_records_restore_row_feedback_over_group_feedback() -> None:
