@@ -1,6 +1,8 @@
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 
+from openpyxl import Workbook
 from starlette.testclient import TestClient
 
 from report_processor.admin_panel import create_app
@@ -23,8 +25,17 @@ def _review_result() -> ReconciliationReviewResult:
             categories={"target-1": "Целевой этап"},
             source_digests=("source-a", "source-b"),
             target_digest="target",
-        )
+        ),
+        None,
     )
+
+
+def _workbook_bytes() -> bytes:
+    workbook = Workbook()
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
 
 
 def test_authoritative_review_payload_and_local_responsive_controls(tmp_path: Path) -> None:
@@ -36,12 +47,12 @@ def test_authoritative_review_payload_and_local_responsive_controls(tmp_path: Pa
             files={
                 "sources": (
                     "source-a.xlsx",
-                    b"PK\x03\x04a",
+                    _workbook_bytes(),
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 ),
                 "target": (
                     "target.xlsx",
-                    b"PK\x03\x04t",
+                    _workbook_bytes(),
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 ),
             },
@@ -51,8 +62,13 @@ def test_authoritative_review_payload_and_local_responsive_controls(tmp_path: Pa
 
     payload = created.json()
     assert created.status_code == 201
-    assert payload["unresolved_review_count"] == 2 and payload["review_can_apply"] is False
+    assert payload["unresolved_review_count"] == 1 and payload["review_can_apply"] is False
     assert {"review_groups", "review_categories", "download_url"} <= set(payload)
+    assert len(payload["review_groups"]) == 1
+    assert [member["row_id"] for member in payload["review_groups"][0]["members"]] == [
+        "source-a:1",
+        "source-b:1",
+    ]
     serialized = repr(payload)
     assert all(
         token not in serialized
@@ -67,4 +83,11 @@ def test_authoritative_review_payload_and_local_responsive_controls(tmp_path: Pa
     )
     assert "/review/groups/" in javascript and "/review/items/" in javascript
     assert "mode-switch" in javascript and "@container" in css
+    assert 'input.type = "radio"' in javascript
+    assert (
+        '[["quantity_cost", "Количество + стоимость"], ["cost_only", "Только стоимость"]]'
+        in javascript
+    )
+    assert 'document.createElement("details")' in javascript
+    assert "member-override" in javascript and "renderMemberRow" in javascript
     assert "http://" not in javascript + css and "https://" not in javascript + css
