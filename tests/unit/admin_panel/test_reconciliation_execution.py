@@ -14,6 +14,7 @@ from report_processor.admin_panel.reconciliation_execution import (
     apply_review,
     prepare_review,
 )
+from report_processor.admin_panel.reconciliation_semantic_assist import RUBERT_TINY2_MODEL_REVISION
 from report_processor.admin_panel.reconciliation_target import publish_unchanged_target
 from report_processor.reconciliation_review import (
     FeedbackRecord,
@@ -63,6 +64,7 @@ def test_prepare_review_hides_leading_zero_row_without_hiding_later_nonzero_row(
     assert result.state is not None
     assert tuple(result.state.rows) == ("nonzero",)
     assert result.state.grouping.partition.hidden_rows == (zero,)
+    assert result.state.grouping.version_context.model_revision == RUBERT_TINY2_MODEL_REVISION
     assert result.state.group_decisions == {} and result.state.row_decisions == {}
 
 
