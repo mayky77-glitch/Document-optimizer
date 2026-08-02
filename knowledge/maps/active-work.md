@@ -12,6 +12,7 @@ updated: 2026-07-31
 - [[../tasks/reconciliation-real-data-tests-v4|Reconciliation real-data tests v4]] — focused acceptance for the accepted fail-soft source, grouped review and verified output flow.
 - [[../tasks/reconciliation-real-data-remediation-v4|Reconciliation real-data remediation v4]] — focused KS-2 header and all-reject output fixes from independent test evidence.
 - [[../tasks/reconciliation-ui-clarity-v4|Reconciliation UI clarity v4]] — remove implicit category defaults and correct all-bad repair guidance.
+- [[../tasks/reconciliation-mobile-overflow-v4|Reconciliation mobile overflow v4]] — remove the measured hidden-table overflow at 390 px.
 
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
