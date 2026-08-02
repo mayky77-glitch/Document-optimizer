@@ -19,7 +19,7 @@ launch_status: planned
 planning_parent_sha: 321e988a016629f3d093b47431b03872bb775702
 base_sha_source: exact remediation planning commit supplied by the launch envelope
 dependency_shas:
-  - 28ae28f8f353405a873ef903f8346b8a1ed836a1
+  - e0eba998137c2b7da9794ad0ffeba9ad5b4d0053
 branch: codex/reconciliation-real-data-remediation-v4
 write_scope:
   - src/report_processor/admin_panel/reconciliation_sources.py
@@ -51,6 +51,10 @@ links:
 ---
 
 # Reconciliation focused remediation
+
+Failing acceptance evidence is isolated on test feature
+`28ae28f8f353405a873ef903f8346b8a1ed836a1`; it is intentionally not a code
+dependency until root merges the production remediation first.
 
 - KS-2 data start must be derived from explicit header-token rows. A non-empty
   detail row must never extend the header boundary merely because it has values in
