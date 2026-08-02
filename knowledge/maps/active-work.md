@@ -9,7 +9,7 @@ updated: 2026-07-31
 
 # Active work
 
-- [[../tasks/reconciliation-real-data-resilience-v4-gate0|Reconciliation real-data resilience v4]] — frozen Gate 0 for fail-soft source extraction, grouped review cards and verified output.
+- [[../tasks/reconciliation-real-data-tests-v4|Reconciliation real-data tests v4]] — focused acceptance for the accepted fail-soft source, grouped review and verified output flow.
 
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
