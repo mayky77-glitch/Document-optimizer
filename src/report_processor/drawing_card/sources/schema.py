@@ -134,6 +134,43 @@ def _block_metric_score(header: str, block_aliases: tuple[str, ...], *, quantity
     return 20 if "стоим" in leaf or "сумм" in leaf else 0
 
 
+def _is_unit_price_header(header: str) -> bool:
+    return any(token in header for token in _UNIT_PRICE_TOKENS) or "цен" in header
+
+
+def _resolve_contract_metrics(headers: dict[int, str]) -> tuple[dict[str, int], list[str]]:
+    """Resolve contract triplets where volume sits left of the cost block."""
+    cost_columns = sorted(
+        column
+        for column, header in headers.items()
+        if _block_metric_score(header, (_CONTRACT_COST_BLOCK,), quantity=False)
+    )
+    candidates: list[tuple[int, int]] = []
+    for cost_column in cost_columns:
+        quantities = [
+            column
+            for column in range(max(1, cost_column - 6), cost_column)
+            if any(token in headers.get(column, "") for token in _QUANTITY_TOKENS)
+            and any(
+                _is_unit_price_header(headers.get(price_column, ""))
+                for price_column in range(column + 1, cost_column)
+            )
+        ]
+        if quantities:
+            candidates.append((max(quantities), cost_column))
+    if not candidates:
+        return {}, []
+    quantity_column, cost_column = candidates[0]
+    warnings: list[str] = []
+    if len(candidates) > 1:
+        warnings.append(f"AMBIGUOUS_COLUMN:contract_total_cost:{cost_column},{candidates[1][1]}")
+        warnings.append(f"AMBIGUOUS_COLUMN:contract_quantity:{quantity_column},{candidates[1][0]}")
+    return {
+        "contract_quantity": quantity_column,
+        "contract_total_cost": cost_column,
+    }, warnings
+
+
 def _resolve_block_metrics(
     headers: dict[int, str],
     *,
@@ -199,11 +236,7 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
     if resolved.get("remaining_quantity") == resolved.get("remaining_total_cost"):
         column = resolved.pop("remaining_quantity", None)
         warnings.append(f"SAME_COLUMN_FOR_QUANTITY_AND_COST:{column}")
-    contract_columns, contract_warnings = _resolve_block_metrics(
-        headers,
-        prefix="contract",
-        block_aliases=(_CONTRACT_COST_BLOCK,),
-    )
+    contract_columns, contract_warnings = _resolve_contract_metrics(headers)
     performed_columns, performed_warnings = _resolve_block_metrics(
         headers,
         prefix="performed",

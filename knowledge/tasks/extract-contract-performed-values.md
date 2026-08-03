@@ -65,12 +65,16 @@ Extract four immutable contract/performed Decimal values alongside existing rema
   - `.venv/bin/ruff format --check src/report_processor/drawing_card/models.py src/report_processor/drawing_card/sources/schema.py src/report_processor/drawing_card/sources/extractor.py`
   - `.venv/bin/pytest -q tests/unit/drawing_card/test_hierarchy_aggregates.py` — `3 passed`
   - focused in-memory multi-row-header check: resolved all four columns; empty contract cached cells yielded `Decimal(0)`.
+  - follow-up: `.venv/bin/python` private-source schema inspection emitted only mappings; all four selected schemas resolved contract columns.
+  - follow-up: nearest complete contract-triplet check passed; `.venv/bin/pytest -q tests/unit/drawing_card/test_hierarchy_aggregates.py` — `3 passed`.
 - Result:
   - `DrawingSourceRow` now exposes `contract_quantity`, `contract_total_cost`, `performed_quantity`, and `performed_total_cost`, each defaulting to `Decimal(0)` for backward-compatible construction.
   - Schema resolution selects explicit quantity/cost leaf columns beneath `Стоимость по договору` and `Выполнено за весь период строительства`; tied duplicate leaves resolve to the leftmost column and emit `AMBIGUOUS_COLUMN`.
   - Extraction preserves cached/formula provenance in this fixed tuple order: remaining quantity/cost, contract quantity/cost, performed quantity/cost.
+  - Contract resolution binds a quantity to the nearest preceding quantity/unit-price/contract-total triplet, including PSD gaps. Duplicate blocks remain deterministic (leftmost cost block) and warning-bearing.
+  - Private selected-schema mappings, with source names and values omitted: `25/27/170/171`, `11/15/165/166`, `11/15/169/170`, `15/17/64/65` (contract quantity/total cost/performed quantity/total cost).
 - Risks or follow-up:
-  - The current source scope has no real-workbook fixture. Header aliases cover the PRD labels; a real duplicate-header fixture should lock the expected physical columns in the downstream test scope.
+  - The current source scope has no committed real-workbook fixture. A downstream fixture should lock real duplicate-header physical columns, including the 0907 `11/14/15` and later `40/41/42` candidates.
   - A formula without a cached value remains warning-bearing and produces `Decimal(0)` for the new rendered metrics.
 
 ## Routing
