@@ -5,9 +5,12 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from report_processor.drawing_card.config import load_rules
 from report_processor.drawing_card.matching.examples import ConfirmedExample, RetrievedExample
 from report_processor.drawing_card.matching.matcher import DrawingRowMatcher
+from report_processor.drawing_card.matching.semantic import DenseRetrievalContext
 from report_processor.drawing_card.models import (
     DrawingSourceLocation,
     DrawingSourceRow,
@@ -75,6 +78,14 @@ def test_rubert_suggestion_is_never_auto_applied() -> None:
     assert decision.cost_decision == "review"
     assert decision.requires_manual_review is True
     assert "SEMANTIC_SUGGESTION_NOT_APPLIED" in decision.warnings
+
+
+def test_dense_retriever_requires_explicit_context() -> None:
+    with pytest.raises(ValueError, match="supplied together"):
+        DrawingRowMatcher(RULES, (), rag_mode="semantic", dense_retriever=object())
+
+    with pytest.raises(ValueError, match="tenant"):
+        DenseRetrievalContext("", "project", "visr", "taxonomy-1")
 
 
 class _SemanticSuggestion:
