@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from report_processor.stage_rag import evaluate_cases
 from report_processor.stage_rag.evaluation import (
     EvaluationQuery,
     evaluate_fixture,
@@ -165,3 +166,32 @@ def test_unavailable_result_is_rejected_before_metrics() -> None:
 def test_legacy_evaluate_fixture_arity_warns_then_refuses_fabricated_metrics() -> None:
     with pytest.deprecated_call(), pytest.raises(ValueError, match="requires a DenseRetriever"):
         evaluate_fixture(Path("tests/fixtures/stage_rag/dense_rag_evaluation.json"))
+
+
+def test_legacy_evaluate_cases_order_preserves_observed_evaluation() -> None:
+    query = EvaluationQuery(
+        "sanitized cable query",
+        "example-cable",
+        "tenant-a",
+        "project-7",
+        "visr",
+        "taxonomy-1",
+    )
+    ticks = iter((1.0, 1.002))
+
+    with pytest.deprecated_call():
+        result = evaluate_cases(_retriever(), (query,), clock=lambda: next(ticks))
+
+    assert result.query_count == 1
+    assert result.recall_at_5 == result.mrr == 1.0
+    assert result.mean_latency_ms == pytest.approx(2.0)
+
+
+def test_legacy_one_argument_fabricated_cases_are_rejected() -> None:
+    fabricated_cases = ({"candidate_example_ids": ["example-cable"]},)
+
+    with (
+        pytest.deprecated_call(),
+        pytest.raises(ValueError, match="requires a DenseRetriever and queries"),
+    ):
+        evaluate_cases(fabricated_cases)  # type: ignore[arg-type]

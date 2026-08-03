@@ -77,18 +77,13 @@ class ConfirmedExampleIndexer:
         """Deactivate search state without modifying any audit evidence."""
         if not isinstance(tenant_id, str) or not tenant_id.strip():
             raise StageRAGInputError("INVALID_TENANT", "tenant_id должен быть непустой строкой")
-        if isinstance(example_ids, (str, bytes)):
+        if isinstance(example_ids, (str, bytes)) or not isinstance(example_ids, Sequence):
             raise StageRAGInputError(
                 "INVALID_EXAMPLE_IDS", "example_ids должен быть последовательностью ID"
             )
-        try:
-            ids = tuple(example_ids)
-        except TypeError as exc:
-            raise StageRAGInputError(
-                "INVALID_EXAMPLE_IDS", "example_ids должен быть последовательностью ID"
-            ) from exc
-        if any(not isinstance(example_id, str) or not example_id.strip() for example_id in ids):
-            raise StageRAGInputError("INVALID_EXAMPLE_IDS", "example_ids содержит недопустимый ID")
+        ids = tuple(example_ids)
+        for example_id in ids:
+            _validate_opaque_id(example_id, "example_ids")
         self._vector_store.deactivate(tenant_id, ids)
 
 
