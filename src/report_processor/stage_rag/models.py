@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 
 STAGE_RELATION_RAG_CONTRACT_VERSION = "StageRelationRAG-18.0"
 
@@ -38,3 +39,138 @@ class StageRelationSuggestion:
     requires_manual_review: bool = field(default=True, init=False)
     auto_accepted: bool = field(default=False, init=False)
     contract_version: str = field(default=STAGE_RELATION_RAG_CONTRACT_VERSION, init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmedExampleVector:
+    """A validated, auditable vector for one explicit review confirmation."""
+
+    example_id: str
+    tenant_id: str
+    vector: tuple[float, ...]
+    normalized_text_hash: str
+    embedding_model_id: str
+    embedding_model_revision: str
+    taxonomy_version: str
+    review_decision: str
+    category: str | None = None
+    project_id: str | None = None
+    document_type: str | None = None
+    rule_version: str | None = None
+    audit_reference: str | None = None
+
+    def __post_init__(self) -> None:
+        _required_strings(
+            self.example_id,
+            self.tenant_id,
+            self.normalized_text_hash,
+            self.embedding_model_id,
+            self.embedding_model_revision,
+            self.taxonomy_version,
+            self.review_decision,
+        )
+        values = tuple(float(value) for value in self.vector)
+        if not values or not all(isfinite(value) for value in values):
+            raise ValueError("vector должен содержать хотя бы одно конечное число")
+        if self.audit_reference is not None and _unsafe_audit_reference(self.audit_reference):
+            raise ValueError("audit_reference не должен быть путём к файлу")
+        object.__setattr__(self, "vector", values)
+
+    @property
+    def embedding_dimensions(self) -> int:
+        return len(self.vector)
+
+    def payload(self) -> dict[str, str | int]:
+        """Return only metadata allowed in the vector-store payload."""
+        values: dict[str, str | int] = {
+            "example_id": self.example_id,
+            "tenant_id": self.tenant_id,
+            "normalized_text_hash": self.normalized_text_hash,
+            "embedding_model_id": self.embedding_model_id,
+            "embedding_model_revision": self.embedding_model_revision,
+            "embedding_dimensions": self.embedding_dimensions,
+            "taxonomy_version": self.taxonomy_version,
+            "review_decision": self.review_decision,
+        }
+        for key in ("category", "project_id", "document_type", "rule_version", "audit_reference"):
+            value = getattr(self, key)
+            if value is not None:
+                values[key] = value
+        return values
+
+
+@dataclass(frozen=True, slots=True)
+class DenseRetrievalQuery:
+    """A tenant-scoped vector query with optional exact metadata constraints."""
+
+    tenant_id: str
+    vector: tuple[float, ...]
+    limit: int = 5
+    project_id: str | None = None
+    document_type: str | None = None
+    taxonomy_version: str | None = None
+
+    def __post_init__(self) -> None:
+        _required_strings(self.tenant_id)
+        values = tuple(float(value) for value in self.vector)
+        if not values or not all(isfinite(value) for value in values):
+            raise ValueError("vector должен содержать хотя бы одно конечное число")
+        if isinstance(self.limit, bool) or not isinstance(self.limit, int) or self.limit < 1:
+            raise ValueError("limit должен быть положительным целым")
+        object.__setattr__(self, "vector", values)
+
+
+DenseQuery = DenseRetrievalQuery
+
+
+@dataclass(frozen=True, slots=True)
+class DenseRetrievalCandidate:
+    """A candidate that can only enrich a manual-review decision."""
+
+    example_id: str
+    score: float
+    category: str | None = None
+    review_decision: str | None = None
+    taxonomy_version: str | None = None
+    requires_manual_review: bool = field(default=True, init=False)
+    auto_accepted: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        _required_strings(self.example_id)
+        if not isfinite(float(self.score)):
+            raise ValueError("score должен быть конечным числом")
+        object.__setattr__(self, "score", float(self.score))
+
+
+@dataclass(frozen=True, slots=True)
+class DenseRetrievalResult:
+    """A deterministic result, including a controlled unavailable fallback state."""
+
+    query: DenseRetrievalQuery
+    candidates: tuple[DenseRetrievalCandidate, ...]
+    unavailable: bool = False
+    requires_manual_review: bool = field(default=True, init=False)
+    auto_accepted: bool = field(default=False, init=False)
+    contract_version: str = field(default="DenseRetriever-1.0", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.query, DenseRetrievalQuery):
+            raise TypeError("query должен быть DenseRetrievalQuery")
+        candidates = tuple(self.candidates)
+        if any(not isinstance(item, DenseRetrievalCandidate) for item in candidates):
+            raise TypeError("candidates должен содержать DenseRetrievalCandidate")
+        ordered = tuple(sorted(candidates, key=lambda item: (-item.score, item.example_id)))
+        if candidates != ordered:
+            raise ValueError("candidates должен быть отсортирован по score и example_id")
+        if self.unavailable and candidates:
+            raise ValueError("unavailable result не должен содержать candidates")
+        object.__setattr__(self, "candidates", candidates)
+
+
+def _required_strings(*values: str) -> None:
+    if any(not isinstance(value, str) or not value.strip() for value in values):
+        raise ValueError("обязательные metadata поля должны быть непустыми строками")
+
+
+def _unsafe_audit_reference(value: str) -> bool:
+    return not value or value.startswith(("/", "\\")) or ".." in value or ":\\" in value
