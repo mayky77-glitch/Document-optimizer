@@ -19,7 +19,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 validate_qdrant_url "$QDRANT_URL"
 cleanup() {
-  curl --silent -X DELETE -H "api-key: $QDRANT_API_KEY" \
+  qdrant_curl --silent -X DELETE -H "api-key: $QDRANT_API_KEY" \
     "$QDRANT_URL/collections/$CHECK_COLLECTION" >/dev/null || true
   rm -f -- "$snapshot_file" "$collection_file" "$point_file" "$count_file"
 }
@@ -28,34 +28,34 @@ trap cleanup EXIT
 QDRANT_COLLECTION="$CHECK_COLLECTION" "$SCRIPT_DIR/create-collection.sh"
 canary_vector="$(python3 -c 'import json; print(json.dumps([1.0] + [0.0] * 311))')"
 canary_payload='{"tenant_id":"restore-check-tenant","project_id":"restore-check-project","document_type":"restore-check-document","taxonomy_version":"restore-check-taxonomy","embedding_model_id":"cointegrated/rubert-tiny2","embedding_model_revision":"e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae","active":true,"embedding_dimensions":312,"review_decision":"confirmed"}'
-curl --fail --silent --show-error -X PUT -H "api-key: $QDRANT_API_KEY" \
+qdrant_curl --fail --silent --show-error -X PUT -H "api-key: $QDRANT_API_KEY" \
   -H 'Content-Type: application/json' \
   --data "{\"points\":[{\"id\":314159,\"vector\":$canary_vector,\"payload\":$canary_payload}]}" \
   "$QDRANT_URL/collections/$CHECK_COLLECTION/points?wait=true" >/dev/null
 snapshot_name="$(QDRANT_COLLECTION="$CHECK_COLLECTION" "$SCRIPT_DIR/snapshot.sh")"
-curl --fail --silent --show-error -H "api-key: $QDRANT_API_KEY" \
+qdrant_curl --fail --silent --show-error -H "api-key: $QDRANT_API_KEY" \
   -o "$snapshot_file" "$QDRANT_URL/collections/$CHECK_COLLECTION/snapshots/$snapshot_name"
-curl --fail --silent --show-error -X DELETE -H "api-key: $QDRANT_API_KEY" \
+qdrant_curl --fail --silent --show-error -X DELETE -H "api-key: $QDRANT_API_KEY" \
   "$QDRANT_URL/collections/$CHECK_COLLECTION?timeout=30" >/dev/null
-if curl --fail --silent -H "api-key: $QDRANT_API_KEY" \
+if qdrant_curl --fail --silent -H "api-key: $QDRANT_API_KEY" \
   "$QDRANT_URL/collections/$CHECK_COLLECTION" >/dev/null; then
   echo "Disposable collection still exists after deletion." >&2
   exit 1
 fi
-curl --fail --silent --show-error -X POST -H "api-key: $QDRANT_API_KEY" \
+qdrant_curl --fail --silent --show-error -X POST -H "api-key: $QDRANT_API_KEY" \
   -F "snapshot=@$snapshot_file" \
   "$QDRANT_URL/collections/$CHECK_COLLECTION/snapshots/upload?priority=snapshot&wait=true" >/dev/null
 for _ in {1..30}; do
-  if curl --fail --silent --show-error -H "api-key: $QDRANT_API_KEY" \
+  if qdrant_curl --fail --silent --show-error -H "api-key: $QDRANT_API_KEY" \
     -o "$collection_file" "$QDRANT_URL/collections/$CHECK_COLLECTION"; then
     break
   fi
   sleep 1
 done
 python3 "$SCRIPT_DIR/validate-collection.py" "$collection_file"
-curl --fail --silent --show-error -H "api-key: $QDRANT_API_KEY" \
+qdrant_curl --fail --silent --show-error -H "api-key: $QDRANT_API_KEY" \
   -o "$point_file" "$QDRANT_URL/collections/$CHECK_COLLECTION/points/314159?with_vector=true"
-curl --fail --silent --show-error -X POST -H "api-key: $QDRANT_API_KEY" \
+qdrant_curl --fail --silent --show-error -X POST -H "api-key: $QDRANT_API_KEY" \
   -H 'Content-Type: application/json' --data '{"exact":true}' \
   -o "$count_file" "$QDRANT_URL/collections/$CHECK_COLLECTION/points/count"
 python3 - "$point_file" "$count_file" <<'PY'

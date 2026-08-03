@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib.sh"
 validate_qdrant_url "$QDRANT_URL"
 validate_collection_name "$COLLECTION_NAME"
 
-response="$(curl --fail --silent --show-error -X POST -H "api-key: $QDRANT_API_KEY" \
+response="$(qdrant_curl --fail --silent --show-error -X POST -H "api-key: $QDRANT_API_KEY" \
   "$QDRANT_URL/collections/$COLLECTION_NAME/snapshots")"
 snapshot_name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["name"])' <<<"$response")"
 printf '%s\n' "$snapshot_name"
