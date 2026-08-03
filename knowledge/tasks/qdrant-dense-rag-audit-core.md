@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-orda_status: frozen
+status: done
+orda_status: accepted
 card_id: qdrant-dense-rag-audit-core
 version: 1
 work_id: qdrant-dense-rag-audit-fixes-2026-08
@@ -14,15 +14,15 @@ card_path: knowledge/tasks/qdrant-dense-rag-audit-core.md
 branch: codex/qdrant-dense-audit-core
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 2
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-08-03
@@ -50,7 +50,7 @@ forbidden_paths:
   - knowledge
 tags:
   - task/implementation
-  - status/in-progress
+  - status/done
   - domain/rag
   - risk/high
 links:
@@ -62,3 +62,9 @@ links:
 Enforce confirmed-only storage/search, safe replacement ordering, opaque audit IDs,
 and immutable index identity through manual-review evidence. Add regression tests
 for rejected points, failed upsert, unsafe audit references and context evidence.
+
+## Completion evidence
+
+- Accepted feature: `c04f6cc7164d4f772b187163a17ebe0b4ea22485`.
+- Accepted integration: `50e8d85cfd4732a362fec657e11aa9af0aaa5f4c`.
+- Validation: 44 focused tests, Ruff, format and diff checks passed.

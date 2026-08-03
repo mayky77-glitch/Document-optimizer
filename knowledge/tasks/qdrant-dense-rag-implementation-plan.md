@@ -100,6 +100,40 @@ links:
   с тремя непересекающимися scopes: core lifecycle/evidence, infra security/
   reproducibility и observed evaluation. До их acceptance статус остаётся
   `in-progress`; production gates не расширены.
+- Remediation Wave 1 запущена от точного Gate 0 SHA
+  `cdca7ce82118effcb353f003b63a53a04c459f58`: `dense-audit-core` работает в
+  `codex/qdrant-dense-audit-core`, `dense-audit-infra` — в
+  `codex/qdrant-dense-audit-infra`. Observed evaluation остаётся
+  зарезервированной и будет запущена после освобождения одного write-слота;
+  это сохраняет лимит `max_parallel: 2` и frozen scopes.
+- Core audit remediation принята Orda точной парой
+  `c04f6cc7164d4f772b187163a17ebe0b4ea22485` →
+  `50e8d85cfd4732a362fec657e11aa9af0aaa5f4c`: confirmed-only enforcement,
+  fail-safe replacement с self-replacement guard, opaque audit ID и index
+  identity прошли 44 focused tests. Освободившийся слот отдан frozen-задаче
+  `dense-audit-evaluation`; infra и evaluation теперь идут параллельно.
+- Infra audit remediation принята Orda: `f1ad3accb55fc5cb86e14e2db1d016e6f305c35a`
+  → `f4e46fc97501bfd569a27b9be96b09962eef6a54`. Parsed loopback validation,
+  preflight/final collection schema, canary restore и frozen CPU image прошли
+  independent live checks; образ содержит `torch 2.6.0+cpu`, CUDA отключена.
+- Observed evaluation принята после additive compatibility fix:
+  `0af721d6e46b84c5de5849ae0813384594bbbce7` →
+  `9fc6f51b4c0225c0e3ed22afdadf342044ade4c4`. Fixture больше не содержит
+  готовых candidates/latency: реальные вызовы `StoreBackedDenseRetriever`
+  измеряются clock и связываются с model revision и index identity. Совместный
+  post-merge focused набор: 54 passed. Остались full regression и финальный
+  read-only P6 audit; до них план остаётся `in-progress`.
+- Integration-owner boundary review открыл и сразу локализовал дополнительный
+  случай той же infra-задачи: правильный `model` не должен разрешать
+  конфликтующий или `null` `model_id`. Добавлен additive hotfix и regression;
+  focused embedding-service suite: 6 passed. Финальный P6-аудитор перепроверяет
+  уже этот итоговый контракт.
+- Повторный P6 audit на `b009dbadd7316dbcde46070b5bbb82875f2f4f16`
+  нашёл 2 P1 и 3 P2: proxy-env bypass для authenticated curl, positional/API
+  compatibility, identity при Qdrant outage, недопустимый outage-report в
+  evaluation и scalar lifecycle IDs. Текущая Orda-работа исчерпала budgets;
+  открыт отдельный frozen Gate 0 `qdrant-dense-rag-final-audit-fixes-2026-08`
+  с двумя непересекающимися tasks (`dense-final-infra`, `dense-final-core`).
 
 ## Временные решения dev/test
 

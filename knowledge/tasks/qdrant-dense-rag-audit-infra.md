@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-orda_status: frozen
+status: done
+orda_status: accepted
 card_id: qdrant-dense-rag-audit-infra
 version: 1
 work_id: qdrant-dense-rag-audit-fixes-2026-08
@@ -14,15 +14,15 @@ card_path: knowledge/tasks/qdrant-dense-rag-audit-infra.md
 branch: codex/qdrant-dense-audit-infra
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 2
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-08-03
@@ -45,7 +45,7 @@ forbidden_paths:
   - knowledge
 tags:
   - task/implementation
-  - status/in-progress
+  - status/done
   - domain/rag
   - layer/infra
   - risk/high
@@ -58,3 +58,10 @@ links:
 Parse exact loopback URLs, validate collection/vector/index schemas, test a canary
 through destructive disposable restore, require the pinned model field, and build
 a locked CPU-only embedding image with a minimal context.
+
+## Completion evidence
+
+- Accepted feature: `f1ad3accb55fc5cb86e14e2db1d016e6f305c35a`.
+- Accepted integration: `f4e46fc97501bfd569a27b9be96b09962eef6a54`.
+- Validation: 6 focused tests, URL suite, Qdrant 1.18 live restore/schema checks,
+  Compose/Ruff/lock checks and CPU-only Docker build passed.
