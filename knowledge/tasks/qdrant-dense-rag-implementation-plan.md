@@ -134,6 +134,31 @@ links:
   evaluation и scalar lifecycle IDs. Текущая Orda-работа исчерпала budgets;
   открыт отдельный frozen Gate 0 `qdrant-dense-rag-final-audit-fixes-2026-08`
   с двумя непересекающимися tasks (`dense-final-infra`, `dense-final-core`).
+- Final audit Wave 1 запущена от опубликованного Gate 0 SHA
+  `80e695d5ad718bded934ed88acf5b8281e49eef1`: proxy-hardening работает в
+  `codex/qdrant-dense-final-infra`, contract/lifecycle/evaluation — в
+  `codex/qdrant-dense-final-core`. Оба scope зарезервированы, лимиты:
+  `max_parallel: 2`, `max_spawns: 2`; production gates не менялись.
+- Final proxy task принята Orda: `044447f34c13d9e5aaa8f8c7476170b5ae9dfbf1`
+  → `b45e78f34701574154f38eeb6d586dfa3f601d3e`. Все authenticated curl
+  централизованы через proxy-clearing `qdrant_curl --noproxy '*'`; Bash, URL,
+  hostile-proxy capture и live disposable restore прошли. Core feature пока
+  не принят: integration review потребовал regression с реальным offline
+  `QdrantVectorStore`, а не только абстрактным store fake.
+- Final core task принята после additive regression:
+  `36ca15677848e98a66a699b914478857d5570932` →
+  `4132e9eee50ec7a81a1d42433ef24b0ed7f799ab`. Сохранён legacy positional
+  `unavailable`, observed evaluation API версионирован, outage metrics
+  отклоняются, public store identity проходит через реальный offline Qdrant и
+  drawing-card, malformed lifecycle IDs не дают side effects. Post-merge:
+  77 scoped tests passed; финальные full regression/CodeGraph/P6 review впереди.
+- Независимый closure-review точного SHA
+  `4132e9eee50ec7a81a1d42433ef24b0ed7f799ab` с CodeGraph выявил ещё два P2:
+  `cancel()` допускает unordered/lazy контейнеры и path-like ID до `deactivate`,
+  а экспортированный `evaluate_cases()` нарушает legacy порядок аргументов
+  `(retriever, queries)`. Открыта отдельная frozen Orda-работа
+  `qdrant-dense-rag-closure-fixes-2026-08` с одним bounded scope; завершение
+  запрещено до zero-side-effect и public-compatibility regressions.
 
 ## Временные решения dev/test
 

@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-orda_status: frozen
+status: done
+orda_status: accepted
 card_id: qdrant-dense-rag-final-audit-core
 version: 1
 work_id: qdrant-dense-rag-final-audit-fixes-2026-08
@@ -14,15 +14,15 @@ card_path: knowledge/tasks/qdrant-dense-rag-final-audit-core.md
 branch: codex/qdrant-dense-final-core
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 4
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-08-03
@@ -48,7 +48,7 @@ forbidden_paths:
   - knowledge
 tags:
   - task/implementation
-  - status/in-progress
+  - status/done
   - domain/rag
   - risk/high
 links:
@@ -60,3 +60,10 @@ links:
 Preserve old positional/public APIs, expose immutable store identity on unavailable
 results, reject outages in quality evaluation, and validate replacement ID sequences
 before any encode, upsert or deactivate side effect.
+
+## Completion evidence
+
+- Accepted feature: `36ca15677848e98a66a699b914478857d5570932`.
+- Accepted integration: `4132e9eee50ec7a81a1d42433ef24b0ed7f799ab`.
+- Validation: 77 scoped and 79 CodeGraph-guided tests passed; one opt-in model
+  test was skipped in the guided run and passed in the separate RuBERT run.

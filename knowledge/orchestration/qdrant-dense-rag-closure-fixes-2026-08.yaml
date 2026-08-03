@@ -1,0 +1,18 @@
+status: frozen
+work_id: qdrant-dense-rag-closure-fixes-2026-08
+objective: "Закрыть два CodeGraph closure findings Dense RAG без production cutover"
+planning_parent_sha: 4132e9eee50ec7a81a1d42433ef24b0ed7f799ab
+published_base_sha_ref: "planning commit containing this manifest and frozen card"
+published_base_sha: ""
+integration_sha: ""
+max_parallel: 1
+max_spawns: 1
+max_retries: 1
+merge_method: merge-no-ff
+approval_gates:
+  - production deployment
+  - real secrets
+  - production alias switch
+tasks:
+  - dense-closure-contracts
+accepted: {}
