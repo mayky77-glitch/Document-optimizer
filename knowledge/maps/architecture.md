@@ -13,4 +13,5 @@ Add links to component cards as they are created. Use this map for local graph n
 
 - [[../INDEX|Knowledge index]]
 - [[../components/drawing-card|Карточка остатков]] — extraction, matching/RAG, aggregation and XLSX output.
+- [[../tasks/qdrant-dense-rag-implementation-plan|Общий Qdrant и Dense RAG]] — активная dev/test реализация без production cutover.
 - Contract/performed aggregates, discrepancy links and exact normalized name+unit feedback replay are implemented and documented; source of truth remains the repository at `/Users/x/Documents/Сооотношение документов/Document-optimizer-ready`, branch `codex/drawing-card-summary-v1`.

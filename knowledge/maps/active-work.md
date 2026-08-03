@@ -9,6 +9,13 @@ updated: 2026-08-03
 
 # Active work
 
+Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
+
+Wave 1: [[../tasks/qdrant-dense-rag-core|core]] and
+[[../tasks/qdrant-dense-rag-infra|local service/infra]]. Wave 2:
+[[../tasks/qdrant-dense-rag-indexer|indexer/evaluation]] and
+[[../tasks/qdrant-dense-rag-app|application integration]].
+
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
 No active drawing-card initiative. Completed/recent:

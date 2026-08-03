@@ -1,0 +1,72 @@
+status: frozen
+work_id: qdrant-dense-rag-2026-08
+objective: "Реализовать общий Dense RAG поверх Qdrant с обязательной tenant-изоляцией, manual-review-only поведением, локальными embeddings и безопасной эксплуатацией"
+project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-qdrant-dense-rag"
+planning_parent_sha: 648d3c95dbb4a7ed2ab27a7c4f1531b5f929102c
+published_base_sha_ref: "planning commit containing this manifest, master plan and all frozen cards"
+wave_base_sha_ref: published_base_sha_ref
+shared_contract_sha: 648d3c95dbb4a7ed2ab27a7c4f1531b5f929102c
+contract_versions:
+  embedding_provider: EmbeddingProvider-1.0
+  vector_store: VectorStore-1.0
+  dense_retriever: DenseRetriever-1.0
+  confirmed_example: ConfirmedExampleVector-1.0
+  embedding_http: LocalEmbeddingService-1.0
+wave: 1
+max_parallel: 2
+max_spawns: 6
+max_retries: 1
+merge_method: merge-no-ff
+baseline_commands:
+  - "PYTHONDONTWRITEBYTECODE=1 uv run python -m pytest -p no:cacheprovider -q tests/unit/stage_rag/test_retrieval.py tests/contract/test_block18_release_contract.py tests/integration/test_block18_golden.py tests/integration/test_block18_rag.py tests/integration/test_block18_e2e.py"
+  - "uv run ruff check src/report_processor/stage_rag src/report_processor/drawing_card/matching/semantic.py tests/unit/stage_rag tests/contract/test_block18_release_contract.py tests/integration/test_block18_golden.py tests/integration/test_block18_rag.py tests/integration/test_block18_e2e.py"
+  - "PYTHONDONTWRITEBYTECODE=1 uv run python -m pytest -p no:cacheprovider -q"
+  - "uv run ruff check src tests"
+baseline_results:
+  - "focused RAG: 21 passed, 1 skipped"
+  - "focused Ruff and format: passed"
+  - "full pytest: two pre-existing failures in Block 12 enum contract and hierarchy presentation"
+  - "full Ruff: three pre-existing E501 errors in tests/integration/test_drawing_card_ui_contract.py"
+shared_paths_owner: integration
+shared_paths:
+  - pyproject.toml
+  - uv.lock
+  - README.md
+  - .github
+  - knowledge
+  - src/report_processor/stage_rag/__init__.py
+  - src/report_processor/stage_rag/encoder.py
+  - tests/integration/test_block18_e2e.py
+  - tests/integration/test_block18_rag.py
+forbidden_paths:
+  - ".env*"
+  - cache
+  - logs
+  - output
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+data_classification: restricted
+approval_gates:
+  - production deployment
+  - real API keys or TLS private keys
+  - production collection alias switch
+  - production quality thresholds and embedding-model selection
+acceptance_commands:
+  - "PYTHONDONTWRITEBYTECODE=1 uv run python -m pytest -p no:cacheprovider -q tests/unit/stage_rag tests/contract/test_block18_release_contract.py tests/contract/test_dense_rag_contract.py tests/integration/test_block18_golden.py tests/integration/test_block18_rag.py tests/integration/test_block18_e2e.py tests/integration/test_dense_rag_drawing_card.py tests/unit/drawing_card/test_matcher_dictionary.py"
+  - "uv run ruff check src/report_processor/stage_rag src/report_processor/drawing_card/matching tests/fixtures/stage_rag tests/unit/stage_rag tests/unit/drawing_card/test_matcher_dictionary.py tests/contract/test_dense_rag_contract.py tests/integration/test_dense_rag_drawing_card.py"
+  - "uv run ruff format --check src/report_processor/stage_rag src/report_processor/drawing_card/matching tests/fixtures/stage_rag tests/unit/stage_rag tests/unit/drawing_card/test_matcher_dictionary.py tests/contract/test_dense_rag_contract.py tests/integration/test_dense_rag_drawing_card.py"
+  - "QDRANT_API_KEY=test-only-key docker compose -f compose.qdrant.yml config --quiet"
+  - "PYTHONDONTWRITEBYTECODE=1 uv run python -m pytest -p no:cacheprovider -q"
+  - "uv lock --check"
+  - "git diff --check"
+required_evidence:
+  - "every vector query contains an exact tenant_id must-filter"
+  - "same request cannot return another tenant's point"
+  - "score ties are ordered by stable example_id"
+  - "indexing is idempotent and stale decisions deactivate without rewriting audit"
+  - "Qdrant/model unavailable is controlled and never auto-accepts a decision"
+  - "exact feedback and deterministic rules remain before semantic retrieval"
+  - "evaluation reports Recall@5, MRR, top-1 error, review rate and latency"
+  - "Compose contains no committed secret and uses persistent storage"
+created_at: "2026-08-03T14:20:00+08:00"
