@@ -28,10 +28,7 @@ class InMemoryVectorStore:
 
     def upsert(self, examples: Sequence[ConfirmedExampleVector]) -> None:
         for example in examples:
-            if not isinstance(example, ConfirmedExampleVector):
-                raise StageRAGInputError(
-                    "INVALID_EXAMPLE", "examples должен содержать ConfirmedExampleVector"
-                )
+            _validate_confirmed_example(example)
             self._examples[(example.tenant_id, example.example_id)] = example
 
     def query(self, query: DenseRetrievalQuery) -> DenseRetrievalResult:
@@ -43,7 +40,11 @@ class InMemoryVectorStore:
             candidates.append(
                 _candidate_from_example(example, _cosine(query.vector, example.vector))
             )
-        return DenseRetrievalResult(query=query, candidates=tuple(_rank(candidates)[: query.limit]))
+        return DenseRetrievalResult(
+            query=query,
+            candidates=tuple(_rank(candidates)[: query.limit]),
+            index_identity="in-memory-confirmed-examples",
+        )
 
     def deactivate(self, tenant_id: str, example_ids: Sequence[str]) -> None:
         for example_id in example_ids:
@@ -89,10 +90,7 @@ class QdrantVectorStore:
     def upsert(self, examples: Sequence[ConfirmedExampleVector]) -> None:
         points = []
         for example in examples:
-            if not isinstance(example, ConfirmedExampleVector):
-                raise StageRAGInputError(
-                    "INVALID_EXAMPLE", "examples должен содержать ConfirmedExampleVector"
-                )
+            _validate_confirmed_example(example)
             points.append(
                 {
                     "id": _qdrant_point_id(example.tenant_id, example.example_id),
@@ -130,6 +128,7 @@ class QdrantVectorStore:
                         "match": {"value": query.embedding_dimensions},
                     },
                     {"key": "active", "match": {"value": True}},
+                    {"key": "review_decision", "match": {"value": "confirmed"}},
                 ]
             },
         }
@@ -148,7 +147,11 @@ class QdrantVectorStore:
             candidate = _candidate_from_qdrant_point(point, query)
             if candidate is not None:
                 candidates.append(candidate)
-        return DenseRetrievalResult(query=query, candidates=tuple(_rank(candidates)[: query.limit]))
+        return DenseRetrievalResult(
+            query=query,
+            candidates=tuple(_rank(candidates)[: query.limit]),
+            index_identity=f"qdrant:{self._collection_name}",
+        )
 
     def search(self, query: DenseRetrievalQuery) -> DenseRetrievalResult:
         """Compatibility spelling for a filtered vector query."""
@@ -198,6 +201,7 @@ def _candidate_from_qdrant_point(
         or payload.get("embedding_model_revision") != query.embedding_model_revision
         or payload.get("embedding_dimensions") != query.embedding_dimensions
         or payload.get("active") is not True
+        or payload.get("review_decision") != "confirmed"
     ):
         return None
     if (
@@ -225,6 +229,7 @@ def _matches(example: ConfirmedExampleVector, query: DenseRetrievalQuery) -> boo
     return (
         example.tenant_id == query.tenant_id
         and example.active
+        and example.review_decision == "confirmed"
         and example.embedding_model_id == query.embedding_model_id
         and example.embedding_model_revision == query.embedding_model_revision
         and example.embedding_dimensions == query.embedding_dimensions
@@ -286,3 +291,14 @@ def _qdrant_point_id(tenant_id: str, example_id: str) -> str:
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _validate_confirmed_example(example: object) -> None:
+    if not isinstance(example, ConfirmedExampleVector):
+        raise StageRAGInputError(
+            "INVALID_EXAMPLE", "examples должен содержать ConfirmedExampleVector"
+        )
+    if example.review_decision != "confirmed":
+        raise StageRAGInputError(
+            "UNCONFIRMED_EXAMPLE", "хранилище принимает только confirmed точки"
+        )

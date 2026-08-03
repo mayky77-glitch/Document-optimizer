@@ -38,7 +38,7 @@ class ConfirmedExampleIndexer:
         self._embedding_provider = embedding_provider
 
     def index(self, outcome: ConfirmedReviewOutcome) -> ConfirmedExampleVector:
-        """Upsert one confirmed outcome; replacements are deactivated first."""
+        """Upsert one confirmed outcome before deactivating distinct stale evidence."""
         _validate_outcome(outcome)
         if outcome.confirmed is not True:
             raise StageRAGInputError(
@@ -64,10 +64,12 @@ class ConfirmedExampleIndexer:
             audit_reference=outcome.audit_reference,
             active=True,
         )
-        deactivated = _replacement_ids(outcome)
+        deactivated = tuple(
+            example_id for example_id in _replacement_ids(outcome) if example_id != point.example_id
+        )
+        self._vector_store.upsert((point,))
         if deactivated:
             self._vector_store.deactivate(outcome.tenant_id, deactivated)
-        self._vector_store.upsert((point,))
         return point
 
     def cancel(self, tenant_id: str, example_ids: Sequence[str]) -> None:

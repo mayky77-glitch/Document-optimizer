@@ -47,6 +47,7 @@ class DenseSemanticSuggestion:
     """Bounded, opaque Dense RAG evidence for a manual decision."""
 
     candidates: tuple[DenseRetrievalCandidate, ...]
+    index_identity: str = "unavailable"
     unavailable: bool = False
 
     @property
@@ -76,12 +77,16 @@ class DenseSemanticRetriever:
                 document_type=self._context.document_type,
                 taxonomy_version=self._context.taxonomy_version,
             )
-            if result.unavailable or not self._query_matches_context(result.query):
+            if result.unavailable:
+                return DenseSemanticSuggestion(
+                    (), index_identity=result.index_identity, unavailable=True
+                )
+            if not self._query_matches_context(result.query):
                 return DenseSemanticSuggestion((), unavailable=True)
             candidates = tuple(result.candidates[:MAX_DENSE_REVIEW_CANDIDATES])
         except Exception:
             return DenseSemanticSuggestion((), unavailable=True)
-        return DenseSemanticSuggestion(candidates)
+        return DenseSemanticSuggestion(candidates, index_identity=result.index_identity)
 
     def _query_matches_context(self, query: object) -> bool:
         return (

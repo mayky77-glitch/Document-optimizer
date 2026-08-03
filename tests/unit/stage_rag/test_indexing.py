@@ -80,6 +80,44 @@ def test_only_explicit_confirmations_are_indexed_and_replacements_are_deactivate
     ]
 
 
+def test_replacement_deactivates_stale_evidence_only_after_successful_upsert() -> None:
+    class FlakyStore(RecordingVectorStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_next_upsert = True
+
+        def upsert(self, examples):
+            if self.fail_next_upsert:
+                self.fail_next_upsert = False
+                raise RuntimeError("temporary failure")
+            super().upsert(examples)
+
+    store = FlakyStore()
+    indexer = ConfirmedExampleIndexer(store, Provider())
+    replacement = _outcome(replaces_example_id="stale-id")
+
+    with pytest.raises(RuntimeError, match="temporary failure"):
+        indexer.index(replacement)
+    assert store.deactivations == []
+
+    indexed = indexer.index(replacement)
+    assert store.upserts == [(indexed,)]
+    assert store.deactivations == [("tenant-a", ("stale-id",))]
+
+
+def test_self_replacement_does_not_deactivate_the_newly_upserted_evidence() -> None:
+    store = RecordingVectorStore()
+    indexer = ConfirmedExampleIndexer(store, Provider())
+    stable_id = stable_example_id("tenant-a", "review-123")
+
+    indexed = indexer.index(
+        _outcome(replaces_example_id=stable_id, cancelled_example_ids=(stable_id,))
+    )
+
+    assert indexed.example_id == stable_id
+    assert store.deactivations == []
+
+
 def test_stable_ids_are_tenant_aware_and_reindex_plan_has_no_side_effect() -> None:
     assert stable_example_id("tenant-a", "review-123") != stable_example_id(
         "tenant-b", "review-123"

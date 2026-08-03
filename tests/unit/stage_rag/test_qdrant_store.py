@@ -87,6 +87,7 @@ def test_qdrant_query_uses_v118_endpoint_and_nonoptional_exact_tenant_must_filte
                                 "embedding_model_revision": "rev-1",
                                 "embedding_dimensions": 2,
                                 "active": True,
+                                "review_decision": "confirmed",
                                 "project_id": "p",
                                 "document_type": "spec",
                             },
@@ -102,6 +103,7 @@ def test_qdrant_query_uses_v118_endpoint_and_nonoptional_exact_tenant_must_filte
                                 "embedding_model_revision": "rev-1",
                                 "embedding_dimensions": 2,
                                 "active": True,
+                                "review_decision": "confirmed",
                                 "project_id": "p",
                                 "document_type": "spec",
                             },
@@ -136,6 +138,7 @@ def test_qdrant_query_uses_v118_endpoint_and_nonoptional_exact_tenant_must_filte
         {"key": "embedding_model_revision", "match": {"value": "rev-1"}},
         {"key": "embedding_dimensions", "match": {"value": 2}},
         {"key": "active", "match": {"value": True}},
+        {"key": "review_decision", "match": {"value": "confirmed"}},
         {"key": "project_id", "match": {"value": "p"}},
         {"key": "document_type", "match": {"value": "spec"}},
     ]
@@ -154,6 +157,23 @@ def test_qdrant_transport_errors_are_controlled_without_response_body() -> None:
 def test_audit_reference_cannot_be_a_local_path() -> None:
     with pytest.raises(ValueError, match="audit_reference"):
         replace(_example("one", "tenant-a", (1.0,)), audit_reference="/private/book.xlsx")
+
+
+@pytest.mark.parametrize(
+    "audit_reference", ["https://audit.example/id", "file:record", "..", "a/b"]
+)
+def test_audit_reference_must_be_an_opaque_identifier(audit_reference: str) -> None:
+    with pytest.raises(ValueError, match="opaque ID"):
+        replace(_example("one", "tenant-a", (1.0,)), audit_reference=audit_reference)
+
+
+def test_retrieval_result_carries_immutable_index_identity() -> None:
+    store = InMemoryVectorStore()
+    store.upsert((_example("one", "tenant-a", (1.0,)),))
+
+    result = store.query(_query("tenant-a", (1.0,)))
+
+    assert result.index_identity == "in-memory-confirmed-examples"
 
 
 def test_in_memory_store_uses_cosine_and_excludes_deactivated_examples() -> None:

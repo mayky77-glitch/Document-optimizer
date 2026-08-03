@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from math import isfinite
 
@@ -74,7 +75,9 @@ class ConfirmedExampleVector:
         if not values or not all(isfinite(value) for value in values):
             raise ValueError("vector должен содержать хотя бы одно конечное число")
         if self.audit_reference is not None and _unsafe_audit_reference(self.audit_reference):
-            raise ValueError("audit_reference не должен быть путём к файлу")
+            raise ValueError("audit_reference должен быть opaque ID, а не URI или путём")
+        if self.review_decision != "confirmed":
+            raise ValueError("review_decision должен быть confirmed")
         object.__setattr__(self, "vector", values)
 
     @property
@@ -159,6 +162,7 @@ class DenseRetrievalResult:
 
     query: DenseRetrievalQuery
     candidates: tuple[DenseRetrievalCandidate, ...]
+    index_identity: str = "unavailable"
     unavailable: bool = False
     requires_manual_review: bool = field(default=True, init=False)
     auto_accepted: bool = field(default=False, init=False)
@@ -175,6 +179,8 @@ class DenseRetrievalResult:
             raise ValueError("candidates должен быть отсортирован по score и example_id")
         if self.unavailable and candidates:
             raise ValueError("unavailable result не должен содержать candidates")
+        if not isinstance(self.index_identity, str) or not self.index_identity.strip():
+            raise ValueError("index_identity должен быть непустой строкой")
         object.__setattr__(self, "candidates", candidates)
 
 
@@ -184,4 +190,4 @@ def _required_strings(*values: str) -> None:
 
 
 def _unsafe_audit_reference(value: str) -> bool:
-    return not value or value.startswith(("/", "\\")) or ".." in value or ":\\" in value
+    return not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value) is None
