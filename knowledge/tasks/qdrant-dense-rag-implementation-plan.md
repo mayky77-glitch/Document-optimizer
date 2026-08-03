@@ -53,6 +53,10 @@ links:
   прошёл 25 focused tests, Ruff, format и diff-check; tenant входит в stable
   point ID/deactivate, а одинаковые public IDs разных tenants покрыты regression.
   SHA готов к `--no-ff` integration acceptance.
+- Core принят Orda точной парой feature/integration:
+  `89cb4814d04e31acb1143e7d75bc58f2b3e57df1` →
+  `f35053baba2379864256ef428f5f4230e05a27eb`; merge имеет правильных двух
+  родителей, повторные 25 focused tests прошли.
 - Wave 2: `qdrant-dense-rag-indexer`, `qdrant-dense-rag-app` — ожидают Wave 1.
 - Production deploy, реальные secrets и переключение production alias не выполнялись.
 
