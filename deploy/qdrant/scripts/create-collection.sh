@@ -19,10 +19,10 @@ ensure_index() {
   local field_schema="$2"
   if curl --fail --silent --show-error -X PUT "${headers[@]}" \
     --data "{\"field_name\":\"$field_name\",\"field_schema\":$field_schema}" \
-    "$QDRANT_URL/collections/$COLLECTION_NAME/index" >/dev/null 2>"$error_file"; then
+    "$QDRANT_URL/collections/$COLLECTION_NAME/index" >"$error_file" 2>&1; then
     return 0
   fi
-  if rg --ignore-case --quiet 'already exists|already.*index' "$error_file"; then
+  if grep -Eiq 'already exists|already.*index' "$error_file"; then
     return 0
   fi
   cat "$error_file" >&2
@@ -37,10 +37,10 @@ else
   echo "Created collection $COLLECTION_NAME."
 fi
 ensure_index tenant_id '{"type":"keyword","is_tenant":true}'
-ensure_index project_id 'keyword'
-ensure_index document_type 'keyword'
-ensure_index taxonomy_version 'keyword'
-ensure_index embedding_model_id 'keyword'
-ensure_index embedding_model_revision 'keyword'
-ensure_index active 'bool'
+ensure_index project_id '"keyword"'
+ensure_index document_type '"keyword"'
+ensure_index taxonomy_version '"keyword"'
+ensure_index embedding_model_id '"keyword"'
+ensure_index embedding_model_revision '"keyword"'
+ensure_index active '"bool"'
 echo "Payload indexes are ready for $COLLECTION_NAME."

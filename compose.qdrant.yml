@@ -9,7 +9,12 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:6333/healthz"]
+      test:
+        - CMD-SHELL
+        - >-
+          bash -ec 'exec 3<>/dev/tcp/127.0.0.1/6333;
+          printf "GET /healthz HTTP/1.0\r\n\r\n" >&3;
+          grep -q "healthz check passed" <&3'
       interval: 10s
       timeout: 3s
       retries: 10

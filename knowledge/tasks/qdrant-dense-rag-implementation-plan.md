@@ -57,6 +57,33 @@ links:
   `89cb4814d04e31acb1143e7d75bc58f2b3e57df1` →
   `f35053baba2379864256ef428f5f4230e05a27eb`; merge имеет правильных двух
   родителей, повторные 25 focused tests прошли.
+- Infra принята Orda точной парой `3d256dd73bae857d66ce55d9a8db328d635021fc`
+  → `2488019e327445b8dc00f94c0df3540054557c2c`. Совместный Wave 1 набор:
+  41 passed, 1 model-dependent skipped; Ruff, Compose config, Bash syntax и
+  diff-check прошли. Этот integration SHA становится точной базой Wave 2.
+- Wave 2 открывается для frozen задач `confirmed-indexer` и `app-integration`;
+  production alias/deploy и реальные данные по-прежнему вне scope.
+- Обе Wave 2 задачи зарезервированы и запущены от точного SHA
+  `2488019e327445b8dc00f94c0df3540054557c2c` в отдельных ветках
+  `codex/qdrant-dense-indexer` и `codex/qdrant-dense-app`; scopes не
+  пересекаются, лимит Orda launch attempts исчерпан ровно по плану.
+- Первый indexer SHA `379f97d8c0a4818727054ab108a8c0e5a1fcda3e`
+  прошёл 5 тестов, но integration review не принял identity: ID от одного
+  text hash схлопывает разные подтверждённые audits/contexts. Задача возвращена
+  на один additive fix с tenant+audit identity и строгой lifecycle validation.
+- Реальный локальный Qdrant 1.18.3 smoke-test выявил два infra-дефекта после
+  Wave 1 acceptance: строковые payload schemas передавались как невалидный JSON,
+  а образ не содержит `wget` для healthcheck. Integration owner исправляет два
+  локализованных файла; обязательны повторный idempotency/snapshot smoke и health.
+- Infra hotfix подтверждён реальным контейнером: health стал `healthy`, повторное
+  создание collection/indexes идемпотентно, disposable snapshot restore прошёл.
+- Финальный indexer SHA `1f159d0adc5714deb30c7d8c4643fed6141ffbcf`
+  использует tenant+audit identity, сохраняет независимый text hash и прошёл
+  18 focused tests; ожидает integration merge.
+- App SHA `fbe7bcb69bb69455f56f5a6b2931f8098c8732b8` прошёл 7 тестов,
+  но review отклонил перенос RAG category/score в поля решения. Запущен один
+  additive fix: только evidence IDs/scores, category/confidences остаются пустыми,
+  ответ проверяется по полному tenant/project/document/taxonomy context.
 - Wave 2: `qdrant-dense-rag-indexer`, `qdrant-dense-rag-app` — ожидают Wave 1.
 - Production deploy, реальные secrets и переключение production alias не выполнялись.
 
