@@ -23,7 +23,13 @@ from .errors import (
     StageRAGStoreError,
     StageRAGStoreUnavailableError,
 )
-from .evaluation import DenseRAGEvaluation, evaluate_cases, evaluate_fixture
+from .evaluation import (
+    OBSERVED_DENSE_RAG_EVALUATION_VERSION,
+    DenseRAGEvaluation,
+    evaluate_cases,
+    evaluate_fixture,
+    evaluate_observed_queries,
+)
 from .indexing import (
     CollectionReindexPlan,
     ConfirmedExampleIndexer,
@@ -50,6 +56,7 @@ __all__ = [
     "DENSE_RETRIEVER_CONTRACT_VERSION",
     "EMBEDDING_DIMENSIONS",
     "EMBEDDING_PROVIDER_CONTRACT_VERSION",
+    "OBSERVED_DENSE_RAG_EVALUATION_VERSION",
     "RUBERT_TINY2_MODEL_ID",
     "RUBERT_TINY2_MODEL_REVISION",
     "STAGE_RELATION_RAG_CONTRACT_VERSION",
@@ -83,6 +90,7 @@ __all__ = [
     "VectorStore",
     "evaluate_cases",
     "evaluate_fixture",
+    "evaluate_observed_queries",
     "normalized_text_hash",
     "plan_reindex",
     "retrieve_stage_relations",

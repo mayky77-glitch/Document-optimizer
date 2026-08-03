@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,8 @@ from time import perf_counter
 from typing import Protocol
 
 from .models import DenseRetrievalResult
+
+OBSERVED_DENSE_RAG_EVALUATION_VERSION = "DenseRAGEvaluation-2.0"
 
 
 class DenseRetrieverBoundary(Protocol):
@@ -57,19 +60,26 @@ class DenseRAGEvaluation:
 
 def evaluate_fixture(
     path: Path,
-    retriever: DenseRetrieverBoundary,
+    retriever: DenseRetrieverBoundary | None = None,
     *,
     clock: Callable[[], float] = perf_counter,
 ) -> DenseRAGEvaluation:
     """Read a sanitized fixture and measure actual calls through DenseRetriever."""
+    if retriever is None:
+        warnings.warn(
+            "evaluate_fixture now requires a DenseRetriever; fabricated metrics are unsupported",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        raise ValueError("evaluate_fixture requires a DenseRetriever")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or not isinstance(payload.get("queries"), list):
         raise ValueError("evaluation fixture должен содержать queries")
     queries = tuple(_parse_query(item) for item in payload["queries"])
-    return evaluate_queries(retriever, queries, clock=clock)
+    return evaluate_observed_queries(retriever, queries, clock=clock)
 
 
-def evaluate_queries(
+def evaluate_observed_queries(
     retriever: DenseRetrieverBoundary,
     queries: Sequence[EvaluationQuery],
     *,
@@ -127,13 +137,24 @@ def evaluate_queries(
 
 
 def evaluate_cases(
-    retriever: DenseRetrieverBoundary,
-    queries: Sequence[EvaluationQuery],
+    cases: Sequence[object],
+    retriever: DenseRetrieverBoundary | None = None,
     *,
     clock: Callable[[], float] = perf_counter,
 ) -> DenseRAGEvaluation:
-    """Compatibility entry point that still evaluates only observed retrieval calls."""
-    return evaluate_queries(retriever, queries, clock=clock)
+    """Deprecated safe shim: fabricated candidates are never interpreted as observations."""
+    warnings.warn(
+        "evaluate_cases is deprecated; use evaluate_observed_queries",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    if retriever is None:
+        raise ValueError(
+            "evaluate_cases requires a DenseRetriever; fabricated cases are unsupported"
+        )
+    if any(not isinstance(case, EvaluationQuery) for case in cases):
+        raise ValueError("evaluate_cases accepts only EvaluationQuery observations")
+    return evaluate_observed_queries(retriever, tuple(cases), clock=clock)
 
 
 def _parse_query(value: object) -> EvaluationQuery:
@@ -167,6 +188,8 @@ def _parse_query(value: object) -> EvaluationQuery:
 def _validate_observed_result(result: object, expected: EvaluationQuery) -> None:
     if not isinstance(result, DenseRetrievalResult):
         raise ValueError("retriever должен вернуть DenseRetrievalResult")
+    if result.unavailable:
+        raise ValueError("unavailable retrieval нельзя использовать для evaluation metrics")
     query = result.query
     if (
         query.tenant_id != expected.tenant_id
@@ -178,17 +201,10 @@ def _validate_observed_result(result: object, expected: EvaluationQuery) -> None
 
 
 def _observed_index_identity(result: DenseRetrievalResult, retriever: object) -> str:
-    """Read immutable identity from the result when available, with legacy-boundary support."""
-    identity = getattr(result, "index_identity", None)
-    if not isinstance(identity, str) or not identity.strip() or identity == "unavailable":
+    """Accept only the public result/store identity, never private store internals."""
+    identity = result.index_identity
+    if identity == "unavailable":
         identity = getattr(retriever, "index_identity", None)
-    if not isinstance(identity, str) or not identity.strip():
-        store = getattr(retriever, "_vector_store", None)
-        collection = getattr(store, "_collection_name", None)
-        if isinstance(collection, str) and collection.strip():
-            identity = f"qdrant:{collection}"
-        elif store is not None and type(store).__name__ == "InMemoryVectorStore":
-            identity = "in-memory-confirmed-examples"
-    if not isinstance(identity, str) or not identity.strip():
+    if not isinstance(identity, str) or not identity.strip() or identity == "unavailable":
         raise ValueError("observed retrieval не содержит index identity")
     return identity

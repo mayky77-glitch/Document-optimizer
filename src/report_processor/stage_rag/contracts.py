@@ -32,6 +32,10 @@ class EmbeddingProvider(Protocol):
 class VectorStore(Protocol):
     """Stores confirmed examples and searches only within one tenant."""
 
+    @property
+    def index_identity(self) -> str:
+        """Immutable identity of the collection or local index serving results."""
+
     def upsert(self, examples: Sequence[ConfirmedExampleVector]) -> None:
         """Create or replace examples by their stable public ID."""
 
