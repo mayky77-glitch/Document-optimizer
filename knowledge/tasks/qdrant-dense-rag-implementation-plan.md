@@ -1,7 +1,7 @@
 ---
 type: plan
 status: in-progress
-work_id: qdrant-dense-rag-2026-08
+work_id: qdrant-dense-rag-2026-08-v2
 owner: integration-owner
 last_verified: 2026-08-03
 updated: 2026-08-03
@@ -26,6 +26,8 @@ links:
 - Integration base: `648d3c95dbb4a7ed2ab27a7c4f1531b5f929102c`.
 - Ветка: `codex/qdrant-dense-rag`.
 - Gate 0: frozen; точный published SHA передаётся launch envelope после commit.
+- Runtime `qdrant-dense-rag-2026-08` отменён до launch: envelope содержал
+  несуществующий полный SHA. Исправленная работа: `qdrant-dense-rag-2026-08-v2`.
 - Wave 1: `qdrant-dense-rag-core`, `qdrant-dense-rag-infra` — ожидают запуска.
 - Wave 2: `qdrant-dense-rag-indexer`, `qdrant-dense-rag-app` — ожидают Wave 1.
 - Production deploy, реальные secrets и переключение production alias не выполнялись.

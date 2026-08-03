@@ -5,7 +5,7 @@ orda_status: frozen-wave-2
 card_id: qdrant-dense-rag-app
 version: 1
 supersedes: null
-work_id: qdrant-dense-rag-2026-08
+work_id: qdrant-dense-rag-2026-08-v2
 task_id: app-integration
 purpose: Inject filtered Dense RAG into drawing-card matching while preserving exact feedback precedence and manual review.
 role: worker

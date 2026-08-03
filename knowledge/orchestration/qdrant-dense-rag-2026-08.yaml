@@ -1,5 +1,5 @@
 status: frozen
-work_id: qdrant-dense-rag-2026-08
+work_id: qdrant-dense-rag-2026-08-v2
 objective: "Реализовать общий Dense RAG поверх Qdrant с обязательной tenant-изоляцией, manual-review-only поведением, локальными embeddings и безопасной эксплуатацией"
 project_root: "/Users/x/Documents/Сооотношение документов/Document-optimizer-qdrant-dense-rag"
 planning_parent_sha: 648d3c95dbb4a7ed2ab27a7c4f1531b5f929102c

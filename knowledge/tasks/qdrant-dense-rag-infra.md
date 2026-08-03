@@ -5,7 +5,7 @@ orda_status: frozen
 card_id: qdrant-dense-rag-infra
 version: 1
 supersedes: null
-work_id: qdrant-dense-rag-2026-08
+work_id: qdrant-dense-rag-2026-08-v2
 task_id: local-infra
 purpose: Build a bounded local embedding HTTP service and reproducible Qdrant dev/test operations without committed secrets.
 role: worker

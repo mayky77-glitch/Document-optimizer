@@ -5,7 +5,7 @@ orda_status: frozen-wave-2
 card_id: qdrant-dense-rag-indexer
 version: 1
 supersedes: null
-work_id: qdrant-dense-rag-2026-08
+work_id: qdrant-dense-rag-2026-08-v2
 task_id: confirmed-indexer
 purpose: Implement idempotent confirmed-example lifecycle, versioned reindex planning and reproducible Dense RAG evaluation.
 role: worker
