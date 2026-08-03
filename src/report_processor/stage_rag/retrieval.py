@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from math import isfinite, sqrt
 
 from .contracts import EmbeddingProvider, VectorStore
@@ -102,10 +103,15 @@ class StoreBackedDenseRetriever:
             raise StageRAGInputError(
                 "INVALID_ENCODER", "embedding_provider должен иметь метод encode"
             )
-        if not hasattr(vector_store, "query"):
+        if not hasattr(vector_store, "query") or not hasattr(vector_store, "index_identity"):
             raise StageRAGInputError("INVALID_STORE", "vector_store должен иметь метод query")
         self._embedding_provider = embedding_provider
         self._vector_store = vector_store
+
+    @property
+    def index_identity(self) -> str:
+        """Expose the store identity without revealing store internals."""
+        return self._vector_store.index_identity
 
     def retrieve(
         self,
@@ -144,9 +150,15 @@ class StoreBackedDenseRetriever:
             taxonomy_version=taxonomy_version,
         )
         try:
-            return self._vector_store.query(query)
+            result = self._vector_store.query(query)
+            return replace(result, index_identity=self._vector_store.index_identity)
         except StageRAGStoreUnavailableError:
-            return DenseRetrievalResult(query=query, candidates=(), unavailable=True)
+            return DenseRetrievalResult(
+                query=query,
+                candidates=(),
+                unavailable=True,
+                index_identity=self._vector_store.index_identity,
+            )
 
 
 def _validate_stages(values: Sequence[StageText], name: str) -> tuple[StageText, ...]:

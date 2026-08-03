@@ -9,7 +9,7 @@ import pytest
 from report_processor.stage_rag.evaluation import (
     EvaluationQuery,
     evaluate_fixture,
-    evaluate_queries,
+    evaluate_observed_queries,
 )
 from report_processor.stage_rag.models import (
     ConfirmedExampleVector,
@@ -109,7 +109,7 @@ def test_mixed_retriever_identity_is_rejected_when_result_identity_is_unavailabl
 
     query = EvaluationQuery("sanitized", "expected", "tenant-a", None, "visr", "taxonomy-1")
     with pytest.raises(ValueError, match="смешанную"):
-        evaluate_queries(MixedRetriever(), (query, query))
+        evaluate_observed_queries(MixedRetriever(), (query, query))
 
 
 def test_context_mismatch_is_rejected_before_metrics() -> None:
@@ -132,4 +132,36 @@ def test_context_mismatch_is_rejected_before_metrics() -> None:
 
     query = EvaluationQuery("sanitized", "expected", "tenant-a", None, "visr", "taxonomy-1")
     with pytest.raises(ValueError, match="evaluation context"):
-        evaluate_queries(WrongContextRetriever(), (query,))
+        evaluate_observed_queries(WrongContextRetriever(), (query,))
+
+
+def test_unavailable_result_is_rejected_before_metrics() -> None:
+    class UnavailableRetriever:
+        index_identity = "index"
+
+        def retrieve(self, tenant_id, _text, *, limit, project_id, document_type, taxonomy_version):
+            return DenseRetrievalResult(
+                DenseRetrievalQuery(
+                    tenant_id,
+                    (1.0,),
+                    "model",
+                    "revision",
+                    1,
+                    limit,
+                    project_id,
+                    document_type,
+                    taxonomy_version,
+                ),
+                (),
+                True,
+                index_identity="index",
+            )
+
+    query = EvaluationQuery("sanitized", "expected", "tenant-a", None, "visr", "taxonomy-1")
+    with pytest.raises(ValueError, match="unavailable retrieval"):
+        evaluate_observed_queries(UnavailableRetriever(), (query,))
+
+
+def test_legacy_evaluate_fixture_arity_warns_then_refuses_fabricated_metrics() -> None:
+    with pytest.deprecated_call(), pytest.raises(ValueError, match="requires a DenseRetriever"):
+        evaluate_fixture(Path("tests/fixtures/stage_rag/dense_rag_evaluation.json"))

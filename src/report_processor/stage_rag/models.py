@@ -162,8 +162,8 @@ class DenseRetrievalResult:
 
     query: DenseRetrievalQuery
     candidates: tuple[DenseRetrievalCandidate, ...]
-    index_identity: str = "unavailable"
     unavailable: bool = False
+    index_identity: str = field(default="unavailable", kw_only=True)
     requires_manual_review: bool = field(default=True, init=False)
     auto_accepted: bool = field(default=False, init=False)
     contract_version: str = field(default="DenseRetriever-1.0", init=False)

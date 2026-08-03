@@ -118,6 +118,31 @@ def test_self_replacement_does_not_deactivate_the_newly_upserted_evidence() -> N
     assert store.deactivations == []
 
 
+@pytest.mark.parametrize(
+    "invalid_ids", ["stale", b"stale", {"stale"}, {"stale": 1}, ("",), ("not/path",)]
+)
+def test_invalid_replacement_ids_cause_no_encoder_or_store_side_effects(
+    invalid_ids: object,
+) -> None:
+    class CountingProvider(Provider):
+        calls = 0
+
+        def encode(self, texts):
+            self.calls += 1
+            return super().encode(texts)
+
+    provider = CountingProvider()
+    store = RecordingVectorStore()
+    outcome = _outcome(cancelled_example_ids=invalid_ids)
+
+    with pytest.raises(StageRAGInputError, match="INVALID_EXAMPLE_IDS"):
+        ConfirmedExampleIndexer(store, provider).index(outcome)
+
+    assert provider.calls == 0
+    assert store.upserts == []
+    assert store.deactivations == []
+
+
 def test_stable_ids_are_tenant_aware_and_reindex_plan_has_no_side_effect() -> None:
     assert stable_example_id("tenant-a", "review-123") != stable_example_id(
         "tenant-b", "review-123"

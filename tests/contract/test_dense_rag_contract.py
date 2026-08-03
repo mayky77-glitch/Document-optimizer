@@ -9,7 +9,7 @@ from report_processor.stage_rag.contracts import (
     StageEncoderEmbeddingProvider,
 )
 from report_processor.stage_rag.errors import StageRAGStoreUnavailableError
-from report_processor.stage_rag.models import DenseRetrievalQuery
+from report_processor.stage_rag.models import DenseRetrievalQuery, DenseRetrievalResult
 from report_processor.stage_rag.retrieval import StoreBackedDenseRetriever
 
 
@@ -29,6 +29,8 @@ def test_retriever_returns_empty_manual_review_result_when_store_is_unavailable(
             return ((1.0, 0.0),)
 
     class OfflineStore:
+        index_identity = "offline-test-store"
+
         def query(self, query: DenseRetrievalQuery):
             raise StageRAGStoreUnavailableError("unavailable")
 
@@ -38,6 +40,7 @@ def test_retriever_returns_empty_manual_review_result_when_store_is_unavailable(
     assert result.candidates == ()
     assert result.requires_manual_review is True
     assert result.auto_accepted is False
+    assert result.index_identity == "offline-test-store"
 
 
 def test_stage_encoder_adapter_exposes_required_embedding_metadata() -> None:
@@ -51,3 +54,11 @@ def test_stage_encoder_adapter_exposes_required_embedding_metadata() -> None:
 
     assert (provider.model_id, provider.revision, provider.dimensions) == ("model", "revision", 2)
     assert provider.encode(("query",)) == ((1.0, 0.0),)
+
+
+def test_dense_result_preserves_legacy_third_positional_unavailable_argument() -> None:
+    query = DenseRetrievalQuery("tenant", (1.0,), "model", "revision", 1)
+    result = DenseRetrievalResult(query, (), True, index_identity="index")
+
+    assert result.unavailable is True
+    assert result.index_identity == "index"

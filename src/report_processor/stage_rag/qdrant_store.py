@@ -26,6 +26,10 @@ class InMemoryVectorStore:
     def __init__(self) -> None:
         self._examples: dict[tuple[str, str], ConfirmedExampleVector] = {}
 
+    @property
+    def index_identity(self) -> str:
+        return "in-memory-confirmed-examples"
+
     def upsert(self, examples: Sequence[ConfirmedExampleVector]) -> None:
         for example in examples:
             _validate_confirmed_example(example)
@@ -43,7 +47,7 @@ class InMemoryVectorStore:
         return DenseRetrievalResult(
             query=query,
             candidates=tuple(_rank(candidates)[: query.limit]),
-            index_identity="in-memory-confirmed-examples",
+            index_identity=self.index_identity,
         )
 
     def deactivate(self, tenant_id: str, example_ids: Sequence[str]) -> None:
@@ -86,6 +90,10 @@ class QdrantVectorStore:
         self._collection_name = collection_name
         self._api_key = api_key
         self._timeout_seconds = float(timeout_seconds)
+
+    @property
+    def index_identity(self) -> str:
+        return f"qdrant:{self._collection_name}"
 
     def upsert(self, examples: Sequence[ConfirmedExampleVector]) -> None:
         points = []

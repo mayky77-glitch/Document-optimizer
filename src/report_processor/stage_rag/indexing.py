@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from math import isfinite
-from re import sub
+from re import fullmatch, sub
 
 from .contracts import EmbeddingProvider, VectorStore
 from .errors import StageRAGInputError
@@ -45,6 +45,7 @@ class ConfirmedExampleIndexer:
                 "UNCONFIRMED_OUTCOME",
                 "индексировать можно только явное manual-review подтверждение",
             )
+        replacement_ids = _validated_replacement_ids(outcome)
         normalized_hash = normalized_text_hash(outcome.text)
         example_id = stable_example_id(outcome.tenant_id, outcome.audit_reference)
         vector = _encode_one(self._embedding_provider, outcome.text)
@@ -65,7 +66,7 @@ class ConfirmedExampleIndexer:
             active=True,
         )
         deactivated = tuple(
-            example_id for example_id in _replacement_ids(outcome) if example_id != point.example_id
+            example_id for example_id in replacement_ids if example_id != point.example_id
         )
         self._vector_store.upsert((point,))
         if deactivated:
@@ -170,11 +171,25 @@ def _encode_one(provider: EmbeddingProvider, text: str) -> tuple[float, ...]:
     return vector
 
 
-def _replacement_ids(outcome: ConfirmedReviewOutcome) -> tuple[str, ...]:
-    ids = ((outcome.replaces_example_id,) if outcome.replaces_example_id else ()) + tuple(
-        outcome.cancelled_example_ids
-    )
+def _validated_replacement_ids(outcome: ConfirmedReviewOutcome) -> tuple[str, ...]:
+    replacement = outcome.replaces_example_id
+    if replacement is not None:
+        _validate_opaque_id(replacement, "replaces_example_id")
+    cancelled = outcome.cancelled_example_ids
+    if isinstance(cancelled, (str, bytes)) or not isinstance(cancelled, Sequence):
+        raise StageRAGInputError(
+            "INVALID_EXAMPLE_IDS",
+            "cancelled_example_ids должен быть конечной последовательностью ID",
+        )
+    for example_id in cancelled:
+        _validate_opaque_id(example_id, "cancelled_example_ids")
+    ids = ((replacement,) if replacement is not None else ()) + tuple(cancelled)
     return tuple(sorted(set(ids)))
+
+
+def _validate_opaque_id(value: object, field_name: str) -> None:
+    if not isinstance(value, str) or fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value) is None:
+        raise StageRAGInputError("INVALID_EXAMPLE_IDS", f"{field_name} содержит недопустимый ID")
 
 
 def _validate_outcome(outcome: ConfirmedReviewOutcome) -> None:
