@@ -1,0 +1,17 @@
+status: frozen
+work_id: qdrant-dense-rag-audit-fixes-2026-08
+objective: "Закрыть P6 audit findings Dense RAG без production cutover"
+planning_parent_sha: bce6a23642f51e1d96c5263c049ed3df9c5e6ff4
+published_base_sha_ref: "planning commit containing this manifest and frozen remediation cards"
+max_parallel: 2
+max_spawns: 3
+max_retries: 1
+merge_method: merge-no-ff
+approval_gates:
+  - production deployment
+  - real secrets
+  - production alias switch
+tasks:
+  - dense-audit-core
+  - dense-audit-infra
+  - dense-audit-evaluation

@@ -1,7 +1,7 @@
 ---
 type: task
-status: frozen
-orda_status: frozen-wave-2
+status: done
+orda_status: accepted
 card_id: qdrant-dense-rag-app
 version: 1
 supersedes: null
@@ -21,7 +21,7 @@ branch_base_sha_ref: wave-1-integration-sha
 worktree: "/Users/x/Documents/Сооотношение документов/Document-optimizer-qdrant-dense-app"
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 5
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -30,9 +30,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-08-03
@@ -68,7 +68,7 @@ acceptance_commands:
   - "git diff --check"
 tags:
   - "task/implementation"
-  - "status/in-progress"
+  - "status/done"
   - "domain/rag"
   - "layer/backend"
   - "risk/high"
@@ -96,10 +96,12 @@ returns controlled manual review/fallback without leaking backend details.
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: frozen drawing-card semantic/matcher scope and focused tests.
+- Commands and tests run: 11 focused pytest; Ruff; format; diff-check; combined
+  Dense RAG suite 68 passed with one opt-in model skip before the real model run.
+- Result: accepted `1e93a0418a554bc8086765f448df1343c937a64a` →
+  `bce6a23642f51e1d96c5263c049ed3df9c5e6ff4`.
+- Risks or follow-up: feature is injectable/opt-in; no production endpoint or default enabled.
 
 ## Handoff
 

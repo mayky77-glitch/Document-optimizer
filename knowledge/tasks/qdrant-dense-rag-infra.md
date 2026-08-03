@@ -1,7 +1,7 @@
 ---
 type: task
-status: frozen
-orda_status: frozen
+status: done
+orda_status: accepted
 card_id: qdrant-dense-rag-infra
 version: 1
 supersedes: null
@@ -21,7 +21,7 @@ branch_base_sha_ref: published-base-sha
 worktree: "/Users/x/Documents/Сооотношение документов/Document-optimizer-qdrant-dense-infra"
 profile: L1
 routing_grade: P3
-progress_revision: 0
+progress_revision: 5
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -30,9 +30,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: medium
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-08-03
@@ -75,7 +75,7 @@ acceptance_commands:
   - "git diff --check"
 tags:
   - "task/implementation"
-  - "status/in-progress"
+  - "status/done"
   - "domain/rag"
   - "layer/infra"
   - "risk/high"
@@ -103,10 +103,13 @@ and a no-secret runbook. No real server access or production deployment.
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: frozen local service, Compose, Qdrant scripts and runbook scope.
+- Commands and tests run: 6 focused pytest; Ruff; format; Compose; Bash; live
+  Qdrant 1.18.3 health, idempotent indexes and disposable snapshot restore.
+- Result: accepted `3d256dd73bae857d66ce55d9a8db328d635021fc` →
+  `2488019e327445b8dc00f94c0df3540054557c2c`; two live-smoke fixes were added by
+  integration owner in `01c87761870b1e546728186a2536473850bd5a2a`.
+- Risks or follow-up: TLS, firewall, production keys and real deployment remain gates.
 
 ## Handoff
 

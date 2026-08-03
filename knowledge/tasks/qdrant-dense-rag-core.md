@@ -1,7 +1,7 @@
 ---
 type: task
-status: frozen
-orda_status: frozen
+status: done
+orda_status: accepted
 card_id: qdrant-dense-rag-core
 version: 1
 supersedes: null
@@ -21,7 +21,7 @@ branch_base_sha_ref: published-base-sha
 worktree: "/Users/x/Documents/Сооотношение документов/Document-optimizer-qdrant-dense-core"
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 8
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -30,9 +30,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-08-03
@@ -75,7 +75,7 @@ acceptance_commands:
   - "git diff --check"
 tags:
   - "task/implementation"
-  - "status/in-progress"
+  - "status/done"
   - "domain/rag"
   - "layer/data"
   - "risk/high"
@@ -104,10 +104,11 @@ audit paths, use bounded timeouts and map failures to controlled RAG errors.
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: frozen `stage_rag` contracts/store/retrieval scope and focused tests.
+- Commands and tests run: 25 focused pytest; Ruff; format; diff-check.
+- Result: accepted `89cb4814d04e31acb1143e7d75bc58f2b3e57df1` →
+  `f35053baba2379864256ef428f5f4230e05a27eb`.
+- Risks or follow-up: production isolation model and capacity remain owner gates.
 
 ## Handoff
 

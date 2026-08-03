@@ -90,8 +90,16 @@ links:
 - Финальный app SHA `1e93a0418a554bc8086765f448df1343c937a64a`
   прошёл 11 focused tests и готов к integration acceptance. Integration owner
   публикует новые Dense RAG API через package boundary без изменения defaults.
+- Реальная embedding-image сборка показала, что generic Linux `torch` тянет
+  CUDA runtime в CPU-only локальный сервис и не использует lock. P6-аудит
+  потребовал frozen CPU dependency install и минимальный Docker context.
 - Wave 2: `qdrant-dense-rag-indexer`, `qdrant-dense-rag-app` — ожидают Wave 1.
 - Production deploy, реальные secrets и переключение production alias не выполнялись.
+- Финальный P6 read-only audit отклонил завершение: 5 P1 и 5 P2. Открыта
+  отдельная Orda remediation-работа `qdrant-dense-rag-audit-fixes-2026-08`
+  с тремя непересекающимися scopes: core lifecycle/evidence, infra security/
+  reproducibility и observed evaluation. До их acceptance статус остаётся
+  `in-progress`; production gates не расширены.
 
 ## Временные решения dev/test
 

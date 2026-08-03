@@ -1,7 +1,7 @@
 ---
 type: task
-status: frozen
-orda_status: frozen-wave-2
+status: done
+orda_status: accepted
 card_id: qdrant-dense-rag-indexer
 version: 1
 supersedes: null
@@ -21,7 +21,7 @@ branch_base_sha_ref: wave-1-integration-sha
 worktree: "/Users/x/Documents/Сооотношение документов/Document-optimizer-qdrant-dense-indexer"
 profile: L2
 routing_grade: P4
-progress_revision: 0
+progress_revision: 5
 state_fingerprint: ""
 no_progress_count: 0
 circuit_state: closed
@@ -30,9 +30,9 @@ luna_benchmark_evidence: ""
 exception_evidence: ""
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 fallback_reason: ""
 model_fallback: false
 last_verified: 2026-08-03
@@ -74,7 +74,7 @@ acceptance_commands:
   - "git diff --check"
 tags:
   - "task/implementation"
-  - "status/in-progress"
+  - "status/done"
   - "domain/rag"
   - "layer/data"
   - "risk/high"
@@ -102,10 +102,11 @@ sanitized fixture with Recall@5, MRR, top-1 error, review rate and latency.
 
 ## Completion evidence
 
-- Changed paths:
-- Commands and tests run:
-- Result:
-- Risks or follow-up:
+- Changed paths: frozen indexer, evaluation, sanitized fixture and focused tests.
+- Commands and tests run: 18 focused pytest; Ruff; format; diff-check.
+- Result: accepted `1f159d0adc5714deb30c7d8c4643fed6141ffbcf` →
+  `01c87761870b1e546728186a2536473850bd5a2a`.
+- Risks or follow-up: production dataset, thresholds and real alias switch remain gates.
 
 ## Handoff
 
