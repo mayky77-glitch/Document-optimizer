@@ -44,11 +44,7 @@ def _parse_input(payload: Any) -> tuple[str, ...] | None:
 
 
 def _has_pinned_model(payload: dict[str, Any]) -> bool:
-    return all(
-        value == RUBERT_TINY2_MODEL_ID
-        for key in ("model", "model_id")
-        if (value := payload.get(key)) is not None
-    )
+    return payload.get("model") == RUBERT_TINY2_MODEL_ID
 
 
 def _normalise_vectors(vectors: Sequence[Sequence[float]]) -> tuple[tuple[float, ...], ...] | None:

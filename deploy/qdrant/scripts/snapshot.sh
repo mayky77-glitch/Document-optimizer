@@ -4,10 +4,12 @@ set -euo pipefail
 : "${QDRANT_API_KEY:?Set QDRANT_API_KEY in the environment.}"
 QDRANT_URL="${QDRANT_URL:-http://127.0.0.1:6333}"
 COLLECTION_NAME="${QDRANT_COLLECTION:-confirmed_examples_v1}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 
-case "$QDRANT_URL" in http://127.0.0.1:*|http://localhost:*|https://127.0.0.1:*|https://localhost:*) ;; *)
-  echo "QDRANT_URL must target loopback." >&2; exit 2;; esac
-case "$COLLECTION_NAME" in *[!A-Za-z0-9_-]*|"") echo "Invalid collection name." >&2; exit 2;; esac
+validate_qdrant_url "$QDRANT_URL"
+validate_collection_name "$COLLECTION_NAME"
 
 response="$(curl --fail --silent --show-error -X POST -H "api-key: $QDRANT_API_KEY" \
   "$QDRANT_URL/collections/$COLLECTION_NAME/snapshots")"

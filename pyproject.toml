@@ -27,10 +27,19 @@ dev = [
   "ruff>=0.9",
 ]
 rag = [
-  "sentencepiece>=0.2,<1",
-  "torch>=2.6,<3",
-  "transformers>=4.48,<5",
+  "sentencepiece==0.2.2",
+  "torch==2.6.0+cpu; sys_platform == 'linux'",
+  "torch==2.6.0; sys_platform != 'linux'",
+  "transformers==4.57.6",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.scripts]
 report-processor = "report_processor.cli:main"

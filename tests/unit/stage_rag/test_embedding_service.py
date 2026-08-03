@@ -62,6 +62,8 @@ def test_embeddings_rejects_any_non_pinned_requested_model() -> None:
     responses = [
         client.post("/v1/embeddings", json={"input": "text", "model": "another-model"}),
         client.post("/v1/embeddings", json={"input": "text", "model_id": "another-model"}),
+        client.post("/v1/embeddings", json={"input": "text"}),
+        client.post("/v1/embeddings", json={"input": "text", "model_id": RUBERT_TINY2_MODEL_ID}),
     ]
 
     assert all(response.status_code == 400 for response in responses)
@@ -74,7 +76,10 @@ def test_embeddings_rejects_non_finite_or_wrong_size_vectors() -> None:
         TestClient(create_app(InvalidVectorEncoder((float("nan"),) * EMBEDDING_DIMENSIONS))),
     ]
 
-    responses = [client.post("/v1/embeddings", json={"input": "text"}) for client in clients]
+    responses = [
+        client.post("/v1/embeddings", json={"input": "text", "model": RUBERT_TINY2_MODEL_ID})
+        for client in clients
+    ]
 
     assert all(response.status_code == 503 for response in responses)
     assert all(response.json()["error"]["code"] == "service_unavailable" for response in responses)
@@ -82,7 +87,7 @@ def test_embeddings_rejects_non_finite_or_wrong_size_vectors() -> None:
 
 def test_embeddings_hides_local_model_errors() -> None:
     response = TestClient(create_app(UnavailableEncoder())).post(
-        "/v1/embeddings", json={"input": "text"}
+        "/v1/embeddings", json={"input": "text", "model": RUBERT_TINY2_MODEL_ID}
     )
 
     assert response.status_code == 503
