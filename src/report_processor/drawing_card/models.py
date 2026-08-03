@@ -105,6 +105,10 @@ class DrawingSourceRow:
     source_revision: str | None
     status: str
     warnings: tuple[str, ...]
+    contract_quantity: Decimal = Decimal(0)
+    contract_total_cost: Decimal = Decimal(0)
+    performed_quantity: Decimal = Decimal(0)
+    performed_total_cost: Decimal = Decimal(0)
     position_code_raw: str | None = None
 
 

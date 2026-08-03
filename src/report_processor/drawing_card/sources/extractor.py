@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from decimal import Decimal
 from itertools import islice
 
 from openpyxl.utils import get_column_letter
@@ -32,6 +33,11 @@ def _position_text(value: object) -> str | None:
 
 def _is_formula(value: object) -> bool:
     return isinstance(value, str) and value.startswith("=")
+
+
+def _decimal_or_zero(value: object) -> tuple[Decimal, tuple[str, ...]]:
+    parsed, warnings = parse_decimal(value)
+    return (parsed if parsed is not None else Decimal(0)), warnings
 
 
 def extract_rows(
@@ -72,6 +78,14 @@ def extract_rows(
         quantity_cached = value_at(cached_row, columns.get("remaining_quantity"))
         cost_formula = value_at(formula_row, columns.get("remaining_total_cost"))
         cost_cached = value_at(cached_row, columns.get("remaining_total_cost"))
+        contract_quantity_formula = value_at(formula_row, columns.get("contract_quantity"))
+        contract_quantity_cached = value_at(cached_row, columns.get("contract_quantity"))
+        contract_cost_formula = value_at(formula_row, columns.get("contract_total_cost"))
+        contract_cost_cached = value_at(cached_row, columns.get("contract_total_cost"))
+        performed_quantity_formula = value_at(formula_row, columns.get("performed_quantity"))
+        performed_quantity_cached = value_at(cached_row, columns.get("performed_quantity"))
+        performed_cost_formula = value_at(formula_row, columns.get("performed_total_cost"))
+        performed_cost_cached = value_at(cached_row, columns.get("performed_total_cost"))
         observed = (
             raw_drawing,
             work_name,
@@ -81,6 +95,14 @@ def extract_rows(
             quantity_cached,
             cost_formula,
             cost_cached,
+            contract_quantity_formula,
+            contract_quantity_cached,
+            contract_cost_formula,
+            contract_cost_cached,
+            performed_quantity_formula,
+            performed_quantity_cached,
+            performed_cost_formula,
+            performed_cost_cached,
         )
         if all(value in (None, "") for value in observed):
             empty_streak += 1
@@ -114,10 +136,29 @@ def extract_rows(
             continue
         quantity, quantity_warnings = parse_decimal(quantity_cached)
         cost, cost_warnings = parse_decimal(cost_cached)
-        warnings = extraction_warnings + list(quantity_warnings + cost_warnings)
-        if _is_formula(quantity_formula) and quantity_cached is None:
-            warnings.append(Status.FORMULA_WITHOUT_CACHED_VALUE)
-        if _is_formula(cost_formula) and cost_cached is None:
+        contract_quantity, contract_quantity_warnings = _decimal_or_zero(contract_quantity_cached)
+        contract_cost, contract_cost_warnings = _decimal_or_zero(contract_cost_cached)
+        performed_quantity, performed_quantity_warnings = _decimal_or_zero(
+            performed_quantity_cached
+        )
+        performed_cost, performed_cost_warnings = _decimal_or_zero(performed_cost_cached)
+        warnings = extraction_warnings + list(
+            quantity_warnings
+            + cost_warnings
+            + contract_quantity_warnings
+            + contract_cost_warnings
+            + performed_quantity_warnings
+            + performed_cost_warnings
+        )
+        metric_values = (
+            (quantity_formula, quantity_cached),
+            (cost_formula, cost_cached),
+            (contract_quantity_formula, contract_quantity_cached),
+            (contract_cost_formula, contract_cost_cached),
+            (performed_quantity_formula, performed_quantity_cached),
+            (performed_cost_formula, performed_cost_cached),
+        )
+        if any(_is_formula(formula) and cached is None for formula, cached in metric_values):
             warnings.append(Status.FORMULA_WITHOUT_CACHED_VALUE)
         if entry.extension == ".xlsb":
             warnings.append(Status.FORMULA_NOT_AVAILABLE_FOR_BACKEND)
@@ -146,11 +187,15 @@ def extract_rows(
             unit_raw=unit,
             remaining_quantity=quantity,
             remaining_total_cost=cost,
-            formula_values=(quantity_formula, cost_formula),
-            cached_values=(quantity_cached, cost_cached),
+            formula_values=tuple(formula for formula, _cached in metric_values),
+            cached_values=tuple(cached for _formula, cached in metric_values),
             source_document_type=entry.document_type,
             source_period=entry.period,
             source_revision=entry.revision,
             status=status,
             warnings=tuple(dict.fromkeys(str(item) for item in warnings)),
+            contract_quantity=contract_quantity,
+            contract_total_cost=contract_cost,
+            performed_quantity=performed_quantity,
+            performed_total_cost=performed_cost,
         )

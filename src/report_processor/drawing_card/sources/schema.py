@@ -47,6 +47,11 @@ _UNIT_ALIASES = ("ед. изм", "ед изм", "единица измерени
 _QUANTITY_TOKENS = ("колич", "объем", "объём", "кол-во")
 _UNIT_PRICE_TOKENS = ("цена за единицу", "стоимость за единицу")
 _TOTAL_COST_TOKENS = ("общая стоимость", "стоимость работ всего")
+_CONTRACT_COST_BLOCK = "стоимость по договору"
+_PERFORMED_BLOCK_ALIASES = (
+    "выполнено за весь период строительства",
+    "выполнено за весь период",
+)
 
 
 def _normalize_header(value: object) -> str:
@@ -116,6 +121,45 @@ def _remaining_cost_score(header: str) -> int:
     return 0
 
 
+def _block_metric_score(header: str, block_aliases: tuple[str, ...], *, quantity: bool) -> int:
+    """Score an explicit leaf metric under one multi-row header block."""
+    block = next((alias for alias in block_aliases if alias in header), None)
+    if block is None:
+        return 0
+    leaf = header.replace(block, " ").strip()
+    if quantity:
+        return 20 if any(token in leaf for token in _QUANTITY_TOKENS) else 0
+    if "единиц" in leaf or "цен" in leaf:
+        return 0
+    return 20 if "стоим" in leaf or "сумм" in leaf else 0
+
+
+def _resolve_block_metrics(
+    headers: dict[int, str],
+    *,
+    prefix: str,
+    block_aliases: tuple[str, ...],
+) -> tuple[dict[str, int], list[str]]:
+    """Resolve quantity/cost leaves, keeping duplicate physical blocks deterministic."""
+    resolved: dict[str, int] = {}
+    warnings: list[str] = []
+    for field, quantity in (("quantity", True), ("total_cost", False)):
+        ranked = sorted(
+            (
+                (score, column)
+                for column, header in headers.items()
+                if (score := _block_metric_score(header, block_aliases, quantity=quantity))
+            ),
+            key=lambda item: (-item[0], item[1]),
+        )
+        if not ranked:
+            continue
+        resolved[f"{prefix}_{field}"] = ranked[0][1]
+        if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+            warnings.append(f"AMBIGUOUS_COLUMN:{prefix}_{field}:{ranked[0][1]},{ranked[1][1]}")
+    return resolved, warnings
+
+
 def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]]:
     resolved: dict[str, int] = {}
     warnings: list[str] = []
@@ -155,6 +199,20 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
     if resolved.get("remaining_quantity") == resolved.get("remaining_total_cost"):
         column = resolved.pop("remaining_quantity", None)
         warnings.append(f"SAME_COLUMN_FOR_QUANTITY_AND_COST:{column}")
+    contract_columns, contract_warnings = _resolve_block_metrics(
+        headers,
+        prefix="contract",
+        block_aliases=(_CONTRACT_COST_BLOCK,),
+    )
+    performed_columns, performed_warnings = _resolve_block_metrics(
+        headers,
+        prefix="performed",
+        block_aliases=_PERFORMED_BLOCK_ALIASES,
+    )
+    resolved.update(contract_columns)
+    resolved.update(performed_columns)
+    warnings.extend(contract_warnings)
+    warnings.extend(performed_warnings)
     return resolved, warnings
 
 
@@ -191,6 +249,16 @@ def _content_position_column(
 def _schema_score(columns: dict[str, int]) -> int:
     score = sum(2 for key in ("drawing_code", "work_name", "unit") if key in columns)
     score += sum(4 for key in ("remaining_quantity", "remaining_total_cost") if key in columns)
+    score += sum(
+        1
+        for key in (
+            "contract_quantity",
+            "contract_total_cost",
+            "performed_quantity",
+            "performed_total_cost",
+        )
+        if key in columns
+    )
     return score
 
 
