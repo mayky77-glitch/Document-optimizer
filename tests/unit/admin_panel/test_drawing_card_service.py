@@ -347,3 +347,83 @@ def test_initial_run_is_strict_but_approved_inline_review_rerun_is_not(
     assert calls[0] == (None, True)
     assert calls[1][0] == job.directory / "inline_review_decisions.json"
     assert calls[1][1] is False
+
+
+@pytest.mark.parametrize("rerun_status", ("ready", "failed", "blocked"))
+def test_inline_review_feedback_uses_initial_snapshot_only_after_ready_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rerun_status: str
+) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+    original_row = DrawingSourceRow(
+        row_id="initial-row",
+        location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 10, ("A10",)),
+        object_index_raw="1006",
+        drawing_code_raw="А-001",
+        work_name_raw="Исходное решение",
+        unit_raw="м",
+        remaining_quantity=Decimal("1"),
+        remaining_total_cost=Decimal("2"),
+        formula_values=(),
+        cached_values=(),
+        source_document_type="ks6a",
+        source_period=None,
+        source_revision=None,
+        status=Status.OK,
+        warnings=(),
+    )
+    replacement_row = DrawingSourceRow(
+        row_id="rerun-row",
+        location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 11, ("A11",)),
+        object_index_raw="1006",
+        drawing_code_raw="А-001",
+        work_name_raw="Перезаписанное состояние",
+        unit_raw="шт",
+        remaining_quantity=Decimal("3"),
+        remaining_total_cost=Decimal("4"),
+        formula_values=(),
+        cached_values=(),
+        source_document_type="ks6a",
+        source_period=None,
+        source_revision=None,
+        status=Status.OK,
+        warnings=(),
+    )
+    feedback_calls: list[tuple[dict[str, DrawingSourceRow], dict[str, object]]] = []
+
+    def fake_run(
+        job: DrawingCardJob, *, review_decisions: Path | None = None, strict: bool = True
+    ) -> DrawingCardJob:
+        if review_decisions is None:
+            job.status = "review_required"
+            return job
+        assert strict is False
+        job.review_rows = {replacement_row.row_id: replacement_row}
+        job.inline_approvals = {}
+        job.status = rerun_status
+        return job
+
+    def capture_feedback(_path, rows, approvals) -> None:
+        feedback_calls.append((dict(rows), dict(approvals)))
+
+    monkeypatch.setattr(service, "_run", fake_run)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service.append_feedback", capture_feedback
+    )
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    job.review_items = {original_row.row_id: {"review_id": original_row.row_id}}
+    job.review_rows = {original_row.row_id: original_row}
+    from report_processor.drawing_card.review.inline import review_approval
+
+    job.inline_approvals = {
+        original_row.row_id: review_approval(original_row.row_id, "approve", "low_current_cable")
+    }
+
+    service.apply_inline_review(job_id=job.job_id)
+
+    if rerun_status == "ready":
+        assert len(feedback_calls) == 1
+        assert feedback_calls[0][0] == {original_row.row_id: original_row}
+        assert set(feedback_calls[0][1]) == {original_row.row_id}
+    else:
+        assert feedback_calls == []

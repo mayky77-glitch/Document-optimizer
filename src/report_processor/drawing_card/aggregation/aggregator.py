@@ -35,6 +35,10 @@ class _Bucket:
     quantity_matching_strategies: list[str]
     cost_matching_strategies: list[str]
     warnings: list[str]
+    contract_quantity_values: list[Decimal]
+    performed_quantity_values: list[Decimal]
+    contract_cost_values: list[Decimal]
+    performed_cost_values: list[Decimal]
     requires_review: bool = False
 
 
@@ -73,7 +77,25 @@ def aggregate_rows(
         group = (row.object_index_raw, drawing.group_key, decision.category)
         bucket = buckets.get(group)
         if bucket is None:
-            bucket = _Bucket(drawing, [], [], [], [], [], [], [], [], [], [], [], [])
+            bucket = _Bucket(
+                drawing,
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+            )
             buckets[group] = bucket
         if is_duplicate:
             bucket.warnings.append(f"{Status.POSSIBLE_DUPLICATE}:{duplicate_of}:{row.row_id}")
@@ -87,6 +109,8 @@ def aggregate_rows(
             if unit:
                 bucket.units.append(unit)
             bucket.quantity_values.append(row.remaining_quantity)
+            bucket.contract_quantity_values.append(row.contract_quantity)
+            bucket.performed_quantity_values.append(row.performed_quantity)
             bucket.quantity_rows.append(row.row_id)
             if decision.quantity_rule_id:
                 bucket.quantity_rule_ids.append(decision.quantity_rule_id)
@@ -99,6 +123,8 @@ def aggregate_rows(
             bucket.warnings.extend(decision.warnings)
         if decision.cost_decision == "include" and row.remaining_total_cost is not None:
             bucket.cost_values.append(row.remaining_total_cost)
+            bucket.contract_cost_values.append(row.contract_total_cost)
+            bucket.performed_cost_values.append(row.performed_total_cost)
             bucket.cost_rows.append(row.row_id)
             if decision.cost_rule_id:
                 bucket.cost_rule_ids.append(decision.cost_rule_id)
@@ -157,6 +183,10 @@ def aggregate_rows(
                     dict.fromkeys(bucket.quantity_matching_strategies)
                 ),
                 cost_matching_strategies=tuple(dict.fromkeys(bucket.cost_matching_strategies)),
+                contract_quantity=sum(bucket.contract_quantity_values, Decimal(0)),
+                contract_total_cost=sum(bucket.contract_cost_values, Decimal(0)),
+                performed_quantity=sum(bucket.performed_quantity_values, Decimal(0)),
+                performed_total_cost=sum(bucket.performed_cost_values, Decimal(0)),
             )
         )
     return results
@@ -230,6 +260,10 @@ def build_complete_card_rows(
                     warnings=aggregated_item.warnings,
                     quantity_matching_strategies=aggregated_item.quantity_matching_strategies,
                     cost_matching_strategies=aggregated_item.cost_matching_strategies,
+                    contract_quantity=aggregated_item.contract_quantity,
+                    contract_total_cost=aggregated_item.contract_total_cost,
+                    performed_quantity=aggregated_item.performed_quantity,
+                    performed_total_cost=aggregated_item.performed_total_cost,
                 )
             )
     return card_rows

@@ -15,6 +15,7 @@ from report_processor.drawing_card.models import (
     DrawingCardResultRow,
 )
 from report_processor.drawing_card.output.contract import (
+    CARD_HEADERS,
     COST_FORMAT,
     FRACTIONAL_QUANTITY_FORMAT,
     MAIN_CARD_SHEET_NAME,
@@ -23,6 +24,7 @@ from report_processor.drawing_card.output.contract import (
     SUMMARY_HEADERS,
     SUMMARY_SHEET_NAME,
 )
+from report_processor.drawing_card.output.discrepancies import DISCREPANCY_SHEET_NAME
 from report_processor.drawing_card.output.layout import plan_layout
 from report_processor.drawing_card.output.summary import summary_block_position, summary_row_count
 from report_processor.drawing_card.output.validator import validate_card
@@ -204,6 +206,169 @@ def test_numeric_display_uses_two_decimals_without_rounding_stored_values(tmp_pa
         workbook.close()
 
 
+def test_main_card_publishes_contract_and_performed_values_without_scaling_quantity(
+    tmp_path: Path,
+) -> None:
+    rows = _rows()
+    rows[0] = replace(
+        rows[0],
+        contract_quantity=Decimal("11.25"),
+        contract_total_cost=Decimal("2500000"),
+        performed_quantity=Decimal("9.5"),
+        performed_total_cost=Decimal("1750000"),
+    )
+    layouts = plan_layout(rows)
+    output = tmp_path / "contract-values.xlsx"
+    write_card(
+        base_path=FIXTURES / "default_template.xlsx",
+        output_path=output,
+        rows=rows,
+        layouts=layouts,
+        run_id="contract-values",
+        cost_scale=1,
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    try:
+        card = workbook[MAIN_CARD_SHEET_NAME]
+        headers = {
+            card.cell(layouts[0].column_header_row, layouts[0].start_column + offset).value: offset
+            for offset in range(len(CARD_HEADERS))
+        }
+        assert tuple(headers) == CARD_HEADERS
+        first_data_row = layouts[0].drawing_code_blocks[0].start_row
+        published = {
+            header: card.cell(first_data_row, layouts[0].start_column + offset).value
+            for header, offset in headers.items()
+        }
+        assert published[CARD_HEADERS[5]] == 11.25
+        assert published[CARD_HEADERS[6]] == 2.5
+        assert published[CARD_HEADERS[7]] == 9.5
+        assert published[CARD_HEADERS[8]] == 1.75
+        assert DISCREPANCY_SHEET_NAME not in workbook.sheetnames
+    finally:
+        workbook.close()
+
+
+@pytest.mark.parametrize(
+    ("difference_rub", "has_violation"),
+    ((Decimal("1000"), False), (Decimal("1000.01"), True)),
+)
+def test_contract_cost_violation_uses_strict_ruble_tolerance_and_links_to_only_red_cell(
+    tmp_path: Path, difference_rub: Decimal, has_violation: bool
+) -> None:
+    rows = _rows(indices=("1001",))
+    rows[0] = replace(
+        rows[0],
+        contract_quantity=Decimal("10.1234567890123"),
+        contract_total_cost=Decimal("2000000"),
+        performed_quantity=Decimal("12.9876543210987"),
+        performed_total_cost=Decimal("2000000") + difference_rub,
+    )
+    layouts = plan_layout(rows)
+    output = tmp_path / f"tolerance-{difference_rub}.xlsx"
+    write_card(
+        base_path=FIXTURES / "default_template.xlsx",
+        output_path=output,
+        rows=rows,
+        layouts=layouts,
+        run_id="contract-tolerance",
+        cost_scale=1,
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    try:
+        card = workbook[MAIN_CARD_SHEET_NAME]
+        headers = {
+            card.cell(layouts[0].column_header_row, layouts[0].start_column + offset).value: offset
+            for offset in range(len(CARD_HEADERS))
+        }
+        row_number = layouts[0].drawing_code_blocks[0].start_row
+        contract_cost_column = layouts[0].start_column + headers[CARD_HEADERS[6]]
+        contract_cost_cell = card.cell(row_number, contract_cost_column)
+        if not has_violation:
+            assert DISCREPANCY_SHEET_NAME not in workbook.sheetnames
+            assert not contract_cost_cell.fill.fgColor.rgb.endswith("FFC7CE")
+            return
+
+        assert DISCREPANCY_SHEET_NAME in workbook.sheetnames
+        assert contract_cost_cell.fill.fgColor.rgb.endswith("FFC7CE")
+        discrepancy = workbook[DISCREPANCY_SHEET_NAME]
+        assert discrepancy.max_row == 2
+        assert tuple(cell.value for cell in discrepancy[1]) == (
+            "Индекс объекта",
+            "Шифр чертежа",
+            "Этап / категория",
+            "Ед. изм.",
+            CARD_HEADERS[5],
+            CARD_HEADERS[6],
+            CARD_HEADERS[7],
+            CARD_HEADERS[8],
+            "Разница стоимости, млн руб.",
+            "Ссылка на договорную стоимость",
+        )
+        expected_target = f"#'{MAIN_CARD_SHEET_NAME}'!{contract_cost_cell.coordinate}"
+        assert discrepancy.cell(2, 10).hyperlink.target == expected_target
+        red_coordinates = {
+            cell.coordinate
+            for cell in card[row_number]
+            if cell.fill.fill_type == "solid" and cell.fill.fgColor.rgb.endswith("FFC7CE")
+        }
+        assert red_coordinates == {contract_cost_cell.coordinate}
+        assert Decimal(str(discrepancy.cell(2, 5).value)) == Decimal("10.1234567890123")
+        assert discrepancy.cell(2, 6).value == 2
+        assert Decimal(str(discrepancy.cell(2, 7).value)) == Decimal("12.9876543210987")
+        assert Decimal(str(discrepancy.cell(2, 8).value)) == Decimal("2.00100001")
+        assert Decimal(str(discrepancy.cell(2, 9).value)) == Decimal("0.00100001")
+    finally:
+        workbook.close()
+
+
+def test_update_clears_resolved_contract_cost_highlight(tmp_path: Path) -> None:
+    rows = _rows(indices=("1001",))
+    layouts = plan_layout(rows)
+    first_output = tmp_path / "first-violation.xlsx"
+    second_output = tmp_path / "resolved-violation.xlsx"
+    violating = replace(
+        rows[0],
+        contract_total_cost=Decimal("1000000"),
+        performed_total_cost=Decimal("1001000.01"),
+    )
+    write_card(
+        base_path=FIXTURES / "default_template.xlsx",
+        output_path=first_output,
+        rows=[violating, *rows[1:]],
+        layouts=layouts,
+        run_id="first-violation",
+        cost_scale=1,
+    )
+    resolved = replace(
+        rows[0],
+        contract_total_cost=Decimal("1000000"),
+        performed_total_cost=Decimal("1001000"),
+    )
+    write_card(
+        base_path=first_output,
+        output_path=second_output,
+        rows=[resolved, *rows[1:]],
+        layouts=layouts,
+        run_id="resolved-violation",
+        cost_scale=1,
+    )
+
+    workbook = load_workbook(second_output, data_only=False)
+    try:
+        card = workbook[MAIN_CARD_SHEET_NAME]
+        contract_cost_cell = card.cell(
+            layouts[0].drawing_code_blocks[0].start_row,
+            layouts[0].start_column + CARD_HEADERS.index("По договору — стоимость, млн руб."),
+        )
+        assert DISCREPANCY_SHEET_NAME not in workbook.sheetnames
+        assert not contract_cost_cell.fill.fgColor.rgb.endswith("FFC7CE")
+    finally:
+        workbook.close()
+
+
 def test_update_reads_million_ruble_card_back_as_internal_rubles_without_double_scaling(
     tmp_path: Path,
 ) -> None:
@@ -233,11 +398,15 @@ def test_three_occupied_slots_trim_only_the_fourth_template_slot(tmp_path: Path)
     workbook = load_workbook(output)
     try:
         sheet = workbook[layouts[-1].sheet_name]
-        assert sheet["B4"].value == "А-001"
-        assert sheet["H4"].value == "А-002"
-        assert sheet["N4"].value == "А-003"
-        assert sheet["T4"].value is None
-        assert not sheet["T4"].has_style
+        assert [layout.start_column for layout in layouts] == [2, 12, 22]
+        assert [
+            sheet.cell(layout.drawing_code_blocks[0].start_row, layout.start_column).value
+            for layout in layouts
+        ] == ["А-001", "А-002", "А-003"]
+        slot_span = layouts[1].start_column - layouts[0].start_column
+        fourth_slot_start = layouts[-1].start_column + slot_span
+        assert sheet.cell(4, fourth_slot_start).value is None
+        assert not sheet.cell(4, fourth_slot_start).has_style
     finally:
         workbook.close()
 

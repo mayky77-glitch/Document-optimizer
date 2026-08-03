@@ -7,7 +7,15 @@ from openpyxl.utils import get_column_letter
 from ..models import CATEGORY_ORDER, DrawingCardResultRow, ObjectBlockLayout, WriteOperation
 from .contract import cost_to_million_rubles
 
-_METRICS = (("unit", 2), ("quantity", 3), ("total_cost", 4))
+_METRICS = (
+    ("unit", 2),
+    ("quantity", 3),
+    ("total_cost", 4),
+    ("contract_quantity", 5),
+    ("contract_total_cost", 6),
+    ("performed_quantity", 7),
+    ("performed_total_cost", 8),
+)
 
 
 def plan_write_operations(
@@ -64,7 +72,7 @@ def _metric_provenance(
     def strategies_for(metric_value: object, *, template_hint: bool = False) -> tuple[str, ...]:
         stored = (
             row.cost_matching_strategies
-            if metric == "total_cost"
+            if metric in {"total_cost", "contract_total_cost", "performed_total_cost"}
             else row.quantity_matching_strategies
         )
         if stored:
@@ -73,12 +81,9 @@ def _metric_provenance(
             return ("template_unit_hint",)
         return ("no_matching_value",)
 
-    if metric == "total_cost":
-        value = (
-            None
-            if row.remaining_total_cost is None
-            else cost_to_million_rubles(row.remaining_total_cost, cost_scale)
-        )
+    if metric in {"total_cost", "contract_total_cost", "performed_total_cost"}:
+        value = row.remaining_total_cost if metric == "total_cost" else getattr(row, metric)
+        value = None if value is None else cost_to_million_rubles(value, cost_scale)
         return (
             row.cost_source_rows,
             row.cost_rule_id,
@@ -86,13 +91,14 @@ def _metric_provenance(
             strategies_for(value),
             value,
         )
-    if metric == "quantity":
+    if metric in {"quantity", "contract_quantity", "performed_quantity"}:
+        value = row.remaining_quantity if metric == "quantity" else getattr(row, metric)
         return (
             row.quantity_source_rows,
             row.quantity_rule_id,
             row.quantity_confidence,
-            strategies_for(row.remaining_quantity),
-            row.remaining_quantity,
+            strategies_for(value),
+            value,
         )
     return (
         row.quantity_source_rows,

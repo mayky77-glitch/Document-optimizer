@@ -138,12 +138,25 @@ def _is_unit_price_header(header: str) -> bool:
     return any(token in header for token in _UNIT_PRICE_TOKENS) or "цен" in header
 
 
+def _is_exact_contract_cost_header(header: str) -> bool:
+    compact = header.replace(",", "").replace(".", "").strip()
+    return compact in {
+        _CONTRACT_COST_BLOCK,
+        f"{_CONTRACT_COST_BLOCK} руб",
+        f"{_CONTRACT_COST_BLOCK} рублей",
+    }
+
+
 def _resolve_contract_metrics(headers: dict[int, str]) -> tuple[dict[str, int], list[str]]:
     """Resolve contract triplets where volume sits left of the cost block."""
     cost_columns = sorted(
         column
         for column, header in headers.items()
         if _block_metric_score(header, (_CONTRACT_COST_BLOCK,), quantity=False)
+        or (
+            _is_exact_contract_cost_header(header)
+            and _is_unit_price_header(headers.get(column - 1, ""))
+        )
     )
     candidates: list[tuple[int, int]] = []
     for cost_column in cost_columns:

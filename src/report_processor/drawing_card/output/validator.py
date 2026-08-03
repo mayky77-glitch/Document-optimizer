@@ -14,6 +14,7 @@ from ..models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER, ObjectBlockLayout
 from ..sources.normalization import is_plausible_drawing_code, normalize_text
 from ..statuses import Status
 from .contract import (
+    CARD_BLOCK_COLUMN_SPAN,
     CARD_HEADERS,
     COST_FORMAT,
     FRACTIONAL_QUANTITY_FORMAT,
@@ -21,6 +22,7 @@ from .contract import (
     SUMMARY_HEADERS,
     SUMMARY_SHEET_NAME,
 )
+from .discrepancies import DISCREPANCY_SHEET_NAME
 from .summary import summary_block_position, summary_row_count
 from .xlsx_xml import find_binary_tail_cells
 
@@ -110,7 +112,7 @@ def _validate_layout_contract(
             continue
         sheet = workbook[layout.sheet_name]
         start = layout.start_column
-        merge = f"{get_column_letter(start + 3)}2:{get_column_letter(start + 4)}2"
+        merge = f"{get_column_letter(start + 3)}2:{get_column_letter(layout.end_column)}2"
         if merge not in {str(item) for item in sheet.merged_cells.ranges}:
             errors.append(f"MISSING_MERGE:{sheet.title}:{merge}")
         if sheet.cell(2, start).value != f"Индекс объекта: {layout.object_index}":
@@ -124,6 +126,10 @@ def _validate_layout_contract(
                 row = block.start_row + offset
                 quantity = sheet.cell(row, start + 3)
                 cost = sheet.cell(row, start + 4)
+                contract_quantity = sheet.cell(row, start + 5)
+                contract_cost = sheet.cell(row, start + 6)
+                performed_quantity = sheet.cell(row, start + 7)
+                performed_cost = sheet.cell(row, start + 8)
                 expected_quantity_format = (
                     INTEGER_QUANTITY_FORMAT
                     if isinstance(quantity.value, (int, Decimal))
@@ -134,7 +140,18 @@ def _validate_layout_contract(
                     errors.append(f"INVALID_QUANTITY_FORMAT:{sheet.title}:{quantity.coordinate}")
                 if cost.number_format != COST_FORMAT:
                     errors.append(f"INVALID_COST_FORMAT:{sheet.title}:{cost.coordinate}")
-                if not all(sheet.cell(row, column).has_style for column in range(start, start + 5)):
+                for quantity_cell in (contract_quantity, performed_quantity):
+                    if quantity_cell.number_format != FRACTIONAL_QUANTITY_FORMAT:
+                        errors.append(
+                            f"INVALID_QUANTITY_FORMAT:{sheet.title}:{quantity_cell.coordinate}"
+                        )
+                for cost_cell in (contract_cost, performed_cost):
+                    if cost_cell.number_format != COST_FORMAT:
+                        errors.append(f"INVALID_COST_FORMAT:{sheet.title}:{cost_cell.coordinate}")
+                if not all(
+                    sheet.cell(row, column).has_style
+                    for column in range(start, layout.end_column + 1)
+                ):
                     errors.append(f"MISSING_DATA_STYLE:{sheet.title}:{row}")
                 if sheet.row_dimensions[row].height is None:
                     errors.append(f"MISSING_ROW_DIMENSION:{sheet.title}:{row}")
@@ -151,7 +168,7 @@ def _validate_trimmed_template_slots(
     final_layouts = [layout for layout in layouts if layout.sheet_name == final_sheet_name]
     last_occupied_column = max(layout.end_column for layout in final_layouts)
     sheet = workbook[final_sheet_name]
-    for start_column in (8, 14, 20):
+    for start_column in tuple(2 + slot * CARD_BLOCK_COLUMN_SPAN for slot in range(1, 4)):
         if start_column <= last_occupied_column:
             continue
         if sheet.cell(4, start_column).has_style:
@@ -286,7 +303,7 @@ def _validate_sheet_data(
     object_count = 0
     drawing_count = 0
     expected_set = set(_EXPECTED_CATEGORIES)
-    for start_column in range(2, sheet.max_column + 1, 6):
+    for start_column in range(2, sheet.max_column + 1, CARD_BLOCK_COLUMN_SPAN):
         value = sheet.cell(2, start_column).value
         if not isinstance(value, str) or "индекс объекта" not in normalize_text(value):
             continue
@@ -322,8 +339,19 @@ def _validate_sheet_data(
             categories.append(normalized)
             quantity_cell = sheet.cell(row, start_column + 3)
             cost_cell = sheet.cell(row, start_column + 4)
+            contract_quantity_cell = sheet.cell(row, start_column + 5)
+            contract_cost_cell = sheet.cell(row, start_column + 6)
+            performed_quantity_cell = sheet.cell(row, start_column + 7)
+            performed_cost_cell = sheet.cell(row, start_column + 8)
             numeric_targets.setdefault(sheet.title, set()).update(
-                {quantity_cell.coordinate, cost_cell.coordinate}
+                {
+                    quantity_cell.coordinate,
+                    cost_cell.coordinate,
+                    contract_quantity_cell.coordinate,
+                    contract_cost_cell.coordinate,
+                    performed_quantity_cell.coordinate,
+                    performed_cost_cell.coordinate,
+                }
             )
             quantity = _decimal(quantity_cell.value)
             cost = _decimal(cost_cell.value)
@@ -381,7 +409,7 @@ def validate_card(path: Path, layouts: list[ObjectBlockLayout] | None = None) ->
                 for cell in row:
                     if cell.data_type == "e" or str(cell.value).upper() in _FORMULA_ERRORS:
                         errors.append(f"FORMULA_ERROR:{sheet.title}:{cell.coordinate}:{cell.value}")
-            if sheet.title == SUMMARY_SHEET_NAME:
+            if sheet.title in {SUMMARY_SHEET_NAME, DISCREPANCY_SHEET_NAME}:
                 continue
             objects, drawings = _validate_sheet_data(sheet, errors, numeric_targets)
             object_count += objects

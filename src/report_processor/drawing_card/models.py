@@ -159,6 +159,10 @@ class AggregatedDrawingResult:
     warnings: tuple[str, ...]
     quantity_matching_strategies: tuple[str, ...] = ()
     cost_matching_strategies: tuple[str, ...] = ()
+    contract_quantity: Decimal = Decimal(0)
+    contract_total_cost: Decimal = Decimal(0)
+    performed_quantity: Decimal = Decimal(0)
+    performed_total_cost: Decimal = Decimal(0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +185,10 @@ class DrawingCardResultRow:
     warnings: tuple[str, ...]
     quantity_matching_strategies: tuple[str, ...] = ()
     cost_matching_strategies: tuple[str, ...] = ()
+    contract_quantity: Decimal = Decimal(0)
+    contract_total_cost: Decimal = Decimal(0)
+    performed_quantity: Decimal = Decimal(0)
+    performed_total_cost: Decimal = Decimal(0)
 
 
 @dataclass(frozen=True, slots=True)

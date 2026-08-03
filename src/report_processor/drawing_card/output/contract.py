@@ -8,7 +8,12 @@ CARD_HEADERS = (
     "Ед. изм.",
     "Количество",
     "Общая стоимость, млн руб.",
+    "По договору — объём",
+    "По договору — стоимость, млн руб.",
+    "Выполнено за весь период — объём",
+    "Выполнено за весь период — стоимость, млн руб.",
 )
+CARD_BLOCK_COLUMN_SPAN = len(CARD_HEADERS) + 1
 # Use display formats only: numeric cell values retain their full precision.
 # Both quantity variants deliberately use the same format so every published
 # value is rendered with exactly two fractional digits.

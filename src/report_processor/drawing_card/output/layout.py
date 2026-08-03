@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from ..models import DrawingCardResultRow, DrawingCodeBlockLayout, ObjectBlockLayout
-from .contract import MAIN_CARD_SHEET_NAME
+from .contract import CARD_BLOCK_COLUMN_SPAN, MAIN_CARD_SHEET_NAME
 
 
 def plan_layout(
@@ -32,7 +32,7 @@ def plan_layout(
             if sheet_number == 0
             else f"{additional_sheet_prefix} {sheet_number + 1}"
         )
-        start_column = 2 + slot * 6
+        start_column = 2 + slot * CARD_BLOCK_COLUMN_SPAN
         blocks = tuple(
             DrawingCodeBlockLayout(
                 drawing_code=drawing_code,
@@ -46,7 +46,7 @@ def plan_layout(
                 sheet_name=sheet_name,
                 object_index=object_index,
                 start_column=start_column,
-                end_column=start_column + 4,
+                end_column=start_column + CARD_BLOCK_COLUMN_SPAN - 2,
                 header_row=2,
                 column_header_row=3,
                 data_start_row=4,

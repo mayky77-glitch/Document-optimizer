@@ -106,6 +106,82 @@ def test_approve_includes_both_quantity_and_cost() -> None:
     assert aggregated[0].total_cost == Decimal("3500")
 
 
+def test_contract_and_performed_values_follow_the_same_included_source_sets() -> None:
+    quantity_row = replace(
+        _row(),
+        row_id="quantity-row",
+        remaining_quantity=Decimal("12"),
+        remaining_total_cost=None,
+        contract_quantity=Decimal("20"),
+        performed_quantity=Decimal("8"),
+        contract_total_cost=Decimal("900"),
+        performed_total_cost=Decimal("700"),
+    )
+    cost_row = replace(
+        _row(),
+        row_id="cost-row",
+        work_name_raw="Другая строка той же категории",
+        remaining_quantity=None,
+        remaining_total_cost=Decimal("3500"),
+        contract_quantity=Decimal("30"),
+        performed_quantity=Decimal("15"),
+        contract_total_cost=Decimal("5000"),
+        performed_total_cost=Decimal("6000"),
+    )
+    quantity_only = MatchDecision(
+        row_id="quantity-row",
+        category=TargetWorkCategory.LOW_CURRENT_CABLE,
+        quantity_decision="include",
+        cost_decision="exclude",
+        quantity_rule_id="quantity-rule",
+        cost_rule_id=None,
+        quantity_confidence=1.0,
+        cost_confidence=None,
+        matching_strategy="test",
+        evidence_ids=(),
+        reason="test",
+        requires_manual_review=False,
+        status=Status.OK,
+        warnings=(),
+    )
+    cost_only = MatchDecision(
+        row_id="cost-row",
+        category=TargetWorkCategory.LOW_CURRENT_CABLE,
+        quantity_decision="exclude",
+        cost_decision="include",
+        quantity_rule_id=None,
+        cost_rule_id="cost-rule",
+        quantity_confidence=None,
+        cost_confidence=1.0,
+        matching_strategy="test",
+        evidence_ids=(),
+        reason="test",
+        requires_manual_review=False,
+        status=Status.OK,
+        warnings=(),
+    )
+
+    result = aggregate_rows(
+        [quantity_row, cost_row],
+        [quantity_only, cost_only],
+        drawing_code_mode="strict",
+        strict=True,
+    )[0]
+
+    assert result.quantity_rows == ("quantity-row",)
+    assert result.cost_rows == ("cost-row",)
+    assert (result.quantity, result.contract_quantity, result.performed_quantity) == (
+        Decimal("12"),
+        Decimal("20"),
+        Decimal("8"),
+    )
+    assert (result.total_cost, result.contract_total_cost, result.performed_total_cost) == (
+        Decimal("3500"),
+        Decimal("5000"),
+        Decimal("6000"),
+    )
+
+
 def test_cost_only_feedback_remembers_category_with_quantity_excluded(tmp_path: Path) -> None:
     feedback = tmp_path / "review-feedback.jsonl"
     approval = ReviewApproval(
@@ -215,9 +291,9 @@ def test_inline_feedback_replays_every_explicit_action_without_manual_review(
     )
 
     repeated = replace(_row(), row_id="same-text-next-run")
-    decision = DrawingRowMatcher(
-        RULES, load_confirmed_examples(feedback), rag_mode="off"
-    ).match(repeated)
+    decision = DrawingRowMatcher(RULES, load_confirmed_examples(feedback), rag_mode="off").match(
+        repeated
+    )
 
     assert decision.category is category
     assert (decision.quantity_decision, decision.cost_decision) == (quantity, cost)

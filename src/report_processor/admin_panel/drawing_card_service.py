@@ -354,12 +354,16 @@ class DrawingCardService:
         job = self.get_job(job_id)
         if job.status != "review_required" or set(job.review_items) != set(job.inline_approvals):
             raise ValueError("unresolved review items remain")
+        initial_review_rows = dict(job.review_rows)
+        initial_inline_approvals = dict(job.inline_approvals)
         approvals_path = job.directory / "inline_review_decisions.json"
         write_approvals(approvals_path, job.inline_approvals)
         rerun = self._run(job, review_decisions=approvals_path, strict=False)
         if rerun.status == "ready":
             append_feedback(
-                self.workspace_root / "review-feedback.jsonl", job.review_rows, job.inline_approvals
+                self.workspace_root / "review-feedback.jsonl",
+                initial_review_rows,
+                initial_inline_approvals,
             )
         self._prune_terminal_jobs()
         return rerun

@@ -13,6 +13,7 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
+from ..contract_check import find_contract_cost_violations
 from ..models import (
     CATEGORY_DISPLAY_NAMES,
     CATEGORY_ORDER,
@@ -23,6 +24,7 @@ from ..models import (
 from ..sources.normalization import build_drawing_code, normalize_text
 from ..statuses import Status
 from .contract import (
+    CARD_BLOCK_COLUMN_SPAN,
     CARD_HEADERS,
     COST_FORMAT,
     DISPLAY_COST_SCALE,
@@ -31,6 +33,12 @@ from .contract import (
     MAIN_CARD_SHEET_NAME,
     SUMMARY_SHEET_NAME,
     cost_to_million_rubles,
+)
+from .discrepancies import (
+    DISCREPANCY_SHEET_NAME,
+    add_discrepancy_sheet,
+    apply_contract_cost_highlights,
+    clear_contract_cost_highlights,
 )
 from .planner import plan_write_operations
 from .styles import clone_block_columns, clone_row_style
@@ -194,12 +202,29 @@ def _ensure_sheets(workbook, layouts: list[ObjectBlockLayout]) -> None:
             clone.title = name
 
 
-def _clear_template_values(sheet) -> None:
-    """Remove sample values while preserving styles, dimensions and merges."""
-    max_row = max(sheet.max_row, 19)
-    for start_column in range(2, 21, 6):
+def _clear_template_values(sheet, layouts: list[ObjectBlockLayout]) -> None:
+    """Clear only the template-managed card slots before rendering new values.
+
+    The shipped template has four legacy six-column slots, whereas new cards use
+    ten-column slots.  Cover both geometries so legacy labels cannot survive in
+    new spacer columns, while leaving cells outside the controlled card region
+    untouched for update-mode users.
+    """
+
+    max_row = max(
+        19,
+        max(
+            (block.end_row for layout in layouts for block in layout.drawing_code_blocks),
+            default=0,
+        ),
+    )
+    legacy_starts = range(2, min(sheet.max_column, 25), 6)
+    current_starts = {2 + slot * CARD_BLOCK_COLUMN_SPAN for slot in range(4)} | {
+        layout.start_column for layout in layouts
+    }
+    for start_column in set(legacy_starts) | current_starts:
         for row in range(2, max_row + 1):
-            for column in range(start_column, start_column + 5):
+            for column in range(start_column, start_column + len(CARD_HEADERS)):
                 cell = sheet.cell(row, column)
                 if isinstance(cell, MergedCell):
                     continue
@@ -210,12 +235,22 @@ def _clear_template_values(sheet) -> None:
 def _prepare_block(sheet, layout: ObjectBlockLayout) -> None:
     start = layout.start_column
     if start > 2:
-        clone_block_columns(sheet, source_start=2, target_start=start)
-    merge_range = f"{get_column_letter(start + 3)}2:{get_column_letter(start + 4)}2"
+        clone_block_columns(
+            sheet,
+            source_start=2,
+            target_start=start,
+            width=len(CARD_HEADERS),
+        )
+    for existing in tuple(sheet.merged_cells.ranges):
+        if existing.min_row <= 2 <= existing.max_row and not (
+            existing.max_col < start or existing.min_col > layout.end_column
+        ):
+            sheet.unmerge_cells(str(existing))
+    merge_range = f"{get_column_letter(start + 3)}2:{get_column_letter(layout.end_column)}2"
     if merge_range not in {str(item) for item in sheet.merged_cells.ranges}:
         sheet.merge_cells(merge_range)
     sheet.cell(2, start).value = f"Индекс объекта: {layout.object_index}"
-    sheet.cell(2, start + 3).value = "Остаток работ по договору"
+    sheet.cell(2, start + 3).value = "Показатели работ по договору"
     for offset, header in enumerate(CARD_HEADERS):
         sheet.cell(3, start + offset).value = header
 
@@ -240,17 +275,14 @@ def _trim_unused_right_template_slots(workbook, layouts: list[ObjectBlockLayout]
         return
     final_sheet_name = layouts[-1].sheet_name
     final_layouts = [layout for layout in layouts if layout.sheet_name == final_sheet_name]
-    occupied_starts = {layout.start_column for layout in final_layouts}
     sheet = workbook[final_sheet_name]
-    for start_column in (20, 14, 8, 2):
-        if start_column in occupied_starts:
-            break
-        merge_range = (
-            f"{get_column_letter(start_column + 3)}2:{get_column_letter(start_column + 4)}2"
-        )
-        if merge_range in {str(item) for item in sheet.merged_cells.ranges}:
-            sheet.unmerge_cells(merge_range)
-        sheet.delete_cols(start_column, 5)
+    last_occupied_column = max(layout.end_column for layout in final_layouts)
+    trim_start = last_occupied_column + 2
+    if trim_start <= sheet.max_column:
+        for existing in tuple(sheet.merged_cells.ranges):
+            if existing.max_col >= trim_start:
+                sheet.unmerge_cells(str(existing))
+        sheet.delete_cols(trim_start, sheet.max_column - trim_start + 1)
 
 
 def write_card(
@@ -291,7 +323,10 @@ def write_card(
             for operation in operations
         }
         for sheet_name in dict.fromkeys(layout.sheet_name for layout in layouts):
-            _clear_template_values(workbook[sheet_name])
+            _clear_template_values(
+                workbook[sheet_name],
+                [layout for layout in layouts if layout.sheet_name == sheet_name],
+            )
         rows_by_key = {(row.object_index, row.drawing_code.raw, row.category): row for row in rows}
         for layout in layouts:
             sheet = workbook[layout.sheet_name]
@@ -306,24 +341,24 @@ def write_card(
                         result.display_name,
                         result.result_unit,
                         result.remaining_quantity,
-                        (
-                            None
-                            if result.remaining_total_cost is None
-                            else cost_to_million_rubles(result.remaining_total_cost, cost_scale)
-                        ),
+                        cost_to_million_rubles(result.remaining_total_cost, cost_scale),
+                        result.contract_quantity,
+                        cost_to_million_rubles(result.contract_total_cost, cost_scale),
+                        result.performed_quantity,
+                        cost_to_million_rubles(result.performed_total_cost, cost_scale),
                     )
                     for column_offset, value in enumerate(values):
                         cell = sheet.cell(row_number, layout.start_column + column_offset)
                         cell.value = _decimal_or_value(value)
-                        if isinstance(value, Decimal) and column_offset in {3, 4}:
+                        if isinstance(value, Decimal) and column_offset in {3, 4, 5, 6, 7, 8}:
                             exact_numeric_cells[(sheet.title, cell.coordinate)] = value
-                        if column_offset == 3:
+                        if column_offset in {3, 5, 7}:
                             cell.number_format = (
                                 INTEGER_QUANTITY_FORMAT
                                 if isinstance(value, Decimal) and value == value.to_integral()
                                 else FRACTIONAL_QUANTITY_FORMAT
                             )
-                        elif column_offset == 4:
+                        elif column_offset in {4, 6, 8}:
                             cell.number_format = COST_FORMAT
                         if result.requires_manual_review or result.status not in {
                             Status.OK,
@@ -340,8 +375,12 @@ def write_card(
                             "unit",
                             "quantity",
                             "total_cost",
+                            "contract_quantity",
+                            "contract_total_cost",
+                            "performed_quantity",
+                            "performed_total_cost",
                         )[column_offset]
-                        if metric in {"unit", "quantity", "total_cost"}:
+                        if metric not in {"drawing_code", "category"}:
                             old_value = previous_values[(sheet.title, cell.coordinate)]
                             operation_index = operations_by_cell[(sheet.title, cell.coordinate)]
                             operations[operation_index] = replace(
@@ -352,11 +391,24 @@ def write_card(
         _trim_unused_right_template_slots(workbook, layouts)
         if SUMMARY_SHEET_NAME in workbook.sheetnames:
             del workbook[SUMMARY_SHEET_NAME]
+        if DISCREPANCY_SHEET_NAME in workbook.sheetnames:
+            del workbook[DISCREPANCY_SHEET_NAME]
+        clear_contract_cost_highlights(workbook, layouts)
+        violations = find_contract_cost_violations(rows)
+        locations = apply_contract_cost_highlights(workbook, layouts, violations)
         exact_numeric_cells.update(
             add_summary_sheet(
                 workbook,
                 layouts,
                 rows,
+                cost_scale=cost_scale,
+            )
+        )
+        exact_numeric_cells.update(
+            add_discrepancy_sheet(
+                workbook,
+                violations,
+                locations,
                 cost_scale=cost_scale,
             )
         )
