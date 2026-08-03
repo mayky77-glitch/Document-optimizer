@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import replace
+from math import isfinite, sqrt
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from uuid import NAMESPACE_URL, uuid5
 
 from .errors import StageRAGInputError, StageRAGStoreError, StageRAGStoreUnavailableError
 from .models import (
@@ -34,10 +37,19 @@ class InMemoryVectorStore:
     def query(self, query: DenseRetrievalQuery) -> DenseRetrievalResult:
         candidates = []
         for example in self._examples.values():
+            _validate_compatible_vector(example, query)
             if not _matches(example, query):
                 continue
-            candidates.append(_candidate_from_example(example, _dot(query.vector, example.vector)))
+            candidates.append(
+                _candidate_from_example(example, _cosine(query.vector, example.vector))
+            )
         return DenseRetrievalResult(query=query, candidates=tuple(_rank(candidates)[: query.limit]))
+
+    def deactivate(self, example_ids: Sequence[str]) -> None:
+        for example_id in example_ids:
+            example = self._examples.get(example_id)
+            if example is not None:
+                self._examples[example_id] = replace(example, active=False)
 
     def search(self, query: DenseRetrievalQuery) -> DenseRetrievalResult:
         """Compatibility spelling for a filtered vector query."""
@@ -83,7 +95,7 @@ class QdrantVectorStore:
                 )
             points.append(
                 {
-                    "id": example.example_id,
+                    "id": _qdrant_point_id(example.example_id),
                     "vector": list(example.vector),
                     "payload": example.payload(),
                 }
@@ -91,12 +103,35 @@ class QdrantVectorStore:
         if points:
             self._request("PUT", "/points?wait=true", {"points": points})
 
+    def deactivate(self, example_ids: Sequence[str]) -> None:
+        point_ids = [_qdrant_point_id(example_id) for example_id in example_ids]
+        if point_ids:
+            self._request(
+                "PUT",
+                "/points/payload?wait=true",
+                {"payload": {"active": False}, "points": point_ids},
+            )
+
     def query(self, query: DenseRetrievalQuery) -> DenseRetrievalResult:
         body: dict[str, Any] = {
             "query": list(query.vector),
             "limit": query.limit,
             "with_payload": True,
-            "filter": {"must": [{"key": "tenant_id", "match": {"value": query.tenant_id}}]},
+            "filter": {
+                "must": [
+                    {"key": "tenant_id", "match": {"value": query.tenant_id}},
+                    {"key": "embedding_model_id", "match": {"value": query.embedding_model_id}},
+                    {
+                        "key": "embedding_model_revision",
+                        "match": {"value": query.embedding_model_revision},
+                    },
+                    {
+                        "key": "embedding_dimensions",
+                        "match": {"value": query.embedding_dimensions},
+                    },
+                    {"key": "active", "match": {"value": True}},
+                ]
+            },
         }
         filters = (
             ("project_id", query.project_id),
@@ -158,6 +193,13 @@ def _candidate_from_qdrant_point(
         return None
     if payload.get("tenant_id") != query.tenant_id:
         return None
+    if (
+        payload.get("embedding_model_id") != query.embedding_model_id
+        or payload.get("embedding_model_revision") != query.embedding_model_revision
+        or payload.get("embedding_dimensions") != query.embedding_dimensions
+        or payload.get("active") is not True
+    ):
+        return None
     example_id = payload.get("example_id", point.get("id"))
     if not isinstance(example_id, str) or not example_id:
         return None
@@ -173,10 +215,29 @@ def _candidate_from_qdrant_point(
 def _matches(example: ConfirmedExampleVector, query: DenseRetrievalQuery) -> bool:
     return (
         example.tenant_id == query.tenant_id
+        and example.active
+        and example.embedding_model_id == query.embedding_model_id
+        and example.embedding_model_revision == query.embedding_model_revision
+        and example.embedding_dimensions == query.embedding_dimensions
         and (query.project_id is None or example.project_id == query.project_id)
         and (query.document_type is None or example.document_type == query.document_type)
         and (query.taxonomy_version is None or example.taxonomy_version == query.taxonomy_version)
     )
+
+
+def _validate_compatible_vector(
+    example: ConfirmedExampleVector, query: DenseRetrievalQuery
+) -> None:
+    if (
+        example.active
+        and example.tenant_id == query.tenant_id
+        and example.embedding_model_id == query.embedding_model_id
+        and example.embedding_model_revision == query.embedding_model_revision
+        and len(example.vector) != len(query.vector)
+    ):
+        raise StageRAGInputError(
+            "INVALID_VECTOR_DIMENSION", "vectors должны иметь одинаковую размерность"
+        )
 
 
 def _candidate_from_example(
@@ -195,8 +256,23 @@ def _rank(candidates: Sequence[DenseRetrievalCandidate]) -> list[DenseRetrievalC
     return sorted(candidates, key=lambda item: (-item.score, item.example_id))
 
 
-def _dot(left: Sequence[float], right: Sequence[float]) -> float:
-    return sum(a * b for a, b in zip(left, right, strict=True))
+def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    if len(left) != len(right):
+        raise StageRAGInputError(
+            "INVALID_VECTOR_DIMENSION", "vectors должны иметь одинаковую размерность"
+        )
+    if not all(isfinite(value) for value in (*left, *right)):
+        raise StageRAGInputError("NONFINITE_VECTOR", "vector должен содержать конечные числа")
+    left_length = sqrt(sum(value * value for value in left))
+    right_length = sqrt(sum(value * value for value in right))
+    if left_length == 0 or right_length == 0:
+        raise StageRAGInputError("ZERO_VECTOR", "нулевой vector нельзя использовать для cosine")
+    return sum(a * b for a, b in zip(left, right, strict=True)) / (left_length * right_length)
+
+
+def _qdrant_point_id(example_id: str) -> str:
+    """Use an accepted Qdrant UUID while retaining the public ID in payload."""
+    return str(uuid5(NAMESPACE_URL, f"stage-rag-confirmed-example:{example_id}"))
 
 
 def _optional_string(value: object) -> str | None:

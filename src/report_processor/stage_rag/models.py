@@ -58,6 +58,7 @@ class ConfirmedExampleVector:
     document_type: str | None = None
     rule_version: str | None = None
     audit_reference: str | None = None
+    active: bool = True
 
     def __post_init__(self) -> None:
         _required_strings(
@@ -80,9 +81,9 @@ class ConfirmedExampleVector:
     def embedding_dimensions(self) -> int:
         return len(self.vector)
 
-    def payload(self) -> dict[str, str | int]:
+    def payload(self) -> dict[str, str | int | bool]:
         """Return only metadata allowed in the vector-store payload."""
-        values: dict[str, str | int] = {
+        values: dict[str, str | int | bool] = {
             "example_id": self.example_id,
             "tenant_id": self.tenant_id,
             "normalized_text_hash": self.normalized_text_hash,
@@ -91,6 +92,7 @@ class ConfirmedExampleVector:
             "embedding_dimensions": self.embedding_dimensions,
             "taxonomy_version": self.taxonomy_version,
             "review_decision": self.review_decision,
+            "active": self.active,
         }
         for key in ("category", "project_id", "document_type", "rule_version", "audit_reference"):
             value = getattr(self, key)
@@ -105,18 +107,27 @@ class DenseRetrievalQuery:
 
     tenant_id: str
     vector: tuple[float, ...]
+    embedding_model_id: str
+    embedding_model_revision: str
+    embedding_dimensions: int
     limit: int = 5
     project_id: str | None = None
     document_type: str | None = None
     taxonomy_version: str | None = None
 
     def __post_init__(self) -> None:
-        _required_strings(self.tenant_id)
+        _required_strings(self.tenant_id, self.embedding_model_id, self.embedding_model_revision)
         values = tuple(float(value) for value in self.vector)
         if not values or not all(isfinite(value) for value in values):
             raise ValueError("vector должен содержать хотя бы одно конечное число")
         if isinstance(self.limit, bool) or not isinstance(self.limit, int) or self.limit < 1:
             raise ValueError("limit должен быть положительным целым")
+        if (
+            isinstance(self.embedding_dimensions, bool)
+            or not isinstance(self.embedding_dimensions, int)
+            or self.embedding_dimensions != len(values)
+        ):
+            raise ValueError("embedding_dimensions должен совпадать с размерностью vector")
         object.__setattr__(self, "vector", values)
 
 

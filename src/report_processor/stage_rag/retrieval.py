@@ -135,6 +135,9 @@ class StoreBackedDenseRetriever:
         query = DenseRetrievalQuery(
             tenant_id=tenant_id,
             vector=vector,
+            embedding_model_id=self._embedding_provider.model_id,
+            embedding_model_revision=self._embedding_provider.revision,
+            embedding_dimensions=self._embedding_provider.dimensions,
             limit=limit,
             project_id=project_id,
             document_type=document_type,
