@@ -1,8 +1,10 @@
-"""Offline RuBERT Tiny2 retrieval used only to enrich manual review."""
+"""Semantic retrieval adapters that can only enrich manual review."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from threading import Lock
+from typing import TYPE_CHECKING
 
 from report_processor.stage_rag import (
     RuBERTTiny2Encoder,
@@ -10,8 +12,84 @@ from report_processor.stage_rag import (
     StageText,
     retrieve_stage_relations,
 )
+from report_processor.stage_rag.models import DenseRetrievalCandidate
 
 from .examples import ConfirmedExample, RetrievedExample
+
+if TYPE_CHECKING:
+    from report_processor.stage_rag.contracts import DenseRetriever
+
+
+MAX_DENSE_REVIEW_CANDIDATES = 5
+
+
+@dataclass(frozen=True, slots=True)
+class DenseRetrievalContext:
+    """The explicit isolation context required for one drawing-card lookup."""
+
+    tenant_id: str
+    project_id: str | None
+    document_type: str
+    taxonomy_version: str
+
+    def __post_init__(self) -> None:
+        required = (self.tenant_id, self.document_type, self.taxonomy_version)
+        if any(not isinstance(value, str) or not value.strip() for value in required):
+            raise ValueError("Dense retrieval context requires tenant, document, and taxonomy")
+        if self.project_id is not None and (
+            not isinstance(self.project_id, str) or not self.project_id.strip()
+        ):
+            raise ValueError("Dense retrieval project must be a non-empty string when supplied")
+
+
+@dataclass(frozen=True, slots=True)
+class DenseSemanticSuggestion:
+    """Bounded, opaque Dense RAG evidence for a manual decision."""
+
+    candidates: tuple[DenseRetrievalCandidate, ...]
+    unavailable: bool = False
+
+    @property
+    def evidence_ids(self) -> tuple[str, ...]:
+        return tuple(item.example_id for item in self.candidates)
+
+    @property
+    def scores(self) -> tuple[float, ...]:
+        return tuple(item.score for item in self.candidates)
+
+
+class DenseSemanticRetriever:
+    """Adapt a tenant-filtered DenseRetriever without exposing backend failures."""
+
+    def __init__(self, retriever: DenseRetriever, context: DenseRetrievalContext) -> None:
+        self._retriever = retriever
+        self._context = context
+
+    def search(self, text: str, *, top_k: int) -> DenseSemanticSuggestion:
+        """Return only bounded candidate IDs/scores, or a controlled fallback."""
+        try:
+            result = self._retriever.retrieve(
+                self._context.tenant_id,
+                text,
+                limit=min(max(top_k, 1), MAX_DENSE_REVIEW_CANDIDATES),
+                project_id=self._context.project_id,
+                document_type=self._context.document_type,
+                taxonomy_version=self._context.taxonomy_version,
+            )
+            if result.unavailable or not self._query_matches_context(result.query):
+                return DenseSemanticSuggestion((), unavailable=True)
+            candidates = tuple(result.candidates[:MAX_DENSE_REVIEW_CANDIDATES])
+        except Exception:
+            return DenseSemanticSuggestion((), unavailable=True)
+        return DenseSemanticSuggestion(candidates)
+
+    def _query_matches_context(self, query: object) -> bool:
+        return (
+            getattr(query, "tenant_id", None) == self._context.tenant_id
+            and getattr(query, "project_id", None) == self._context.project_id
+            and getattr(query, "document_type", None) == self._context.document_type
+            and getattr(query, "taxonomy_version", None) == self._context.taxonomy_version
+        )
 
 
 class SemanticExampleRetriever:

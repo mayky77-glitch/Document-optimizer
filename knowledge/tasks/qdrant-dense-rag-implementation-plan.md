@@ -84,6 +84,12 @@ links:
   но review отклонил перенос RAG category/score в поля решения. Запущен один
   additive fix: только evidence IDs/scores, category/confidences остаются пустыми,
   ответ проверяется по полному tenant/project/document/taxonomy context.
+- Indexer принят Orda: `1f159d0adc5714deb30c7d8c4643fed6141ffbcf` →
+  `01c87761870b1e546728186a2536473850bd5a2a`; после merge 56 passed,
+  1 opt-in model test skipped, live Qdrant smoke повторно прошёл.
+- Финальный app SHA `1e93a0418a554bc8086765f448df1343c937a64a`
+  прошёл 11 focused tests и готов к integration acceptance. Integration owner
+  публикует новые Dense RAG API через package boundary без изменения defaults.
 - Wave 2: `qdrant-dense-rag-indexer`, `qdrant-dense-rag-app` — ожидают Wave 1.
 - Production deploy, реальные secrets и переключение production alias не выполнялись.
 

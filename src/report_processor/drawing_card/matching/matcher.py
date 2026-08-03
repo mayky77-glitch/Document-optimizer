@@ -18,9 +18,11 @@ from .examples import (
     has_exact_example_conflict,
 )
 from .masks import contains_mask, has_all_masks, has_any_mask
-from .semantic import SemanticExampleRetriever
+from .semantic import DenseRetrievalContext, DenseSemanticRetriever, SemanticExampleRetriever
 
 if TYPE_CHECKING:
+    from report_processor.stage_rag.contracts import DenseRetriever
+
     from ..autopilot import MachineConsensusStore
     from .tiny_model import OpenAICompatibleTinyModel
 
@@ -179,12 +181,23 @@ class DrawingRowMatcher:
         tiny_model: OpenAICompatibleTinyModel | None = None,
         approvals: dict[str, ReviewApproval] | None = None,
         machine_consensus: MachineConsensusStore | None = None,
+        dense_retriever: DenseRetriever | None = None,
+        dense_context: DenseRetrievalContext | None = None,
     ) -> None:
+        if (dense_retriever is None) != (dense_context is None):
+            raise ValueError("Dense retriever and retrieval context must be supplied together")
         self.rules = rules
         self.examples = examples
         self.retriever = LexicalExampleRetriever(examples)
         self.semantic_retriever = (
-            SemanticExampleRetriever(examples) if rag_mode == "semantic" else None
+            SemanticExampleRetriever(examples)
+            if rag_mode == "semantic" and dense_retriever is None
+            else None
+        )
+        self.dense_retriever = (
+            DenseSemanticRetriever(dense_retriever, dense_context)
+            if dense_retriever is not None and dense_context is not None and rag_mode == "semantic"
+            else None
         )
         self.rag_mode = rag_mode
         self.tiny_model = tiny_model
@@ -410,6 +423,22 @@ class DrawingRowMatcher:
                     warnings=("SEMANTIC_SUGGESTION_NOT_APPLIED",),
                     evidence_ids=tuple(item.example.example_id for item in semantic),
                     confidence=proposed.score,
+                )
+        if self.dense_retriever is not None:
+            dense = self.dense_retriever.search(text, top_k=self.rules.top_k_examples)
+            if dense.unavailable:
+                return self._review(
+                    row,
+                    reason="Dense retrieval is unavailable; manual review required",
+                    warnings=("DENSE_RETRIEVAL_UNAVAILABLE",),
+                )
+            if dense.candidates:
+                scores = ",".join(f"{score:.3f}" for score in dense.scores)
+                return self._review(
+                    row,
+                    reason=(f"Dense retrieval suggests manual review (candidate_scores={scores})"),
+                    warnings=("DENSE_SUGGESTION_NOT_APPLIED",),
+                    evidence_ids=dense.evidence_ids,
                 )
         if self.rag_mode != "off" and self.tiny_model is not None and retrieved:
             try:
