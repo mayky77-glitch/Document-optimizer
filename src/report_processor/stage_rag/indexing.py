@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
+from math import isfinite
 from re import sub
 
 from .contracts import EmbeddingProvider, VectorStore
@@ -45,7 +46,7 @@ class ConfirmedExampleIndexer:
                 "индексировать можно только явное manual-review подтверждение",
             )
         normalized_hash = normalized_text_hash(outcome.text)
-        example_id = stable_example_id(outcome.tenant_id, normalized_hash)
+        example_id = stable_example_id(outcome.tenant_id, outcome.audit_reference)
         vector = _encode_one(self._embedding_provider, outcome.text)
         point = ConfirmedExampleVector(
             example_id=example_id,
@@ -73,7 +74,19 @@ class ConfirmedExampleIndexer:
         """Deactivate search state without modifying any audit evidence."""
         if not isinstance(tenant_id, str) or not tenant_id.strip():
             raise StageRAGInputError("INVALID_TENANT", "tenant_id должен быть непустой строкой")
-        self._vector_store.deactivate(tenant_id, tuple(example_ids))
+        if isinstance(example_ids, (str, bytes)):
+            raise StageRAGInputError(
+                "INVALID_EXAMPLE_IDS", "example_ids должен быть последовательностью ID"
+            )
+        try:
+            ids = tuple(example_ids)
+        except TypeError as exc:
+            raise StageRAGInputError(
+                "INVALID_EXAMPLE_IDS", "example_ids должен быть последовательностью ID"
+            ) from exc
+        if any(not isinstance(example_id, str) or not example_id.strip() for example_id in ids):
+            raise StageRAGInputError("INVALID_EXAMPLE_IDS", "example_ids содержит недопустимый ID")
+        self._vector_store.deactivate(tenant_id, ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +111,11 @@ def plan_reindex(
     taxonomy_version: str,
 ) -> CollectionReindexPlan:
     """Prepare a versioned target and explicit rollback target, without side effects."""
-    if isinstance(collection_version, bool) or collection_version < 1:
+    if (
+        isinstance(collection_version, bool)
+        or not isinstance(collection_version, int)
+        or collection_version < 1
+    ):
         raise StageRAGInputError(
             "INVALID_COLLECTION_VERSION", "collection_version должен быть положительным"
         )
@@ -124,10 +141,10 @@ def normalized_text_hash(text: str) -> str:
     return sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def stable_example_id(tenant_id: str, text_hash: str) -> str:
-    """Create a stable public ID scoped to one tenant and normalized content."""
-    _required_strings(tenant_id, text_hash)
-    return sha256(f"{tenant_id}\x00{text_hash}".encode()).hexdigest()
+def stable_example_id(tenant_id: str, audit_reference: str) -> str:
+    """Create a stable public ID scoped to tenant and immutable review evidence."""
+    _required_strings(tenant_id, audit_reference)
+    return sha256(f"{tenant_id}\x00{audit_reference}".encode()).hexdigest()
 
 
 def _encode_one(provider: EmbeddingProvider, text: str) -> tuple[float, ...]:
@@ -137,8 +154,14 @@ def _encode_one(provider: EmbeddingProvider, text: str) -> tuple[float, ...]:
         raise StageRAGInputError("ENCODER_FAILURE", "embedding provider недоступен") from exc
     if len(vectors) != 1:
         raise StageRAGInputError("INVALID_VECTOR_COUNT", "provider вернул неверное число vectors")
-    vector = tuple(float(value) for value in vectors[0])
-    if len(vector) != provider.dimensions:
+    try:
+        vector = tuple(float(value) for value in vectors[0])
+        dimensions = provider.dimensions
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise StageRAGInputError("INVALID_VECTOR", "provider вернул недопустимый vector") from exc
+    if not vector or not all(isfinite(value) for value in vector):
+        raise StageRAGInputError("NONFINITE_VECTOR", "vector должен содержать конечные числа")
+    if isinstance(dimensions, bool) or not isinstance(dimensions, int) or len(vector) != dimensions:
         raise StageRAGInputError(
             "INVALID_VECTOR_DIMENSION", "vector не совпадает с metadata dimensions"
         )
