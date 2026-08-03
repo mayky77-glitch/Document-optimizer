@@ -137,8 +137,8 @@ def evaluate_observed_queries(
 
 
 def evaluate_cases(
-    cases: Sequence[object],
-    retriever: DenseRetrieverBoundary | None = None,
+    retriever: DenseRetrieverBoundary | Sequence[object],
+    queries: Sequence[EvaluationQuery] | None = None,
     *,
     clock: Callable[[], float] = perf_counter,
 ) -> DenseRAGEvaluation:
@@ -148,13 +148,13 @@ def evaluate_cases(
         DeprecationWarning,
         stacklevel=2,
     )
-    if retriever is None:
+    if queries is None:
         raise ValueError(
-            "evaluate_cases requires a DenseRetriever; fabricated cases are unsupported"
+            "evaluate_cases requires a DenseRetriever and queries; fabricated cases are unsupported"
         )
-    if any(not isinstance(case, EvaluationQuery) for case in cases):
+    if any(not isinstance(query, EvaluationQuery) for query in queries):
         raise ValueError("evaluate_cases accepts only EvaluationQuery observations")
-    return evaluate_observed_queries(retriever, tuple(cases), clock=clock)
+    return evaluate_observed_queries(retriever, tuple(queries), clock=clock)
 
 
 def _parse_query(value: object) -> EvaluationQuery:

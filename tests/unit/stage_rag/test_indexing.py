@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from fixtures.stage_rag.qdrant_fakes import RecordingVectorStore
@@ -172,10 +174,28 @@ def test_same_normalized_text_with_distinct_review_evidence_has_distinct_public_
     assert first.example_id != second.example_id
 
 
-@pytest.mark.parametrize("ids", ["example", b"example", ("",), (1,), None])
-def test_cancel_rejects_invalid_lifecycle_ids(ids: object) -> None:
+@pytest.mark.parametrize(
+    "ids",
+    [
+        "example",
+        b"example",
+        {"example"},
+        {"example": 1},
+        (example_id for example_id in ("example",)),
+        ("",),
+        (1,),
+        ("bad/id",),
+        (Path("opaque-id"),),
+        None,
+    ],
+)
+def test_cancel_rejects_invalid_lifecycle_ids_without_store_side_effects(ids: object) -> None:
+    store = RecordingVectorStore()
+
     with pytest.raises(StageRAGInputError, match="INVALID_EXAMPLE_IDS"):
-        ConfirmedExampleIndexer(RecordingVectorStore(), Provider()).cancel("tenant-a", ids)  # type: ignore[arg-type]
+        ConfirmedExampleIndexer(store, Provider()).cancel("tenant-a", ids)  # type: ignore[arg-type]
+
+    assert store.deactivations == []
 
 
 @pytest.mark.parametrize("version", [True, 0, "2", None])
