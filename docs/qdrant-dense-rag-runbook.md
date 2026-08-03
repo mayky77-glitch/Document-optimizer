@@ -27,7 +27,7 @@ curl --fail -H "api-key: $QDRANT_API_KEY" http://127.0.0.1:6333/healthz
 ## Collection and snapshots
 
 All scripts reject a missing API key and non-loopback Qdrant URL. They default to
-the `stage_embeddings` collection with the 312-dimensional cosine vectors used by
+the `confirmed_examples_v1` collection with the 312-dimensional cosine vectors used by
 the pinned local encoder.
 
 ```bash
@@ -37,7 +37,7 @@ QDRANT_RESTORE_CHECK=1 deploy/qdrant/scripts/restore-check.sh
 ```
 
 The restore check creates and deletes a disposable local collection. It does not
-touch `stage_embeddings`. The Qdrant Docker volume persists data across container
+touch `confirmed_examples_v1`. The Qdrant Docker volume persists data across container
 restarts; remove it only when intentionally resetting local development data:
 
 ```bash

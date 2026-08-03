@@ -3,7 +3,7 @@ set -euo pipefail
 
 : "${QDRANT_API_KEY:?Set QDRANT_API_KEY in the environment.}"
 QDRANT_URL="${QDRANT_URL:-http://127.0.0.1:6333}"
-COLLECTION_NAME="${QDRANT_COLLECTION:-stage_embeddings}"
+COLLECTION_NAME="${QDRANT_COLLECTION:-confirmed_examples_v1}"
 
 case "$QDRANT_URL" in http://127.0.0.1:*|http://localhost:*|https://127.0.0.1:*|https://localhost:*) ;; *)
   echo "QDRANT_URL must target loopback." >&2; exit 2;; esac
