@@ -84,7 +84,7 @@ def test_invalid_fixture_does_not_accept_fabricated_candidates_or_latency(tmp_pa
         evaluate_fixture(fixture, _retriever())
 
 
-def test_mixed_observed_index_identity_is_rejected() -> None:
+def test_mixed_retriever_identity_is_rejected_when_result_identity_is_unavailable() -> None:
     class MixedRetriever:
         def __init__(self) -> None:
             self.calls = 0

@@ -180,7 +180,7 @@ def _validate_observed_result(result: object, expected: EvaluationQuery) -> None
 def _observed_index_identity(result: DenseRetrievalResult, retriever: object) -> str:
     """Read immutable identity from the result when available, with legacy-boundary support."""
     identity = getattr(result, "index_identity", None)
-    if not isinstance(identity, str) or not identity.strip():
+    if not isinstance(identity, str) or not identity.strip() or identity == "unavailable":
         identity = getattr(retriever, "index_identity", None)
     if not isinstance(identity, str) or not identity.strip():
         store = getattr(retriever, "_vector_store", None)
