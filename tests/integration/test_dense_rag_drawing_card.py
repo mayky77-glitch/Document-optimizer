@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
+from urllib.error import URLError
 
 import pytest
 
@@ -23,7 +25,7 @@ from report_processor.stage_rag.models import (
     DenseRetrievalQuery,
     DenseRetrievalResult,
 )
-from report_processor.stage_rag.qdrant_store import InMemoryVectorStore
+from report_processor.stage_rag.qdrant_store import InMemoryVectorStore, QdrantVectorStore
 from report_processor.stage_rag.retrieval import StoreBackedDenseRetriever
 
 RULES = load_rules(
@@ -280,5 +282,32 @@ def test_unavailable_dense_result_preserves_immutable_index_identity_in_manual_r
 
     decision = _matcher(_UnavailableRetriever()).match(_row("Редкий монолитный этап"))
 
+    assert decision.category is None
+    assert "index_identity=qdrant:confirmed_examples_v7" in decision.reason
+
+
+def test_real_qdrant_store_unavailability_preserves_collection_identity_in_manual_review() -> None:
+    class _Embedding:
+        model_id = "test-model"
+        revision = "test-revision"
+        dimensions = 1
+
+        def encode(self, texts):
+            return tuple((1.0,) for _ in texts)
+
+    store = QdrantVectorStore("http://127.0.0.1:1", "confirmed_examples_v7", timeout_seconds=0.01)
+    retriever = StoreBackedDenseRetriever(_Embedding(), store)
+    with patch("report_processor.stage_rag.qdrant_store.urlopen", side_effect=URLError("offline")):
+        result = retriever.retrieve(
+            "tenant-a",
+            "sanitized query",
+            project_id="project-7",
+            document_type="visr",
+            taxonomy_version="taxonomy-1",
+        )
+        decision = _matcher(retriever).match(_row("Редкий монолитный этап"))
+
+    assert result.unavailable is True
+    assert result.index_identity == "qdrant:confirmed_examples_v7"
     assert decision.category is None
     assert "index_identity=qdrant:confirmed_examples_v7" in decision.reason
