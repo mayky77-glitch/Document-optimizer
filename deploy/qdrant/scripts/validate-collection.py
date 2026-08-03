@@ -25,9 +25,11 @@ def fail(message: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit(f"Usage: {Path(sys.argv[0]).name} COLLECTION_JSON")
-    response = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    vector_only = sys.argv[1:2] == ["--vector-only"]
+    input_position = 2 if vector_only else 1
+    if len(sys.argv) != input_position + 1:
+        raise SystemExit(f"Usage: {Path(sys.argv[0]).name} [--vector-only] COLLECTION_JSON")
+    response = json.loads(Path(sys.argv[input_position]).read_text(encoding="utf-8"))
     collection = response.get("result")
     if not isinstance(collection, dict):
         fail("missing result")
@@ -37,6 +39,8 @@ def main() -> None:
         fail("unnamed vector config is missing")
     if vectors.get("size") != 312 or vectors.get("distance") != "Cosine":
         fail("vector must be size=312 and distance=Cosine")
+    if vector_only:
+        return
 
     payload_schema = collection.get("payload_schema")
     if not isinstance(payload_schema, dict):

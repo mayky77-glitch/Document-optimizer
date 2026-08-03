@@ -37,6 +37,7 @@ ensure_index() {
 if curl --fail --silent "${headers[@]}" \
   -o "$collection_file" "$QDRANT_URL/collections/$COLLECTION_NAME"; then
   echo "Collection $COLLECTION_NAME already exists."
+  python3 "$SCRIPT_DIR/validate-collection.py" --vector-only "$collection_file"
 else
   curl --fail --silent --show-error -X PUT "${headers[@]}" \
     --data "{\"vectors\":{\"size\":$VECTOR_SIZE,\"distance\":\"Cosine\"}}" \

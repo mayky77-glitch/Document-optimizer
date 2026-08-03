@@ -1,20 +1,10 @@
 #!/usr/bin/env bash
 
 QDRANT_EXPECTED_VECTOR_SIZE=312
+QDRANT_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 validate_qdrant_url() {
-  local url="$1"
-  local port
-
-  if [[ ! "$url" =~ ^https?://127\.0\.0\.1:([0-9]+)$ ]]; then
-    echo "QDRANT_URL must be http(s)://127.0.0.1:<numeric-port> with no userinfo, path, query, or fragment." >&2
-    return 2
-  fi
-  port="${BASH_REMATCH[1]}"
-  if (( ${#port} > 5 || 10#$port < 1 || 10#$port > 65535 )); then
-    echo "QDRANT_URL port must be in 1..65535." >&2
-    return 2
-  fi
+  python3 "$QDRANT_LIB_DIR/validate-url.py" "$1"
 }
 
 validate_collection_name() {
