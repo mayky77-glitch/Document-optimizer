@@ -5,9 +5,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from math import isfinite, sqrt
 
+from .contracts import EmbeddingProvider, VectorStore
 from .encoder import EMBEDDING_DIMENSIONS, StageEncoder
-from .errors import StageRAGError, StageRAGInputError
-from .models import StageRelationCandidate, StageRelationSuggestion, StageText
+from .errors import StageRAGError, StageRAGInputError, StageRAGStoreUnavailableError
+from .models import (
+    DenseRetrievalQuery,
+    DenseRetrievalResult,
+    StageRelationCandidate,
+    StageRelationSuggestion,
+    StageText,
+)
 
 
 class StageRelationRAG:
@@ -85,6 +92,61 @@ def retrieve_stage_relations(
     return StageRelationRAG(encoder, embedding_dimensions=embedding_dimensions).suggest(
         source_stages, target_stages, k=k
     )
+
+
+class StoreBackedDenseRetriever:
+    """Encode once, query a tenant-filtered store, and fail safe on store loss."""
+
+    def __init__(self, embedding_provider: EmbeddingProvider, vector_store: VectorStore) -> None:
+        if not hasattr(embedding_provider, "encode"):
+            raise StageRAGInputError(
+                "INVALID_ENCODER", "embedding_provider должен иметь метод encode"
+            )
+        if not hasattr(vector_store, "query"):
+            raise StageRAGInputError("INVALID_STORE", "vector_store должен иметь метод query")
+        self._embedding_provider = embedding_provider
+        self._vector_store = vector_store
+
+    def retrieve(
+        self,
+        tenant_id: str,
+        text: str,
+        *,
+        limit: int = 5,
+        project_id: str | None = None,
+        document_type: str | None = None,
+        taxonomy_version: str | None = None,
+    ) -> DenseRetrievalResult:
+        if not isinstance(text, str) or not text.strip():
+            raise StageRAGInputError("INVALID_TEXT", "text должен быть непустой строкой")
+        try:
+            encoded = tuple(self._embedding_provider.encode((text,)))
+            if len(encoded) != 1:
+                raise StageRAGInputError(
+                    "INVALID_VECTOR_COUNT", "encoder вернул неверное число embeddings"
+                )
+            vector = tuple(float(value) for value in encoded[0])
+        except StageRAGError:
+            raise
+        except Exception as exc:
+            raise StageRAGInputError(
+                "ENCODER_FAILURE", "encoder не смог вернуть embedding"
+            ) from exc
+        query = DenseRetrievalQuery(
+            tenant_id=tenant_id,
+            vector=vector,
+            embedding_model_id=self._embedding_provider.model_id,
+            embedding_model_revision=self._embedding_provider.revision,
+            embedding_dimensions=self._embedding_provider.dimensions,
+            limit=limit,
+            project_id=project_id,
+            document_type=document_type,
+            taxonomy_version=taxonomy_version,
+        )
+        try:
+            return self._vector_store.query(query)
+        except StageRAGStoreUnavailableError:
+            return DenseRetrievalResult(query=query, candidates=(), unavailable=True)
 
 
 def _validate_stages(values: Sequence[StageText], name: str) -> tuple[StageText, ...]:

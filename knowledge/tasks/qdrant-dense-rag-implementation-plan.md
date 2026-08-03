@@ -28,7 +28,31 @@ links:
 - Gate 0: frozen; точный published SHA передаётся launch envelope после commit.
 - Runtime `qdrant-dense-rag-2026-08` отменён до launch: envelope содержал
   несуществующий полный SHA. Исправленная работа: `qdrant-dense-rag-2026-08-v2`.
-- Wave 1: `qdrant-dense-rag-core`, `qdrant-dense-rag-infra` — ожидают запуска.
+- Wave 1: `qdrant-dense-rag-core` и `qdrant-dense-rag-infra` запущены от
+  `deedbf85f6508383cc7100753af9173eb0d22ebd`; scopes зарезервированы,
+  P4 developer/high и P3 devops/medium работают параллельно.
+- Оба первых agent turns завершились без diff из-за общего runtime usage limit;
+  Orda записала no-progress без ложного evidence и выполнила единственный
+  targeted retry каждого task ID.
+- Targeted retries дали первые feature-коммиты: core
+  `27ac4a6eaecd933821f5f92a92f97cb1ec546aea`, infra
+  `b888c11c3ba981c96a976c2b23eb501bbd131a74`; их acceptance-наборы прошли,
+  ветки опубликованы.
+- Integration review не принял эти SHA: для core потребованы допустимый
+  стабильный Qdrant point ID, cosine fallback, model/version/dimension filters,
+  active lifecycle и согласованные protocols; для infra — versioned collection,
+  payload indexes и строгая валидация embedding request/response. Обе задачи
+  возвращены в `running` для одного additive remediation-коммита без rewrite.
+- Infra remediation `3d256dd73bae857d66ce55d9a8db328d635021fc`
+  прошла повторные pytest/Ruff/Compose/Bash проверки и ожидает merge.
+- Core remediation `0bff4963b4a0c7397c95f2f5574e93cda776c088`
+  закрыла основной список, но повторное isolation-review выявило, что point ID
+  и deactivate ещё не включают tenant. Запущен последний bounded additive fix;
+  SHA не будет принят до теста одинаковых public IDs в разных tenants.
+- Финальный core SHA `89cb4814d04e31acb1143e7d75bc58f2b3e57df1`
+  прошёл 25 focused tests, Ruff, format и diff-check; tenant входит в stable
+  point ID/deactivate, а одинаковые public IDs разных tenants покрыты regression.
+  SHA готов к `--no-ff` integration acceptance.
 - Wave 2: `qdrant-dense-rag-indexer`, `qdrant-dense-rag-app` — ожидают Wave 1.
 - Production deploy, реальные secrets и переключение production alias не выполнялись.
 
