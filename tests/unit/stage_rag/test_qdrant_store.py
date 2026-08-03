@@ -87,6 +87,8 @@ def test_qdrant_query_uses_v118_endpoint_and_nonoptional_exact_tenant_must_filte
                                 "embedding_model_revision": "rev-1",
                                 "embedding_dimensions": 2,
                                 "active": True,
+                                "project_id": "p",
+                                "document_type": "spec",
                             },
                         },
                         {
@@ -100,6 +102,8 @@ def test_qdrant_query_uses_v118_endpoint_and_nonoptional_exact_tenant_must_filte
                                 "embedding_model_revision": "rev-1",
                                 "embedding_dimensions": 2,
                                 "active": True,
+                                "project_id": "p",
+                                "document_type": "spec",
                             },
                         },
                         {
@@ -166,7 +170,7 @@ def test_in_memory_store_uses_cosine_and_excludes_deactivated_examples() -> None
         "cosine-one",
         "high-dot-low-cosine",
     )
-    store.deactivate(("cosine-one",))
+    store.deactivate("tenant-a", ("cosine-one",))
     candidates = store.query(_query("tenant-a", (1.0, 0.0))).candidates
     assert tuple(item.example_id for item in candidates) == ("high-dot-low-cosine",)
 
@@ -203,11 +207,30 @@ def test_qdrant_upsert_and_deactivate_use_deterministic_valid_uuid_point_ids() -
     store = QdrantVectorStore("http://qdrant.test", "confirmed_examples_v1")
     with patch("report_processor.stage_rag.qdrant_store.urlopen", fake_urlopen):
         store.upsert((_example("public-id", "tenant-a", (1.0,)),))
-        store.deactivate(("public-id",))
+        store.deactivate("tenant-a", ("public-id",))
 
-    assert captured[0][1]["points"][0]["id"] == _qdrant_point_id("public-id")
+    assert captured[0][1]["points"][0]["id"] == _qdrant_point_id("tenant-a", "public-id")
     assert captured[0][1]["points"][0]["payload"]["example_id"] == "public-id"
     assert captured[1][1] == {
         "payload": {"active": False},
-        "points": [_qdrant_point_id("public-id")],
+        "points": [_qdrant_point_id("tenant-a", "public-id")],
     }
+
+
+def test_identical_public_ids_are_tenant_scoped_for_memory_and_qdrant_operations() -> None:
+    store = InMemoryVectorStore()
+    store.upsert(
+        (
+            _example("shared-public-id", "tenant-a", (1.0, 0.0)),
+            _example("shared-public-id", "tenant-b", (1.0, 0.0)),
+        )
+    )
+
+    store.deactivate("tenant-a", ("shared-public-id",))
+
+    assert store.query(_query("tenant-a", (1.0, 0.0))).candidates == ()
+    tenant_b_candidates = store.query(_query("tenant-b", (1.0, 0.0))).candidates
+    assert tuple(item.example_id for item in tenant_b_candidates) == ("shared-public-id",)
+    assert _qdrant_point_id("tenant-a", "shared-public-id") != _qdrant_point_id(
+        "tenant-b", "shared-public-id"
+    )

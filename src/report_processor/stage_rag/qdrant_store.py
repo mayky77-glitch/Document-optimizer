@@ -24,7 +24,7 @@ class InMemoryVectorStore:
     """Small deterministic fallback intended for tests and local development."""
 
     def __init__(self) -> None:
-        self._examples: dict[str, ConfirmedExampleVector] = {}
+        self._examples: dict[tuple[str, str], ConfirmedExampleVector] = {}
 
     def upsert(self, examples: Sequence[ConfirmedExampleVector]) -> None:
         for example in examples:
@@ -32,7 +32,7 @@ class InMemoryVectorStore:
                 raise StageRAGInputError(
                     "INVALID_EXAMPLE", "examples должен содержать ConfirmedExampleVector"
                 )
-            self._examples[example.example_id] = example
+            self._examples[(example.tenant_id, example.example_id)] = example
 
     def query(self, query: DenseRetrievalQuery) -> DenseRetrievalResult:
         candidates = []
@@ -45,11 +45,11 @@ class InMemoryVectorStore:
             )
         return DenseRetrievalResult(query=query, candidates=tuple(_rank(candidates)[: query.limit]))
 
-    def deactivate(self, example_ids: Sequence[str]) -> None:
+    def deactivate(self, tenant_id: str, example_ids: Sequence[str]) -> None:
         for example_id in example_ids:
-            example = self._examples.get(example_id)
+            example = self._examples.get((tenant_id, example_id))
             if example is not None:
-                self._examples[example_id] = replace(example, active=False)
+                self._examples[(tenant_id, example_id)] = replace(example, active=False)
 
     def search(self, query: DenseRetrievalQuery) -> DenseRetrievalResult:
         """Compatibility spelling for a filtered vector query."""
@@ -95,7 +95,7 @@ class QdrantVectorStore:
                 )
             points.append(
                 {
-                    "id": _qdrant_point_id(example.example_id),
+                    "id": _qdrant_point_id(example.tenant_id, example.example_id),
                     "vector": list(example.vector),
                     "payload": example.payload(),
                 }
@@ -103,8 +103,8 @@ class QdrantVectorStore:
         if points:
             self._request("PUT", "/points?wait=true", {"points": points})
 
-    def deactivate(self, example_ids: Sequence[str]) -> None:
-        point_ids = [_qdrant_point_id(example_id) for example_id in example_ids]
+    def deactivate(self, tenant_id: str, example_ids: Sequence[str]) -> None:
+        point_ids = [_qdrant_point_id(tenant_id, example_id) for example_id in example_ids]
         if point_ids:
             self._request(
                 "PUT",
@@ -200,6 +200,15 @@ def _candidate_from_qdrant_point(
         or payload.get("active") is not True
     ):
         return None
+    if (
+        (query.project_id is not None and payload.get("project_id") != query.project_id)
+        or (query.document_type is not None and payload.get("document_type") != query.document_type)
+        or (
+            query.taxonomy_version is not None
+            and payload.get("taxonomy_version") != query.taxonomy_version
+        )
+    ):
+        return None
     example_id = payload.get("example_id", point.get("id"))
     if not isinstance(example_id, str) or not example_id:
         return None
@@ -270,9 +279,9 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     return sum(a * b for a, b in zip(left, right, strict=True)) / (left_length * right_length)
 
 
-def _qdrant_point_id(example_id: str) -> str:
+def _qdrant_point_id(tenant_id: str, example_id: str) -> str:
     """Use an accepted Qdrant UUID while retaining the public ID in payload."""
-    return str(uuid5(NAMESPACE_URL, f"stage-rag-confirmed-example:{example_id}"))
+    return str(uuid5(NAMESPACE_URL, f"stage-rag-confirmed-example:{tenant_id}:{example_id}"))
 
 
 def _optional_string(value: object) -> str | None:

@@ -38,7 +38,7 @@ class VectorStore(Protocol):
     def query(self, query: DenseRetrievalQuery) -> DenseRetrievalResult:
         """Return manual-review-only candidates for the query tenant."""
 
-    def deactivate(self, example_ids: Sequence[str]) -> None:
+    def deactivate(self, tenant_id: str, example_ids: Sequence[str]) -> None:
         """Make explicit confirmed examples ineligible for future search."""
 
 
