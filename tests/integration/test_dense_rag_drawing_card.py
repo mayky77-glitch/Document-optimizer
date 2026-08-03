@@ -5,6 +5,8 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from report_processor.drawing_card.config import load_rules
 from report_processor.drawing_card.matching.examples import ConfirmedExample
 from report_processor.drawing_card.matching.matcher import DrawingRowMatcher
@@ -122,7 +124,9 @@ def test_dense_rag_uses_all_explicit_filters_and_never_exposes_cross_tenant_evid
 
     assert decision.evidence_ids == ("tenant-a-example",)
     assert "tenant-b-example" not in decision.evidence_ids
-    assert decision.quantity_confidence == 1.0
+    assert decision.category is None
+    assert decision.quantity_confidence is None
+    assert decision.cost_confidence is None
 
 
 def _dense_example(example_id: str, tenant_id: str, category: str) -> ConfirmedExampleVector:
@@ -175,13 +179,63 @@ def test_dense_score_never_auto_applies_a_category() -> None:
 
     decision = _matcher(retriever).match(_row("Редкий монолитный этап"))
 
-    assert decision.category is TargetWorkCategory.CONCRETE_WORKS
+    assert decision.category is None
     assert decision.quantity_decision == "review"
     assert decision.cost_decision == "review"
+    assert decision.quantity_confidence is None
+    assert decision.cost_confidence is None
     assert decision.requires_manual_review is True
     assert decision.evidence_ids == tuple(f"high-score-{index}" for index in range(5))
     assert "candidate_scores=1.000,0.900,0.800,0.700,0.600" in decision.reason
     assert "DENSE_SUGGESTION_NOT_APPLIED" in decision.warnings
+
+
+@pytest.mark.parametrize(
+    ("field", "unexpected"),
+    (
+        ("tenant_id", "tenant-other"),
+        ("project_id", "project-other"),
+        ("document_type", "other-document"),
+        ("taxonomy_version", "taxonomy-other"),
+    ),
+)
+def test_dense_query_context_mismatch_cannot_leak_evidence(field: str, unexpected: str) -> None:
+    class _MismatchedContextRetriever:
+        def retrieve(
+            self,
+            tenant_id: str,
+            _text: str,
+            *,
+            limit: int,
+            project_id: str | None,
+            document_type: str | None,
+            taxonomy_version: str | None,
+        ) -> DenseRetrievalResult:
+            context = {
+                "project_id": project_id,
+                "document_type": document_type,
+                "taxonomy_version": taxonomy_version,
+            }
+            if field != "tenant_id":
+                context[field] = unexpected
+            return DenseRetrievalResult(
+                query=DenseRetrievalQuery(
+                    tenant_id=unexpected if field == "tenant_id" else tenant_id,
+                    vector=(1.0,),
+                    embedding_model_id="test-model",
+                    embedding_model_revision="test-revision",
+                    embedding_dimensions=1,
+                    limit=limit,
+                    **context,
+                ),
+                candidates=(DenseRetrievalCandidate("must-not-leak", 1.0, "concrete_works"),),
+            )
+
+    decision = _matcher(_MismatchedContextRetriever()).match(_row("Редкий монолитный этап"))
+
+    assert decision.evidence_ids == ()
+    assert decision.category is None
+    assert "DENSE_RETRIEVAL_UNAVAILABLE" in decision.warnings
 
 
 def test_dense_timeout_returns_generic_manual_review_without_backend_detail() -> None:

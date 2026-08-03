@@ -76,12 +76,19 @@ class DenseSemanticRetriever:
                 document_type=self._context.document_type,
                 taxonomy_version=self._context.taxonomy_version,
             )
+            if result.unavailable or not self._query_matches_context(result.query):
+                return DenseSemanticSuggestion((), unavailable=True)
+            candidates = tuple(result.candidates[:MAX_DENSE_REVIEW_CANDIDATES])
         except Exception:
             return DenseSemanticSuggestion((), unavailable=True)
-        if result.unavailable or result.query.tenant_id != self._context.tenant_id:
-            return DenseSemanticSuggestion((), unavailable=True)
-        return DenseSemanticSuggestion(
-            tuple(result.candidates[:MAX_DENSE_REVIEW_CANDIDATES]),
+        return DenseSemanticSuggestion(candidates)
+
+    def _query_matches_context(self, query: object) -> bool:
+        return (
+            getattr(query, "tenant_id", None) == self._context.tenant_id
+            and getattr(query, "project_id", None) == self._context.project_id
+            and getattr(query, "document_type", None) == self._context.document_type
+            and getattr(query, "taxonomy_version", None) == self._context.taxonomy_version
         )
 
 

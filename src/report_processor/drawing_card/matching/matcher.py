@@ -432,25 +432,13 @@ class DrawingRowMatcher:
                     reason="Dense retrieval is unavailable; manual review required",
                     warnings=("DENSE_RETRIEVAL_UNAVAILABLE",),
                 )
-            proposed = next(
-                (
-                    item
-                    for item in dense.candidates
-                    if item.category is not None and _dense_category(item.category) is not None
-                ),
-                None,
-            )
-            if proposed is not None:
-                category = _dense_category(proposed.category)
-                assert category is not None
+            if dense.candidates:
                 scores = ",".join(f"{score:.3f}" for score in dense.scores)
                 return self._review(
                     row,
-                    category=category,
                     reason=(f"Dense retrieval suggests manual review (candidate_scores={scores})"),
                     warnings=("DENSE_SUGGESTION_NOT_APPLIED",),
                     evidence_ids=dense.evidence_ids,
-                    confidence=proposed.score,
                 )
         if self.rag_mode != "off" and self.tiny_model is not None and retrieved:
             try:
@@ -664,10 +652,3 @@ class DrawingRowMatcher:
             status=Status.UNCONFIRMED_CLASSIFICATION,
             warnings=tuple(str(item) for item in warnings),
         )
-
-
-def _dense_category(value: str) -> TargetWorkCategory | None:
-    try:
-        return TargetWorkCategory(value)
-    except ValueError:
-        return None
