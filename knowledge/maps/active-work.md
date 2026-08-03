@@ -3,15 +3,16 @@ type: map
 tags:
   - knowledge/map
   - status/done
-last_verified: 2026-08-02
-updated: 2026-08-02
+last_verified: 2026-08-03
+updated: 2026-08-03
 ---
 
 # Active work
 
 Link only active task cards here. Remove or move links after orchestration accepts completion.
 
-No active reconciliation implementation wave.
+No active drawing-card initiative. Completed/recent:
+[[../tasks/drawing-card-contract-check-rag-plan|Договорные значения и RAG feedback]].
 
 Completed global package review:
 [[../tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]].

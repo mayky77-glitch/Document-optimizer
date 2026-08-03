@@ -2,8 +2,8 @@
 type: decisions
 tags:
   - knowledge/decision
-last_verified: 2026-08-01
-updated: 2026-08-01
+last_verified: 2026-08-03
+updated: 2026-08-03
 ---
 
 # Decisions
@@ -58,3 +58,14 @@ includes, environment interpolation и любые executable constructs запр
 пользовательские наименования не копируются в project knowledge.
 Связанные карточки: [[tasks/feedback-rule-reuse]],
 [[tasks/million-feedback-tests]].
+
+## DO-014: договорные значения и feedback публикуются детерминированно (2026-08-03)
+
+Итоги договора и выполненного периода используют соответствующие source row sets,
+Decimal/рубли внутри и миллионы только при публикации; превышение проверяется строго
+выше 1 000 руб., красной остаётся только contract-cost. Перед rerun сохраняется RAG
+snapshot, а replay выполняется только по точному normalized name + normalized unit;
+другая единица требует ручной проверки. Основание: принятая реализация и focused
+регрессия 2026-08-03.
+Связанные карточки: [[components/drawing-card]],
+[[tasks/drawing-card-contract-check-rag-plan]].
