@@ -1,4 +1,4 @@
-status: verification
+status: completed
 work_id: qdrant-dense-rag-audit-fixes-2026-08
 objective: "Закрыть P6 audit findings Dense RAG без production cutover"
 planning_parent_sha: bce6a23642f51e1d96c5263c049ed3df9c5e6ff4

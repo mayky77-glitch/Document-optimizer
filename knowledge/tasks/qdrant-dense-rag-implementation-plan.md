@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: done
 work_id: qdrant-dense-rag-2026-08-v2
 owner: integration-owner
 last_verified: 2026-08-03
@@ -15,7 +15,7 @@ tags:
   - "layer/data"
   - "layer/infra"
   - "risk/high"
-  - "status/in-progress"
+  - "status/done"
 links:
   - "[[../maps/architecture|Architecture]]"
   - "[[../DECISIONS|Decisions]]"
@@ -159,6 +159,18 @@ links:
   `(retriever, queries)`. Открыта отдельная frozen Orda-работа
   `qdrant-dense-rag-closure-fixes-2026-08` с одним bounded scope; завершение
   запрещено до zero-side-effect и public-compatibility regressions.
+- Closure task `dense-closure-contracts` зарезервирована и запущена в ветке
+  `codex/qdrant-dense-closure-contracts` от точного опубликованного Gate 0 SHA
+  `120d748a501aad0ea1bace5189e0311cbe9f5238`; write scope ограничен двумя
+  production-модулями и их двумя unit-test файлами.
+- Closure task принята Orda: `d6bab7ebb161de2604d82700176b07dbb59d22c7`
+  → `453c8d9f5a2fe849c112661d5ca7426b050ef6c3`. `cancel()` теперь полностью
+  валидирует ordered ID sequence до side effect, legacy
+  `evaluate_cases(retriever, queries)` восстановлен. CodeGraph post-merge:
+  95 passed, 3 skipped; full regression: 928 passed, 24 skipped и только два
+  зафиксированных unrelated baseline failure; opt-in RuBERT: 10 passed.
+  Полный Ruff сохранил только три прежних unrelated E501. Все четыре Orda work
+  ID завершены; production deploy, реальные secrets и alias switch не выполнялись.
 
 ## Временные решения dev/test
 
