@@ -64,6 +64,18 @@ def test_embeddings_rejects_any_non_pinned_requested_model() -> None:
         client.post("/v1/embeddings", json={"input": "text", "model_id": "another-model"}),
         client.post("/v1/embeddings", json={"input": "text"}),
         client.post("/v1/embeddings", json={"input": "text", "model_id": RUBERT_TINY2_MODEL_ID}),
+        client.post(
+            "/v1/embeddings",
+            json={
+                "input": "text",
+                "model": RUBERT_TINY2_MODEL_ID,
+                "model_id": "another-model",
+            },
+        ),
+        client.post(
+            "/v1/embeddings",
+            json={"input": "text", "model": RUBERT_TINY2_MODEL_ID, "model_id": None},
+        ),
     ]
 
     assert all(response.status_code == 400 for response in responses)
