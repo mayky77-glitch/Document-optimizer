@@ -429,14 +429,21 @@ class DrawingRowMatcher:
             if dense.unavailable:
                 return self._review(
                     row,
-                    reason="Dense retrieval is unavailable; manual review required",
+                    reason=(
+                        "Dense retrieval "
+                        f"(index_identity={dense.index_identity}) is unavailable; "
+                        "manual review required"
+                    ),
                     warnings=("DENSE_RETRIEVAL_UNAVAILABLE",),
                 )
             if dense.candidates:
                 scores = ",".join(f"{score:.3f}" for score in dense.scores)
                 return self._review(
                     row,
-                    reason=(f"Dense retrieval suggests manual review (candidate_scores={scores})"),
+                    reason=(
+                        "Dense retrieval suggests manual review "
+                        f"(index_identity={dense.index_identity}, candidate_scores={scores})"
+                    ),
                     warnings=("DENSE_SUGGESTION_NOT_APPLIED",),
                     evidence_ids=dense.evidence_ids,
                 )

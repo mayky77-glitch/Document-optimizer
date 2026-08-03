@@ -123,6 +123,7 @@ def test_dense_rag_uses_all_explicit_filters_and_never_exposes_cross_tenant_evid
     decision = _matcher(retriever).match(_row("Редкий монолитный этап"))
 
     assert decision.evidence_ids == ("tenant-a-example",)
+    assert "index_identity=in-memory-confirmed-examples" in decision.reason
     assert "tenant-b-example" not in decision.evidence_ids
     assert decision.category is None
     assert decision.quantity_confidence is None
@@ -255,3 +256,29 @@ def test_dense_timeout_returns_generic_manual_review_without_backend_detail() ->
     assert decision.evidence_ids == ()
     assert "DENSE_RETRIEVAL_UNAVAILABLE" in decision.warnings
     assert "qdrant.internal.example" not in decision.reason
+
+
+def test_unavailable_dense_result_preserves_immutable_index_identity_in_manual_review() -> None:
+    class _UnavailableRetriever:
+        def retrieve(self, tenant_id, _text, *, limit, project_id, document_type, taxonomy_version):
+            return DenseRetrievalResult(
+                query=DenseRetrievalQuery(
+                    tenant_id=tenant_id,
+                    vector=(1.0,),
+                    embedding_model_id="test-model",
+                    embedding_model_revision="test-revision",
+                    embedding_dimensions=1,
+                    limit=limit,
+                    project_id=project_id,
+                    document_type=document_type,
+                    taxonomy_version=taxonomy_version,
+                ),
+                candidates=(),
+                unavailable=True,
+                index_identity="qdrant:confirmed_examples_v7",
+            )
+
+    decision = _matcher(_UnavailableRetriever()).match(_row("Редкий монолитный этап"))
+
+    assert decision.category is None
+    assert "index_identity=qdrant:confirmed_examples_v7" in decision.reason
