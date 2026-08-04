@@ -1,4 +1,4 @@
-status: gate0-frozen
+status: p6-recovery-required
 work_id: reconciliation-wave8-v1
 objective: "Build an inert active-learning queue, shadow intent adapter/store and optional operator UI without changing authoritative reconciliation runtime."
 source_base_sha: 1a152e344cb5578777479891508533a0c9971f27
@@ -54,3 +54,8 @@ owner_decisions_deferred_until_wave9:
   - shadow retention and undo depth
   - route registration and mass-action eligibility
   - holdout thresholds and rollout gates
+p6_audit:
+  candidate_sha: 32390e2ae8485baad65c7a1da952729b851a9991
+  result: rejected
+  findings: "2 HIGH, 4 MEDIUM"
+  recovery_work_id: reconciliation-wave8-p6-recovery-v1
