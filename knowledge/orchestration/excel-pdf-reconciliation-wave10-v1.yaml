@@ -1,4 +1,4 @@
-status: gate-0-planning
+status: wave-1-integrating
 work_id: excel-pdf-reconciliation-wave10-v1
 objective: "Reconcile KS-2 workbook rows against locally OCR-extracted evidence from related PDF packages without committing private documents or OCR text."
 source_base_sha: 967da5f58ee6508ebbfc3fc1d9fa2d7fe77dc0bb
@@ -29,6 +29,9 @@ corpus_evidence:
   pdf: 1767
   pdf_sample: "54/54 sampled files require OCR"
   deterministic_primary_key: "object directory + work-code directory"
+test_data_policy:
+  development_pilot: "two small packages, 2 workbooks and 6 PDFs total"
+  reserved_holdout: "all remaining packages; no full OCR or reconciliation in Wave 10"
 forbidden_paths:
   - /Users/x/Downloads
   - "**/*.xlsx"
