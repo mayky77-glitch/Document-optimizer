@@ -1,0 +1,63 @@
+status: gate0-frozen-shadow-only
+work_id: reconciliation-wave9-v1
+objective: "Aggregate existing replay and operational evidence into a fail-closed shadow acceptance decision without production activation."
+source_base_sha: b733595caeb243a8d9f8aa3b3bb6c5b3fb623fd9
+integration_branch: codex/reconciliation-group-optimization-wave9
+wave: 9
+max_parallel: 2
+max_spawns: 4
+max_retries: 1
+merge_method: merge-no-ff
+data_classification: restricted
+shared_paths_owner: integration
+runtime_wiring: forbidden
+production_activation: stop
+contracts:
+  input_replay: GroupingReplay-1.0
+  input_policy: GroupingPromotionPolicy-1.0
+  output_acceptance: ReconciliationShadowAcceptance-1.0
+dependency_order:
+  - shadow-acceptance-core
+  - parallel:
+      - shadow-acceptance-runner
+      - shadow-acceptance-report
+  - final-audit
+baseline:
+  focused: "189 passed"
+  worktree: clean
+hard_gates:
+  current_top_level_groups_max: 50
+  repeat_top_level_groups_max: 30
+  disputed_individual_decisions_max: 20
+  forbidden_merges: 0
+  double_membership: 0
+  relevant_nonzero_row_coverage: "100%"
+  calculation_mismatches: 0
+  xlsx_mismatches: 0
+  qdrant_outage_authoritative_delta: 0
+  source_mutations: 0
+  deterministic_repeatability: required
+owner_thresholds_required_for_pass:
+  - retrieval Recall@5, MRR, top-1 error and review rate
+  - pattern reuse, operator correction and suspension rates
+  - p95 latency, index size and availability
+  - representative corpus and independent holdout criteria
+forbidden_paths:
+  - src/report_processor/admin_panel/app.py
+  - src/report_processor/admin_panel/service.py
+  - src/report_processor/admin_panel/reconciliation_review_routes.py
+  - src/report_processor/admin_panel/reconciliation_state.py
+  - src/report_processor/reconciliation_patterns/pattern_registry.py
+  - src/report_processor/reconciliation_patterns/pattern_persistence.py
+  - src/report_processor/calculation
+  - src/report_processor/excel_writer
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+acceptance:
+  - no raw terms, workbook paths, file names, rows, vectors or backend errors
+  - missing manifest, policy, owner thresholds or measurements returns BLOCKED
+  - unavailable injected dependency returns UNAVAILABLE, never PASS
+  - no ActivationMetadata, registry mutation, review mutation or XLSX write
+  - deterministic controlled JSON report written mode 0600 outside Git
+  - independent P6 final audit

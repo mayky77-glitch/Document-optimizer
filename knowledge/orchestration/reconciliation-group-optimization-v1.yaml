@@ -146,6 +146,9 @@ wave8_recovery:
   method: bounded-orda-recovery-and-independent-reaudit
   accepted_integration_sha: b90f71f5a3869ad00971ead543d82205d8933a83
   final_p6_reaudit: "accepted; 0 HIGH, 0 MEDIUM"
+wave9_status: gate0-frozen-shadow-only
+wave9_contract: ReconciliationShadowAcceptance-1.0
+wave9_production_activation: stop
 waves:
   - gate0
   - wave0-dense-rag-verification

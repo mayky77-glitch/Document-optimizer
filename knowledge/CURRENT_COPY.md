@@ -1,8 +1,8 @@
-status: wave8-accepted-shadow-only
+status: wave9-gate0-shadow-go
 canonical_path: Document-optimizer-ready
-branch: codex/reconciliation-group-optimization-wave8
+branch: codex/reconciliation-group-optimization-wave9
 head: b90f71f5a3869ad00971ead543d82205d8933a83 (accepted Wave 8 integration)
-working_tree: clean after accepted Wave 8 integration; no spreadsheet changes
+working_tree: Wave 9 Gate 0 planning; no spreadsheet changes
 date: 2026-08-04
 purpose: Canonical integration copy for reconciliation-group optimization.
 adopted_range: 648d3c9..10eb20f (already adopted; no new merge in Gate 0)
@@ -25,4 +25,5 @@ wave7_gate0: GO for additive inert DecisionPackage-2.0, complete-linkage cluster
 wave7: accepted after independent P6 rejection, one bounded red-first recovery and independent re-audit; 46 focused, 92 relevant and 80 legacy/runtime tests passed; full suite 1275 passed with 2 unchanged unrelated failures; runtime remains inert.
 wave8_gate0: GO was limited to inert shadow queue, adapter/store and optional UI; production routes, activation and authoritative runtime mutation remain STOP.
 wave8: accepted after initial P6 rejection, bounded ORDA recovery and independent re-audit; 45 focused tests and static checks passed; full suite 1321 passed, 24 skipped and 2 unchanged unrelated failures; controlled web DTO, atomic CAS, persisted-intent rebinding, identity-stable focus, split bounds and row-override action closure are verified; runtime remains inert.
-next_wave: Wave 9 Gate 0 for shadow acceptance and rollout evidence; production activation remains STOP until representative holdout evidence, thresholds and owners are approved.
+wave9_gate0: GO for additive offline shadow-acceptance contracts, injected runner and safe aggregate report; production activation, runtime wiring and real-data publication remain STOP.
+next_wave: Wave 9 shadow-acceptance core, then parallel injected runner and safe aggregate report.
