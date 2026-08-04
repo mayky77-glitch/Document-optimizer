@@ -276,11 +276,10 @@ class ActiveLearningQueueItem:
         )
         if required_summary not in self.presentation.summary_codes:
             raise ActiveLearningContractError("presentation must identify the queue item kind")
-        object.__setattr__(
-            self,
-            "allowed_actions",
-            _canonical_actions(self.allowed_actions, kind=self.kind),
-        )
+        allowed_actions = _canonical_actions(self.allowed_actions, kind=self.kind)
+        if ShadowAction.SPLIT in allowed_actions and len(self.member_refs) < 2:
+            raise ActiveLearningContractError("split requires at least two item members")
+        object.__setattr__(self, "allowed_actions", allowed_actions)
 
     @property
     def item_id(self) -> str:

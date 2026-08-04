@@ -135,6 +135,18 @@ def test_package_kind_rejects_pattern_only_actions() -> None:
         )
 
 
+def test_single_member_item_cannot_advertise_impossible_split() -> None:
+    with pytest.raises(al.ActiveLearningContractError):
+        dataclasses.replace(_item(), member_refs=(_ref("6"),))
+
+    valid = dataclasses.replace(
+        _item(),
+        member_refs=(_ref("6"),),
+        allowed_actions=(al.ShadowAction.REJECT,),
+    )
+    assert valid.allowed_actions == (al.ShadowAction.REJECT,)
+
+
 @pytest.mark.parametrize(
     ("model", "field_name", "bad_version"),
     (
