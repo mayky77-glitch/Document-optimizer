@@ -59,7 +59,7 @@ def test_active_learning_submits_only_server_offered_shadow_actions() -> None:
 
     assert "ACTIONS.has(action)" in script
     assert 'action !== "split" || item.splitMemberRefs.length > 1' in script
-    assert "split_member_refs: item.splitMemberRefs" in script
+    assert 'split_member_refs: action === "split" ? item.splitMemberRefs : []' in script
     assert "/review/active-learning/items/${encodeURIComponent(itemId)}/shadow" in admin
     assert "accept-safe" not in script
 
@@ -81,9 +81,19 @@ def test_active_learning_uses_exact_intent_staleness_tokens_and_nested_split_gro
     ):
         assert field in script
     assert 'const INTENT_VERSION = "ActiveLearningIntent-1.0"' in script
-    assert "split_member_refs: item.splitMemberRefs" in script
+    assert 'split_member_refs: action === "split" ? item.splitMemberRefs : []' in script
     assert "if (!Array.isArray(group)" in script
     assert "normalized.flat()" in script
     assert "split group" not in script
     assert "splitMemberRefs.length > 1" in script
     assert "dataset.itemId" not in script and "data-item-id" not in script
+
+
+def test_active_learning_sends_the_exact_parser_shape_with_bounded_unique_actions() -> None:
+    script = (ASSETS / "reconciliation-active-learning.js").read_text(encoding="utf-8")
+
+    assert "MAX_INTEGER_AGGREGATE = 2147483647" in script
+    assert "value <= MAX_INTEGER_AGGREGATE" in script
+    assert 'split_member_refs: action === "split" ? item.splitMemberRefs : []' in script
+    assert "const uniqueActions" in script
+    assert "!unique.includes(action)" in script

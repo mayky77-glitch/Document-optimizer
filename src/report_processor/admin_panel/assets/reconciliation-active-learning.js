@@ -9,6 +9,7 @@
     ["reject", "Отклонить"],
   ]);
   const INTENT_VERSION = "ActiveLearningIntent-1.0";
+  const MAX_INTEGER_AGGREGATE = 2147483647;
   const QUEUE_ID = /^active-learning-queue-[0-9a-f]{64}$/;
   const ITEM_ID = /^active-learning-item-[0-9a-f]{64}$/;
   const SHA_REF = /^sha256:[0-9a-f]{64}$/;
@@ -23,9 +24,16 @@
     const normalized = value.trim();
     return normalized && pattern.test(normalized) ? normalized : "";
   };
-  const count = (value) => Number.isSafeInteger(value) && value >= 0
+  const count = (value) => Number.isSafeInteger(value) && value >= 0 && value <= MAX_INTEGER_AGGREGATE
     ? value
     : 0;
+  const uniqueActions = (value) => {
+    const unique = [];
+    asArray(value).slice(0, 4).forEach((action) => {
+      if (ACTIONS.has(action) && !unique.includes(action)) unique.push(action);
+    });
+    return unique;
+  };
   const isAscending = (values) => values.every((value, index) => index === 0 || values[index - 1] < value);
   const canonicalSplitRefs = (value) => {
     const groups = asArray(value);
@@ -107,7 +115,7 @@
         differences: asArray(value.differences).slice(0, 8).map((entry) => text(entry)).filter(Boolean),
         exceptions: asArray(value.exceptions).slice(0, 8).map((entry) => text(entry)).filter(Boolean),
         splitMemberRefs: canonicalSplitRefs(value.split_member_refs),
-        actions: asArray(value.actions).slice(0, 4).filter((action) => ACTIONS.has(action)),
+        actions: uniqueActions(value.actions),
       };
     }
 
@@ -270,7 +278,7 @@
           expected_item_fingerprint: item.expectedItemFingerprint,
           version: INTENT_VERSION,
           action,
-          ...(action === "split" ? { split_member_refs: item.splitMemberRefs } : {}),
+          split_member_refs: action === "split" ? item.splitMemberRefs : [],
         };
         this.renderPayload(await this.submitShadowAction(jobId, item.itemId, decision));
       } catch (error) {
