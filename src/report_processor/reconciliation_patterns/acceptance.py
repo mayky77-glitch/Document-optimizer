@@ -24,6 +24,7 @@ _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}\Z")
 _MAX_SIGNED_64 = (1 << 63) - 1
 _MAX_REASON_CODES = 64
+_MAX_LATENCY_SAMPLES = 1_000_000
 
 
 class ShadowAcceptanceStatus(StrEnum):
@@ -331,60 +332,68 @@ def _decision(
 
 
 def _revalidate_supplied(
-    report: GroupingReplayReport,
-    promotion: PromotionDecision,
-    gates: HardGateEvidence,
-    thresholds: OwnerThresholds,
-    operational: OperationalEvidence,
+    report: GroupingReplayReport | None,
+    promotion: PromotionDecision | None,
+    gates: HardGateEvidence | None,
+    thresholds: OwnerThresholds | None,
+    operational: OperationalEvidence | None,
 ) -> None:
     """Re-run exact DTO validation after any hostile post-construction mutation."""
     try:
-        nested = (
-            report.baseline_metrics,
-            report.holdout_metrics,
-            report.measurements.index,
-            report.measurements,
-            report,
-            promotion,
-            gates,
-            thresholds,
-            operational,
-        )
-        if len(promotion.reason_codes) > _MAX_REASON_CODES:
-            _error("ACCEPTANCE_SCHEMA_INVALID")
-        if (
-            type(report.baseline_metrics) is not SplitReplayMetrics
-            or type(report.holdout_metrics) is not SplitReplayMetrics
-            or type(report.measurements) is not ReplayMeasurements
-            or type(report.measurements.index) is not IndexMeasurement
-        ):
-            _error("ACCEPTANCE_SCHEMA_INVALID")
-        for metric in (report.baseline_metrics, report.holdout_metrics):
-            for ratio in (metric.coverage_rows, metric.coverage_groups, metric.precision):
-                _ratio(ratio)
-            for name in (
-                "support_document_set_count",
-                "contradiction_count",
-                "forbidden_merge_count",
-                "manual_group_before",
-                "manual_group_after",
-                "manual_action_before",
-                "manual_action_after",
-                "unresolved_before",
-                "unresolved_after",
-                "changed_category_count",
-                "changed_mode_count",
-                "changed_unit_count",
-                "decision_mismatch_count",
-                "double_membership_count",
-                "calculation_mismatch_count",
-                "xlsx_mismatch_count",
+        nested: list[object] = []
+        if report is not None:
+            if (
+                type(report.baseline_metrics) is not SplitReplayMetrics
+                or type(report.holdout_metrics) is not SplitReplayMetrics
+                or type(report.measurements) is not ReplayMeasurements
+                or type(report.measurements.index) is not IndexMeasurement
             ):
-                _count(getattr(metric, name))
-        _count(report.measurements.p50_latency_ns)
-        _count(report.measurements.p95_latency_ns)
-        if report.measurements.index.size_bytes is not None:
-            _count(report.measurements.index.size_bytes)
+                _error("ACCEPTANCE_SCHEMA_INVALID")
+            nested.extend(
+                (
+                    report.baseline_metrics,
+                    report.holdout_metrics,
+                    report.measurements.index,
+                    report.measurements,
+                    report,
+                )
+            )
+            for metric in (report.baseline_metrics, report.holdout_metrics):
+                for ratio in (metric.coverage_rows, metric.coverage_groups, metric.precision):
+                    _ratio(ratio)
+                for name in (
+                    "support_document_set_count",
+                    "contradiction_count",
+                    "forbidden_merge_count",
+                    "manual_group_before",
+                    "manual_group_after",
+                    "manual_action_before",
+                    "manual_action_after",
+                    "unresolved_before",
+                    "unresolved_after",
+                    "changed_category_count",
+                    "changed_mode_count",
+                    "changed_unit_count",
+                    "decision_mismatch_count",
+                    "double_membership_count",
+                    "calculation_mismatch_count",
+                    "xlsx_mismatch_count",
+                ):
+                    _count(getattr(metric, name))
+            samples = report.measurements.latency_samples_ns
+            if type(samples) is not tuple or len(samples) > _MAX_LATENCY_SAMPLES:
+                _error("ACCEPTANCE_SCHEMA_INVALID")
+            for sample in samples:
+                _count(sample)
+            _count(report.measurements.p50_latency_ns)
+            _count(report.measurements.p95_latency_ns)
+            if report.measurements.index.size_bytes is not None:
+                _count(report.measurements.index.size_bytes)
+        if promotion is not None:
+            if len(promotion.reason_codes) > _MAX_REASON_CODES:
+                _error("ACCEPTANCE_SCHEMA_INVALID")
+            nested.append(promotion)
+        nested.extend(value for value in (gates, thresholds, operational) if value is not None)
         for value in nested:
             if not hasattr(value, "__post_init__"):
                 _error("ACCEPTANCE_SCHEMA_INVALID")
@@ -423,6 +432,7 @@ def evaluate_shadow_acceptance(
         for value, kind in zip(supplied, expected, strict=True)
     ):
         _error("ACCEPTANCE_SCHEMA_INVALID")
+    _revalidate_supplied(report, promotion, gates, thresholds, operational)
     missing = []
     if report is None:
         missing.append("REPLAY_REPORT_MISSING")
@@ -451,7 +461,6 @@ def evaluate_shadow_acceptance(
         and thresholds is not None
         and operational is not None
     )
-    _revalidate_supplied(report, promotion, gates, thresholds, operational)
     if operational.status is OperationalEvidenceStatus.UNAVAILABLE:
         return _decision(
             ShadowAcceptanceStatus.UNAVAILABLE,
