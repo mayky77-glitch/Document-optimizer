@@ -1,0 +1,29 @@
+status: gate0-frozen
+work_id: reconciliation-wave8-p6-recovery-v1
+objective: "Close Wave 8 P6 cross-layer, atomic CAS, persisted-intent and UI behavior defects without runtime activation."
+source_base_sha: fe7632e00b3ca7dd90ca0dc375841ec253ea7c2f
+integration_branch: codex/reconciliation-group-optimization-wave8
+wave: 8
+max_parallel: 2
+max_spawns: 4
+max_retries: 1
+merge_method: merge-no-ff
+runtime_wiring: forbidden
+production_activation: stop
+dependency_order:
+  - parallel:
+      - core-store-recovery
+      - web-contract-recovery
+  - ui-behavior-recovery
+  - recovery-audit
+contracts:
+  web_queue: ActiveLearningWebQueue-1.0
+  shadow_request: ActiveLearningShadowRequest-1.0
+acceptance:
+  - exact controlled backend-to-UI DTO; no free display strings
+  - exact queue, item and autosave CAS tokens
+  - atomic concurrent apply with exactly one stale loser
+  - persisted intents rebound to exact queue items on load
+  - split impossible for fewer than two members
+  - executable Node DOM behavior coverage for order, privacy, requests and focus
+  - no production route, registry, feedback, calculation or writer integration

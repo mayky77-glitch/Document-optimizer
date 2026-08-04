@@ -16,6 +16,10 @@ _PUBLIC_ASSETS = {
         "text/javascript; charset=utf-8",
         _ASSET_DIRECTORY / "reconciliation-batch-filters.js",
     ),
+    "reconciliation-active-learning.js": (
+        "text/javascript; charset=utf-8",
+        _ASSET_DIRECTORY / "reconciliation-active-learning.js",
+    ),
     "theme.js": ("text/javascript; charset=utf-8", _ASSET_DIRECTORY / "theme.js"),
     "drawing-card.css": (
         "text/css; charset=utf-8",

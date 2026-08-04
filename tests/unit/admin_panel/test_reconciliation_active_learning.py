@@ -7,16 +7,16 @@ import json
 import pytest
 
 from report_processor.admin_panel.reconciliation_active_learning_api import (
+    SHADOW_REQUEST_VERSION,
     ActiveLearningApiCode,
     apply_active_learning_payload,
-    parse_active_learning_intent,
+    parse_active_learning_shadow_request,
     undo_active_learning,
 )
 from report_processor.admin_panel.reconciliation_active_learning_store import (
     ActiveLearningShadowStore,
 )
 from report_processor.reconciliation_patterns.active_learning import (
-    INTENT_VERSION,
     ActiveLearningMode,
     ActiveLearningPresentation,
     ActiveLearningQueue,
@@ -65,9 +65,10 @@ def _queue(item: ActiveLearningQueueItem | None = None) -> ActiveLearningQueue:
 
 def _payload(queue: ActiveLearningQueue, item: ActiveLearningQueueItem) -> dict[str, object]:
     return {
-        "version": INTENT_VERSION,
+        "version": SHADOW_REQUEST_VERSION,
         "queue_id": queue.queue_id,
         "expected_queue_fingerprint": queue.fingerprint,
+        "expected_autosave_fingerprint": "sha256:" + "0" * 64,
         "item_id": item.item_id,
         "expected_item_fingerprint": item.fingerprint,
         "action": ShadowAction.REJECT.value,
@@ -79,8 +80,9 @@ def test_parser_accepts_only_the_exact_closed_intent_shape() -> None:
     item = _item()
     queue = _queue(item)
     payload = _payload(queue, item)
+    payload["expected_autosave_fingerprint"] = "sha256:" + "a" * 64
 
-    parsed = parse_active_learning_intent(payload)
+    parsed = parse_active_learning_shadow_request(payload)
 
     assert parsed.action is ShadowAction.REJECT
     assert parsed.split_member_refs == ()
@@ -88,11 +90,11 @@ def test_parser_accepts_only_the_exact_closed_intent_shape() -> None:
         {key: value for key, value in payload.items() if key != "item_id"},
         {**payload, "raw_text": "not allowed"},
         {**payload, "action": "promote"},
-        {**payload, "version": "ActiveLearningIntent-1.1"},
+        {**payload, "version": "ActiveLearningShadowRequest-1.1"},
         {**payload, "split_member_refs": False},
     ):
         with pytest.raises(ValueError):
-            parse_active_learning_intent(malformed)
+            parse_active_learning_shadow_request(malformed)
 
 
 def test_api_facade_returns_controlled_codes_without_route_registration(tmp_path) -> None:
@@ -100,23 +102,23 @@ def test_api_facade_returns_controlled_codes_without_route_registration(tmp_path
     queue = _queue(item)
     store = ActiveLearningShadowStore(tmp_path / "shadow.json")
     initial = store.load(queue)
+    payload = _payload(queue, item)
+    payload["expected_autosave_fingerprint"] = initial.fingerprint
 
     saved = apply_active_learning_payload(
         store,
         queue,
-        _payload(queue, item),
-        expected_autosave_fingerprint=initial.fingerprint,
+        payload,
     )
     stale = apply_active_learning_payload(
         store,
         queue,
-        _payload(queue, item),
-        expected_autosave_fingerprint=initial.fingerprint,
+        payload,
     )
     malformed = apply_active_learning_payload(
         store,
         queue,
-        {**_payload(queue, item), "raw_text": "forbidden"},
+        {**payload, "raw_text": "forbidden"},
         expected_autosave_fingerprint=saved.autosave.fingerprint,  # type: ignore[union-attr]
     )
     undone = undo_active_learning(
@@ -143,12 +145,13 @@ def test_api_row_override_conflict_does_not_create_shadow_state(tmp_path) -> Non
     queue = _queue(item)
     store = ActiveLearningShadowStore(tmp_path / "shadow.json")
     initial = store.load(queue)
+    payload = _payload(queue, item)
+    payload["expected_autosave_fingerprint"] = initial.fingerprint
 
     result = apply_active_learning_payload(
         store,
         queue,
-        _payload(queue, item),
-        expected_autosave_fingerprint=initial.fingerprint,
+        payload,
     )
 
     assert result.code is ActiveLearningApiCode.CONFLICT
