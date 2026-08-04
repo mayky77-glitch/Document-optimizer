@@ -23,6 +23,7 @@ MAX_PAIR_CONSTRAINTS_PER_PACKAGE = 8_192
 
 _SHA_REF = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _VERSION = re.compile(r"[A-Za-z][A-Za-z0-9_-]*-\d+\.\d+\Z")
+_ATOM_ID = re.compile(r"package-atom-[0-9a-f]{64}\Z")
 
 
 class DecisionPackageContractError(ValueError):
@@ -45,6 +46,16 @@ class PairRelation(StrEnum):
     MUST_LINK = "must_link"
     CANNOT_LINK = "cannot_link"
     MANUAL_REVIEW = "manual_review"
+
+
+class BlockerCode(StrEnum):
+    """Closed, privacy-safe reasons that keep a path visible but non-safe."""
+
+    AUTHORITY_UNATTESTED = "authority_unattested"
+    CANNOT_LINK = "cannot_link"
+    MANUAL_REVIEW = "manual_review"
+    OUTLIER = "outlier"
+    PATTERN_UNATTESTED = "pattern_unattested"
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -98,10 +109,29 @@ def _opaque_id(kind: str, fingerprint: str) -> str:
     return f"{kind}-{fingerprint.removeprefix('sha256:')}"
 
 
+def _require_atom_id(value: str, *, field_name: str) -> None:
+    if not isinstance(value, str) or not _ATOM_ID.fullmatch(value):
+        raise DecisionPackageContractError(f"{field_name} must be a canonical package atom ID")
+
+
 def _canonical_tuple(values: tuple[Any, ...], *, key: Any, label: str) -> tuple[Any, ...]:
     if len(values) != len({key(value) for value in values}):
         raise DecisionPackageContractError(f"{label} must be unique")
     return tuple(sorted(values, key=key))
+
+
+def _canonical_refs(values: tuple[str, ...], *, label: str) -> tuple[str, ...]:
+    if any(not isinstance(value, str) for value in values):
+        raise DecisionPackageContractError(f"{label} must contain opaque references")
+    for value in values:
+        _require_sha_ref(value, field_name=label)
+    return _canonical_tuple(values, key=lambda value: value, label=label)
+
+
+def _canonical_blockers(values: tuple[BlockerCode, ...], *, label: str) -> tuple[BlockerCode, ...]:
+    if any(not isinstance(value, BlockerCode) for value in values):
+        raise DecisionPackageContractError(f"{label} must contain controlled blocker codes")
+    return _canonical_tuple(values, key=lambda value: value.value, label=label)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +141,7 @@ class PackageBoundary:
     category_ref: str | None
     mode: PackageMode | None
     unit_compatibility: UnitCompatibility
+    unit_ref: str
     action_ref: str | None
     object_ref: str | None
 
@@ -119,6 +150,7 @@ class PackageBoundary:
             raise DecisionPackageContractError("mode must be controlled")
         if not isinstance(self.unit_compatibility, UnitCompatibility):
             raise DecisionPackageContractError("unit compatibility must be controlled")
+        _require_sha_ref(self.unit_ref, field_name="unit_ref")
         for name, value in (
             ("category_ref", self.category_ref),
             ("action_ref", self.action_ref),
@@ -148,15 +180,23 @@ class PackageAtom:
     """One opaque semantic identity and its controlled package boundary."""
 
     semantic_ref: str
+    atom_version_ref: str
     boundary: PackageBoundary
+    manual_blockers: tuple[BlockerCode, ...] = ()
     version: str = DECISION_PACKAGE_VERSION
 
     def __post_init__(self) -> None:
         _require_sha_ref(self.semantic_ref, field_name="semantic_ref")
+        _require_sha_ref(self.atom_version_ref, field_name="atom_version_ref")
         if not isinstance(self.boundary, PackageBoundary):
             raise DecisionPackageContractError("atom boundary must be controlled")
         if self.version != DECISION_PACKAGE_VERSION:
             raise DecisionPackageContractError("atom version must bind DecisionPackage-2.0")
+        object.__setattr__(
+            self,
+            "manual_blockers",
+            _canonical_blockers(self.manual_blockers, label="atom manual blockers"),
+        )
 
     @property
     def fingerprint(self) -> str:
@@ -165,7 +205,9 @@ class PackageAtom:
                 "version": self.version,
                 "kind": "atom",
                 "semantic_ref": self.semantic_ref,
+                "atom_version_ref": self.atom_version_ref,
                 "boundary": self.boundary,
+                "manual_blockers": self.manual_blockers,
             }
         )
 
@@ -181,6 +223,8 @@ class PairConstraint:
     left_atom_id: str
     right_atom_id: str
     relation: PairRelation
+    evidence_refs: tuple[str, ...] = ()
+    blocker_codes: tuple[BlockerCode, ...] = ()
     version: str = DECISION_PACKAGE_VERSION
 
     def __post_init__(self) -> None:
@@ -188,10 +232,8 @@ class PairConstraint:
             raise DecisionPackageContractError(
                 "pair constraint version must bind DecisionPackage-2.0"
             )
-        if not self.left_atom_id.startswith("package-atom-") or not self.right_atom_id.startswith(
-            "package-atom-"
-        ):
-            raise DecisionPackageContractError("pair constraints require opaque atom IDs")
+        _require_atom_id(self.left_atom_id, field_name="left_atom_id")
+        _require_atom_id(self.right_atom_id, field_name="right_atom_id")
         if self.left_atom_id == self.right_atom_id:
             raise DecisionPackageContractError("pair constraints cannot be self-referential")
         if not isinstance(self.relation, PairRelation):
@@ -199,6 +241,16 @@ class PairConstraint:
         left, right = sorted((self.left_atom_id, self.right_atom_id))
         object.__setattr__(self, "left_atom_id", left)
         object.__setattr__(self, "right_atom_id", right)
+        object.__setattr__(
+            self,
+            "evidence_refs",
+            _canonical_refs(self.evidence_refs, label="pair evidence refs"),
+        )
+        object.__setattr__(
+            self,
+            "blocker_codes",
+            _canonical_blockers(self.blocker_codes, label="pair blocker codes"),
+        )
 
     @property
     def pair_key(self) -> tuple[str, str]:
@@ -206,7 +258,7 @@ class PairConstraint:
 
     @property
     def is_compatible(self) -> bool:
-        return self.relation is PairRelation.MUST_LINK
+        return self.relation is PairRelation.MUST_LINK and not self.blocker_codes
 
     @property
     def fingerprint(self) -> str:
@@ -217,6 +269,8 @@ class PairConstraint:
                 "left_atom_id": self.left_atom_id,
                 "right_atom_id": self.right_atom_id,
                 "relation": self.relation,
+                "evidence_refs": self.evidence_refs,
+                "blocker_codes": self.blocker_codes,
             }
         )
 
@@ -231,7 +285,8 @@ class CandidateFamily:
 
     atoms: tuple[PackageAtom, ...]
     pair_constraints: tuple[PairConstraint, ...] = ()
-    manual_review_required: bool = False
+    blocker_codes: tuple[BlockerCode, ...] = ()
+    outlier_atom_ids: tuple[str, ...] = ()
     version: str = DECISION_PACKAGE_VERSION
 
     def __post_init__(self) -> None:
@@ -241,8 +296,6 @@ class CandidateFamily:
             )
         if not self.atoms or len(self.atoms) > MAX_ATOMS_PER_FAMILY:
             raise DecisionPackageContractError("candidate family atom count is out of bounds")
-        if not isinstance(self.manual_review_required, bool):
-            raise DecisionPackageContractError("candidate manual blocker must be boolean")
         if any(not isinstance(atom, PackageAtom) for atom in self.atoms):
             raise DecisionPackageContractError("candidate atoms must be contract atoms")
         atoms = _canonical_tuple(self.atoms, key=lambda item: item.atom_id, label="candidate atoms")
@@ -262,6 +315,21 @@ class CandidateFamily:
                 "candidate constraints must reference candidate atoms"
             )
         object.__setattr__(self, "pair_constraints", constraints)
+        object.__setattr__(
+            self,
+            "blocker_codes",
+            _canonical_blockers(self.blocker_codes, label="candidate blocker codes"),
+        )
+        outlier_atom_ids = _canonical_tuple(
+            self.outlier_atom_ids,
+            key=lambda value: value,
+            label="candidate outlier atom IDs",
+        )
+        for value in outlier_atom_ids:
+            _require_atom_id(value, field_name="candidate outlier atom ID")
+        if set(outlier_atom_ids).intersection(atom_ids):
+            raise DecisionPackageContractError("candidate outliers cannot also be family members")
+        object.__setattr__(self, "outlier_atom_ids", outlier_atom_ids)
 
     @property
     def atom_ids(self) -> tuple[str, ...]:
@@ -282,6 +350,10 @@ class CandidateFamily:
         return all(constraint.is_compatible for constraint in self.pair_constraints)
 
     @property
+    def is_manual_family(self) -> bool:
+        return bool(self.blocker_codes) or any(atom.manual_blockers for atom in self.atoms)
+
+    @property
     def fingerprint(self) -> str:
         return sha256_fingerprint(
             {
@@ -291,7 +363,8 @@ class CandidateFamily:
                 "pair_constraint_ids": tuple(
                     constraint.constraint_id for constraint in self.pair_constraints
                 ),
-                "manual_review_required": self.manual_review_required,
+                "blocker_codes": self.blocker_codes,
+                "outlier_atom_ids": self.outlier_atom_ids,
             }
         )
 
@@ -330,6 +403,18 @@ class OptimizerPolicy:
     def fingerprint(self) -> str:
         return sha256_fingerprint({"kind": "optimizer_policy", "value": self})
 
+    @property
+    def identity_fingerprint(self) -> str:
+        return sha256_fingerprint(
+            {
+                "kind": "optimizer_policy_identity",
+                "policy_ref": self.policy_ref,
+                "max_safe_atoms": self.max_safe_atoms,
+                "max_families": self.max_families,
+                "max_pair_constraints": self.max_pair_constraints,
+            }
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class DecisionPackageVersionContext:
@@ -339,6 +424,7 @@ class DecisionPackageVersionContext:
     feedback_contract_version: str
     clustering_contract_version: str
     optimizer_policy_version: str
+    consequential_refs: tuple[str, ...]
     version: str = DECISION_PACKAGE_VERSION
 
     def __post_init__(self) -> None:
@@ -351,6 +437,13 @@ class DecisionPackageVersionContext:
             ("optimizer_policy_version", self.optimizer_policy_version),
         ):
             _require_version(value, field_name=name)
+        if not self.consequential_refs:
+            raise DecisionPackageContractError("context consequential refs must be non-empty")
+        object.__setattr__(
+            self,
+            "consequential_refs",
+            _canonical_refs(self.consequential_refs, label="context consequential refs"),
+        )
 
     @property
     def fingerprint(self) -> str:
@@ -422,8 +515,10 @@ class DecisionPackage:
             boundary is not None
             and boundary.is_known
             and boundary.unit_compatibility is UnitCompatibility.COMPATIBLE
+            and bool(boundary.unit_ref)
             and len(self.atoms) <= self.policy.max_safe_atoms
-            and not any(family.manual_review_required for family in self.families)
+            and not any(family.is_manual_family for family in self.families)
+            and not any(atom.manual_blockers for atom in self.atoms)
             and all(family.all_pairs_compatible for family in self.families)
             and self.has_complete_pair_coverage
             and all(constraint.is_compatible for constraint in self.pair_constraints)
@@ -434,19 +529,30 @@ class DecisionPackage:
         return sha256_fingerprint(
             {
                 "version": self.version,
-                "kind": "decision_package",
-                "family_ids": tuple(family.family_id for family in self.families),
-                "pair_constraint_ids": tuple(
-                    constraint.constraint_id for constraint in self.pair_constraints
-                ),
+                "kind": "decision_package_revision",
+                "identity_fingerprint": self.identity_fingerprint,
                 "policy_fingerprint": self.policy.fingerprint,
                 "version_context_fingerprint": self.version_context.fingerprint,
             }
         )
 
     @property
+    def identity_fingerprint(self) -> str:
+        return sha256_fingerprint(
+            {
+                "version": self.version,
+                "kind": "decision_package_identity",
+                "family_ids": tuple(family.family_id for family in self.families),
+                "pair_constraint_ids": tuple(
+                    constraint.constraint_id for constraint in self.pair_constraints
+                ),
+                "policy_identity_fingerprint": self.policy.identity_fingerprint,
+            }
+        )
+
+    @property
     def package_id(self) -> str:
-        return _opaque_id("decision-package", self.fingerprint)
+        return _opaque_id("decision-package", self.identity_fingerprint)
 
 
 @dataclass(frozen=True, slots=True)
@@ -456,6 +562,9 @@ class DecisionPackageResult:
     packages: tuple[DecisionPackage, ...]
     policy: OptimizerPolicy
     version_context: DecisionPackageVersionContext
+    manual_families: tuple[CandidateFamily, ...] = ()
+    outlier_atoms: tuple[PackageAtom, ...] = ()
+    blocker_codes: tuple[BlockerCode, ...] = ()
     version: str = DECISION_PACKAGE_VERSION
 
     def __post_init__(self) -> None:
@@ -478,19 +587,93 @@ class DecisionPackageResult:
                 "result packages must share policy and version context"
             )
         object.__setattr__(self, "packages", packages)
+        if any(not isinstance(family, CandidateFamily) for family in self.manual_families):
+            raise DecisionPackageContractError("manual families must be contract families")
+        manual_families = _canonical_tuple(
+            self.manual_families,
+            key=lambda family: family.family_id,
+            label="manual families",
+        )
+        if any(not family.is_manual_family for family in manual_families):
+            raise DecisionPackageContractError("manual family paths require controlled blockers")
+        object.__setattr__(self, "manual_families", manual_families)
+        if any(not isinstance(atom, PackageAtom) for atom in self.outlier_atoms):
+            raise DecisionPackageContractError("outlier atoms must be contract atoms")
+        outlier_atoms = _canonical_tuple(
+            self.outlier_atoms,
+            key=lambda atom: atom.atom_id,
+            label="outlier atoms",
+        )
+        object.__setattr__(self, "outlier_atoms", outlier_atoms)
+        object.__setattr__(
+            self,
+            "blocker_codes",
+            _canonical_blockers(self.blocker_codes, label="result blocker codes"),
+        )
+        package_families = tuple(family for package in packages for family in package.families)
+        package_family_ids = {family.family_id for family in package_families}
+        if package_family_ids.intersection(family.family_id for family in manual_families):
+            raise DecisionPackageContractError("manual families cannot also be package families")
+        package_atom_ids = {atom.atom_id for package in packages for atom in package.atoms}
+        manual_atom_ids = {atom.atom_id for family in manual_families for atom in family.atoms}
+        outlier_atom_ids = {atom.atom_id for atom in outlier_atoms}
+        total_membership_count = (
+            sum(len(package.atoms) for package in packages)
+            + sum(len(family.atoms) for family in manual_families)
+            + len(outlier_atoms)
+        )
+        if (
+            package_atom_ids.intersection(manual_atom_ids)
+            or package_atom_ids.intersection(outlier_atom_ids)
+            or manual_atom_ids.intersection(outlier_atom_ids)
+            or len(package_atom_ids | manual_atom_ids | outlier_atom_ids) != total_membership_count
+        ):
+            raise DecisionPackageContractError("result atom membership must be unique")
+        declared_outlier_ids = {
+            atom_id
+            for family in (*package_families, *manual_families)
+            for atom_id in family.outlier_atom_ids
+        }
+        if declared_outlier_ids != outlier_atom_ids:
+            raise DecisionPackageContractError("visible outliers must match family outlier paths")
+
+    @property
+    def manual_family_ids(self) -> tuple[str, ...]:
+        return tuple(family.family_id for family in self.manual_families)
+
+    @property
+    def outlier_atom_ids(self) -> tuple[str, ...]:
+        return tuple(atom.atom_id for atom in self.outlier_atoms)
 
     @property
     def fingerprint(self) -> str:
         return sha256_fingerprint(
             {
                 "version": self.version,
-                "kind": "decision_package_result",
+                "kind": "decision_package_result_revision",
+                "identity_fingerprint": self.identity_fingerprint,
                 "package_ids": tuple(package.package_id for package in self.packages),
                 "policy_fingerprint": self.policy.fingerprint,
                 "version_context_fingerprint": self.version_context.fingerprint,
+                "manual_family_ids": self.manual_family_ids,
+                "outlier_atom_ids": self.outlier_atom_ids,
+                "blocker_codes": self.blocker_codes,
+            }
+        )
+
+    @property
+    def identity_fingerprint(self) -> str:
+        return sha256_fingerprint(
+            {
+                "version": self.version,
+                "kind": "decision_package_result_identity",
+                "package_ids": tuple(package.package_id for package in self.packages),
+                "policy_identity_fingerprint": self.policy.identity_fingerprint,
+                "manual_family_ids": self.manual_family_ids,
+                "outlier_atom_ids": self.outlier_atom_ids,
             }
         )
 
     @property
     def result_id(self) -> str:
-        return _opaque_id("decision-package-result", self.fingerprint)
+        return _opaque_id("decision-package-result", self.identity_fingerprint)
