@@ -15,6 +15,14 @@ from enum import StrEnum
 from itertools import combinations
 from typing import Any
 
+from report_processor.reconciliation_patterns.hybrid_retrieval import (
+    AuthorityEnvelope,
+    HybridQuery,
+    HybridRetrievalResult,
+    HybridStatus,
+)
+from report_processor.reconciliation_patterns.pattern_registry import DecisionSource
+
 DECISION_PACKAGE_VERSION = "DecisionPackage-2.0"
 MAX_ATOMS_PER_FAMILY = 128
 MAX_FAMILIES_PER_PACKAGE = 64
@@ -188,6 +196,7 @@ class PackageAtom:
     atom_version_ref: str
     critical_signature_ref: str
     typed_signature_ref: str
+    outcome_ref: str
     boundary: PackageBoundary
     manual_blockers: tuple[BlockerCode, ...] = ()
     version: str = DECISION_PACKAGE_VERSION
@@ -197,6 +206,7 @@ class PackageAtom:
         _require_sha_ref(self.atom_version_ref, field_name="atom_version_ref")
         _require_sha_ref(self.critical_signature_ref, field_name="critical_signature_ref")
         _require_sha_ref(self.typed_signature_ref, field_name="typed_signature_ref")
+        _require_sha_ref(self.outcome_ref, field_name="outcome_ref")
         if not isinstance(self.boundary, PackageBoundary):
             raise DecisionPackageContractError("atom boundary must be controlled")
         if self.version != DECISION_PACKAGE_VERSION:
@@ -217,6 +227,7 @@ class PackageAtom:
                 "atom_version_ref": self.atom_version_ref,
                 "critical_signature_ref": self.critical_signature_ref,
                 "typed_signature_ref": self.typed_signature_ref,
+                "outcome_ref": self.outcome_ref,
                 "boundary": self.boundary,
                 "manual_blockers": self.manual_blockers,
             }
@@ -227,6 +238,146 @@ class PackageAtom:
         return _opaque_id("package-atom", self.fingerprint)
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class AuthoritativePairAttestation:
+    """Sealed pair evidence derived only from a validated Wave 6 authority."""
+
+    left_query_fingerprint: str
+    right_query_fingerprint: str
+    left_authority_fingerprint: str
+    right_authority_fingerprint: str
+    outcome_fingerprint: str
+    scope_ref: str
+    consequential_context_ref: str
+    left_atom_id: str
+    right_atom_id: str
+    attestation_ref: str
+    version: str = DECISION_PACKAGE_VERSION
+
+    def __init__(self, *_: object, **__: object) -> None:
+        raise DecisionPackageContractError("attestations are sealed")
+
+    @classmethod
+    def from_authoritative_results(
+        cls,
+        left_atom: PackageAtom,
+        left_query: HybridQuery,
+        left_result: HybridRetrievalResult,
+        right_atom: PackageAtom,
+        right_query: HybridQuery,
+        right_result: HybridRetrievalResult,
+        version_context: DecisionPackageVersionContext,
+    ) -> AuthoritativePairAttestation:
+        if not isinstance(version_context, DecisionPackageVersionContext):
+            raise DecisionPackageContractError("controlled version context is required")
+        left_authority = _validated_authority(left_atom, left_query, left_result)
+        right_authority = _validated_authority(right_atom, right_query, right_result)
+        chains = tuple(
+            sorted(
+                (
+                    (left_atom, left_query, left_authority),
+                    (right_atom, right_query, right_authority),
+                ),
+                key=lambda chain: chain[0].atom_id,
+            )
+        )
+        (left_atom, left_query, left_authority), (right_atom, right_query, right_authority) = chains
+        if (
+            left_authority.decision.outcome != right_authority.decision.outcome
+            or tuple(
+                getattr(left_query, name)
+                for name in (
+                    "tenant_ref",
+                    "project_ref",
+                    "document_type_fingerprint",
+                    "taxonomy_version_fingerprint",
+                    "scope_fingerprint",
+                    "consequential_version_fingerprint",
+                )
+            )
+            != tuple(
+                getattr(right_query, name)
+                for name in (
+                    "tenant_ref",
+                    "project_ref",
+                    "document_type_fingerprint",
+                    "taxonomy_version_fingerprint",
+                    "scope_fingerprint",
+                    "consequential_version_fingerprint",
+                )
+            )
+            or left_query.consequential_version_fingerprint != version_context.authority_context_ref
+            or left_authority.decision.outcome.mode != left_atom.boundary.mode.value
+            or right_authority.decision.outcome.mode != right_atom.boundary.mode.value
+            or left_atom.outcome_ref != sha256_fingerprint(left_authority.decision.outcome)
+            or right_atom.outcome_ref != sha256_fingerprint(right_authority.decision.outcome)
+            or left_atom.boundary.category_ref
+            != sha256_fingerprint(left_authority.decision.outcome.target_category)
+            or right_atom.boundary.category_ref
+            != sha256_fingerprint(right_authority.decision.outcome.target_category)
+        ):
+            raise DecisionPackageContractError("supported authoritative evidence is required")
+        if left_atom.atom_id == right_atom.atom_id:
+            raise DecisionPackageContractError("attestations cannot be self-referential")
+        left, right = sorted((left_atom.atom_id, right_atom.atom_id))
+        outcome_fingerprint = sha256_fingerprint(left_authority.decision.outcome)
+        attestation_ref = sha256_fingerprint(
+            {
+                "version": DECISION_PACKAGE_VERSION,
+                "kind": "authoritative_pair_attestation",
+                "left_query_fingerprint": left_query.fingerprint,
+                "right_query_fingerprint": right_query.fingerprint,
+                "left_authority_fingerprint": left_authority.fingerprint,
+                "right_authority_fingerprint": right_authority.fingerprint,
+                "outcome_fingerprint": outcome_fingerprint,
+                "scope_ref": left_query.scope_fingerprint,
+                "consequential_context_ref": left_query.consequential_version_fingerprint,
+                "left_atom_id": left,
+                "right_atom_id": right,
+            }
+        )
+        attestation = object.__new__(cls)
+        for name, value in {
+            "left_query_fingerprint": left_query.fingerprint,
+            "right_query_fingerprint": right_query.fingerprint,
+            "left_authority_fingerprint": left_authority.fingerprint,
+            "right_authority_fingerprint": right_authority.fingerprint,
+            "outcome_fingerprint": outcome_fingerprint,
+            "scope_ref": left_query.scope_fingerprint,
+            "consequential_context_ref": left_query.consequential_version_fingerprint,
+            "left_atom_id": left,
+            "right_atom_id": right,
+            "attestation_ref": attestation_ref,
+            "version": DECISION_PACKAGE_VERSION,
+        }.items():
+            object.__setattr__(attestation, name, value)
+        return attestation
+
+    @property
+    def pair_key(self) -> tuple[str, str]:
+        return (self.left_atom_id, self.right_atom_id)
+
+
+def _validated_authority(
+    atom: PackageAtom, query: HybridQuery, result: HybridRetrievalResult
+) -> AuthorityEnvelope:
+    if (
+        not isinstance(atom, PackageAtom)
+        or not isinstance(query, HybridQuery)
+        or not isinstance(result, HybridRetrievalResult)
+        or atom.semantic_ref != query.query_ref
+        or result.query_fingerprint != query.fingerprint
+        or result.status
+        not in (HybridStatus.AUTHORITATIVE_EXACT, HybridStatus.AUTHORITATIVE_PATTERN)
+        or not isinstance(result.authority, AuthorityEnvelope)
+        or result.authority.query_fingerprint != query.fingerprint
+        or result.authority.decision.source
+        not in (DecisionSource.EXACT_FEEDBACK, DecisionSource.ACTIVE_PATTERN)
+    ):
+        raise DecisionPackageContractError("supported authoritative evidence is required")
+    return result.authority
+
+
 @dataclass(frozen=True, slots=True)
 class PairConstraint:
     """Canonical complete-linkage relation for one pair of opaque atoms."""
@@ -234,7 +385,7 @@ class PairConstraint:
     left_atom_id: str
     right_atom_id: str
     relation: PairRelation
-    evidence_refs: tuple[str, ...] = ()
+    attestation: AuthoritativePairAttestation | None = None
     blocker_codes: tuple[BlockerCode, ...] = ()
     version: str = DECISION_PACKAGE_VERSION
 
@@ -252,11 +403,17 @@ class PairConstraint:
         left, right = sorted((self.left_atom_id, self.right_atom_id))
         object.__setattr__(self, "left_atom_id", left)
         object.__setattr__(self, "right_atom_id", right)
-        object.__setattr__(
-            self,
-            "evidence_refs",
-            _canonical_refs(self.evidence_refs, label="pair evidence refs"),
-        )
+        if self.attestation is not None:
+            if self.relation is not PairRelation.MUST_LINK:
+                raise DecisionPackageContractError(
+                    "only must-link constraints may carry attestations"
+                )
+            if not isinstance(self.attestation, AuthoritativePairAttestation):
+                raise DecisionPackageContractError("pair attestation must be controlled")
+            if self.attestation.pair_key != (left, right):
+                raise DecisionPackageContractError(
+                    "attestation must bind the constrained atom pair"
+                )
         object.__setattr__(
             self,
             "blocker_codes",
@@ -271,8 +428,16 @@ class PairConstraint:
     def is_compatible(self) -> bool:
         return (
             self.relation is PairRelation.MUST_LINK
-            and bool(self.evidence_refs)
+            and self.attestation is not None
             and not self.blocker_codes
+        )
+
+    def is_compatible_in_context(self, context_ref: str) -> bool:
+        """Return true only for an authoritative attestation of this exact context."""
+        return bool(
+            self.is_compatible
+            and self.attestation is not None
+            and self.attestation.consequential_context_ref == context_ref
         )
 
     @property
@@ -284,7 +449,7 @@ class PairConstraint:
                 "left_atom_id": self.left_atom_id,
                 "right_atom_id": self.right_atom_id,
                 "relation": self.relation,
-                "evidence_refs": self.evidence_refs,
+                "attestation_ref": self.attestation.attestation_ref if self.attestation else None,
                 "blocker_codes": self.blocker_codes,
             }
         )
@@ -315,6 +480,10 @@ class CandidateFamily:
             raise DecisionPackageContractError("candidate atoms must be contract atoms")
         atoms = _canonical_tuple(self.atoms, key=lambda item: item.atom_id, label="candidate atoms")
         _require_unique_semantic_refs(atoms, label="candidate atoms")
+        if len({atom.critical_signature_ref for atom in atoms}) != 1:
+            raise DecisionPackageContractError("candidate atoms must share a critical signature")
+        if len({atom.typed_signature_ref for atom in atoms}) != 1:
+            raise DecisionPackageContractError("candidate atoms must share a typed signature")
         object.__setattr__(self, "atoms", atoms)
         if len(self.pair_constraints) > MAX_PAIR_CONSTRAINTS_PER_PACKAGE:
             raise DecisionPackageContractError("candidate pair constraints exceed the bound")
@@ -440,6 +609,7 @@ class DecisionPackageVersionContext:
     feedback_contract_version: str
     clustering_contract_version: str
     optimizer_policy_version: str
+    authority_context_ref: str
     consequential_refs: tuple[str, ...]
     version: str = DECISION_PACKAGE_VERSION
 
@@ -453,6 +623,7 @@ class DecisionPackageVersionContext:
             ("optimizer_policy_version", self.optimizer_policy_version),
         ):
             _require_version(value, field_name=name)
+        _require_sha_ref(self.authority_context_ref, field_name="authority_context_ref")
         if not self.consequential_refs:
             raise DecisionPackageContractError("context consequential refs must be non-empty")
         object.__setattr__(
@@ -536,9 +707,14 @@ class DecisionPackage:
             and len(self.atoms) <= self.policy.max_safe_atoms
             and not any(family.is_manual_family for family in self.families)
             and not any(atom.manual_blockers for atom in self.atoms)
+            and len({atom.critical_signature_ref for atom in self.atoms}) == 1
+            and len({atom.typed_signature_ref for atom in self.atoms}) == 1
             and all(family.all_pairs_compatible for family in self.families)
             and self.has_complete_pair_coverage
-            and all(constraint.is_compatible for constraint in self.pair_constraints)
+            and all(
+                constraint.is_compatible_in_context(self.version_context.authority_context_ref)
+                for constraint in self.pair_constraints
+            )
         )
 
     @property

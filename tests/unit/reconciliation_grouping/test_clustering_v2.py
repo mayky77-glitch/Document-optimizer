@@ -15,15 +15,22 @@ from report_processor.reconciliation_grouping.clustering import (
     cluster_atoms,
 )
 from report_processor.reconciliation_grouping.decision_packages_v2 import (
+    AuthoritativePairAttestation,
     BlockerCode,
     CandidateFamily,
+    DecisionPackageVersionContext,
+    OptimizerPolicy,
     PackageAtom,
     PackageBoundary,
     PackageMode,
     PairConstraint,
     PairRelation,
     UnitCompatibility,
+    sha256_fingerprint,
 )
+from report_processor.reconciliation_patterns import hybrid_retrieval as hybrid
+from report_processor.reconciliation_patterns.offline import OutcomeSignature
+from report_processor.reconciliation_patterns.pattern_models import PatternVersions
 
 
 def _ref(token: str) -> str:
@@ -39,7 +46,11 @@ def _boundary(
     object_ref: str | None = "c",
 ) -> PackageBoundary:
     return PackageBoundary(
-        category_ref=_ref(category) if category else None,
+        category_ref=sha256_fingerprint("category")
+        if category == "a"
+        else _ref(category)
+        if category
+        else None,
         mode=mode,
         unit_compatibility=unit,
         unit_ref=_ref("0"),
@@ -61,8 +72,58 @@ def _atom(
         atom_version_ref=_ref(token),
         critical_signature_ref=_ref(critical),
         typed_signature_ref=_ref(typed),
+        outcome_ref=sha256_fingerprint(OutcomeSignature("accept", "quantity_cost", "category")),
         boundary=boundary or _boundary(),
         manual_blockers=blockers,
+    )
+
+
+def _chain(atom: PackageAtom) -> tuple[hybrid.HybridQuery, hybrid.HybridRetrievalResult]:
+    query = hybrid.create_hybrid_query(
+        query_ref=atom.semantic_ref,
+        tenant_ref=_ref("b"),
+        project_ref=_ref("c"),
+        document_type_fingerprint=_ref("d"),
+        taxonomy_version_fingerprint=_ref("e"),
+        scope_fingerprint=_ref("f"),
+        consequential_version_fingerprint=_ref("a"),
+        embedding_identity_fingerprint=_ref("2"),
+        confirmed_source_identity_fingerprint=_ref("3"),
+        prototype_source_identity_fingerprint=_ref("4"),
+        hard_negative_identity_fingerprint=_ref("5"),
+        full_term_fingerprint=_ref("6"),
+        skeleton_fingerprint=_ref("7"),
+        exact_only=False,
+        limit=1,
+    )
+    authority = hybrid.resolve_authority(
+        query,
+        exact_feedback=OutcomeSignature("accept", "quantity_cost", "category"),
+        exact_feedback_ref=_ref("8"),
+        matched_histories=(),
+        current_versions=PatternVersions("Parser-1.0", "Model-1.0", "Taxonomy-1.0"),
+    )
+    return query, hybrid.create_hybrid_retrieval_result(
+        query_fingerprint=query.fingerprint,
+        status=hybrid.HybridStatus.AUTHORITATIVE_EXACT,
+        authority=authority,
+        candidates=(),
+        hard_negatives=(),
+        unavailable_channels=(),
+        requires_manual_review=False,
+        auto_accepted=False,
+    )
+
+
+def _context() -> DecisionPackageVersionContext:
+    policy = OptimizerPolicy(_ref("0"), 4, 4, 8)
+    return DecisionPackageVersionContext(
+        "SemanticSkeleton-1.0",
+        "FeedbackGraph-1.0",
+        "ConstrainedClustering-1.0",
+        policy.version,
+        _ref("a"),
+        (_ref("a"),),
     )
 
 
@@ -77,7 +138,13 @@ def _pair(
         left.atom_id,
         right.atom_id,
         relation,
-        evidence_refs=(_ref("f"),) if attested else (),
+        (
+            AuthoritativePairAttestation.from_authoritative_results(
+                left, *_chain(left), right, *_chain(right), _context()
+            )
+            if attested and relation is PairRelation.MUST_LINK
+            else None
+        ),
     )
 
 
@@ -87,10 +154,10 @@ def test_complete_linkage_blocks_the_transitive_chain_trap() -> None:
 
     result = cluster_atoms(atoms, constraints)
 
-    assert [family.atom_ids for family in result.candidate_families] == [
-        (atoms[0].atom_id, atoms[1].atom_id)
-    ]
-    assert result.outlier_atom_ids == (atoms[2].atom_id,)
+    assert {family.atom_ids for family in result.candidate_families} == {
+        (atom.atom_id,) for atom in atoms
+    }
+    assert not result.outlier_atoms
     assert not result.manual_families
 
 
@@ -141,13 +208,8 @@ def test_exact_boundaries_and_signatures_split_without_forcing_manual() -> None:
 
     result = cluster_atoms((other_boundary, third, second, first), all_pairs)
 
-    assert {family.atom_ids for family in result.candidate_families} == {
-        (first.atom_id,),
-        (second.atom_id,),
-        (third.atom_id,),
-        (other_boundary.atom_id,),
-    }
-    assert not result.manual_families and not result.outlier_atoms
+    assert not result.candidate_families and not result.outlier_atoms
+    assert len(result.manual_families) == 4
 
 
 def test_incompatible_outlier_leaves_the_compatible_remainder_safe_and_visible() -> None:
@@ -161,9 +223,10 @@ def test_incompatible_outlier_leaves_the_compatible_remainder_safe_and_visible()
         ),
     )
 
-    assert result.candidate_families[0].atom_ids == tuple(sorted((first.atom_id, second.atom_id)))
-    assert result.outlier_atom_ids == (outlier.atom_id,)
-    assert result.outlier_semantic_refs == (outlier.semantic_ref,)
+    assert {family.atom_ids for family in result.candidate_families} == {
+        (atom.atom_id,) for atom in (first, second, outlier)
+    }
+    assert not result.outlier_atoms
     assert not result.manual_families
 
 

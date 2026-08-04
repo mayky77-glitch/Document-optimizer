@@ -7,6 +7,9 @@ import dataclasses
 import pytest
 
 from report_processor.reconciliation_grouping import decision_packages_v2 as contracts
+from report_processor.reconciliation_patterns import hybrid_retrieval as hybrid
+from report_processor.reconciliation_patterns.offline import OutcomeSignature
+from report_processor.reconciliation_patterns.pattern_models import PatternVersions
 
 
 def _ref(token: str) -> str:
@@ -17,12 +20,39 @@ def _boundary(
     *, unit: contracts.UnitCompatibility = contracts.UnitCompatibility.COMPATIBLE
 ) -> contracts.PackageBoundary:
     return contracts.PackageBoundary(
-        category_ref=_ref("a"),
+        category_ref=contracts.sha256_fingerprint("category"),
         mode=contracts.PackageMode.QUANTITY_COST,
         unit_compatibility=unit,
         unit_ref=_ref("0"),
         action_ref=_ref("b"),
         object_ref=_ref("c"),
+    )
+
+
+def _authority() -> hybrid.AuthorityEnvelope:
+    query = hybrid.create_hybrid_query(
+        query_ref=_ref("a"),
+        tenant_ref=_ref("b"),
+        project_ref=_ref("c"),
+        document_type_fingerprint=_ref("d"),
+        taxonomy_version_fingerprint=_ref("e"),
+        scope_fingerprint=_ref("f"),
+        consequential_version_fingerprint=_ref("a"),
+        embedding_identity_fingerprint=_ref("b"),
+        confirmed_source_identity_fingerprint=_ref("c"),
+        prototype_source_identity_fingerprint=_ref("d"),
+        hard_negative_identity_fingerprint=_ref("e"),
+        full_term_fingerprint=_ref("f"),
+        skeleton_fingerprint=_ref("0"),
+        exact_only=False,
+        limit=1,
+    )
+    return hybrid.resolve_authority(
+        query,
+        exact_feedback=OutcomeSignature("accept", "quantity_cost", "category"),
+        exact_feedback_ref=_ref("f"),
+        matched_histories=(),
+        current_versions=PatternVersions("Parser-1.0", "Model-1.0", "Taxonomy-1.0"),
     )
 
 
@@ -37,6 +67,9 @@ def _atom(
         atom_version_ref=_ref(token),
         critical_signature_ref=_ref("a"),
         typed_signature_ref=_ref("b"),
+        outcome_ref=contracts.sha256_fingerprint(
+            OutcomeSignature("accept", "quantity_cost", "category")
+        ),
         boundary=boundary or _boundary(),
         manual_blockers=blockers,
     )
@@ -53,14 +86,64 @@ def _policy() -> contracts.OptimizerPolicy:
 
 def _context(
     policy: contracts.OptimizerPolicy,
-    refs: tuple[str, ...] = (_ref("1"), _ref("2")),
+    refs: tuple[str, ...] | None = None,
 ) -> contracts.DecisionPackageVersionContext:
     return contracts.DecisionPackageVersionContext(
         semantic_contract_version="SemanticSkeleton-1.0",
         feedback_contract_version="FeedbackGraph-1.0",
         clustering_contract_version="ConstrainedClustering-1.0",
         optimizer_policy_version=policy.version,
-        consequential_refs=refs,
+        authority_context_ref=_authority().consequential_version_fingerprint,
+        consequential_refs=(
+            (_authority().consequential_version_fingerprint, _ref("2")) if refs is None else refs
+        ),
+    )
+
+
+def _attestation(
+    left: contracts.PackageAtom,
+    right: contracts.PackageAtom,
+    context: contracts.DecisionPackageVersionContext,
+) -> contracts.AuthoritativePairAttestation:
+    return contracts.AuthoritativePairAttestation.from_authoritative_results(
+        left, *_chain(left), right, *_chain(right), context
+    )
+
+
+def _chain(atom: contracts.PackageAtom) -> tuple[hybrid.HybridQuery, hybrid.HybridRetrievalResult]:
+    query = hybrid.create_hybrid_query(
+        query_ref=atom.semantic_ref,
+        tenant_ref=_ref("b"),
+        project_ref=_ref("c"),
+        document_type_fingerprint=_ref("d"),
+        taxonomy_version_fingerprint=_ref("e"),
+        scope_fingerprint=_ref("f"),
+        consequential_version_fingerprint=_ref("a"),
+        embedding_identity_fingerprint=_ref("b"),
+        confirmed_source_identity_fingerprint=_ref("c"),
+        prototype_source_identity_fingerprint=_ref("d"),
+        hard_negative_identity_fingerprint=_ref("e"),
+        full_term_fingerprint=_ref("f"),
+        skeleton_fingerprint=_ref("0"),
+        exact_only=False,
+        limit=1,
+    )
+    authority = hybrid.resolve_authority(
+        query,
+        exact_feedback=OutcomeSignature("accept", "quantity_cost", "category"),
+        exact_feedback_ref=_ref("f"),
+        matched_histories=(),
+        current_versions=PatternVersions("Parser-1.0", "Model-1.0", "Taxonomy-1.0"),
+    )
+    return query, hybrid.create_hybrid_retrieval_result(
+        query_fingerprint=query.fingerprint,
+        status=hybrid.HybridStatus.AUTHORITATIVE_EXACT,
+        authority=authority,
+        candidates=(),
+        hard_negatives=(),
+        unavailable_channels=(),
+        requires_manual_review=False,
+        auto_accepted=False,
     )
 
 
@@ -78,16 +161,19 @@ def _package(
         _atom("e", boundary=_boundary(unit=unit), blockers=atom_blockers),
         _atom("f", boundary=_boundary(unit=unit)),
     )
+    policy = dataclasses.replace(_policy(), max_safe_atoms=max_safe_atoms)
+    resolved_context = context or _context(policy)
     constraint = contracts.PairConstraint(
         atoms[1].atom_id,
         atoms[0].atom_id,
         relation,
-        evidence_refs=(_ref("9"), _ref("8")),
+        _attestation(atoms[1], atoms[0], resolved_context)
+        if relation is contracts.PairRelation.MUST_LINK
+        else None,
         blocker_codes=pair_blockers,
     )
     family = contracts.CandidateFamily(atoms[::-1], (constraint,), family_blockers)
-    policy = dataclasses.replace(_policy(), max_safe_atoms=max_safe_atoms)
-    return contracts.DecisionPackage((family,), (constraint,), policy, context or _context(policy))
+    return contracts.DecisionPackage((family,), (constraint,), policy, resolved_context)
 
 
 def test_public_models_are_frozen_slotted_and_versioned() -> None:
@@ -129,7 +215,11 @@ def test_canonical_ids_and_fingerprints_are_input_order_independent() -> None:
     package = _package()
     reversed_package = _package()
     assert package.pair_constraints[0].left_atom_id < package.pair_constraints[0].right_atom_id
-    assert package.pair_constraints[0].evidence_refs == (_ref("8"), _ref("9"))
+    assert package.pair_constraints[0].attestation is not None
+    assert (
+        package.pair_constraints[0].attestation.left_authority_fingerprint
+        == _chain(package.atoms[0])[1].authority.fingerprint
+    )
     assert package.fingerprint == reversed_package.fingerprint
     assert package.package_id.endswith(package.identity_fingerprint.removeprefix("sha256:"))
     assert package.safe is True
@@ -205,9 +295,12 @@ def test_context_requires_ordered_consequential_refs_and_stales_revision_only() 
         _context(policy, ())
     with pytest.raises(contracts.DecisionPackageContractError):
         _context(policy, (_ref("1"), _ref("1")))
-    initial = _package(context=_context(policy, (_ref("2"), _ref("1"))))
-    changed = _package(context=_context(policy, (_ref("3"), _ref("1"))))
-    assert initial.version_context.consequential_refs == (_ref("1"), _ref("2"))
+    authority_context = _authority().consequential_version_fingerprint
+    initial = _package(context=_context(policy, (authority_context, _ref("2"), _ref("1"))))
+    changed = _package(context=_context(policy, (authority_context, _ref("3"), _ref("1"))))
+    assert initial.version_context.consequential_refs == tuple(
+        sorted((authority_context, _ref("1"), _ref("2")))
+    )
     assert initial.package_id == changed.package_id
     assert initial.fingerprint != changed.fingerprint
 
@@ -225,7 +318,14 @@ def test_pair_constraints_require_full_ids_and_controlled_opaque_evidence() -> N
             package.atoms[0].atom_id,
             package.atoms[1].atom_id,
             contracts.PairRelation.MUST_LINK,
-            evidence_refs=("operator note",),
+            attestation="operator note",  # type: ignore[arg-type]
+        )
+    with pytest.raises(contracts.DecisionPackageContractError, match="only must-link"):
+        contracts.PairConstraint(
+            package.atoms[0].atom_id,
+            package.atoms[1].atom_id,
+            contracts.PairRelation.CANNOT_LINK,
+            _attestation(package.atoms[0], package.atoms[1], package.version_context),
         )
     with pytest.raises(contracts.DecisionPackageContractError):
         contracts.PairConstraint(
@@ -250,6 +350,31 @@ def test_pair_constraints_require_full_ids_and_controlled_opaque_evidence() -> N
         ).safe
         is False
     )
+
+
+def test_plain_sha_cannot_self_attest_a_must_link() -> None:
+    package = _package()
+    with pytest.raises(contracts.DecisionPackageContractError, match="sealed"):
+        contracts.AuthoritativePairAttestation(_ref("a"))
+    assert (
+        contracts.PairConstraint(
+            package.atoms[0].atom_id, package.atoms[1].atom_id, contracts.PairRelation.MUST_LINK
+        ).is_compatible
+        is False
+    )
+
+
+def test_cross_signature_family_and_package_never_become_safe() -> None:
+    package = _package()
+    changed = dataclasses.replace(package.atoms[1], critical_signature_ref=_ref("d"))
+    constraint = contracts.PairConstraint(
+        package.atoms[0].atom_id,
+        changed.atom_id,
+        contracts.PairRelation.MUST_LINK,
+        _attestation(package.atoms[0], changed, package.version_context),
+    )
+    with pytest.raises(contracts.DecisionPackageContractError, match="critical signature"):
+        contracts.CandidateFamily((package.atoms[0], changed), (constraint,))
 
 
 def test_manual_family_and_outlier_paths_are_visible_and_disjoint() -> None:
