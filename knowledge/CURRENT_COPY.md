@@ -1,8 +1,8 @@
-status: gate0-pilot-go
+status: accepted-offline-inert
 canonical_path: Document-optimizer-ready
 branch: codex/reconciliation-group-optimization-wave7
-head: f2d63d82705e10c191ab67e8a756301ebc7e1ff2 (accepted Wave 1-6 source base)
-working_tree: Wave 7 Gate 0 planning; no spreadsheet changes
+head: e67df0cbb377f4b9eac06d8b46747164deca3795 (accepted Wave 7 ORDA code integration; final audit metadata commit follows)
+working_tree: Wave 7 final audit metadata and accepted LOW controlled-error guard; no spreadsheet changes
 date: 2026-08-04
 purpose: Canonical integration copy for reconciliation-group optimization.
 adopted_range: 648d3c9..10eb20f (already adopted; no new merge in Gate 0)
@@ -22,4 +22,5 @@ wave5: accepted after dual ORDA P6 audit; 36 focused and 44 relevant tests passe
 wave6_core: accepted after red-first Wave 6B recovery and independent P6 audit; focused 16 and legacy reconciliation/registry 111 tests passed; authority/result binding, canonical DTOs, multi-negative consistency, bounds and stable errors closed.
 wave6_adapter: accepted after red-first ORDA recovery and independent P6 audit; adapter 16, adapter plus core 32, relevant reconciliation 129 tests passed; source identities and dense metadata validation closed; runtime remains unchanged.
 wave7_gate0: GO for additive inert DecisionPackage-2.0, complete-linkage clustering and bounded optimizer; legacy runtime grouping and production activation remain STOP.
-next_wave: Wave 7 contract implementation on its isolated branch.
+wave7: accepted after independent P6 rejection, one bounded red-first recovery and independent re-audit; 46 focused, 92 relevant and 80 legacy/runtime tests passed; full suite 1275 passed with 2 unchanged unrelated failures; runtime remains inert.
+next_wave: Wave 8 active-learning adapter/UI on a new isolated branch.

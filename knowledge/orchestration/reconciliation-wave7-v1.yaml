@@ -1,4 +1,4 @@
-status: gate0-frozen
+status: superseded-by-accepted-p6-recovery
 work_id: reconciliation-wave7-v1
 objective: "Implement inert DecisionPackage-2.0 constrained clustering and bounded package optimization without changing legacy runtime grouping."
 source_base_sha: f2d63d82705e10c191ab67e8a756301ebc7e1ff2
@@ -39,6 +39,16 @@ baseline:
   focused_root: "147 passed"
   independent_gate0: "67 passed"
   worktree: clean
+accepted_code_integration_sha: e67df0cbb377f4b9eac06d8b46747164deca3795
+recovery_work_id: reconciliation-wave7-p6-recovery-v1
+recovery_feature_sha: 9f8793cf2660238238b932b87a5d012322e78007
+final_audit: accepted
+verification:
+  focused: "46 passed"
+  relevant: "92 passed"
+  legacy_runtime: "80 passed, 1 expected opt-in skip"
+  full_suite: "1275 passed, 24 skipped, 2 unchanged unrelated failures"
+  static: passed
 acceptance:
   focused: "Wave 7 contract plus clustering and optimizer tests"
   regression: "legacy reconciliation grouping/admin/runtime tests unchanged"

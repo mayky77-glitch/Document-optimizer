@@ -307,6 +307,8 @@ class AuthoritativePairAttestation:
                 )
             )
             or left_query.consequential_version_fingerprint != version_context.authority_context_ref
+            or left_atom.boundary.mode is None
+            or right_atom.boundary.mode is None
             or left_authority.decision.outcome.mode != left_atom.boundary.mode.value
             or right_authority.decision.outcome.mode != right_atom.boundary.mode.value
             or left_atom.outcome_ref != sha256_fingerprint(left_authority.decision.outcome)

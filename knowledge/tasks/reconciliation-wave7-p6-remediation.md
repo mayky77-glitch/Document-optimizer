@@ -1,7 +1,7 @@
 ---
 type: task
-status: active
-card_status: frozen
+status: done
+card_status: accepted
 version: 1
 work_id: reconciliation-wave7-v1
 task_id: p6-remediation
@@ -13,9 +13,9 @@ routing_grade: P5
 routing_reason: "One bounded red-first correction of three cross-contract P6 findings"
 assigned_model: gpt-5.6-terra
 reasoning_effort: medium
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
 source_base_sha: d8d7c7d7b4a7439ccbb98df8a522067eeeebc0f3
 branch: codex/wave7-p6-remediation
 write_scope:
@@ -29,7 +29,7 @@ depends_on:
   - package-optimizer
 tags:
   - task/recovery
-  - status/active
+  - status/done
 ---
 
 # Wave 7 P6 bounded remediation

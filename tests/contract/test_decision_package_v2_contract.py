@@ -364,6 +364,18 @@ def test_plain_sha_cannot_self_attest_a_must_link() -> None:
     )
 
 
+def test_unknown_mode_fails_with_controlled_attestation_error() -> None:
+    package = _package()
+    unknown_boundary = dataclasses.replace(package.atoms[0].boundary, mode=None)
+    unknown_atom = dataclasses.replace(package.atoms[0], boundary=unknown_boundary)
+
+    with pytest.raises(
+        contracts.DecisionPackageContractError,
+        match="supported authoritative evidence",
+    ):
+        _attestation(unknown_atom, package.atoms[1], package.version_context)
+
+
 def test_cross_signature_family_and_package_never_become_safe() -> None:
     package = _package()
     changed = dataclasses.replace(package.atoms[1], critical_signature_ref=_ref("d"))

@@ -110,6 +110,13 @@ completed_waves:
       - HybridSources-1.0
     evidence: "adapter 16 passed; adapter plus core 32 passed; relevant reconciliation 129 passed; scoped Ruff/format/py_compile/diff checks passed; independent P6 audit accepted"
     integration: offline-inert-not-wired-to-legacy-runtime
+  wave7:
+    contracts:
+      - DecisionPackage-2.0
+      - ConstrainedClustering-1.0
+      - DecisionPackageOptimizer-1.0
+    evidence: "46 focused, 92 relevant and 80 legacy/runtime tests passed; full suite 1275 passed and 24 skipped with 2 unchanged unrelated failures; scoped static checks and independent P6 re-audit accepted"
+    integration: offline-inert-not-wired-to-legacy-runtime
 wave6_status: accepted-offline-inert
 wave6_recovery:
   prior_blockers: 5
@@ -117,8 +124,13 @@ wave6_recovery:
   p6_process_gate: passed
   p6_final_audit: accepted
 wave6_evidence: "core focused 16 passed; adapter 16 passed; combined 32 passed; relevant reconciliation 129 passed; independent P6 audit accepted"
-next_wave: wave7-safe-clustering-packages
-wave7_status: gate0-frozen-runtime-stop
+next_wave: wave8-active-learning-ui
+wave7_status: accepted-offline-inert
+wave7_recovery:
+  original_p6_findings: 3
+  method: one-bounded-red-first-recovery
+  accepted_integration_sha: e67df0cbb377f4b9eac06d8b46747164deca3795
+  final_p6_reaudit: accepted
 waves:
   - gate0
   - wave0-dense-rag-verification

@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-card_status: frozen
+status: done
+card_status: accepted
 version: 1
 work_id: reconciliation-wave7-v1
 task_id: constrained-clustering
@@ -13,9 +13,9 @@ routing_grade: P4
 routing_reason: "Complete-linkage correctness, deterministic outlier isolation and adversarial pair constraints"
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: medium
 source_base_sha: f2d63d82705e10c191ab67e8a756301ebc7e1ff2
 branch: codex/wave7-constrained-clustering
 write_scope:
@@ -32,7 +32,7 @@ depends_on:
   - decision-package-contract
 tags:
   - task/implementation
-  - status/draft
+  - status/done
 ---
 
 # Wave 7 constrained clustering
