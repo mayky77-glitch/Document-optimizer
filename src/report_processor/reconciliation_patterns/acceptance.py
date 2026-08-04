@@ -59,15 +59,17 @@ def _count(value: object) -> int:
 
 
 def _ratio(value: object, *, defined: bool = True) -> Ratio:
+    numerator = getattr(value, "numerator", None)
+    denominator = getattr(value, "denominator", None)
     if (
         type(value) is not Ratio
-        or type(value.numerator) is not int
-        or type(value.denominator) is not int
-        or not 0 <= value.numerator <= _MAX_SIGNED_64
-        or not 0 <= value.denominator <= _MAX_SIGNED_64
-        or (value.denominator == 0 and value.numerator != 0)
-        or (value.denominator != 0 and value.numerator > value.denominator)
-        or (defined and value.undefined)
+        or type(numerator) is not int
+        or type(denominator) is not int
+        or not 0 <= numerator <= _MAX_SIGNED_64
+        or not 0 <= denominator <= _MAX_SIGNED_64
+        or (denominator == 0 and numerator != 0)
+        or (denominator != 0 and numerator > denominator)
+        or (defined and numerator == denominator == 0)
     ):
         _error("ACCEPTANCE_SCHEMA_INVALID")
     return value
@@ -336,18 +338,18 @@ def _revalidate_supplied(
     operational: OperationalEvidence,
 ) -> None:
     """Re-run exact DTO validation after any hostile post-construction mutation."""
-    nested = (
-        report.baseline_metrics,
-        report.holdout_metrics,
-        report.measurements.index,
-        report.measurements,
-        report,
-        promotion,
-        gates,
-        thresholds,
-        operational,
-    )
     try:
+        nested = (
+            report.baseline_metrics,
+            report.holdout_metrics,
+            report.measurements.index,
+            report.measurements,
+            report,
+            promotion,
+            gates,
+            thresholds,
+            operational,
+        )
         if len(promotion.reason_codes) > _MAX_REASON_CODES:
             _error("ACCEPTANCE_SCHEMA_INVALID")
         if (
