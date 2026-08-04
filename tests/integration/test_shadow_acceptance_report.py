@@ -188,3 +188,31 @@ def test_report_writer_never_clobbers_concurrent_output_without_overwrite(
     assert raced
     assert error.value.code == "REPORT_OUTPUT_EXISTS"
     assert target.read_bytes() == b"concurrent"
+
+
+def test_report_writer_rolls_back_if_open_parent_moves_under_git(tmp_path, monkeypatch) -> None:
+    safe_parent = tmp_path / "stable-parent"
+    safe_parent.mkdir()
+    git_parent = tmp_path / "git-parent"
+    git_parent.mkdir()
+    (git_parent / ".git").mkdir()
+    moved_parent = git_parent / "moved-parent"
+    original_link = acceptance_report.os.link
+    moved = False
+
+    def move_parent_before_link(src, dst, **kwargs):
+        nonlocal moved
+        moved = True
+        safe_parent.rename(moved_parent)
+        return original_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(acceptance_report.os, "link", move_parent_before_link)
+
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.write_shadow_acceptance_report(
+            safe_parent / "acceptance.json", _decision(), overwrite=False
+        )
+
+    assert moved
+    assert error.value.code == "REPORT_OUTPUT_UNSAFE"
+    assert not (moved_parent / "acceptance.json").exists()

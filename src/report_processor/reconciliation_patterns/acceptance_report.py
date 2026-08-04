@@ -150,6 +150,7 @@ def _open_verified_output_parent(path: object) -> tuple[Path, list[int]]:
             descriptor = os.open(component, flags, dir_fd=descriptors[-1])
             descriptors.append(descriptor)
         _verify_no_git_ancestor(descriptors)
+        _verify_current_ancestry(descriptors[-1])
     except OSError as exc:
         _close_descriptors(descriptors)
         raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE") from exc
@@ -168,6 +169,33 @@ def _verify_no_git_ancestor(descriptors: list[int]) -> None:
         except OSError as exc:
             raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE") from exc
         raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
+
+
+def _verify_current_ancestry(parent_fd: int) -> None:
+    """Walk the held directory's current parents, detecting post-open moves."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.dup(parent_fd)
+    visited: set[tuple[int, int]] = set()
+    try:
+        while True:
+            current = os.fstat(descriptor)
+            identity = (current.st_dev, current.st_ino)
+            if identity in visited:
+                raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
+            visited.add(identity)
+            _verify_no_git_ancestor([descriptor])
+            ancestor = os.open("..", flags, dir_fd=descriptor)
+            parent = os.fstat(ancestor)
+            if (parent.st_dev, parent.st_ino) == identity:
+                os.close(ancestor)
+                return
+            os.close(descriptor)
+            descriptor = ancestor
+    except OSError as exc:
+        raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE") from exc
+    finally:
+        with suppress(OSError):
+            os.close(descriptor)
 
 
 def _close_descriptors(descriptors: list[int]) -> None:
@@ -215,6 +243,8 @@ def write_shadow_acceptance_report(
     parent_fd = descriptors[-1]
     temp_fd = -1
     temp_name = ""
+    published = False
+    committed = False
     try:
         _existing_output_is_safe(parent_fd, output.name, overwrite=overwrite)
         temp_name = f".{output.name}.{secrets.token_hex(16)}.tmp"
@@ -228,8 +258,10 @@ def write_shadow_acceptance_report(
         os.close(temp_fd)
         temp_fd = -1
         _verify_no_git_ancestor(descriptors)
+        _verify_current_ancestry(parent_fd)
         if overwrite:
             os.replace(temp_name, output.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            temp_name = ""
         else:
             try:
                 os.link(
@@ -243,7 +275,17 @@ def write_shadow_acceptance_report(
                 raise ShadowAcceptanceReportError("REPORT_OUTPUT_EXISTS") from exc
             os.unlink(temp_name, dir_fd=parent_fd)
             temp_name = ""
+        published = True
+        try:
+            _verify_current_ancestry(parent_fd)
+        except ShadowAcceptanceReportError:
+            with suppress(FileNotFoundError):
+                os.unlink(output.name, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+            published = False
+            raise
         os.fsync(parent_fd)
+        committed = True
         return payload
     except ShadowAcceptanceReportError:
         raise
@@ -255,4 +297,7 @@ def write_shadow_acceptance_report(
         if temp_name and parent_fd >= 0:
             with suppress(FileNotFoundError):
                 os.unlink(temp_name, dir_fd=parent_fd)
+        if published and not committed:
+            with suppress(FileNotFoundError):
+                os.unlink(output.name, dir_fd=parent_fd)
         _close_descriptors(descriptors)

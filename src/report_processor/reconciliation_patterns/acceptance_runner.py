@@ -33,6 +33,7 @@ SHADOW_ACCEPTANCE_RUNNER_VERSION = "ReconciliationShadowAcceptanceRunner-1.0"
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _MAX_SIGNED_64 = (1 << 63) - 1
 _MAX_LATENCY_SAMPLES = 1_000_000
+_MAX_SNAPSHOT_REFS = 10_000
 
 
 class ShadowAcceptanceRunnerError(ShadowAcceptanceError):
@@ -184,9 +185,18 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
     if type(inputs) is not ShadowAcceptanceInputs:
         _error()
     try:
-        inputs.__post_init__()
-        _sealed(inputs)
-    except Exception as exc:
+        values = (
+            inputs.baseline,
+            inputs.holdout,
+            inputs.report,
+            inputs.promotion,
+            inputs.gates,
+            inputs.thresholds,
+            inputs.operational,
+            inputs.source,
+            inputs.outage,
+        )
+    except (AttributeError, TypeError) as exc:
         raise ShadowAcceptanceRunnerError(
             "RUNNER_BINDING_INVALID", "runner binding is invalid"
         ) from exc
@@ -200,17 +210,6 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
         OperationalEvidence,
         SourceIntegrityEvidence,
         OutageDecisionDelta,
-    )
-    values = (
-        inputs.baseline,
-        inputs.holdout,
-        inputs.report,
-        inputs.promotion,
-        inputs.gates,
-        inputs.thresholds,
-        inputs.operational,
-        inputs.source,
-        inputs.outage,
     )
     if any(type(value) is not kind for value, kind in zip(values, expected, strict=True)):
         _error()
@@ -227,6 +226,9 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
         for count in (snapshot.row_count, snapshot.review_row_count, snapshot.review_group_count):
             if type(count) is not int or not 0 <= count <= _MAX_SIGNED_64:
                 _error()
+        for refs in (snapshot.source_set_refs, snapshot.document_set_refs):
+            if type(refs) is not tuple or len(refs) > _MAX_SNAPSHOT_REFS:
+                _error()
     samples = inputs.report.measurements.latency_samples_ns
     if (
         type(samples) is not tuple
@@ -235,6 +237,8 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
     ):
         _error()
     try:
+        inputs.__post_init__()
+        _sealed(inputs)
         for value in values:
             value.__post_init__()
             _sealed(value)
@@ -314,6 +318,7 @@ class ShadowAcceptanceRunner:
 
     def run(self, inputs: ShadowAcceptanceInputs) -> ShadowAcceptanceDecision:
         _bind(inputs)
+        bound_fingerprint = inputs.fingerprint
         try:
             decision = self.evaluator(
                 inputs.report,
@@ -326,6 +331,9 @@ class ShadowAcceptanceRunner:
             raise ShadowAcceptanceRunnerError(
                 "RUNNER_EVALUATOR_UNAVAILABLE", "runner evaluator is unavailable"
             ) from exc
+        _bind(inputs)
+        if inputs.fingerprint != bound_fingerprint:
+            _error()
         if type(decision) is not ShadowAcceptanceDecision:
             _error()
         try:
