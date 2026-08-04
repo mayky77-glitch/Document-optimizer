@@ -78,7 +78,7 @@ def discover_document_packages(source_root: Path) -> PackageDiscovery:
         for name in tuple(directories):
             child = path / name
             if child.is_symlink():
-                directories.remove(name)
+                raise ValueError(f"symlinked directory is not allowed: {child.name}")
         if _direct_workbooks(path, root):
             candidates.append(path)
 

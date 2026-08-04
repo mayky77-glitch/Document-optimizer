@@ -8,7 +8,12 @@ from pathlib import Path, PurePosixPath
 from .discovery import discover_document_packages
 from .matcher import drawing_codes_for_row, normalize_work_code, reconcile_row
 from .models import DocumentPackage, PackageWorkbookFacts, WorkbookRowFact
-from .pdf_documents import PdfDocumentEvidence, analyse_pdf_document, classify_document_name
+from .pdf_documents import (
+    PdfDocumentEvidence,
+    analyse_pdf_document,
+    classify_document_name,
+    unsupported_document_evidence,
+)
 from .report import ReconciliationReport
 from .workbook import extract_package_workbook_facts
 
@@ -25,6 +30,8 @@ def reconcile_package(
     """Reconcile discovered packages without broad PDF OCR or guessed pairings."""
     root = Path(package_root)
     discovery = discover_document_packages(root)
+    if not discovery.packages:
+        raise ValueError("no workbook package discovered")
     root = root.resolve(strict=True)
     results = []
     for package in discovery.packages:
@@ -74,9 +81,10 @@ def _exact_aosr_candidates(
         work_code = normalize_work_code(relative_path.parent.name)
         if work_code not in codes:
             continue
-        if classify_document_name(relative_path.name) != "aosr":
-            continue
-        evidence = pdf_extractor(root.joinpath(*relative_path.parts), relative_path)
+        if classify_document_name(relative_path.name) == "aosr":
+            evidence = pdf_extractor(root.joinpath(*relative_path.parts), relative_path)
+        else:
+            evidence = unsupported_document_evidence(relative_path)
         result.setdefault(work_code, []).append(evidence)
     return {
         key: tuple(sorted(value, key=lambda item: item.relative_path.as_posix()))

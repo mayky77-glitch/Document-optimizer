@@ -141,6 +141,59 @@ def test_project_code_signal_accepts_long_excel_code_and_shorter_pdf_backbone() 
     assert "project_code_match" in result.reason_codes
 
 
+def test_project_code_requires_complete_components_and_prefers_own_drawing() -> None:
+    parent = _row(9, "6.1.10.1", drawing="100.200.АВ-7")
+    detail = _row(10, "6.1.10.1.1", drawing="300.400.ГД-8.9")
+    matching = PdfDocumentEvidence(
+        PurePosixPath("6.1.10.1.1/АОСР.pdf"),
+        "aosr",
+        1,
+        "text_layer",
+        None,
+        None,
+        ("300.400.ГД-8",),
+        "Устройство основания",
+        (),
+        (),
+        None,
+        (),
+    )
+    last_component_prefix = PdfDocumentEvidence(
+        PurePosixPath("6.1.10.1.1/АОСР-2.pdf"),
+        "aosr",
+        1,
+        "text_layer",
+        None,
+        None,
+        ("300.400.ГД-89",),
+        None,
+        (),
+        (),
+        None,
+        (),
+    )
+
+    assert drawing_codes_for_row(detail, (parent, detail)) == ("300.400.ГД-8.9",)
+    assert (
+        reconcile_row(
+            detail,
+            PurePosixPath("акт.xlsx"),
+            (matching,),
+            drawing_codes=drawing_codes_for_row(detail, (parent, detail)),
+        ).status
+        == "MATCH"
+    )
+    assert (
+        reconcile_row(
+            detail,
+            PurePosixPath("акт.xlsx"),
+            (last_component_prefix,),
+            drawing_codes=drawing_codes_for_row(detail, (parent, detail)),
+        ).status
+        == "NEEDS_REVIEW"
+    )
+
+
 def test_reconciliation_rejects_absolute_or_traversal_paths() -> None:
     with pytest.raises(ValueError, match="safe and relative"):
         reconcile_row(_row(1, "1.1"), PurePosixPath("../акт.xlsx"), ())

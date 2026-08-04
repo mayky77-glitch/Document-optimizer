@@ -88,3 +88,24 @@ def test_pipeline_preserves_discovery_symlink_root_rejection(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="symlinked package root"):
         reconcile_package(linked)
+
+
+def test_exact_scope_unsupported_pdf_returns_review_without_extraction(tmp_path: Path) -> None:
+    (tmp_path / "act.xlsx").touch()
+    code_directory = tmp_path / "1.1"
+    code_directory.mkdir()
+    (code_directory / "ОЖР.pdf").touch()
+    row = WorkbookRowFact(
+        "Лист", 2, None, None, None, "1.1", None, None, "Монтаж опор", "шт", Decimal("2"), None
+    )
+
+    def workbook(_root: Path, path: PurePosixPath) -> PackageWorkbookFacts:
+        return PackageWorkbookFacts(path, (WorkbookSheetFacts("Лист", None, None, None, (row,)),))
+
+    def evidence(*_args: object) -> PdfDocumentEvidence:
+        raise AssertionError("unsupported PDF must not be extracted")
+
+    report = reconcile_package(tmp_path, workbook_extractor=workbook, pdf_extractor=evidence)
+
+    assert report.results[0].status == "NEEDS_REVIEW"
+    assert report.results[0].reason_codes == ("unsupported_document_type",)

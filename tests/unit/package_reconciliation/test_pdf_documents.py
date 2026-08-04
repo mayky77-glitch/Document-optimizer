@@ -140,6 +140,46 @@ def test_pdf_evidence_marks_low_confidence_ocr_for_manual_review(tmp_path: Path)
     assert "low_ocr_confidence" in {issue.code for issue in evidence.issues}
 
 
+def test_incomplete_text_layer_runs_ocr_before_accepting_aosr(tmp_path: Path) -> None:
+    pdf = tmp_path / "АОСР-17.pdf"
+    pdf.write_text("fixture only")
+    calls: list[str] = []
+
+    def runner(args: tuple[str, ...], _timeout: float) -> subprocess.CompletedProcess[str]:
+        calls.append(args[0])
+        if args[0] == "pdfinfo":
+            return subprocess.CompletedProcess(args, 0, "Pages: 1\n", "")
+        if args[0] == "pdftotext":
+            return subprocess.CompletedProcess(args, 0, "АОСР № 7", "")
+        if args[0] == "pdftoppm":
+            Path(f"{args[-1]}-1.png").write_text("rendered")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            "level\tleft\ttop\twidth\theight\tconf\ttext\n5\t1\t2\t3\t4\t88\tТекст\n",
+            "",
+        )
+
+    evidence = analyse_pdf_document(pdf, PurePosixPath("1.1/АОСР-17.pdf"), runner=runner)
+
+    assert evidence.text_source == "ocr"
+    assert "pdftoppm" in calls
+
+
+def test_unsupported_document_does_not_extract_or_ocr(tmp_path: Path) -> None:
+    pdf = tmp_path / "ОЖР.pdf"
+    pdf.write_text("fixture only")
+
+    def runner(*_args: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("unsupported PDF must not invoke tools")
+
+    evidence = analyse_pdf_document(pdf, PurePosixPath("1.1/ОЖР.pdf"), runner=runner)
+
+    assert evidence.text_source == "not_processed"
+    assert evidence.issues[0].code == "unsupported_document_type"
+
+
 def test_pdf_evidence_rejects_path_escape_without_running_commands(tmp_path: Path) -> None:
     pdf = tmp_path / "АОСР-17.pdf"
     pdf.write_text("fixture only")

@@ -57,6 +57,27 @@ def extract_pdf_evidence(pdf_path: Path, relative_path: PurePosixPath) -> PdfDoc
     return analyse_pdf_document(pdf_path, relative_path)
 
 
+def unsupported_document_evidence(relative_path: PurePosixPath) -> PdfDocumentEvidence:
+    """Represent exact-scope unsupported files without extracting text or OCR."""
+    document_type = classify_document_name(relative_path.name)
+    if not _is_safe_relative_path(relative_path):
+        return _invalid_path_evidence(relative_path, document_type)
+    return PdfDocumentEvidence(
+        relative_path=relative_path,
+        document_type=document_type,
+        page_count=None,
+        text_source="not_processed",
+        act_number=None,
+        act_date=None,
+        project_codes=(),
+        work_description=None,
+        quantity_candidates=(),
+        unit_candidates=(),
+        mean_ocr_confidence=None,
+        issues=(PdfEvidenceIssue("unsupported_document_type", "info"),),
+    )
+
+
 def analyse_pdf_document(
     pdf_path: Path,
     relative_path: PurePosixPath,
@@ -67,9 +88,16 @@ def analyse_pdf_document(
     document_type = classify_document_name(pdf_path.name)
     if not _is_safe_relative_path(relative_path):
         return _invalid_path_evidence(relative_path, document_type)
+    if document_type != "aosr":
+        return unsupported_document_evidence(relative_path)
     page_count, page_count_error = pdf_page_count(pdf_path, runner=runner)
     result = extract_pdf_text_layer(pdf_path, runner=runner)
-    if result.status in {"empty", "error"}:
+    fields = (
+        extract_aosr_fields(result.text, basename=pdf_path.name)
+        if result.status == "text_layer"
+        else None
+    )
+    if result.status in {"empty", "error"} or not _sufficient_aosr_evidence(fields):
         result = ocr_pdf_pages(pdf_path, runner=runner)
     issues = _issues(result.error_code, page_count_error, document_type, result)
     if result.status in {"error", "empty"}:
@@ -146,6 +174,14 @@ def extract_aosr_fields(text: str, *, basename: str | None = None) -> AosrFields
 
 def _empty_fields() -> AosrFields:
     return AosrFields(None, None, (), None, (), ())
+
+
+def _sufficient_aosr_evidence(fields: AosrFields | None) -> bool:
+    return (
+        fields is not None
+        and fields.act_number is not None
+        and bool(fields.project_codes or fields.work_description)
+    )
 
 
 def _invalid_path_evidence(relative_path: PurePosixPath, document_type: str) -> PdfDocumentEvidence:
