@@ -88,10 +88,9 @@ def test_report_rejects_pass_without_every_bound_evidence_fingerprint() -> None:
         )
     }
     values["operational_fingerprint"] = None
-    forged = acceptance.ShadowAcceptanceDecision(
-        **values,
-        fingerprint=replay.replay_fingerprint(values),
-    )
+    forged = _decision()
+    object.__setattr__(forged, "operational_fingerprint", None)
+    object.__setattr__(forged, "fingerprint", replay.replay_fingerprint(values))
 
     with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
         acceptance_report.shadow_acceptance_report_bytes(forged)
