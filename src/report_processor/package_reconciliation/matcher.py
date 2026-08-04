@@ -31,13 +31,16 @@ class RowReconciliation:
     pdf_quantity: Decimal | None
     pdf_unit: str | None
     cost_comparison: str = "NOT_COMPARABLE"
+    candidate_paths: tuple[PurePosixPath, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in STATUSES:
             raise ValueError("unsupported reconciliation status")
-        for path in (self.workbook_path, self.pdf_path):
+        for path in (self.workbook_path, self.pdf_path, *self.candidate_paths):
             if path is not None and (path.is_absolute() or ".." in path.parts):
                 raise ValueError("reconciliation paths must be safe and relative")
+        if self.candidate_paths != tuple(sorted(set(self.candidate_paths))):
+            raise ValueError("candidate paths must be unique and sorted")
 
 
 def normalize_work_code(value: str | None) -> str | None:
@@ -93,7 +96,21 @@ def reconcile_row(
         return _result(base, "NO_EVIDENCE", ("no_exact_work_code_candidate",))
     usable = [candidate for candidate in candidates if candidate.document_type == "aosr"]
     if not usable:
-        return _result(base, "NEEDS_REVIEW", ("unsupported_document_type",))
+        candidate_paths = _candidate_paths(candidates)
+        if len(candidate_paths) == 1:
+            return _result(
+                base,
+                "NEEDS_REVIEW",
+                ("unsupported_document_type",),
+                candidates[0],
+                candidate_paths=candidate_paths,
+            )
+        return _result(
+            base,
+            "AMBIGUOUS",
+            ("multiple_unsupported_candidates",),
+            candidate_paths=candidate_paths,
+        )
     scored = [(_signals(row, candidate, drawing_codes), candidate) for candidate in usable]
     supported = [(signals, candidate) for signals, candidate in scored if signals]
     if not supported:
@@ -143,6 +160,7 @@ def _result(
     quantity_comparison: str = "NOT_COMPARABLE",
     pdf_quantity: Decimal | None = None,
     pdf_unit: str | None = None,
+    candidate_paths: tuple[PurePosixPath, ...] = (),
 ) -> RowReconciliation:
     workbook_path, sheet_name, row_number, work_code, workbook_quantity, workbook_unit = base
     return RowReconciliation(
@@ -159,7 +177,12 @@ def _result(
         workbook_unit=workbook_unit,
         pdf_quantity=pdf_quantity,
         pdf_unit=pdf_unit,
+        candidate_paths=candidate_paths,
     )
+
+
+def _candidate_paths(candidates: tuple[PdfDocumentEvidence, ...]) -> tuple[PurePosixPath, ...]:
+    return tuple(sorted({candidate.relative_path for candidate in candidates}))
 
 
 def _signals(
