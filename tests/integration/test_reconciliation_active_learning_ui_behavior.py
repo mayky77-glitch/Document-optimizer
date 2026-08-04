@@ -152,7 +152,7 @@ assert.strictEqual(review.render(payload([second])), true);
 assert.strictEqual(document.activeElement, review.heading);
 
 review.render(payload([first]));
-assert.strictEqual(renderedText(root).includes("Затронутая стоимость, коп.: 4"), true);
+assert.strictEqual(renderedText(root).includes("Затронутая стоимость, мин. ед.: 4"), true);
 const rejectButton = findButton(root, "Отклонить");
 assert.ok(rejectButton);
 await rejectButton.listeners.get("click")();

@@ -243,7 +243,7 @@
       coverage.textContent = `${item.coverageFamilyCount} ${plural(item.coverageFamilyCount, "семейство", "семейства", "семейств")} · ${item.coverageGroupCount} ${plural(item.coverageGroupCount, "группа", "группы", "групп")} · ${item.affectedRowCount} ${plural(item.affectedRowCount, "строка", "строки", "строк")}`;
       const aggregates = document.createElement("p");
       aggregates.className = "active-learning-reason";
-      aggregates.textContent = `Затронутая стоимость, коп.: ${item.affectedCostMinorUnits} · Документов: ${item.documentFrequencyCount}`;
+      aggregates.textContent = `Затронутая стоимость, мин. ед.: ${item.affectedCostMinorUnits} · Документов: ${item.documentFrequencyCount}`;
       card.append(kind, mode, impact, coverage, aggregates, this.buildDetails(item), this.buildActions(item, state));
       return card;
     }
