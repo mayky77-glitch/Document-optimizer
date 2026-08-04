@@ -1,0 +1,50 @@
+status: gate-0-planning
+work_id: excel-pdf-reconciliation-wave10-v1
+objective: "Reconcile KS-2 workbook rows against locally OCR-extracted evidence from related PDF packages without committing private documents or OCR text."
+source_base_sha: 967da5f58ee6508ebbfc3fc1d9fa2d7fe77dc0bb
+integration_branch: codex/excel-pdf-reconciliation-wave10
+wave: 10
+max_parallel: 2
+max_spawns: 4
+max_retries: 1
+merge_method: merge-no-ff
+data_classification: restricted
+shared_paths_owner: integration
+production_activation: stop
+contracts:
+  workbook_output: PackageWorkbookFacts-1.0
+  pdf_output: PackagePdfEvidence-1.0
+  reconciliation_output: ExcelPdfReconciliation-1.0
+dependency_order:
+  - parallel:
+      - package-core
+      - pdf-ocr
+  - integration-cli
+  - final-audit
+baseline:
+  focused: "18 passed, 1 skipped"
+  worktree: clean
+corpus_evidence:
+  xlsx: 15
+  pdf: 1767
+  pdf_sample: "54/54 sampled files require OCR"
+  deterministic_primary_key: "object directory + work-code directory"
+forbidden_paths:
+  - /Users/x/Downloads
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+  - "**/*.pdf"
+  - "**/*.db"
+  - ".env*"
+acceptance:
+  - discover workbook-rooted packages and normalized work-code PDF scopes deterministically
+  - read workbooks with dynamic headers and without saving or recalculating originals
+  - use only local Poppler and Tesseract for scanned PDFs
+  - never auto-match by basename alone
+  - ambiguous, low-confidence and unsupported evidence fails closed to manual review
+  - no raw OCR text or absolute private path in the default JSON report
+  - synthetic fixtures are generated at test runtime; no real documents enter Git
+  - representative real holdout is read-only and opt-in
+  - final P6 audit and cleanup gate
+
