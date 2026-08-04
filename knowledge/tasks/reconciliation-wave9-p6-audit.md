@@ -1,6 +1,6 @@
 ---
 type: task
-status: draft
+status: done
 card_status: frozen
 version: 1
 work_id: reconciliation-wave9-p6-recovery-v1
@@ -22,3 +22,10 @@ missing-evidence `PASS`, one-field replay/provenance mismatches, tampered nested
 DTOs, boundary+1 counts/ratios/reasons/payload, truthy non-bool overwrite,
 ancestor symlink and directory swap. Confirm no activation/runtime effects.
 Accept only with zero HIGH and zero MEDIUM findings.
+
+## Result
+
+Accepted on `12b9522a342ef09f4ab6ae9385a54f3d5a6b3f33` with zero HIGH
+and zero MEDIUM findings. The frozen focused suite passed 49 tests; scoped
+Ruff, format and diff checks passed. No spreadsheet changes, runtime wiring or
+production activation were found.
