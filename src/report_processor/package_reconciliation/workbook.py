@@ -18,6 +18,9 @@ _HEADER_COLUMNS = 128
 _EMPTY_ROW_LIMIT = 20
 _ACT_RE = re.compile(r"\b(?:акт|кс\s*[- ]?2)\s*(?:№|n(?:o|омер)?\.?)?\s*([\w./-]+)", re.IGNORECASE)
 _PERIOD_RE = re.compile(r"(?:отчетн\w*\s+)?период\w*\s*(?:с|за|:)?\s*([^\n]{3,80})", re.IGNORECASE)
+_PERIOD_VALUE_RE = re.compile(
+    r"^(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})$"
+)
 _OBJECT_RE = re.compile(r"(?:код|шифр)\s+объект\w*\s*(?:[:№-]\s*)?([\w./-]+)", re.IGNORECASE)
 
 
@@ -131,12 +134,14 @@ def _metadata_text(value: object) -> str:
 
 
 def _period_date(value: object) -> str | None:
+    if normalize_header_text(value) in {"с", "по"}:
+        return None
     if isinstance(value, datetime):
         return value.strftime("%d.%m.%Y")
     if isinstance(value, date):
         return value.strftime("%d.%m.%Y")
     text = clean_display_text(value)
-    return text or None
+    return text if _PERIOD_VALUE_RE.fullmatch(text) else None
 
 
 def _structural_period(rows: list[tuple[object, ...]]) -> str | None:
@@ -155,6 +160,16 @@ def _structural_period(rows: list[tuple[object, ...]]) -> str | None:
                 for marker_column in range(max(0, label_column - 1), upper_column):
                     marker = normalize_header_text(candidate[marker_column])
                     if marker not in {"с", "по"}:
+                        continue
+                    for next_row_index in range(row_index + 1, min(row_index + 4, len(rows))):
+                        next_row = rows[next_row_index]
+                        if marker_column >= len(next_row):
+                            continue
+                        period_value = _period_date(next_row[marker_column])
+                        if period_value is not None:
+                            values_by_marker.setdefault(marker, period_value)
+                            break
+                    if marker in values_by_marker:
                         continue
                     for value_column in range(marker_column + 1, upper_column):
                         period_value = _period_date(candidate[value_column])
