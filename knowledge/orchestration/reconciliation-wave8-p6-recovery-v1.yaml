@@ -1,4 +1,4 @@
-status: gate0-frozen
+status: accepted
 work_id: reconciliation-wave8-p6-recovery-v1
 objective: "Close Wave 8 P6 cross-layer, atomic CAS, persisted-intent and UI behavior defects without runtime activation."
 source_base_sha: fe7632e00b3ca7dd90ca0dc375841ec253ea7c2f
@@ -27,3 +27,10 @@ acceptance:
   - split impossible for fewer than two members
   - executable Node DOM behavior coverage for order, privacy, requests and focus
   - no production route, registry, feedback, calculation or writer integration
+accepted_feature_sha: 2b2d478a338dd94bec2ac034953f25a2e2c69aee
+accepted_integration_sha: 3191af123615b716b8da8146b122d5a09dd498d1
+audit_result: "0 HIGH, 0 MEDIUM"
+verification:
+  focused: "45 passed"
+  full_suite: "1321 passed, 24 skipped, 2 unchanged unrelated failures"
+  static: "scoped Ruff and Node syntax passed"

@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-card_status: frozen
+status: done
+card_status: accepted
 version: 1
 work_id: reconciliation-wave8-p6-recovery-v1
 task_id: web-contract-recovery

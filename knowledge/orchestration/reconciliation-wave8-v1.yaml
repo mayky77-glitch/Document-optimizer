@@ -1,4 +1,4 @@
-status: p6-recovery-required
+status: accepted-shadow-only
 work_id: reconciliation-wave8-v1
 objective: "Build an inert active-learning queue, shadow intent adapter/store and optional operator UI without changing authoritative reconciliation runtime."
 source_base_sha: 1a152e344cb5578777479891508533a0c9971f27
@@ -59,3 +59,12 @@ p6_audit:
   result: rejected
   findings: "2 HIGH, 4 MEDIUM"
   recovery_work_id: reconciliation-wave8-p6-recovery-v1
+  recovery_candidate_sha: 2b2d478a338dd94bec2ac034953f25a2e2c69aee
+  recovery_result: accepted
+  final_findings: "0 HIGH, 0 MEDIUM"
+accepted_integration_sha: b90f71f5a3869ad00971ead543d82205d8933a83
+verification:
+  focused: "45 passed"
+  full_suite: "1321 passed, 24 skipped, 2 unchanged unrelated failures"
+  static: "scoped Ruff and Node syntax passed"
+runtime_result: inert-shadow-only

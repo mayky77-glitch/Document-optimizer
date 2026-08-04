@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-card_status: frozen
+status: done
+card_status: accepted
 version: 1
 work_id: reconciliation-wave8-v1
 task_id: final-audit
@@ -13,9 +13,9 @@ routing_grade: P6
 routing_reason: "Final privacy, isolation, stale-safety, deterministic ranking and UI regression audit"
 assigned_model: gpt-5.6-sol
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-sol
+actual_reasoning_effort: high
 source_base_sha: 1a152e344cb5578777479891508533a0c9971f27
 write_scope: []
 depends_on:
@@ -23,7 +23,7 @@ depends_on:
   - active-learning-ui
 tags:
   - task/audit
-  - status/draft
+  - status/done
 ---
 
 # Wave 8 final audit

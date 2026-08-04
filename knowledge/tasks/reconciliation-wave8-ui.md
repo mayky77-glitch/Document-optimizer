@@ -1,7 +1,7 @@
 ---
 type: task
-status: draft
-card_status: frozen
+status: done
+card_status: accepted
 version: 1
 work_id: reconciliation-wave8-v1
 task_id: active-learning-ui
@@ -13,9 +13,9 @@ routing_grade: P4
 routing_reason: "Optional accessible operator queue with strict absent-state compatibility and responsive interaction states"
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
-actual_model: ""
-actual_reasoning_effort: ""
+launch_status: confirmed
+actual_model: gpt-5.6-terra
+actual_reasoning_effort: high
 source_base_sha: 1a152e344cb5578777479891508533a0c9971f27
 branch: codex/wave8-active-learning-ui
 write_scope:
@@ -34,7 +34,7 @@ depends_on:
   - active-learning-core
 tags:
   - task/design
-  - status/draft
+  - status/done
 ---
 
 # Wave 8 optional operator UI

@@ -117,6 +117,15 @@ completed_waves:
       - DecisionPackageOptimizer-1.0
     evidence: "46 focused, 92 relevant and 80 legacy/runtime tests passed; full suite 1275 passed and 24 skipped with 2 unchanged unrelated failures; scoped static checks and independent P6 re-audit accepted"
     integration: offline-inert-not-wired-to-legacy-runtime
+  wave8:
+    contracts:
+      - ActiveLearningQueue-1.0
+      - ActiveLearningIntent-1.0
+      - ActiveLearningShadowAutosave-1.0
+      - ActiveLearningWebQueue-1.0
+      - ActiveLearningShadowRequest-1.0
+    evidence: "45 focused tests passed; full suite 1321 passed and 24 skipped with 2 unchanged unrelated failures; scoped static checks and independent P6 recovery re-audit accepted with 0 HIGH and 0 MEDIUM"
+    integration: inert-shadow-only-not-registered-in-production-runtime
 wave6_status: accepted-offline-inert
 wave6_recovery:
   prior_blockers: 5
@@ -124,14 +133,19 @@ wave6_recovery:
   p6_process_gate: passed
   p6_final_audit: accepted
 wave6_evidence: "core focused 16 passed; adapter 16 passed; combined 32 passed; relevant reconciliation 129 passed; independent P6 audit accepted"
-next_wave: wave8-active-learning-ui
+next_wave: wave9-acceptance-rollout-gate0
 wave7_status: accepted-offline-inert
 wave7_recovery:
   original_p6_findings: 3
   method: one-bounded-red-first-recovery
   accepted_integration_sha: e67df0cbb377f4b9eac06d8b46747164deca3795
   final_p6_reaudit: accepted
-wave8_status: gate0-frozen-shadow-only
+wave8_status: accepted-shadow-only
+wave8_recovery:
+  original_p6_findings: "2 HIGH, 4 MEDIUM"
+  method: bounded-orda-recovery-and-independent-reaudit
+  accepted_integration_sha: b90f71f5a3869ad00971ead543d82205d8933a83
+  final_p6_reaudit: "accepted; 0 HIGH, 0 MEDIUM"
 waves:
   - gate0
   - wave0-dense-rag-verification
