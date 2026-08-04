@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 import textwrap
+import zipfile
 from decimal import Decimal
 from pathlib import Path
-
-import pytest
 
 from report_processor.reconciliation_grouping import (
     PackageVersionContext,
@@ -87,16 +85,8 @@ def test_built_wheel_imports_ontology_resource_from_an_isolated_install(tmp_path
     )
     wheel = next(wheel_dir.glob("document_optimizer-*.whl"))
     installed = tmp_path / "isolated-install"
-    uv = shutil.which("uv")
-    if uv is None:
-        pytest.fail("uv is required to install the wheel in an isolated target")
-    subprocess.run(
-        [uv, "pip", "install", "--target", str(installed), "--no-deps", str(wheel)],
-        check=True,
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(installed)
 
     imported = subprocess.run(
         [

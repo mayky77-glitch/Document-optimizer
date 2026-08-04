@@ -130,6 +130,7 @@ dev = [
     { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "setuptools" },
 ]
 rag = [
     { name = "sentencepiece" },
@@ -149,6 +150,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2,<7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
     { name = "sentencepiece", marker = "extra == 'rag'", specifier = "==0.2.2" },
+    { name = "setuptools", marker = "extra == 'dev'", specifier = ">=75" },
     { name = "starlette", specifier = ">=0.47,<1" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'rag'", specifier = "==2.6.0+cpu", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'rag'", specifier = "==2.6.0", index = "https://download.pytorch.org/whl/cpu" },
