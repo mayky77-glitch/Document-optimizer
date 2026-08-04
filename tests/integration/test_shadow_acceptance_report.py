@@ -87,3 +87,74 @@ def test_report_writer_rejects_any_output_inside_git_worktree() -> None:
         )
 
     assert error.value.code == "REPORT_OUTPUT_UNSAFE"
+
+
+def test_report_writer_rejects_non_bool_overwrite(tmp_path) -> None:
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.write_shadow_acceptance_report(
+            tmp_path / "acceptance.json",
+            _decision(),
+            overwrite=1,  # type: ignore[arg-type]
+        )
+
+    assert error.value.code == "REPORT_OUTPUT_UNSAFE"
+
+
+def test_report_writer_keeps_verified_parent_fd_during_ancestor_swap(tmp_path, monkeypatch) -> None:
+    safe_parent = tmp_path / "stable-parent"
+    safe_parent.mkdir()
+    git_parent = tmp_path / "git-parent"
+    git_parent.mkdir()
+    (git_parent / ".git").mkdir()
+    held_parent = tmp_path / "held-parent"
+    original_open = acceptance_report.os.open
+    swapped = False
+
+    def swap_after_opened_parent(name, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        descriptor = original_open(name, flags, mode, dir_fd=dir_fd)
+        if name == "stable-parent" and not swapped:
+            swapped = True
+            safe_parent.rename(held_parent)
+            safe_parent.symlink_to(git_parent, target_is_directory=True)
+        return descriptor
+
+    monkeypatch.setattr(acceptance_report.os, "open", swap_after_opened_parent)
+
+    acceptance_report.write_shadow_acceptance_report(
+        safe_parent / "acceptance.json", _decision(), overwrite=False
+    )
+
+    assert swapped
+    assert (held_parent / "acceptance.json").is_file()
+    assert not (git_parent / "acceptance.json").exists()
+
+
+def test_report_writer_caps_payload_bytes(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        acceptance_report,
+        "shadow_acceptance_report_bytes",
+        lambda decision: b"x" * (acceptance_report._MAX_REPORT_BYTES + 1),
+    )
+
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.write_shadow_acceptance_report(
+            tmp_path / "acceptance.json", _decision(), overwrite=False
+        )
+
+    assert error.value.code == "REPORT_SCHEMA_INVALID"
+
+
+def test_report_writer_rejects_ancestor_symlink_to_git(tmp_path) -> None:
+    git_parent = tmp_path / "git-parent"
+    git_parent.mkdir()
+    (git_parent / ".git").mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(git_parent, target_is_directory=True)
+
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.write_shadow_acceptance_report(
+            linked_parent / "reports" / "acceptance.json", _decision(), overwrite=False
+        )
+
+    assert error.value.code == "REPORT_OUTPUT_UNSAFE"
