@@ -65,6 +65,8 @@ def analyse_pdf_document(
 ) -> PdfDocumentEvidence:
     """Extract bounded evidence, carrying controlled failures for manual review."""
     document_type = classify_document_name(pdf_path.name)
+    if not _is_safe_relative_path(relative_path):
+        return _invalid_path_evidence(relative_path, document_type)
     page_count, page_count_error = pdf_page_count(pdf_path, runner=runner)
     result = extract_pdf_text_layer(pdf_path, runner=runner)
     if result.status in {"empty", "error"}:
@@ -85,7 +87,11 @@ def analyse_pdf_document(
             mean_ocr_confidence=result.mean_confidence,
             issues=issues,
         )
-    fields = extract_aosr_fields(result.text) if document_type == "aosr" else _empty_fields()
+    fields = (
+        extract_aosr_fields(result.text, basename=pdf_path.name)
+        if document_type == "aosr"
+        else _empty_fields()
+    )
     return PdfDocumentEvidence(
         relative_path=relative_path,
         document_type=document_type,
@@ -112,33 +118,33 @@ class AosrFields:
     unit_candidates: tuple[str, ...]
 
 
-def extract_aosr_fields(text: str) -> AosrFields:
+def extract_aosr_fields(text: str, *, basename: str | None = None) -> AosrFields:
     """Find explicit AОСР values without inventing a value from adjacent text."""
     compact = _normalise_whitespace(text)
-    act_number = _first_group(
-        r"(?:акт(?:а)?\s*(?:освидетельствования)?\s*(?:скрытых)?\s*работ)?\s*№\s*([\w./-]{1,48})",
+    act_header = re.search(
+        r"\bакт\s+освидетельствования\s+(?:скрытых\s+)?работ\s*№\s*([\w./-]{1,48})"
+        r"(?P<nearby>.{0,180})",
         compact,
+        re.IGNORECASE,
     )
-    act_date = _first_group(r"(?:от|дата)\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})", compact)
-    project_codes = tuple(
-        dict.fromkeys(
-            match.upper()
-            for match in re.findall(
-                r"\b(?:[A-ZА-ЯЁ]{1,6}[-/]?\d[\w./-]{2,})\b", compact, re.IGNORECASE
-            )
-        )
-    )[:12]
-    work_description = _section_value(
-        compact,
-        r"(?:наименование|вид)\s+(?:работ|скрытых\s+работ)\s*[:—-]?\s*",
-    )
-    quantities = tuple(
-        dict.fromkeys(re.findall(r"\b\d+(?:[ .,]\d+)?\b", _after_quantity_label(compact)))
-    )[:12]
+    act_number = act_header.group(1).strip() if act_header else None
+    act_date = _adjacent_act_date(act_header.group("nearby")) if act_header else None
+    if act_date is None and basename:
+        act_date = _basename_date(basename)
+    project_codes = _project_codes(_sections_one_to_two(compact), excluded=(act_number,))
+    work_description = _work_description(compact)
+    quantities, quantity_units = _quantity_candidates(compact)
     units = tuple(
         dict.fromkeys(
-            unit.casefold()
-            for unit in re.findall(r"\b(м3|м²|м2|м\.п\.|м|шт\.|шт|т|кг)\b", compact, re.IGNORECASE)
+            (
+                *quantity_units,
+                *(
+                    unit.casefold()
+                    for unit in re.findall(
+                        r"\b(м3|м²|м2|м\.п\.|м|шт\.|шт|т|кг)\b", compact, re.IGNORECASE
+                    )
+                ),
+            )
         )
     )[:12]
     return AosrFields(act_number, act_date, project_codes, work_description, quantities, units)
@@ -146,6 +152,23 @@ def extract_aosr_fields(text: str) -> AosrFields:
 
 def _empty_fields() -> AosrFields:
     return AosrFields(None, None, (), None, (), ())
+
+
+def _invalid_path_evidence(relative_path: PurePosixPath, document_type: str) -> PdfDocumentEvidence:
+    return PdfDocumentEvidence(
+        relative_path=relative_path,
+        document_type=document_type,
+        page_count=None,
+        text_source="error",
+        act_number=None,
+        act_date=None,
+        project_codes=(),
+        work_description=None,
+        quantity_candidates=(),
+        unit_candidates=(),
+        mean_ocr_confidence=None,
+        issues=(PdfEvidenceIssue("unsafe_relative_path", "error"),),
+    )
 
 
 def _issues(
@@ -168,23 +191,79 @@ def _issues(
     return tuple(issues)
 
 
-def _first_group(pattern: str, value: str) -> str | None:
-    match = re.search(pattern, value, re.IGNORECASE)
+def _is_safe_relative_path(value: PurePosixPath) -> bool:
+    return not value.is_absolute() and ".." not in value.parts and value.parts not in {(), (".",)}
+
+
+def _adjacent_act_date(value: str) -> str | None:
+    match = re.search(
+        r"\b(?:от|дата)\s*("
+        r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}"
+        r"|[«\"]?\d{1,2}[»\"]?\s+"
+        r"(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+\d{4}"
+        r")",
+        value,
+        re.IGNORECASE,
+    )
     return match.group(1).strip() if match else None
 
 
-def _section_value(value: str, label_pattern: str) -> str | None:
+def _basename_date(value: str) -> str | None:
+    match = re.search(r"\bот\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b", value, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def _work_description(value: str) -> str | None:
     match = re.search(
-        label_pattern + r"(.{3,500}?)(?=\s{2,}|\b(?:объект|проект|количеств|единиц)\b|$)",
+        r"к\s+освидетельствованию\s+предъявлены\s+следующие\s+работы\s*[:—-]?\s*"
+        r"(.{3,1200}?)(?=\b2\s*[.)]|$)",
+        value,
+        re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip(" .;:")
+    match = re.search(
+        r"(?:наименование|вид)\s+(?:работ|скрытых\s+работ)\s*[:—-]?\s*"
+        r"(.{3,500}?)(?=\s{2,}|\b(?:объект|проект|количеств|единиц)\b|$)",
         value,
         re.IGNORECASE,
     )
     return match.group(1).strip(" .;:") if match else None
 
 
-def _after_quantity_label(value: str) -> str:
-    match = re.search(r"(?:количество|объем|объём)\s*[:—-]?\s*([^\n]{0,200})", value, re.IGNORECASE)
-    return match.group(1) if match else ""
+def _quantity_candidates(value: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    pairs = re.findall(
+        r"\b(?:[LSV]\s*=\s*|(?:количество|объем|объём)\s*[:=—-]?\s*)"
+        r"(\d+(?:[., ]\d+)?)\s*(м3|м²|м2|м\.п\.|м|шт\.|шт|т|кг)\b",
+        value,
+        re.IGNORECASE,
+    )
+    return (
+        tuple(dict.fromkeys(quantity.replace(" ", "") for quantity, _unit in pairs))[:12],
+        tuple(dict.fromkeys(unit.casefold() for _quantity, unit in pairs))[:12],
+    )
+
+
+def _sections_one_to_two(value: str) -> str:
+    return re.split(r"\b3\s*[.)]", value, maxsplit=1)[0]
+
+
+def _project_codes(value: str, *, excluded: tuple[str | None, ...] = ()) -> tuple[str, ...]:
+    candidates = re.findall(
+        r"(?<!\w)[A-ZА-ЯЁ0-9]{1,16}(?:[./-][A-ZА-ЯЁ0-9]{1,16})+(?!\w)", value, re.IGNORECASE
+    )
+    accepted: list[str] = []
+    excluded_codes = {item.upper() for item in excluded if item}
+    for candidate in candidates:
+        code = candidate.upper()
+        if code in excluded_codes:
+            continue
+        if len(code) < 5 or re.fullmatch(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}", code):
+            continue
+        if not ("/" in code or re.search(r"[A-ZА-ЯЁ]", code) or code.count(".") >= 2):
+            continue
+        accepted.append(code)
+    return tuple(dict.fromkeys(accepted))[:12]
 
 
 def _normalise(value: str) -> str:

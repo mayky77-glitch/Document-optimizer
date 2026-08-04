@@ -45,6 +45,34 @@ def test_does_not_invent_aosr_fields_when_text_has_no_labels() -> None:
     assert evidence.unit_candidates == ("м3",)
 
 
+def test_aosr_header_prevents_unrelated_number_date_and_extracts_sections() -> None:
+    evidence = extract_aosr_fields(
+        "Приказ № 999 от 01.01.2020. "
+        "АКТ ОСВИДЕТЕЛЬСТВОВАНИЯ СКРЫТЫХ РАБОТ № АОСР-77 от «03» февраля 2026. "
+        "1. К освидетельствованию предъявлены следующие работы: Устройство основания. "
+        "L=12,5 м; S = 18 м2; V=7,25 м3. "
+        "2. Работы выполнены по проекту 906.1/2 и АБ-123/4. "
+        "3. Приказ № 12.01.2026."
+    )
+
+    assert evidence.act_number == "АОСР-77"
+    assert evidence.act_date == "«03» февраля 2026"
+    assert evidence.work_description == "Устройство основания. L=12,5 м; S = 18 м2; V=7,25 м3"
+    assert evidence.quantity_candidates == ("12,5", "18", "7,25")
+    assert evidence.unit_candidates == ("м", "м2", "м3")
+    assert evidence.project_codes == ("906.1/2", "АБ-123/4")
+
+
+def test_act_fields_require_full_header_and_allow_only_basename_date_fallback() -> None:
+    evidence = extract_aosr_fields("Приказ № 999 от 01.01.2020. Работы L=3 м.")
+    fallback = extract_aosr_fields("№ 42", basename="АОСР от 05.06.2026.pdf")
+
+    assert evidence.act_number is None
+    assert evidence.act_date is None
+    assert fallback.act_number is None
+    assert fallback.act_date == "05.06.2026"
+
+
 def test_pdf_evidence_uses_text_layer_before_ocr_and_has_relative_path(tmp_path: Path) -> None:
     pdf = tmp_path / "АОСР-17.pdf"
     pdf.write_text("fixture only")
@@ -96,3 +124,16 @@ def test_pdf_evidence_marks_low_confidence_ocr_for_manual_review(tmp_path: Path)
     assert evidence.text_source == "ocr"
     assert evidence.mean_ocr_confidence == 69.0
     assert "low_ocr_confidence" in {issue.code for issue in evidence.issues}
+
+
+def test_pdf_evidence_rejects_path_escape_without_running_commands(tmp_path: Path) -> None:
+    pdf = tmp_path / "АОСР-17.pdf"
+    pdf.write_text("fixture only")
+
+    def runner(*_args: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("unsafe path must fail before invoking a command")
+
+    evidence = analyse_pdf_document(pdf, PurePosixPath("../АОСР-17.pdf"), runner=runner)
+
+    assert evidence.text_source == "error"
+    assert evidence.issues[0].code == "unsafe_relative_path"
