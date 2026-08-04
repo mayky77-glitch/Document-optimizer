@@ -20,6 +20,7 @@ from .decision_packages_v2 import (
     OptimizerPolicy,
     PackageAtom,
     PairConstraint,
+    PairRelation,
     UnitCompatibility,
 )
 
@@ -55,31 +56,44 @@ def optimize_packages(
         constraint.pair_key: constraint for constraint in clustering_result.pair_constraints
     }
     families = _split_oversized_families(clustering_result.candidate_families, policy)
-    _validate_candidate_families(families, constraints)
+    _validate_candidate_families(families, constraints, version_context)
 
-    selected = _select_optimal_partition(families, constraints, policy)
+    selected = _select_optimal_partition(families, constraints, policy, version_context)
+    singleton_outliers = tuple(
+        atom
+        for indices in selected
+        if sum(len(families[index].atoms) for index in indices) == 1
+        for index in indices
+        for atom in families[index].atoms
+    )
     packages = tuple(
         _package_for_indices(indices, families, constraints, policy, version_context)
         for indices in selected
+        if sum(len(families[index].atoms) for index in indices) > 1
     )
-    manual_families, package_families = _attach_outlier_paths(
-        clustering_result.manual_families,
-        packages,
-        clustering_result.outlier_atoms,
+    manual_families = clustering_result.manual_families
+    if not packages and singleton_outliers:
+        manual_families = (*manual_families, *_manual_remainders(singleton_outliers, constraints))
+        singleton_outliers = ()
+    outliers = tuple(
+        sorted(
+            (*clustering_result.outlier_atoms, *singleton_outliers), key=lambda atom: atom.atom_id
+        )
     )
+    manual_families, package_families = _attach_outlier_paths(manual_families, packages, outliers)
     packages = tuple(
         DecisionPackage(families, constraints, policy, version_context)
         for families, constraints in package_families
     )
     blockers = {blocker for family in manual_families for blocker in family.blocker_codes}
-    if clustering_result.outlier_atoms:
+    if outliers:
         blockers.add(BlockerCode.OUTLIER)
     return DecisionPackageResult(
         packages,
         policy,
         version_context,
         manual_families=manual_families,
-        outlier_atoms=clustering_result.outlier_atoms,
+        outlier_atoms=outliers,
         blocker_codes=tuple(sorted(blockers, key=lambda item: item.value)),
     )
 
@@ -135,7 +149,9 @@ def _split_oversized_families(
 
 
 def _validate_candidate_families(
-    families: tuple[CandidateFamily, ...], constraints: dict[tuple[str, str], PairConstraint]
+    families: tuple[CandidateFamily, ...],
+    constraints: dict[tuple[str, str], PairConstraint],
+    version_context: DecisionPackageVersionContext,
 ) -> None:
     atom_ids: set[str] = set()
     semantic_refs: set[str] = set()
@@ -157,7 +173,9 @@ def _validate_candidate_families(
             semantic_refs.add(atom.semantic_ref)
         for pair in combinations(family.atom_ids, 2):
             constraint = constraints.get(pair)
-            if constraint is None or not constraint.is_compatible:
+            if constraint is None or not constraint.is_compatible_in_context(
+                version_context.authority_context_ref
+            ):
                 raise OptimizerContractError("candidate family pairs must be explicitly compatible")
 
 
@@ -165,6 +183,7 @@ def _select_optimal_partition(
     families: tuple[CandidateFamily, ...],
     constraints: dict[tuple[str, str], PairConstraint],
     policy: OptimizerPolicy,
+    version_context: DecisionPackageVersionContext,
 ) -> tuple[tuple[int, ...], ...]:
     if not families:
         return ()
@@ -172,7 +191,9 @@ def _select_optimal_partition(
     boundaries = tuple(family.boundary for family in families)
     compatible = tuple(
         tuple(
-            _families_can_share(families[left], families[right], constraints)
+            _families_can_share(
+                families[left], families[right], constraints, version_context.authority_context_ref
+            )
             for right in range(len(families))
         )
         for left in range(len(families))
@@ -255,13 +276,18 @@ def _families_can_share(
     left: CandidateFamily,
     right: CandidateFamily,
     constraints: dict[tuple[str, str], PairConstraint],
+    context_ref: str,
 ) -> bool:
-    return all(
-        (constraint := constraints.get(tuple(sorted((left_atom.atom_id, right_atom.atom_id)))))
-        is not None
-        and constraint.is_compatible
-        for left_atom in left.atoms
-        for right_atom in right.atoms
+    return bool(
+        left.atoms[0].critical_signature_ref == right.atoms[0].critical_signature_ref
+        and left.atoms[0].typed_signature_ref == right.atoms[0].typed_signature_ref
+        and all(
+            (constraint := constraints.get(tuple(sorted((left_atom.atom_id, right_atom.atom_id)))))
+            is not None
+            and constraint.is_compatible_in_context(context_ref)
+            for left_atom in left.atoms
+            for right_atom in right.atoms
+        )
     )
 
 
@@ -323,11 +349,7 @@ def _attach_outlier_paths(
     tuple[CandidateFamily, ...],
     tuple[tuple[tuple[CandidateFamily, ...], tuple[PairConstraint, ...]], ...],
 ]:
-    """Attach visible outlier IDs to one deterministic existing result path.
-
-    DecisionPackage-2.0 deliberately keeps outliers out of family membership,
-    so it requires their IDs be declared by a package or manual family.
-    """
+    """Declare every visible outlier on exactly one deterministic result path."""
     outlier_ids = tuple(atom.atom_id for atom in outliers)
     manual = tuple(sorted(manual_families, key=lambda family: family.family_id))
     package_parts = tuple((package.families, package.pair_constraints) for package in packages)
@@ -335,8 +357,26 @@ def _attach_outlier_paths(
         return manual, package_parts
     if package_parts:
         families, constraints = package_parts[0]
-        first = replace(families[0], outlier_atom_ids=outlier_ids)
-        return manual, (((first, *families[1:]), constraints), *package_parts[1:])
+        return manual, (
+            ((replace(families[0], outlier_atom_ids=outlier_ids), *families[1:]), constraints),
+            *package_parts[1:],
+        )
     if manual:
         return (replace(manual[0], outlier_atom_ids=outlier_ids), *manual[1:]), package_parts
-    raise OptimizerContractError("outlier-only clustering result cannot be represented safely")
+    raise OptimizerContractError("outlier-only result requires a controlled manual path")
+
+
+def _manual_remainders(
+    atoms: tuple[PackageAtom, ...], constraints: dict[tuple[str, str], PairConstraint]
+) -> tuple[CandidateFamily, ...]:
+    atom_ids = {atom.atom_id for atom in atoms}
+    blocker = (
+        BlockerCode.CANNOT_LINK
+        if any(
+            constraint.relation is PairRelation.CANNOT_LINK
+            for constraint in constraints.values()
+            if set(constraint.pair_key) <= atom_ids
+        )
+        else BlockerCode.AUTHORITY_UNATTESTED
+    )
+    return tuple(CandidateFamily((atom,), blocker_codes=(blocker,)) for atom in atoms)

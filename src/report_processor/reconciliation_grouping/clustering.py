@@ -1,4 +1,4 @@
-"""Deterministic, complete-linkage clustering for DecisionPackage-2.0 atoms.
+"""Deterministic constrained compatibility graph preparation for DecisionPackage-2.0 atoms.
 
 This module consumes only the inert decision-package DTOs.  It deliberately
 does not inspect source terms, vectors, or ranking scores: a family is a safe
@@ -108,12 +108,12 @@ class ClusteringResult:
 def cluster_atoms(
     atoms: Iterable[PackageAtom], pair_constraints: Iterable[PairConstraint]
 ) -> ClusteringResult:
-    """Build deterministic category-aware complete-linkage candidates.
+    """Build deterministic category-aware atomic optimizer candidates.
 
-    Exact boundaries are a hard partition.  Within an eligible boundary,
-    critical and typed signatures are hard subpartitions.  A merge happens
-    only after every cross pair is present and ``PairConstraint.is_compatible``
-    is true; this intentionally prevents transitive/union-find closure.
+    Exact boundaries and both signatures are hard partitions.  Eligible cohorts
+    retain their attested compatibility graph as atomic candidates, allowing
+    the bounded optimizer to prove a complete-linkage partition without a
+    greedy clustering merge hiding a better clique arrangement.
     """
     ordered_atoms = _normalize_atoms(atoms)
     constraints = _normalize_constraints(pair_constraints, ordered_atoms)
@@ -222,62 +222,12 @@ def _boundary_blocker(boundary: object) -> BlockerCode:
 def _cluster_cohort(
     cohort: tuple[PackageAtom, ...], constraints_by_pair: dict[tuple[str, str], PairConstraint]
 ) -> tuple[list[CandidateFamily], list[CandidateFamily], list[PackageAtom]]:
-    if len(cohort) == 1:
-        return [CandidateFamily(cohort)], [], []
-
-    clusters: list[tuple[PackageAtom, ...]] = [(atom,) for atom in cohort]
-    while True:
-        mergeable: list[tuple[tuple[str, ...], int, int]] = []
-        for left_index, right_index in combinations(range(len(clusters)), 2):
-            left, right = clusters[left_index], clusters[right_index]
-            merged = tuple(sorted((*left, *right), key=lambda atom: atom.atom_id))
-            if len(merged) <= MAX_ATOMS_PER_FAMILY and _can_complete_link(
-                left, right, constraints_by_pair
-            ):
-                mergeable.append((tuple(atom.atom_id for atom in merged), left_index, right_index))
-        if not mergeable:
-            break
-        _, left_index, right_index = min(mergeable)
-        merged = tuple(
-            sorted((*clusters[left_index], *clusters[right_index]), key=lambda atom: atom.atom_id)
-        )
-        clusters = [
-            cluster
-            for index, cluster in enumerate(clusters)
-            if index not in (left_index, right_index)
-        ]
-        clusters.append(merged)
-        clusters.sort(key=lambda cluster: tuple(atom.atom_id for atom in cluster))
-
-    safe_clusters = [cluster for cluster in clusters if len(cluster) > 1]
-    singletons = [cluster[0] for cluster in clusters if len(cluster) == 1]
-    if not safe_clusters:
-        constraints = _constraints_for_atoms(cohort, constraints_by_pair)
+    constraints = _constraints_for_atoms(cohort, constraints_by_pair)
+    if not any(constraint.is_compatible for constraint in constraints):
         return [], _manual_families(cohort, constraints, _constraint_blocker(constraints)), []
-
-    candidates = [
-        CandidateFamily(cluster, _constraints_for_atoms(cluster, constraints_by_pair))
-        for cluster in safe_clusters
-    ]
-    return candidates, [], singletons
-
-
-def _can_complete_link(
-    left: tuple[PackageAtom, ...],
-    right: tuple[PackageAtom, ...],
-    constraints_by_pair: dict[tuple[str, str], PairConstraint],
-) -> bool:
-    return all(
-        (
-            constraint := constraints_by_pair.get(
-                tuple(sorted((left_atom.atom_id, right_atom.atom_id)))
-            )
-        )
-        is not None
-        and constraint.is_compatible
-        for left_atom in left
-        for right_atom in right
-    )
+    # Keep the compatibility graph intact for the exact optimizer.  A greedy
+    # clustering merge can otherwise consume AB and hide the AC + BD optimum.
+    return [CandidateFamily((atom,)) for atom in cohort], [], []
 
 
 def _constraints_for_atoms(
