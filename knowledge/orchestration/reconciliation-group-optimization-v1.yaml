@@ -118,6 +118,7 @@ wave6_recovery:
   p6_final_audit: accepted
 wave6_evidence: "core focused 16 passed; adapter 16 passed; combined 32 passed; relevant reconciliation 129 passed; independent P6 audit accepted"
 next_wave: wave7-safe-clustering-packages
+wave7_status: gate0-frozen-runtime-stop
 waves:
   - gate0
   - wave0-dense-rag-verification

@@ -1,0 +1,52 @@
+status: gate0-frozen
+work_id: reconciliation-wave7-v1
+objective: "Implement inert DecisionPackage-2.0 constrained clustering and bounded package optimization without changing legacy runtime grouping."
+source_base_sha: f2d63d82705e10c191ab67e8a756301ebc7e1ff2
+integration_branch: codex/reconciliation-group-optimization-wave7
+wave: 7
+max_parallel: 1
+max_spawns: 4
+max_retries: 1
+merge_method: merge-no-ff
+data_classification: restricted
+shared_paths_owner: integration
+runtime_wiring: forbidden
+production_activation: stop
+forbidden_paths:
+  - src/report_processor/reconciliation_grouping/__init__.py
+  - src/report_processor/reconciliation_grouping/models.py
+  - src/report_processor/reconciliation_grouping/features.py
+  - src/report_processor/reconciliation_grouping/constraints.py
+  - src/report_processor/reconciliation_grouping/packages.py
+  - src/report_processor/admin_panel
+  - src/report_processor/calculation
+  - src/report_processor/excel_writer
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+contract_versions:
+  input_semantics: SemanticSkeleton-1.0
+  input_registry: PatternRegistry-1.0
+  input_feedback: FeedbackGraph-1.0
+  input_replay: GroupingReplay-1.0
+  input_retrieval: HybridRetrieval-1.0
+  output: DecisionPackage-2.0
+dependency_order:
+  - decision-package-contract
+  - constrained-clustering
+  - package-optimizer
+baseline:
+  focused_root: "147 passed"
+  independent_gate0: "67 passed"
+  worktree: clean
+acceptance:
+  focused: "Wave 7 contract plus clustering and optimizer tests"
+  regression: "legacy reconciliation grouping/admin/runtime tests unchanged"
+  static: "scoped Ruff, format and git diff checks"
+  final_review: P6
+owner_decisions_deferred_until_activation:
+  - category-specific thresholds
+  - maximum safe package size defaults
+  - private replay winner and holdout ownership
+  - production cannot-link adapter mapping
+  - allowed first-wave categories and rollback owner
