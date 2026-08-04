@@ -18,3 +18,10 @@ def test_cli_writes_report_for_runtime_synthetic_workbook(tmp_path: Path) -> Non
 
     assert main(["reconcile-package", "--package", str(tmp_path), "--output", str(output)]) == 0
     assert json.loads(output.read_text())["results"][0]["status"] == "NO_EVIDENCE"
+
+
+def test_cli_returns_controlled_error_when_no_workbook_package_exists(tmp_path: Path) -> None:
+    output = tmp_path / "report.json"
+
+    assert main(["reconcile-package", "--package", str(tmp_path), "--output", str(output)]) == 2
+    assert not output.exists()

@@ -51,7 +51,9 @@ def normalize_work_code(value: str | None) -> str | None:
 def drawing_codes_for_row(
     row: WorkbookRowFact, rows: tuple[WorkbookRowFact, ...]
 ) -> tuple[str, ...]:
-    """Inherit drawing context from nearest preceding dotted-prefix parent only."""
+    """Use own drawing code; otherwise inherit nearest preceding dotted parent."""
+    if row.drawing_code:
+        return (row.drawing_code,)
     code = normalize_work_code(row.work_code)
     if code is None:
         return ()
@@ -176,40 +178,45 @@ def _normalise_code(value: str) -> str:
 
 
 def _project_code_signal(drawing_codes: tuple[str, ...], project_codes: tuple[str, ...]) -> bool:
-    """Compare only substantial project-code backbones, never loose substrings."""
+    """Compare only complete delimiter-separated project-code components."""
     workbook_codes = [
         code for drawing in drawing_codes for code in _project_code_fragments(drawing)
     ]
     pdf_codes = [code for value in project_codes for code in _project_code_fragments(value)]
     return any(
-        full.startswith(prefix)
-        for full in workbook_codes
-        for prefix in pdf_codes
-        if len(full) > len(prefix)
-    ) or bool(set(workbook_codes) & set(pdf_codes))
+        _same_or_component_extension(left, right) for left in workbook_codes for right in pdf_codes
+    )
 
 
 def _signal_weight(signals: tuple[str, ...]) -> int:
     return sum(2 if signal == "project_code_match" else 1 for signal in signals)
 
 
-def _project_code_fragments(value: str) -> tuple[str, ...]:
-    fragments: list[str] = []
+def _project_code_fragments(value: str) -> tuple[tuple[str, ...], ...]:
+    fragments: list[tuple[str, ...]] = []
     for section in value.split(";"):
         for candidate in re.findall(
             r"(?<!\w)[A-ZА-ЯЁ0-9]{1,24}(?:[./-][A-ZА-ЯЁ0-9]{1,24}){2,}(?!\w)",
             section,
             re.IGNORECASE,
         ):
-            normalized = _normalise_code(candidate)
+            components = tuple(
+                _normalise_code(component) for component in re.split(r"[./-]", candidate)
+            )
+            normalized = "".join(components)
             if (
-                candidate.count(".") >= 2
+                len(components) >= 3
                 and len(normalized) >= 8
                 and re.search(r"\d", normalized)
                 and re.search(r"[a-zа-яё]", normalized)
             ):
-                fragments.append(normalized)
+                fragments.append(components)
     return tuple(dict.fromkeys(fragments))
+
+
+def _same_or_component_extension(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    shorter, longer = sorted((left, right), key=len)
+    return shorter == longer[: len(shorter)]
 
 
 def _similar_work_names(left: str | None, right: str | None) -> bool:

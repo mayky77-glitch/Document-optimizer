@@ -46,3 +46,13 @@ def test_rejects_symlinked_root(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="symlinked package root"):
         discover_document_packages(link)
+
+
+def test_rejects_encountered_symlinked_directory(tmp_path: Path) -> None:
+    (tmp_path / "book.xlsx").touch()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "linked").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked directory"):
+        discover_document_packages(tmp_path)
