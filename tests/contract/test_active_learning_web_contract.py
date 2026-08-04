@@ -133,6 +133,18 @@ def test_web_projection_hides_split_without_an_exact_complete_proposal() -> None
         )
 
 
+def test_split_only_source_item_projects_as_a_safe_no_action_web_item() -> None:
+    queue, _autosave, item = _queue()
+    split_only = dataclasses.replace(item, allowed_actions=(ShadowAction.SPLIT,))
+    split_queue = ActiveLearningQueue(queue.queue_ref, queue.source_fingerprint_refs, (split_only,))
+    split_autosave = ActiveLearningShadowAutosave(split_queue.queue_id, split_queue.fingerprint)
+
+    web_queue = project_active_learning_web_queue(split_queue, split_autosave)
+
+    assert web_queue.items[0].allowed_actions == ()
+    assert web_queue.items[0].split_member_refs == ()
+
+
 def test_exported_web_dtos_reject_forged_or_unbounded_values() -> None:
     queue, autosave, item = _queue()
     valid = project_active_learning_web_queue(queue, autosave).items[0]
@@ -141,6 +153,28 @@ def test_exported_web_dtos_reject_forged_or_unbounded_values() -> None:
         dataclasses.replace(valid, affected_row_count=True)
     with pytest.raises(ActiveLearningContractError):
         dataclasses.replace(valid, allowed_actions=("reject",))  # type: ignore[arg-type]
+    with pytest.raises(ActiveLearningContractError):
+        dataclasses.replace(valid, summary_codes=())
+    with pytest.raises(ActiveLearningContractError):
+        dataclasses.replace(
+            valid,
+            summary_codes=(PresentationCode.CATEGORY_DIFFERENCE,),
+        )
+    with pytest.raises(ActiveLearningContractError):
+        dataclasses.replace(
+            valid,
+            summary_codes=(PresentationCode.PATTERN_CANDIDATE,) * 33,
+        )
+    with pytest.raises(ActiveLearningContractError):
+        dataclasses.replace(
+            valid,
+            difference_codes=(
+                PresentationCode.MODE_DIFFERENCE,
+                PresentationCode.CATEGORY_DIFFERENCE,
+            ),
+        )
+    with pytest.raises(ActiveLearningContractError):
+        dataclasses.replace(valid, allowed_actions=(ShadowAction.REJECT, ShadowAction.CASE_ONLY))
     forged_values = {field.name: getattr(valid, field.name) for field in dataclasses.fields(valid)}
     forged_values["split_member_refs"] = ((_ref("6"),), (_ref("7"),))
     with pytest.raises(ActiveLearningContractError):

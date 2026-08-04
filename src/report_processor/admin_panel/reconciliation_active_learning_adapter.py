@@ -12,6 +12,7 @@ from typing import Final
 from report_processor.reconciliation_patterns.active_learning import (
     INTENT_VERSION,
     MAX_INTEGER_AGGREGATE,
+    MAX_PRESENTATION_CODES,
     ActiveLearningContractError,
     ActiveLearningIntent,
     ActiveLearningMode,
@@ -93,15 +94,27 @@ class ActiveLearningWebItem:
         for codes in (self.summary_codes, self.difference_codes, self.exception_codes):
             if (
                 not isinstance(codes, tuple)
+                or len(codes) > MAX_PRESENTATION_CODES
                 or len(codes) != len(set(codes))
                 or any(not isinstance(code, PresentationCode) for code in codes)
+                or tuple(sorted(codes, key=lambda code: code.value)) != codes
             ):
                 raise ActiveLearningContractError("web item presentation codes must be controlled")
+        required_summary = (
+            PresentationCode.PATTERN_CANDIDATE
+            if self.kind is QueueItemKind.PATTERN
+            else PresentationCode.PACKAGE_CANDIDATE
+        )
+        if not self.summary_codes or required_summary not in self.summary_codes:
+            raise ActiveLearningContractError("web item summary must identify its controlled kind")
         if (
             not isinstance(self.allowed_actions, tuple)
-            or not self.allowed_actions
             or len(self.allowed_actions) != len(set(self.allowed_actions))
             or any(not isinstance(action, ShadowAction) for action in self.allowed_actions)
+            or tuple(
+                sorted(self.allowed_actions, key=lambda action: list(ShadowAction).index(action))
+            )
+            != self.allowed_actions
         ):
             raise ActiveLearningContractError("web item actions must be controlled")
         if self.kind is QueueItemKind.PACKAGE and any(
