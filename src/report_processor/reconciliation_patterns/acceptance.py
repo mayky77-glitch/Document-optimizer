@@ -174,6 +174,7 @@ class OperationalEvidence:
             if any(value is None for value in values):
                 _error("ACCEPTANCE_SCHEMA_INVALID")
             _opaque(self.replay_measurements_fingerprint)
+            _opaque(self.observation_fingerprint)
             for value in (
                 self.recall_at_5,
                 self.mrr,
@@ -279,7 +280,19 @@ class ShadowAcceptanceDecision:
         ):
             if value is not None:
                 _opaque(value)
-        if self.status is ShadowAcceptanceStatus.PASS and self.reason_codes:
+        if self.status is ShadowAcceptanceStatus.PASS and (
+            self.reason_codes
+            or any(
+                value is None
+                for value in (
+                    self.replay_fingerprint,
+                    self.promotion_fingerprint,
+                    self.hard_gate_fingerprint,
+                    self.threshold_fingerprint,
+                    self.operational_fingerprint,
+                )
+            )
+        ):
             _error("ACCEPTANCE_SCHEMA_INVALID")
         if self.status is not ShadowAcceptanceStatus.PASS and not self.reason_codes:
             _error("ACCEPTANCE_SCHEMA_INVALID")
@@ -328,6 +341,8 @@ def _revalidate_supplied(
         operational,
     )
     try:
+        if len(promotion.reason_codes) > _MAX_REASON_CODES:
+            _error("ACCEPTANCE_SCHEMA_INVALID")
         for metric in (report.baseline_metrics, report.holdout_metrics):
             for ratio in (metric.coverage_rows, metric.coverage_groups, metric.precision):
                 _ratio(ratio)

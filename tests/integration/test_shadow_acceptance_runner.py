@@ -141,7 +141,13 @@ def _inputs() -> acceptance_runner.ShadowAcceptanceInputs:
     outage_values: dict[str, object] = {
         "qdrant_unavailable": True,
         "authoritative_decision_delta": 0,
-        "oracle_fingerprint": _ref("51"),
+        "oracle_fingerprint": replay.replay_fingerprint(
+            {
+                "qdrant_unavailable": True,
+                "authoritative_decision_delta": 0,
+                "version": acceptance_runner.SHADOW_ACCEPTANCE_RUNNER_VERSION,
+            }
+        ),
         "version": acceptance_runner.SHADOW_ACCEPTANCE_RUNNER_VERSION,
     }
     outage = _sealed(acceptance_runner.OutageDecisionDelta, outage_values)
@@ -155,6 +161,7 @@ def _inputs() -> acceptance_runner.ShadowAcceptanceInputs:
                 "holdout": report.holdout_metrics.fingerprint,
                 "current_groups": 1,
                 "repeat_groups": 1,
+                "disputed_decisions": 0,
             }
         ),
         "outage_oracle_fingerprint": outage.oracle_fingerprint,
@@ -197,13 +204,7 @@ def _inputs() -> acceptance_runner.ShadowAcceptanceInputs:
     operational_values: dict[str, object] = {
         "status": acceptance.OperationalEvidenceStatus.MEASURED,
         "replay_measurements_fingerprint": report.measurements.fingerprint,
-        "observation_fingerprint": replay.replay_fingerprint(
-            {
-                "measurements": report.measurements.fingerprint,
-                "operational": report.measurements.fingerprint,
-                "outage_oracle": outage.oracle_fingerprint,
-            }
-        ),
+        "observation_fingerprint": _ref("64"),
         "recall_at_5": replay.Ratio(1, 1),
         "mrr": replay.Ratio(1, 1),
         "top_1_error": replay.Ratio(0, 1),
@@ -217,6 +218,12 @@ def _inputs() -> acceptance_runner.ShadowAcceptanceInputs:
         "version": acceptance.RECONCILIATION_SHADOW_ACCEPTANCE_VERSION,
     }
     operational = _sealed(acceptance.OperationalEvidence, operational_values)
+    operational = _replace_sealed(
+        operational,
+        observation_fingerprint=acceptance_runner._operational_observation_fingerprint(
+            operational, outage
+        ),
+    )
     values: dict[str, object] = {
         "baseline": baseline,
         "holdout": holdout,
@@ -262,7 +269,17 @@ def test_runner_rejects_mismatched_or_unavailable_bound_evidence(field: str) -> 
         changed_source = _replace_sealed(inputs.source, after_fingerprint=_ref("51"))
         changed = _replace_sealed(inputs, source=changed_source)
     else:
-        changed_outage = _replace_sealed(inputs.outage, authoritative_decision_delta=1)
+        changed_outage = _replace_sealed(
+            inputs.outage,
+            authoritative_decision_delta=1,
+            oracle_fingerprint=replay.replay_fingerprint(
+                {
+                    "qdrant_unavailable": True,
+                    "authoritative_decision_delta": 1,
+                    "version": acceptance_runner.SHADOW_ACCEPTANCE_RUNNER_VERSION,
+                }
+            ),
+        )
         changed = _replace_sealed(inputs, outage=changed_outage)
     with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
         acceptance_runner.ShadowAcceptanceRunner(acceptance.evaluate_shadow_acceptance).run(changed)
@@ -282,7 +299,17 @@ def test_source_evidence_rejects_matching_raw_path_and_outage_must_be_proven() -
     }
     with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
         _sealed(acceptance_runner.SourceIntegrityEvidence, raw_source_values)
-    no_outage = _replace_sealed(inputs.outage, qdrant_unavailable=False)
+    no_outage = _replace_sealed(
+        inputs.outage,
+        qdrant_unavailable=False,
+        oracle_fingerprint=replay.replay_fingerprint(
+            {
+                "qdrant_unavailable": False,
+                "authoritative_decision_delta": 0,
+                "version": acceptance_runner.SHADOW_ACCEPTANCE_RUNNER_VERSION,
+            }
+        ),
+    )
     changed = _replace_sealed(inputs, outage=no_outage)
     with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
         acceptance_runner.ShadowAcceptanceRunner(acceptance.evaluate_shadow_acceptance).run(changed)
@@ -321,7 +348,15 @@ def test_runner_rejects_each_resealed_provenance_binding_and_forged_evaluator() 
         ),
         _replace_sealed(
             inputs,
+            gates=_replace_sealed(inputs.gates, disputed_individual_decision_count=1),
+        ),
+        _replace_sealed(
+            inputs,
             operational=_replace_sealed(inputs.operational, observation_fingerprint=_ref("73")),
+        ),
+        _replace_sealed(
+            inputs,
+            operational=_replace_sealed(inputs.operational, recall_at_5=replay.Ratio(0, 1)),
         ),
     )
     runner = acceptance_runner.ShadowAcceptanceRunner(acceptance.evaluate_shadow_acceptance)
@@ -331,20 +366,28 @@ def test_runner_rejects_each_resealed_provenance_binding_and_forged_evaluator() 
         assert error.value.code == "RUNNER_BINDING_INVALID"
 
     def forged(*_values: object) -> acceptance.ShadowAcceptanceDecision:
-        values = {
-            "status": acceptance.ShadowAcceptanceStatus.PASS,
-            "reason_codes": (),
-            "replay_fingerprint": None,
-            "promotion_fingerprint": None,
-            "hard_gate_fingerprint": None,
-            "threshold_fingerprint": None,
-            "operational_fingerprint": None,
-            "version": acceptance.RECONCILIATION_SHADOW_ACCEPTANCE_VERSION,
-        }
-        return _sealed(acceptance.ShadowAcceptanceDecision, values)  # type: ignore[return-value]
+        decision = acceptance.evaluate_shadow_acceptance(
+            inputs.report,
+            inputs.promotion,
+            inputs.gates,
+            inputs.thresholds,
+            inputs.operational,
+        )
+        object.__setattr__(decision, "replay_fingerprint", None)
+        return decision
 
     with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError) as error:
         acceptance_runner.ShadowAcceptanceRunner(forged).run(inputs)
+    assert error.value.code == "RUNNER_BINDING_INVALID"
+
+    outage_values = {
+        "qdrant_unavailable": True,
+        "authoritative_decision_delta": 0,
+        "oracle_fingerprint": _ref("74"),
+        "version": acceptance_runner.SHADOW_ACCEPTANCE_RUNNER_VERSION,
+    }
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError) as error:
+        _sealed(acceptance_runner.OutageDecisionDelta, outage_values)
     assert error.value.code == "RUNNER_BINDING_INVALID"
 
 

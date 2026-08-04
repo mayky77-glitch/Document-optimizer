@@ -273,6 +273,18 @@ def test_forged_values_and_raw_or_unbounded_values_fail_closed() -> None:
     with pytest.raises(PatternRegistryError) as error:
         acceptance.evaluate_shadow_acceptance(object(), None, None, None, None)  # type: ignore[arg-type]
     assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
+    with pytest.raises(PatternRegistryError) as error:
+        acceptance.ShadowAcceptanceDecision(
+            status=acceptance.ShadowAcceptanceStatus.PASS,
+            reason_codes=(),
+            replay_fingerprint=None,
+            promotion_fingerprint=None,
+            hard_gate_fingerprint=None,
+            threshold_fingerprint=None,
+            operational_fingerprint=None,
+            fingerprint=_hash("forged-pass"),
+        )
+    assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
 
 
 def test_report_metric_sums_and_per_split_coverage_are_bound_to_hard_gates() -> None:

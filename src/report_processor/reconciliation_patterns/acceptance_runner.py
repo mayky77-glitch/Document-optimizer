@@ -51,6 +51,38 @@ def _sealed(value: object) -> None:
         _error()
 
 
+def _outage_oracle_fingerprint(value: OutageDecisionDelta) -> str:
+    return replay_fingerprint(
+        {
+            "qdrant_unavailable": value.qdrant_unavailable,
+            "authoritative_decision_delta": value.authoritative_decision_delta,
+            "version": value.version,
+        }
+    )
+
+
+def _operational_observation_fingerprint(
+    operational: OperationalEvidence, outage: OutageDecisionDelta
+) -> str:
+    return replay_fingerprint(
+        {
+            "status": operational.status,
+            "measurements": operational.replay_measurements_fingerprint,
+            "recall_at_5": operational.recall_at_5,
+            "mrr": operational.mrr,
+            "top_1_error": operational.top_1_error,
+            "review_rate": operational.review_rate,
+            "pattern_reuse_rate": operational.pattern_reuse_rate,
+            "operator_correction_rate": operational.operator_correction_rate,
+            "suspension_rate": operational.suspension_rate,
+            "availability": operational.availability,
+            "p95_latency_ns": operational.p95_latency_ns,
+            "index_size_bytes": operational.index_size_bytes,
+            "outage_oracle": outage.oracle_fingerprint,
+        }
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SourceIntegrityEvidence:
     before_fingerprint: str
@@ -106,6 +138,8 @@ class OutageDecisionDelta:
             or not isinstance(self.oracle_fingerprint, str)
             or not _HASH.fullmatch(self.oracle_fingerprint)
         ):
+            _error()
+        if self.oracle_fingerprint != _outage_oracle_fingerprint(self):
             _error()
         _sealed(self)
 
@@ -233,19 +267,14 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
                 "holdout": report.holdout_metrics.fingerprint,
                 "current_groups": gates.current_top_level_group_count,
                 "repeat_groups": gates.repeat_top_level_group_count,
+                "disputed_decisions": gates.disputed_individual_decision_count,
             }
         )
         or gates.outage_oracle_fingerprint != inputs.outage.oracle_fingerprint
         or (
             inputs.operational.status.value == "MEASURED"
             and inputs.operational.observation_fingerprint
-            != replay_fingerprint(
-                {
-                    "measurements": report.measurements.fingerprint,
-                    "operational": inputs.operational.replay_measurements_fingerprint,
-                    "outage_oracle": inputs.outage.oracle_fingerprint,
-                }
-            )
+            != _operational_observation_fingerprint(inputs.operational, inputs.outage)
         )
     ):
         _error()
