@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -73,6 +74,29 @@ def test_returns_controlled_issue_when_header_is_not_structural(tmp_path: Path) 
 
     assert facts.sheets[0].rows == ()
     assert facts.sheets[0].issues[0].code == "HEADER_NOT_FOUND"
+
+
+def test_extracts_multirow_report_period_from_structural_labels(tmp_path: Path) -> None:
+    path = tmp_path / "period.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet["E2"] = "Отчетный период"
+    worksheet["E3"] = "с"
+    worksheet["F3"] = date(2026, 8, 1)
+    worksheet["E4"] = "по"
+    worksheet["F4"] = date(2026, 8, 31)
+    for column, value in enumerate(
+        ["Позиция", "Наименование работ", "Ед. изм.", "Количество", "Стоимость всего"], start=1
+    ):
+        worksheet.cell(7, column, value)
+    worksheet.append(["2.01", "Устройство основания", "м2", 12, 6000])
+    workbook.save(path)
+    workbook.close()
+
+    facts = extract_package_workbook_facts(tmp_path, "period.xlsx")
+
+    assert facts.sheets[0].period == "с 01.08.2026 по 31.08.2026"
+    assert facts.sheets[0].rows[0].work_code == "2.01"
 
 
 def test_rejects_path_escape_and_does_not_accept_symlinked_workbook(tmp_path: Path) -> None:

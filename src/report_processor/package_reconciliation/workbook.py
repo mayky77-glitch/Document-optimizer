@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 
@@ -122,14 +122,64 @@ def _candidate_headers(rows: list[tuple[object, ...]]) -> tuple[int, dict[str, i
     return None if best is None else (best[1], best[2])
 
 
-def _metadata(values: Iterable[object]) -> tuple[str | None, str | None, str | None]:
-    text = "\n".join(clean_display_text(value) for value in values if clean_display_text(value))
+def _metadata_text(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return clean_display_text(value)
+
+
+def _period_date(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.strftime("%d.%m.%Y")
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%Y")
+    text = clean_display_text(value)
+    return text or None
+
+
+def _structural_period(rows: list[tuple[object, ...]]) -> str | None:
+    """Read the common ``Отчетный период / с / по`` cell layout by coordinates."""
+
+    for label_row, row in enumerate(rows):
+        for label_column, value in enumerate(row):
+            normalized = normalize_header_text(value)
+            if "отчет" not in normalized or "период" not in normalized:
+                continue
+            bounds = range(label_row + 1, min(label_row + 5, len(rows)))
+            values_by_marker: dict[str, str] = {}
+            for row_index in bounds:
+                candidate = rows[row_index]
+                upper_column = min(label_column + 6, len(candidate))
+                for marker_column in range(max(0, label_column - 1), upper_column):
+                    marker = normalize_header_text(candidate[marker_column])
+                    if marker not in {"с", "по"}:
+                        continue
+                    for value_column in range(marker_column + 1, upper_column):
+                        period_value = _period_date(candidate[value_column])
+                        if period_value is not None:
+                            values_by_marker.setdefault(marker, period_value)
+                            break
+            if values_by_marker:
+                return " ".join(
+                    f"{marker} {values_by_marker[marker]}"
+                    for marker in ("с", "по")
+                    if marker in values_by_marker
+                )
+    return None
+
+
+def _metadata(rows: list[tuple[object, ...]]) -> tuple[str | None, str | None, str | None]:
+    text = "\n".join(
+        _metadata_text(value) for row in rows for value in row if _metadata_text(value)
+    )
     act = _ACT_RE.search(text)
     period = _PERIOD_RE.search(text)
     object_code = _OBJECT_RE.search(text)
     return (
         act.group(1).strip() if act else None,
-        period.group(1).strip(" .;:") if period else None,
+        _structural_period(rows) or (period.group(1).strip(" .;:") if period else None),
         object_code.group(1).strip() if object_code else None,
     )
 
@@ -155,8 +205,7 @@ def _sheet_facts(worksheet: object, workbook_path: PurePosixPath) -> WorkbookShe
             values_only=True,
         )
     )
-    metadata_values = (value for row in header_rows for value in row)
-    act_number, period, object_code = _metadata(metadata_values)
+    act_number, period, object_code = _metadata(header_rows)
     candidate = _candidate_headers(header_rows)
     if candidate is None:
         issue = PackageIssue(
