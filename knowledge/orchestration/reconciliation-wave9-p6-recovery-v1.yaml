@@ -1,0 +1,33 @@
+status: gate0-frozen
+work_id: reconciliation-wave9-p6-recovery-v1
+objective: "Close Wave 9 forged PASS, provenance, seal, bounds and filesystem-boundary findings without activation."
+source_base_sha: 0b73f3e99c29e567eac4a259e80cc3859dee1660
+integration_branch: codex/reconciliation-group-optimization-wave9
+max_parallel: 2
+max_spawns: 3
+max_retries: 1
+merge_method: merge-no-ff
+runtime_wiring: forbidden
+production_activation: stop
+dependency_order:
+  - parallel:
+      - core-runner-recovery
+      - report-boundary-recovery
+  - recovery-audit
+findings:
+  high:
+    - forged or missing-evidence PASS crosses runner and report
+    - replay, snapshot, threshold, source, outage and operational provenance are incompletely bound
+    - ancestor symlink bypasses outside-Git report boundary
+  medium:
+    - supplied DTO seals and schemas are not revalidated at evaluation time
+    - integer, tuple, payload and overwrite bounds are incomplete
+acceptance:
+  - PASS requires every exact evidence binding and deterministic core result
+  - replay contradictions and decision mismatches fail directly
+  - snapshot, threshold, source, outage and operational provenance are exact
+  - every supplied sealed DTO is revalidated at call time
+  - counts, ratio operands, reason tuples and report bytes are bounded
+  - report parent path is opened component-by-component without following symlinks
+  - overwrite is exact bool and report remains atomic mode 0600 outside Git
+  - independent P6 re-audit returns 0 HIGH and 0 MEDIUM

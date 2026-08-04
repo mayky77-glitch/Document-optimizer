@@ -9,16 +9,22 @@ from enum import StrEnum
 from .replay import (
     GroupingReplayError,
     GroupingReplayReport,
+    IndexMeasurement,
     MeasurementStatus,
     PromotionDecision,
     PromotionVerdict,
     Ratio,
+    ReplayMeasurements,
+    SplitReplayMetrics,
     replay_fingerprint,
 )
 
 RECONCILIATION_SHADOW_ACCEPTANCE_VERSION = "ReconciliationShadowAcceptance-1.0"
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}\Z")
+_MAX_SIGNED_64 = (1 << 63) - 1
+_MAX_REASON_CODES = 64
+_MAX_LATENCY_SAMPLES = 1_000_000
 
 
 class ShadowAcceptanceStatus(StrEnum):
@@ -48,13 +54,24 @@ def _opaque(value: object) -> str:
 
 
 def _count(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _MAX_SIGNED_64:
         _error("ACCEPTANCE_SCHEMA_INVALID")
     return value
 
 
 def _ratio(value: object, *, defined: bool = True) -> Ratio:
-    if not isinstance(value, Ratio) or (defined and value.undefined):
+    numerator = getattr(value, "numerator", None)
+    denominator = getattr(value, "denominator", None)
+    if (
+        type(value) is not Ratio
+        or type(numerator) is not int
+        or type(denominator) is not int
+        or not 0 <= numerator <= _MAX_SIGNED_64
+        or not 0 <= denominator <= _MAX_SIGNED_64
+        or (denominator == 0 and numerator != 0)
+        or (denominator != 0 and numerator > denominator)
+        or (defined and numerator == denominator == 0)
+    ):
         _error("ACCEPTANCE_SCHEMA_INVALID")
     return value
 
@@ -80,6 +97,8 @@ class OwnerThresholds:
     owner_ref: str
     representative_corpus_ref: str
     independent_holdout_ref: str
+    representative_snapshot_fingerprint: str
+    independent_holdout_snapshot_fingerprint: str
     min_recall_at_5: Ratio
     min_mrr: Ratio
     max_top_1_error: Ratio
@@ -101,6 +120,8 @@ class OwnerThresholds:
             self.owner_ref,
             self.representative_corpus_ref,
             self.independent_holdout_ref,
+            self.representative_snapshot_fingerprint,
+            self.independent_holdout_snapshot_fingerprint,
         ):
             _opaque(value)
         for value in (
@@ -123,6 +144,7 @@ class OwnerThresholds:
 class OperationalEvidence:
     status: OperationalEvidenceStatus
     replay_measurements_fingerprint: str | None
+    observation_fingerprint: str | None
     recall_at_5: Ratio | None
     mrr: Ratio | None
     top_1_error: Ratio | None
@@ -143,6 +165,7 @@ class OperationalEvidence:
             _error("ACCEPTANCE_SCHEMA_INVALID")
         values = (
             self.replay_measurements_fingerprint,
+            self.observation_fingerprint,
             self.recall_at_5,
             self.mrr,
             self.top_1_error,
@@ -161,7 +184,17 @@ class OperationalEvidence:
             if any(value is None for value in values):
                 _error("ACCEPTANCE_SCHEMA_INVALID")
             _opaque(self.replay_measurements_fingerprint)
-            for value in values[1:9]:
+            _opaque(self.observation_fingerprint)
+            for value in (
+                self.recall_at_5,
+                self.mrr,
+                self.top_1_error,
+                self.review_rate,
+                self.pattern_reuse_rate,
+                self.operator_correction_rate,
+                self.suspension_rate,
+                self.availability,
+            ):
                 _ratio(value)
             _count(self.p95_latency_ns)
             _count(self.index_size_bytes)
@@ -173,9 +206,13 @@ class HardGateEvidence:
     replay_fingerprint: str
     source_before_fingerprint: str
     source_after_fingerprint: str
+    group_action_observation_fingerprint: str
+    outage_oracle_fingerprint: str
     current_top_level_group_count: int
     repeat_top_level_group_count: int
     disputed_individual_decision_count: int
+    contradiction_count: int
+    decision_mismatch_count: int
     forbidden_merge_count: int
     double_membership_count: int
     relevant_nonzero_row_coverage: Ratio
@@ -194,12 +231,16 @@ class HardGateEvidence:
             self.replay_fingerprint,
             self.source_before_fingerprint,
             self.source_after_fingerprint,
+            self.group_action_observation_fingerprint,
+            self.outage_oracle_fingerprint,
         ):
             _opaque(value)
         for value in (
             self.current_top_level_group_count,
             self.repeat_top_level_group_count,
             self.disputed_individual_decision_count,
+            self.contradiction_count,
+            self.decision_mismatch_count,
             self.forbidden_merge_count,
             self.double_membership_count,
             self.calculation_mismatch_count,
@@ -233,6 +274,7 @@ class ShadowAcceptanceDecision:
             _error("ACCEPTANCE_SCHEMA_INVALID")
         if (
             not isinstance(self.reason_codes, tuple)
+            or len(self.reason_codes) > _MAX_REASON_CODES
             or any(
                 not isinstance(code, str) or not _CODE.fullmatch(code) for code in self.reason_codes
             )
@@ -248,7 +290,19 @@ class ShadowAcceptanceDecision:
         ):
             if value is not None:
                 _opaque(value)
-        if self.status is ShadowAcceptanceStatus.PASS and self.reason_codes:
+        if self.status is ShadowAcceptanceStatus.PASS and (
+            self.reason_codes
+            or any(
+                value is None
+                for value in (
+                    self.replay_fingerprint,
+                    self.promotion_fingerprint,
+                    self.hard_gate_fingerprint,
+                    self.threshold_fingerprint,
+                    self.operational_fingerprint,
+                )
+            )
+        ):
             _error("ACCEPTANCE_SCHEMA_INVALID")
         if self.status is not ShadowAcceptanceStatus.PASS and not self.reason_codes:
             _error("ACCEPTANCE_SCHEMA_INVALID")
@@ -277,6 +331,86 @@ def _decision(
     return ShadowAcceptanceDecision(**values, fingerprint=replay_fingerprint(values))
 
 
+def _revalidate_supplied(
+    report: GroupingReplayReport | None,
+    promotion: PromotionDecision | None,
+    gates: HardGateEvidence | None,
+    thresholds: OwnerThresholds | None,
+    operational: OperationalEvidence | None,
+) -> None:
+    """Re-run exact DTO validation after any hostile post-construction mutation."""
+    try:
+        nested: list[object] = []
+        if report is not None:
+            if (
+                type(report.baseline_metrics) is not SplitReplayMetrics
+                or type(report.holdout_metrics) is not SplitReplayMetrics
+                or type(report.measurements) is not ReplayMeasurements
+                or type(report.measurements.index) is not IndexMeasurement
+            ):
+                _error("ACCEPTANCE_SCHEMA_INVALID")
+            nested.extend(
+                (
+                    report.baseline_metrics,
+                    report.holdout_metrics,
+                    report.measurements.index,
+                    report.measurements,
+                    report,
+                )
+            )
+            for metric in (report.baseline_metrics, report.holdout_metrics):
+                for ratio in (metric.coverage_rows, metric.coverage_groups, metric.precision):
+                    _ratio(ratio)
+                for name in (
+                    "support_document_set_count",
+                    "contradiction_count",
+                    "forbidden_merge_count",
+                    "manual_group_before",
+                    "manual_group_after",
+                    "manual_action_before",
+                    "manual_action_after",
+                    "unresolved_before",
+                    "unresolved_after",
+                    "changed_category_count",
+                    "changed_mode_count",
+                    "changed_unit_count",
+                    "decision_mismatch_count",
+                    "double_membership_count",
+                    "calculation_mismatch_count",
+                    "xlsx_mismatch_count",
+                ):
+                    _count(getattr(metric, name))
+            samples = report.measurements.latency_samples_ns
+            if type(samples) is not tuple or len(samples) > _MAX_LATENCY_SAMPLES:
+                _error("ACCEPTANCE_SCHEMA_INVALID")
+            for sample in samples:
+                _count(sample)
+            _count(report.measurements.p50_latency_ns)
+            _count(report.measurements.p95_latency_ns)
+            if report.measurements.index.size_bytes is not None:
+                _count(report.measurements.index.size_bytes)
+        if promotion is not None:
+            if len(promotion.reason_codes) > _MAX_REASON_CODES:
+                _error("ACCEPTANCE_SCHEMA_INVALID")
+            nested.append(promotion)
+        nested.extend(value for value in (gates, thresholds, operational) if value is not None)
+        for value in nested:
+            if not hasattr(value, "__post_init__"):
+                _error("ACCEPTANCE_SCHEMA_INVALID")
+            value.__post_init__()
+            _sealed(value)
+    except (
+        AttributeError,
+        TypeError,
+        ValueError,
+        GroupingReplayError,
+        ShadowAcceptanceError,
+    ) as exc:
+        if isinstance(exc, ShadowAcceptanceError):
+            raise
+        _error("ACCEPTANCE_SCHEMA_INVALID")
+
+
 def evaluate_shadow_acceptance(
     report: GroupingReplayReport | None,
     promotion: PromotionDecision | None,
@@ -294,10 +428,11 @@ def evaluate_shadow_acceptance(
         OperationalEvidence,
     )
     if any(
-        value is not None and not isinstance(value, kind)
+        value is not None and type(value) is not kind
         for value, kind in zip(supplied, expected, strict=True)
     ):
         _error("ACCEPTANCE_SCHEMA_INVALID")
+    _revalidate_supplied(report, promotion, gates, thresholds, operational)
     missing = []
     if report is None:
         missing.append("REPLAY_REPORT_MISSING")
@@ -357,6 +492,9 @@ def evaluate_shadow_acceptance(
         != sum(metric.calculation_mismatch_count for metric in replay_metrics)
         or gates.xlsx_mismatch_count != sum(metric.xlsx_mismatch_count for metric in replay_metrics)
         or gates.deterministic_repeatability != report.deterministic_repeatability
+        or gates.contradiction_count != sum(metric.contradiction_count for metric in replay_metrics)
+        or gates.decision_mismatch_count
+        != sum(metric.decision_mismatch_count for metric in replay_metrics)
     ):
         reasons.append("HARD_GATE_METRICS_MISMATCH")
     if (
@@ -372,6 +510,10 @@ def evaluate_shadow_acceptance(
         reasons.append("DISPUTED_DECISION_LIMIT_EXCEEDED")
     if gates.forbidden_merge_count:
         reasons.append("FORBIDDEN_MERGE_PRESENT")
+    if gates.contradiction_count:
+        reasons.append("CONTRADICTION_PRESENT")
+    if gates.decision_mismatch_count:
+        reasons.append("DECISION_MISMATCH_PRESENT")
     if gates.double_membership_count:
         reasons.append("DOUBLE_MEMBERSHIP_PRESENT")
     if gates.relevant_nonzero_row_coverage != Ratio(1, 1) or any(

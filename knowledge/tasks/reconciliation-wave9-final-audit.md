@@ -1,6 +1,6 @@
 ---
 type: task
-status: draft
+status: done
 card_status: frozen
 version: 1
 work_id: reconciliation-wave9-v1
@@ -34,3 +34,11 @@ calculation/XLSX equivalence, Qdrant-outage isolation, deterministic reporting,
 safe persistence and absence of activation/runtime wiring. Reject any path that
 can report `PASS` with missing evidence or mutate registry, review state,
 workbooks, production routes or external services.
+
+## Result
+
+The initial candidate was rejected with 3 HIGH and 2 MEDIUM findings. Bounded
+recovery `reconciliation-wave9-p6-recovery-v1` closed all findings. Independent
+re-audit accepted candidate `12b9522a342ef09f4ab6ae9385a54f3d5a6b3f33`
+with zero HIGH and zero MEDIUM findings; 49 focused tests and scoped static
+checks passed. No spreadsheet changes or production/runtime wiring were found.

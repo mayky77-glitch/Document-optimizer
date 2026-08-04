@@ -16,11 +16,13 @@ from .acceptance import (
     ShadowAcceptanceDecision,
     ShadowAcceptanceStatus,
 )
+from .acceptance_runner import ShadowAcceptanceInputs, run_shadow_acceptance
 from .replay import replay_fingerprint
 
 RECONCILIATION_SHADOW_ACCEPTANCE_REPORT_VERSION = "ReconciliationShadowAcceptanceReport-1.0"
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}\Z")
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_MAX_REPORT_BYTES = 16 * 1024
 
 
 class ShadowAcceptanceReportError(ValueError):
@@ -35,9 +37,15 @@ def _schema_error() -> None:
     raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID")
 
 
-def _sealed_decision(decision: object) -> ShadowAcceptanceDecision:
+def _sealed_decision(
+    decision: object, inputs: ShadowAcceptanceInputs | None
+) -> ShadowAcceptanceDecision:
     if type(decision) is not ShadowAcceptanceDecision:
         _schema_error()
+    try:
+        decision.__post_init__()
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID") from exc
     if decision.version != RECONCILIATION_SHADOW_ACCEPTANCE_VERSION:
         _schema_error()
     if not isinstance(decision.status, ShadowAcceptanceStatus):
@@ -62,6 +70,17 @@ def _sealed_decision(decision: object) -> ShadowAcceptanceDecision:
             _schema_error()
     if not isinstance(decision.fingerprint, str) or not _HASH.fullmatch(decision.fingerprint):
         _schema_error()
+    if decision.status is ShadowAcceptanceStatus.PASS and any(
+        value is None
+        for value in (
+            decision.replay_fingerprint,
+            decision.promotion_fingerprint,
+            decision.hard_gate_fingerprint,
+            decision.threshold_fingerprint,
+            decision.operational_fingerprint,
+        )
+    ):
+        _schema_error()
     values = {
         field.name: getattr(decision, field.name)
         for field in fields(decision)
@@ -69,12 +88,23 @@ def _sealed_decision(decision: object) -> ShadowAcceptanceDecision:
     }
     if decision.fingerprint != replay_fingerprint(values):
         _schema_error()
+    if decision.status is ShadowAcceptanceStatus.PASS:
+        if type(inputs) is not ShadowAcceptanceInputs:
+            _schema_error()
+        try:
+            expected = run_shadow_acceptance(inputs)
+        except ValueError as exc:
+            raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID") from exc
+        if expected != decision:
+            _schema_error()
     return decision
 
 
-def shadow_acceptance_report_payload(decision: ShadowAcceptanceDecision) -> dict[str, object]:
+def shadow_acceptance_report_payload(
+    decision: ShadowAcceptanceDecision, *, inputs: ShadowAcceptanceInputs | None = None
+) -> dict[str, object]:
     """Return only the controlled acceptance aggregate, not its source evidence."""
-    sealed = _sealed_decision(decision)
+    sealed = _sealed_decision(decision, inputs)
     return {
         "schema_version": RECONCILIATION_SHADOW_ACCEPTANCE_REPORT_VERSION,
         "status": sealed.status.value,
@@ -83,11 +113,13 @@ def shadow_acceptance_report_payload(decision: ShadowAcceptanceDecision) -> dict
     }
 
 
-def shadow_acceptance_report_bytes(decision: ShadowAcceptanceDecision) -> bytes:
+def shadow_acceptance_report_bytes(
+    decision: ShadowAcceptanceDecision, *, inputs: ShadowAcceptanceInputs | None = None
+) -> bytes:
     """Encode the controlled aggregate as canonical, newline-terminated JSON."""
     try:
         encoded = json.dumps(
-            shadow_acceptance_report_payload(decision),
+            shadow_acceptance_report_payload(decision, inputs=inputs),
             allow_nan=False,
             ensure_ascii=True,
             separators=(",", ":"),
@@ -95,22 +127,81 @@ def shadow_acceptance_report_bytes(decision: ShadowAcceptanceDecision) -> bytes:
         ).encode("ascii")
     except (TypeError, ValueError) as exc:
         raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID") from exc
-    return encoded + b"\n"
+    payload = encoded + b"\n"
+    if len(payload) > _MAX_REPORT_BYTES:
+        raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID")
+    return payload
 
 
-def _validate_output_path(path: object) -> Path:
-    if not isinstance(path, Path) or not path.is_absolute() or path.name in {"", ".", ".."}:
+def _open_verified_output_parent(path: object) -> tuple[Path, list[int]]:
+    if (
+        not isinstance(path, Path)
+        or not path.is_absolute()
+        or path.name in {"", ".", ".."}
+        or any(component in {".", ".."} for component in path.parts)
+    ):
         raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
     try:
-        parent_status = path.parent.lstat()
+        descriptor = os.open(path.anchor, flags)
+        descriptors.append(descriptor)
+        for component in path.parent.parts[1:]:
+            descriptor = os.open(component, flags, dir_fd=descriptors[-1])
+            descriptors.append(descriptor)
+        _verify_no_git_ancestor(descriptors)
+        _verify_current_ancestry(descriptors[-1])
+    except OSError as exc:
+        _close_descriptors(descriptors)
+        raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE") from exc
+    except ShadowAcceptanceReportError:
+        _close_descriptors(descriptors)
+        raise
+    return path, descriptors
+
+
+def _verify_no_git_ancestor(descriptors: list[int]) -> None:
+    for descriptor in descriptors:
+        try:
+            os.stat(".git", dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE") from exc
+        raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
+
+
+def _verify_current_ancestry(parent_fd: int) -> None:
+    """Walk the held directory's current parents, detecting post-open moves."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.dup(parent_fd)
+    visited: set[tuple[int, int]] = set()
+    try:
+        while True:
+            current = os.fstat(descriptor)
+            identity = (current.st_dev, current.st_ino)
+            if identity in visited:
+                raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
+            visited.add(identity)
+            _verify_no_git_ancestor([descriptor])
+            ancestor = os.open("..", flags, dir_fd=descriptor)
+            parent = os.fstat(ancestor)
+            if (parent.st_dev, parent.st_ino) == identity:
+                os.close(ancestor)
+                return
+            os.close(descriptor)
+            descriptor = ancestor
     except OSError as exc:
         raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE") from exc
-    if stat.S_ISLNK(parent_status.st_mode) or not stat.S_ISDIR(parent_status.st_mode):
-        raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
-    for ancestor in (path.parent, *path.parent.parents):
-        if (ancestor / ".git").exists():
-            raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
-    return path
+    finally:
+        with suppress(OSError):
+            os.close(descriptor)
+
+
+def _close_descriptors(descriptors: list[int]) -> None:
+    for descriptor in reversed(descriptors):
+        with suppress(OSError):
+            os.close(descriptor)
 
 
 def _existing_output_is_safe(parent_fd: int, name: str, *, overwrite: bool) -> None:
@@ -136,17 +227,23 @@ def _write_all(fd: int, payload: bytes) -> None:
 
 
 def write_shadow_acceptance_report(
-    path: Path, decision: ShadowAcceptanceDecision, *, overwrite: bool
+    path: Path,
+    decision: ShadowAcceptanceDecision,
+    *,
+    overwrite: bool,
+    inputs: ShadowAcceptanceInputs | None = None,
 ) -> bytes:
     """Atomically publish a mode-0600 report outside a Git worktree."""
-    payload = shadow_acceptance_report_bytes(decision)
-    output = _validate_output_path(path)
-    parent_fd = -1
+    if type(overwrite) is not bool:
+        raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
+    payload = shadow_acceptance_report_bytes(decision, inputs=inputs)
+    if len(payload) > _MAX_REPORT_BYTES:
+        raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID")
+    output, descriptors = _open_verified_output_parent(path)
+    parent_fd = descriptors[-1]
     temp_fd = -1
     temp_name = ""
     try:
-        flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
-        parent_fd = os.open(output.parent, flags)
         _existing_output_is_safe(parent_fd, output.name, overwrite=overwrite)
         temp_name = f".{output.name}.{secrets.token_hex(16)}.tmp"
         temp_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
@@ -158,7 +255,31 @@ def write_shadow_acceptance_report(
             raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
         os.close(temp_fd)
         temp_fd = -1
-        os.replace(temp_name, output.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        _verify_no_git_ancestor(descriptors)
+        _verify_current_ancestry(parent_fd)
+        if overwrite:
+            os.replace(temp_name, output.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            temp_name = ""
+        else:
+            try:
+                os.link(
+                    temp_name,
+                    output.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError as exc:
+                raise ShadowAcceptanceReportError("REPORT_OUTPUT_EXISTS") from exc
+            os.unlink(temp_name, dir_fd=parent_fd)
+            temp_name = ""
+        try:
+            _verify_current_ancestry(parent_fd)
+        except ShadowAcceptanceReportError:
+            with suppress(FileNotFoundError):
+                os.unlink(output.name, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+            raise
         os.fsync(parent_fd)
         return payload
     except ShadowAcceptanceReportError:
@@ -171,5 +292,4 @@ def write_shadow_acceptance_report(
         if temp_name and parent_fd >= 0:
             with suppress(FileNotFoundError):
                 os.unlink(temp_name, dir_fd=parent_fd)
-        if parent_fd >= 0:
-            os.close(parent_fd)
+        _close_descriptors(descriptors)
