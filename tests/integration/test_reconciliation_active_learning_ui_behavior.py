@@ -92,6 +92,14 @@ const payload = (items) => ({ active_learning_queue: {
   items,
 } });
 const root = new Element("div");
+const findButton = (element, label) => {
+  if (element.tagName === "button" && element.textContent === label) return element;
+  for (const child of element.children) {
+    const found = findButton(child, label);
+    if (found) return found;
+  }
+  return null;
+};
 let submitted = [];
 let review;
 review = new Review({
@@ -127,6 +135,10 @@ for (const malformed of [
   assert.strictEqual(review.queue, null);
   assert.strictEqual(renderedText(root).includes("private-injected-value"), false);
 }
+assert.strictEqual(review.render(payload([{ ...first, split_member_refs: [[ref("a")]] }])), false);
+assert.strictEqual(review.queue, null);
+assert.strictEqual(review.render(payload(Array.from({ length: 513 }, () => first))), false);
+assert.strictEqual(review.queue, null);
 assert.strictEqual(review.render(payload([second, first])), false);
 assert.strictEqual(
   JSON.stringify([...review.cardsById.keys()]),
@@ -140,7 +152,10 @@ assert.strictEqual(review.render(payload([second])), true);
 assert.strictEqual(document.activeElement, review.heading);
 
 review.render(payload([first]));
-await review.save(review.queue.items[0], "reject");
+assert.strictEqual(renderedText(root).includes("Затронутая стоимость, коп.: 4"), true);
+const rejectButton = findButton(root, "Отклонить");
+assert.ok(rejectButton);
+await rejectButton.listeners.get("click")();
 assert.strictEqual(JSON.stringify(Object.keys(submitted[0]).sort()), JSON.stringify([
   "action", "expected_autosave_fingerprint", "expected_item_fingerprint",
   "expected_queue_fingerprint", "item_id", "queue_id", "split_member_refs", "version",
@@ -149,9 +164,14 @@ assert.strictEqual(submitted[0].version, "ActiveLearningShadowRequest-1.0");
 assert.strictEqual(JSON.stringify(submitted[0].split_member_refs), "[]");
 
 review.render(payload([first]));
-await review.save(review.queue.items[0], "split");
+const splitButton = findButton(root, "Разделить");
+assert.ok(splitButton);
+await splitButton.listeners.get("click")();
 assert.strictEqual(JSON.stringify(submitted[1].split_member_refs), JSON.stringify(split));
 assert.strictEqual(document.activeElement, review.cardsById.get(first.item_id));
+
+review.render(payload([item("3", { allowed_actions: [], split_member_refs: [] })]));
+assert.strictEqual(renderedText(root).includes("Действия для этого вопроса недоступны."), true);
 
 review.submitShadowAction = async () => {
   throw Object.assign(new Error("stale"), { code: "stale_state" });

@@ -69,7 +69,12 @@
     } catch {
       throw new Error("Панель вернула непонятный ответ. Повторите сверку.");
     }
-    if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Сверка не выполнена. Проверьте документы и повторите действие.");
+    if (!response.ok) {
+      const error = new Error(typeof payload.error === "string" ? payload.error : "Сверка не выполнена. Проверьте документы и повторите действие.");
+      const controlledCode = payload?.code === "stale_state" ? "stale_state" : "";
+      if (controlledCode) error.code = controlledCode;
+      throw error;
+    }
     return payload;
   };
 

@@ -5,6 +5,7 @@
   const SHADOW_REQUEST_VERSION = "ActiveLearningShadowRequest-1.0";
   const MAX_INTEGER_AGGREGATE = 2147483647;
   const MAX_PRESENTATION_CODES = 32;
+  const MAX_QUEUE_ITEMS = 512;
   const MAX_SPLIT_GROUPS = 64;
   const MAX_MEMBER_REFS = 512;
   const QUEUE_ID = /^active-learning-queue-[0-9a-f]{64}$/;
@@ -72,6 +73,7 @@
   const splitRefs = (value) => {
     if (!Array.isArray(value) || value.length > MAX_SPLIT_GROUPS) return null;
     if (!value.length) return [];
+    if (value.length < 2) return null;
     const groups = value.map((group) => {
       if (!Array.isArray(group) || !group.length) return null;
       return group.every((ref) => opaque(ref, SHA_REF)) && ascending(group) ? group : null;
@@ -129,7 +131,8 @@
   };
 
   const parseQueue = (value) => {
-    if (!exactKeys(value, QUEUE_KEYS) || value.version !== WEB_QUEUE_VERSION || !Array.isArray(value.items)) return null;
+    if (!exactKeys(value, QUEUE_KEYS) || value.version !== WEB_QUEUE_VERSION
+      || !Array.isArray(value.items) || value.items.length > MAX_QUEUE_ITEMS) return null;
     const queueId = opaque(value.queue_id, QUEUE_ID);
     const expectedQueueFingerprint = opaque(value.expected_queue_fingerprint, SHA_REF);
     const expectedAutosaveFingerprint = opaque(value.expected_autosave_fingerprint, SHA_REF);
@@ -238,7 +241,10 @@
       const coverage = document.createElement("p");
       coverage.className = "active-learning-coverage";
       coverage.textContent = `${item.coverageFamilyCount} ${plural(item.coverageFamilyCount, "семейство", "семейства", "семейств")} · ${item.coverageGroupCount} ${plural(item.coverageGroupCount, "группа", "группы", "групп")} · ${item.affectedRowCount} ${plural(item.affectedRowCount, "строка", "строки", "строк")}`;
-      card.append(kind, mode, impact, coverage, this.buildDetails(item), this.buildActions(item, state));
+      const aggregates = document.createElement("p");
+      aggregates.className = "active-learning-reason";
+      aggregates.textContent = `Затронутая стоимость, коп.: ${item.affectedCostMinorUnits} · Документов: ${item.documentFrequencyCount}`;
+      card.append(kind, mode, impact, coverage, aggregates, this.buildDetails(item), this.buildActions(item, state));
       return card;
     }
 
@@ -275,13 +281,20 @@
       const actions = document.createElement("div");
       actions.className = "active-learning-actions";
       if (state !== "ready") return actions;
+      if (!item.allowedActions.length) {
+        const hint = document.createElement("p");
+        hint.className = "active-learning-action-hint";
+        hint.textContent = "Действия для этого вопроса недоступны.";
+        actions.append(hint);
+        return actions;
+      }
       item.allowedActions.forEach((action) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = `active-learning-action is-${action}`;
         button.textContent = ACTION_LABELS.get(action);
         button.disabled = this.savingItemId === item.itemId;
-        button.addEventListener("click", () => { void this.save(item, action); });
+        button.addEventListener("click", () => this.save(item, action));
         actions.append(button);
       });
       return actions;

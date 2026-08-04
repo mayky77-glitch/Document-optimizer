@@ -18,6 +18,8 @@ def test_active_learning_asset_is_published_and_additive_to_package_review() -> 
     assert "window.ReconciliationActiveLearning?.supports(payload)" in admin
     assert "reviewFocusRestored = activeLearningReview.render(payload) === true" in admin
     assert "if (!reviewFocusRestored) reviewPanel.focus({ preventScroll: true });" in admin
+    assert 'payload?.code === "stale_state"' in admin
+    assert "error.code = controlledCode" in admin
 
 
 def test_active_learning_accepts_only_the_closed_web_queue_and_request_shapes() -> None:
@@ -35,6 +37,9 @@ def test_active_learning_accepts_only_the_closed_web_queue_and_request_shapes() 
     assert "exactKeys(value, QUEUE_KEYS)" in script
     assert "exactKeys(value, ITEM_KEYS)" in script
     assert "Number.isSafeInteger(value)" in script
+    assert "MAX_QUEUE_ITEMS = 512" in script
+    assert "value.items.length > MAX_QUEUE_ITEMS" in script
+    assert "if (value.length < 2) return null;" in script
     assert ".sort(" not in script
 
 
@@ -46,7 +51,7 @@ def test_active_learning_localizes_only_closed_codes_and_keeps_opaque_ids_out_of
     for forbidden in (
         "value.title",
         "category_label",
-        "reason",
+        "value.reason",
         "slots",
         "differences",
         "examples",
