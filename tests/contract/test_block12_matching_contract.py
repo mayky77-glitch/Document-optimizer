@@ -28,6 +28,7 @@ def test_public_versions_strategies_and_fixed_decimal_policy() -> None:
         MatchStrategy.NORMALIZED_NAME_CONTEXT,
         MatchStrategy.CONFIGURATION_RULE,
         MatchStrategy.FUZZY_REVIEW,
+        MatchStrategy.AUTHORITATIVE_REVIEW,
     )
     assert MatchingPolicy().fuzzy_threshold == Decimal("0.750000")
     with pytest.raises(TypeError):

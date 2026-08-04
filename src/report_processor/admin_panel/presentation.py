@@ -297,6 +297,17 @@ def _issue_record(issue: object, context: Mapping[str, object]) -> dict[str, obj
         "severity": _enum_value(getattr(issue, "severity", "manual_review")),
         "message": _public_text(getattr(issue, "message", "Требуется проверка.")),
     }
+    if code == "HIERARCHY_COST_MISMATCH":
+        for field_name in (
+            "position_code",
+            "parent_amount",
+            "direct_children_amount",
+            "delta",
+            "tolerance",
+        ):
+            value = getattr(issue, field_name, None)
+            if value is not None:
+                record[field_name] = _public_text(value)
     if context:
         record["context"] = public_context(context)
     return record
