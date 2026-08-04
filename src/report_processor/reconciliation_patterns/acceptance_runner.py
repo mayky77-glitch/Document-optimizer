@@ -213,23 +213,31 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
     )
     if any(type(value) is not kind for value, kind in zip(values, expected, strict=True)):
         _error()
+    report = inputs.report
+    baseline_metrics = getattr(report, "baseline_metrics", None)
+    holdout_metrics = getattr(report, "holdout_metrics", None)
+    measurements = getattr(report, "measurements", None)
+    index = getattr(measurements, "index", None)
     if (
-        type(inputs.report.baseline_metrics) is not SplitReplayMetrics
-        or type(inputs.report.holdout_metrics) is not SplitReplayMetrics
-        or type(inputs.report.measurements) is not ReplayMeasurements
-        or type(inputs.report.measurements.index) is not IndexMeasurement
+        type(baseline_metrics) is not SplitReplayMetrics
+        or type(holdout_metrics) is not SplitReplayMetrics
+        or type(measurements) is not ReplayMeasurements
+        or type(index) is not IndexMeasurement
     ):
         _error()
-    if len(inputs.promotion.reason_codes) > 64:
+    reason_codes = getattr(inputs.promotion, "reason_codes", None)
+    if type(reason_codes) is not tuple or len(reason_codes) > 64:
         _error()
     for snapshot in (inputs.baseline, inputs.holdout):
-        for count in (snapshot.row_count, snapshot.review_row_count, snapshot.review_group_count):
+        for name in ("row_count", "review_row_count", "review_group_count"):
+            count = getattr(snapshot, name, None)
             if type(count) is not int or not 0 <= count <= _MAX_SIGNED_64:
                 _error()
-        for refs in (snapshot.source_set_refs, snapshot.document_set_refs):
+        for name in ("source_set_refs", "document_set_refs"):
+            refs = getattr(snapshot, name, None)
             if type(refs) is not tuple or len(refs) > _MAX_SNAPSHOT_REFS:
                 _error()
-    samples = inputs.report.measurements.latency_samples_ns
+    samples = getattr(measurements, "latency_samples_ns", None)
     if (
         type(samples) is not tuple
         or len(samples) > _MAX_LATENCY_SAMPLES
@@ -260,7 +268,6 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
         )
     ):
         _error()
-    report = inputs.report
     gates = inputs.gates
     if (
         report.baseline_snapshot_fingerprint != inputs.baseline.fingerprint

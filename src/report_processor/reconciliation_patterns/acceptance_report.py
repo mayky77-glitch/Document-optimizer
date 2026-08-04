@@ -262,6 +262,7 @@ def write_shadow_acceptance_report(
         if overwrite:
             os.replace(temp_name, output.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             temp_name = ""
+            published = True
         else:
             try:
                 os.link(
@@ -273,9 +274,9 @@ def write_shadow_acceptance_report(
                 )
             except FileExistsError as exc:
                 raise ShadowAcceptanceReportError("REPORT_OUTPUT_EXISTS") from exc
+            published = True
             os.unlink(temp_name, dir_fd=parent_fd)
             temp_name = ""
-        published = True
         try:
             _verify_current_ancestry(parent_fd)
         except ShadowAcceptanceReportError:
