@@ -70,3 +70,30 @@ def test_report_rejects_raw_codes_and_fingerprint_tampering() -> None:
     with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
         acceptance_report.shadow_acceptance_report_bytes(decision)
     assert error.value.code == "REPORT_SCHEMA_INVALID"
+
+
+def test_report_rejects_pass_without_every_bound_evidence_fingerprint() -> None:
+    decision = _decision()
+    values = {
+        field: getattr(decision, field)
+        for field in (
+            "status",
+            "reason_codes",
+            "replay_fingerprint",
+            "promotion_fingerprint",
+            "hard_gate_fingerprint",
+            "threshold_fingerprint",
+            "operational_fingerprint",
+            "version",
+        )
+    }
+    values["operational_fingerprint"] = None
+    forged = acceptance.ShadowAcceptanceDecision(
+        **values,
+        fingerprint=replay.replay_fingerprint(values),
+    )
+
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.shadow_acceptance_report_bytes(forged)
+
+    assert error.value.code == "REPORT_SCHEMA_INVALID"
