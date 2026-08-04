@@ -243,8 +243,6 @@ def write_shadow_acceptance_report(
     parent_fd = descriptors[-1]
     temp_fd = -1
     temp_name = ""
-    published = False
-    committed = False
     try:
         _existing_output_is_safe(parent_fd, output.name, overwrite=overwrite)
         temp_name = f".{output.name}.{secrets.token_hex(16)}.tmp"
@@ -262,7 +260,6 @@ def write_shadow_acceptance_report(
         if overwrite:
             os.replace(temp_name, output.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             temp_name = ""
-            published = True
         else:
             try:
                 os.link(
@@ -274,7 +271,6 @@ def write_shadow_acceptance_report(
                 )
             except FileExistsError as exc:
                 raise ShadowAcceptanceReportError("REPORT_OUTPUT_EXISTS") from exc
-            published = True
             os.unlink(temp_name, dir_fd=parent_fd)
             temp_name = ""
         try:
@@ -283,10 +279,8 @@ def write_shadow_acceptance_report(
             with suppress(FileNotFoundError):
                 os.unlink(output.name, dir_fd=parent_fd)
             os.fsync(parent_fd)
-            published = False
             raise
         os.fsync(parent_fd)
-        committed = True
         return payload
     except ShadowAcceptanceReportError:
         raise
@@ -298,7 +292,4 @@ def write_shadow_acceptance_report(
         if temp_name and parent_fd >= 0:
             with suppress(FileNotFoundError):
                 os.unlink(temp_name, dir_fd=parent_fd)
-        if published and not committed:
-            with suppress(FileNotFoundError):
-                os.unlink(output.name, dir_fd=parent_fd)
         _close_descriptors(descriptors)

@@ -216,3 +216,28 @@ def test_report_writer_rolls_back_if_open_parent_moves_under_git(tmp_path, monke
     assert moved
     assert error.value.code == "REPORT_OUTPUT_UNSAFE"
     assert not (moved_parent / "acceptance.json").exists()
+
+
+def test_overwrite_fsync_failure_never_removes_both_old_and_new_report(
+    tmp_path, monkeypatch
+) -> None:
+    target = tmp_path / "acceptance.json"
+    target.write_bytes(b"old")
+    expected = acceptance_report.shadow_acceptance_report_bytes(_decision())
+    original_fsync = acceptance_report.os.fsync
+    calls = 0
+
+    def fail_directory_fsync(descriptor):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("directory fsync failed")
+        return original_fsync(descriptor)
+
+    monkeypatch.setattr(acceptance_report.os, "fsync", fail_directory_fsync)
+
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.write_shadow_acceptance_report(target, _decision(), overwrite=True)
+
+    assert error.value.code == "REPORT_OUTPUT_IO"
+    assert target.read_bytes() in {b"old", expected}
