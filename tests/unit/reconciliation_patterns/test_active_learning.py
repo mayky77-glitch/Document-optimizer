@@ -147,6 +147,11 @@ def test_split_requires_complete_sorted_unique_membership() -> None:
             )
 
 
+def test_split_is_impossible_for_an_item_with_fewer_than_two_members() -> None:
+    with pytest.raises(ActiveLearningContractError):
+        _item("1", member_refs=(_ref("d"),))
+
+
 def test_stale_queue_or_item_fails_closed_with_zero_mutation() -> None:
     item = _item("1")
     queue = _queue(item)
