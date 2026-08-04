@@ -1,4 +1,4 @@
-status: p6-recovery-required
+status: accepted-offline-shadow-only
 work_id: reconciliation-wave9-v1
 objective: "Aggregate existing replay and operational evidence into a fail-closed shadow acceptance decision without production activation."
 source_base_sha: b733595caeb243a8d9f8aa3b3bb6c5b3fb623fd9
@@ -62,7 +62,15 @@ acceptance:
   - deterministic controlled JSON report written mode 0600 outside Git
   - independent P6 final audit
 p6_audit:
-  candidate_sha: 0b73f3e99c29e567eac4a259e80cc3859dee1660
-  result: rejected
-  findings: "3 HIGH, 2 MEDIUM"
+  initial_candidate_sha: 0b73f3e99c29e567eac4a259e80cc3859dee1660
+  accepted_candidate_sha: 12b9522a342ef09f4ab6ae9385a54f3d5a6b3f33
+  accepted_integration_sha: 5ac5d9653e041e5f092fc23a7f52be353a378d45
+  result: accepted
+  findings: "0 HIGH, 0 MEDIUM after bounded recovery"
   recovery_work_id: reconciliation-wave9-p6-recovery-v1
+verification:
+  focused: "49 passed"
+  full: "1370 passed, 24 skipped, 2 unchanged unrelated failures"
+  static: "Ruff, format and diff checks passed"
+  spreadsheets: none
+  runtime_wiring: none

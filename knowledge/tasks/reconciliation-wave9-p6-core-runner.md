@@ -1,6 +1,6 @@
 ---
 type: task
-status: draft
+status: done
 card_status: frozen
 version: 1
 work_id: reconciliation-wave9-p6-recovery-v1

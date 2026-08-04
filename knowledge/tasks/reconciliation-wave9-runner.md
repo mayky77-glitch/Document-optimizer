@@ -1,6 +1,6 @@
 ---
 type: task
-status: draft
+status: done
 card_status: frozen
 version: 1
 work_id: reconciliation-wave9-v1
@@ -12,7 +12,7 @@ profile: L2
 routing_grade: P4
 assigned_model: gpt-5.6-terra
 reasoning_effort: high
-launch_status: planned
+launch_status: completed
 source_base_sha: b733595caeb243a8d9f8aa3b3bb6c5b3fb623fd9
 branch: codex/wave9-shadow-acceptance-runner
 write_scope:

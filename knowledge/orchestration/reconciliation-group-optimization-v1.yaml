@@ -126,6 +126,13 @@ completed_waves:
       - ActiveLearningShadowRequest-1.0
     evidence: "45 focused tests passed; full suite 1321 passed and 24 skipped with 2 unchanged unrelated failures; scoped static checks and independent P6 recovery re-audit accepted with 0 HIGH and 0 MEDIUM"
     integration: inert-shadow-only-not-registered-in-production-runtime
+  wave9:
+    contracts:
+      - ReconciliationShadowAcceptance-1.0
+      - ReconciliationShadowAcceptanceRunner-1.0
+      - ReconciliationShadowAcceptanceReport-1.0
+    evidence: "49 focused tests passed; full suite 1370 passed and 24 skipped with 2 unchanged unrelated failures; scoped static checks and independent P6 recovery re-audit accepted with 0 HIGH and 0 MEDIUM"
+    integration: offline-shadow-only-not-wired-to-production-runtime
 wave6_status: accepted-offline-inert
 wave6_recovery:
   prior_blockers: 5
@@ -133,7 +140,7 @@ wave6_recovery:
   p6_process_gate: passed
   p6_final_audit: accepted
 wave6_evidence: "core focused 16 passed; adapter 16 passed; combined 32 passed; relevant reconciliation 129 passed; independent P6 audit accepted"
-next_wave: wave9-acceptance-rollout-gate0
+next_wave: owner-activation-decisions-and-representative-independent-holdout
 wave7_status: accepted-offline-inert
 wave7_recovery:
   original_p6_findings: 3
@@ -146,9 +153,15 @@ wave8_recovery:
   method: bounded-orda-recovery-and-independent-reaudit
   accepted_integration_sha: b90f71f5a3869ad00971ead543d82205d8933a83
   final_p6_reaudit: "accepted; 0 HIGH, 0 MEDIUM"
-wave9_status: gate0-frozen-shadow-only
+wave9_status: accepted-offline-shadow-only
 wave9_contract: ReconciliationShadowAcceptance-1.0
 wave9_production_activation: stop
+wave9_recovery:
+  original_p6_findings: "3 HIGH, 2 MEDIUM"
+  method: bounded-orda-recovery-and-independent-reaudit
+  accepted_candidate_sha: 12b9522a342ef09f4ab6ae9385a54f3d5a6b3f33
+  accepted_integration_sha: 5ac5d9653e041e5f092fc23a7f52be353a378d45
+  final_p6_reaudit: "accepted; 0 HIGH, 0 MEDIUM"
 waves:
   - gate0
   - wave0-dense-rag-verification

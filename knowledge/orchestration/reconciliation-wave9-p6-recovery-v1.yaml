@@ -1,4 +1,4 @@
-status: gate0-frozen
+status: completed
 work_id: reconciliation-wave9-p6-recovery-v1
 objective: "Close Wave 9 forged PASS, provenance, seal, bounds and filesystem-boundary findings without activation."
 source_base_sha: 0b73f3e99c29e567eac4a259e80cc3859dee1660
@@ -31,3 +31,9 @@ acceptance:
   - report parent path is opened component-by-component without following symlinks
   - overwrite is exact bool and report remains atomic mode 0600 outside Git
   - independent P6 re-audit returns 0 HIGH and 0 MEDIUM
+result:
+  accepted_candidate_sha: 12b9522a342ef09f4ab6ae9385a54f3d5a6b3f33
+  accepted_integration_sha: 13a06d8eba526116b6eb9ce9e5c6855fcd25bfc6
+  focused: "49 passed"
+  audit: "accepted; 0 HIGH, 0 MEDIUM"
+  production_activation: stop
