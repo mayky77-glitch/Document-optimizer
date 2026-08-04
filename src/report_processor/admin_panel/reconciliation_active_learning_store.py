@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import stat
 import tempfile
-from contextlib import suppress
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +41,9 @@ _INTENT_KEYS = {
     "action",
     "split_member_refs",
 }
+
+_THREAD_LOCKS_GUARD = threading.Lock()
+_THREAD_LOCKS: dict[str, threading.RLock] = {}
 
 
 class ActiveLearningStoreError(ActiveLearningContractError):
@@ -151,15 +157,30 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
     return result
 
 
+def _thread_lock(path: Path) -> threading.RLock:
+    key = os.path.abspath(os.fspath(path))
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _THREAD_LOCKS[key] = lock
+        return lock
+
+
 class ActiveLearningShadowStore:
     """Persist current plus one previous shadow autosave in a private file."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
 
+    @property
+    def lock_path(self) -> Path:
+        return self.path.with_name(f".{self.path.name}.lock")
+
     def load(self, queue: ActiveLearningQueue) -> ActiveLearningShadowAutosave:
-        current, _previous = self._load_envelope(queue)
-        return current
+        with self._locked():
+            current, _previous = self._load_envelope(queue)
+            return current
 
     def apply(
         self,
@@ -168,26 +189,27 @@ class ActiveLearningShadowStore:
         *,
         expected_autosave_fingerprint: str,
     ) -> ActiveLearningShadowAutosave:
-        current, _previous = self._load_envelope(queue)
-        if expected_autosave_fingerprint != current.fingerprint:
-            raise ActiveLearningStoreStaleConflict("stale autosave version")
-        item = next(
-            (candidate for candidate in queue.items if candidate.item_id == intent.item_id),
-            None,
-        )
-        if (
-            intent.queue_id != queue.queue_id
-            or intent.expected_queue_fingerprint != queue.fingerprint
-            or item is None
-            or intent.expected_item_fingerprint != item.fingerprint
-        ):
-            raise ActiveLearningStoreStaleConflict("stale queue or item version")
-        try:
-            updated = transition_shadow_intent(queue, current, intent)
-        except ActiveLearningConflictError as error:
-            raise ActiveLearningStoreConflict("shadow intent conflict") from error
-        self._write_envelope(updated, current)
-        return updated
+        with self._locked():
+            current, _previous = self._load_envelope(queue)
+            if expected_autosave_fingerprint != current.fingerprint:
+                raise ActiveLearningStoreStaleConflict("stale autosave version")
+            item = next(
+                (candidate for candidate in queue.items if candidate.item_id == intent.item_id),
+                None,
+            )
+            if (
+                intent.queue_id != queue.queue_id
+                or intent.expected_queue_fingerprint != queue.fingerprint
+                or item is None
+                or intent.expected_item_fingerprint != item.fingerprint
+            ):
+                raise ActiveLearningStoreStaleConflict("stale queue or item version")
+            try:
+                updated = transition_shadow_intent(queue, current, intent)
+            except ActiveLearningConflictError as error:
+                raise ActiveLearningStoreConflict("shadow intent conflict") from error
+            self._write_envelope(updated, current)
+            return updated
 
     def undo(
         self,
@@ -195,13 +217,14 @@ class ActiveLearningShadowStore:
         *,
         expected_autosave_fingerprint: str,
     ) -> ActiveLearningShadowAutosave:
-        current, previous = self._load_envelope(queue)
-        if expected_autosave_fingerprint != current.fingerprint:
-            raise ActiveLearningStoreStaleConflict("stale autosave version")
-        if previous is None:
-            raise ActiveLearningUndoUnavailable("no shadow undo is available")
-        self._write_envelope(previous, None)
-        return previous
+        with self._locked():
+            current, previous = self._load_envelope(queue)
+            if expected_autosave_fingerprint != current.fingerprint:
+                raise ActiveLearningStoreStaleConflict("stale autosave version")
+            if previous is None:
+                raise ActiveLearningUndoUnavailable("no shadow undo is available")
+            self._write_envelope(previous, None)
+            return previous
 
     def _load_envelope(
         self, queue: ActiveLearningQueue
@@ -231,7 +254,96 @@ class ActiveLearningShadowStore:
             previous.queue_id != queue.queue_id or previous.queue_fingerprint != queue.fingerprint
         ):
             raise ActiveLearningStoreStaleConflict("stored undo state is stale")
+        self._rebind_autosave(queue, current, label="current")
+        if previous is not None:
+            self._rebind_autosave(queue, previous, label="previous")
         return current, previous
+
+    @staticmethod
+    def _rebind_autosave(
+        queue: ActiveLearningQueue,
+        autosave: ActiveLearningShadowAutosave,
+        *,
+        label: str,
+    ) -> None:
+        rebound = ActiveLearningShadowAutosave(queue.queue_id, queue.fingerprint)
+        try:
+            for intent in autosave.intents:
+                rebound = transition_shadow_intent(queue, rebound, intent)
+        except ActiveLearningConflictError as error:
+            raise ActiveLearningStoreConflict(
+                f"stored {label} intent does not bind the exact queue"
+            ) from error
+        if rebound != autosave:
+            raise ActiveLearningStoreConflict(f"stored {label} intent set is non-canonical")
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        with _thread_lock(self.lock_path):
+            self._ensure_parent()
+            descriptor = self._open_lock_file()
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                self._validate_lock_file(descriptor)
+                yield
+            except OSError as error:
+                raise ActiveLearningStoreError("shadow store lock failed") from error
+            finally:
+                with suppress(OSError):
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                with suppress(OSError):
+                    os.close(descriptor)
+
+    def _open_lock_file(self) -> int:
+        flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        created = False
+        descriptor: int | None = None
+        try:
+            try:
+                descriptor = os.open(
+                    self.lock_path,
+                    flags | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                created = True
+            except FileExistsError:
+                descriptor = os.open(self.lock_path, flags)
+            if created:
+                os.fchmod(descriptor, 0o600)
+            self._validate_lock_file(descriptor)
+            return descriptor
+        except ActiveLearningStoreError:
+            if descriptor is not None:
+                with suppress(OSError):
+                    os.close(descriptor)
+            raise
+        except OSError as error:
+            if descriptor is not None:
+                with suppress(OSError):
+                    os.close(descriptor)
+            raise ActiveLearningStoreError("shadow store lock cannot be opened") from error
+
+    def _validate_lock_file(self, descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        path_metadata = self.lock_path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(path_metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != (path_metadata.st_dev, path_metadata.st_ino)
+        ):
+            raise ActiveLearningStoreError("shadow store lock must be a regular file")
+        if stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_size != 0:
+            raise ActiveLearningStoreError("shadow store lock must be empty mode 0600")
+
+    def _ensure_parent(self) -> None:
+        try:
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if self.path.parent.is_symlink() or not self.path.parent.is_dir():
+                raise ActiveLearningStoreError("shadow store parent is invalid")
+        except ActiveLearningStoreError:
+            raise
+        except OSError as error:
+            raise ActiveLearningStoreError("shadow store parent cannot be prepared") from error
 
     def _read_private(self) -> bytes:
         if self.path.is_symlink():
@@ -272,9 +384,7 @@ class ActiveLearningShadowStore:
         if len(payload) > MAX_STORE_BYTES:
             raise ActiveLearningStoreError("shadow store payload exceeds its bound")
         try:
-            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            if self.path.parent.is_symlink() or not self.path.parent.is_dir():
-                raise ActiveLearningStoreError("shadow store parent is invalid")
+            self._ensure_parent()
             descriptor, temporary = tempfile.mkstemp(
                 prefix=f".{self.path.name}.",
                 suffix=".tmp",
