@@ -18,6 +18,7 @@ from report_processor.admin_panel.reconciliation_active_learning_api import (
     parse_active_learning_shadow_request,
 )
 from report_processor.reconciliation_patterns.active_learning import (
+    MAX_QUEUE_ITEMS,
     ActiveLearningContractError,
     ActiveLearningMode,
     ActiveLearningPresentation,
@@ -147,7 +148,25 @@ def test_split_only_source_item_projects_as_a_safe_no_action_web_item() -> None:
 
 def test_exported_web_dtos_reject_forged_or_unbounded_values() -> None:
     queue, autosave, item = _queue()
-    valid = project_active_learning_web_queue(queue, autosave).items[0]
+    web_queue = project_active_learning_web_queue(queue, autosave)
+    valid = web_queue.items[0]
+
+    maximum_items = tuple(
+        dataclasses.replace(valid, item_id=f"active-learning-item-{index:064x}")
+        for index in range(MAX_QUEUE_ITEMS)
+    )
+    assert len(dataclasses.replace(web_queue, items=maximum_items).items) == MAX_QUEUE_ITEMS
+    with pytest.raises(ActiveLearningContractError):
+        dataclasses.replace(
+            web_queue,
+            items=(
+                *maximum_items,
+                dataclasses.replace(
+                    valid,
+                    item_id=f"active-learning-item-{MAX_QUEUE_ITEMS:064x}",
+                ),
+            ),
+        )
 
     with pytest.raises(ActiveLearningContractError):
         dataclasses.replace(valid, affected_row_count=True)
@@ -191,6 +210,37 @@ def test_exported_web_dtos_reject_forged_or_unbounded_values() -> None:
                 "action": ShadowAction.REJECT.value,
                 "split_member_refs": [],
             }
+        )
+
+
+def test_web_projection_hides_all_actions_for_row_overrides() -> None:
+    queue, _autosave, item = _queue()
+    overridden = dataclasses.replace(item, row_override_count=1)
+    overridden_queue = ActiveLearningQueue(
+        queue.queue_ref,
+        queue.source_fingerprint_refs,
+        (overridden,),
+    )
+    autosave = ActiveLearningShadowAutosave(
+        overridden_queue.queue_id,
+        overridden_queue.fingerprint,
+    )
+
+    web_item = project_active_learning_web_queue(overridden_queue, autosave).items[0]
+
+    assert web_item.allowed_actions == ()
+    assert web_item.split_member_refs == ()
+    with pytest.raises(ActiveLearningContractError):
+        project_active_learning_web_queue(
+            overridden_queue,
+            autosave,
+            split_proposals=(
+                ActiveLearningWebSplitProposal(
+                    overridden.item_id,
+                    overridden.fingerprint,
+                    ((_ref("6"),), (_ref("7"),)),
+                ),
+            ),
         )
 
 
