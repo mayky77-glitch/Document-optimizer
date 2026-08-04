@@ -1,0 +1,21 @@
+status: remediation-planning
+work_id: excel-pdf-reconciliation-wave10-remediation-v3
+objective: "Close the two residual independent-review findings for Wave 10."
+integration_branch: codex/excel-pdf-reconciliation-wave10
+max_parallel: 1
+max_spawns: 2
+max_retries: 0
+merge_method: merge-no-ff
+production_activation: stop
+attempt_policy: "second and final implementation attempt for each residual finding"
+data_policy:
+  allowed: "synthetic runtime fixtures only"
+  forbidden: "private corpus discovery, OCR, reconciliation, paths or metadata"
+findings:
+  - preserve controlled relative context for one or multiple exact-scope unsupported PDFs
+  - reject a workbook package that produces no comparable rows
+acceptance:
+  - focused package tests and Ruff pass
+  - independent review reports no HIGH or MEDIUM finding
+  - full suite has no new failure relative to the recorded baseline
+  - no additional private package is opened

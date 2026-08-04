@@ -1,4 +1,4 @@
-status: remediation-planning
+status: superseded-by-remediation-v3
 work_id: excel-pdf-reconciliation-wave10-remediation-v2
 objective: "Close independent Wave 10 review findings without reading additional private packages."
 integration_branch: codex/excel-pdf-reconciliation-wave10
@@ -7,6 +7,7 @@ max_spawns: 2
 max_retries: 1
 merge_method: merge-no-ff
 production_activation: stop
+superseded_by: excel-pdf-reconciliation-wave10-remediation-v3
 data_policy:
   allowed: "synthetic runtime fixtures only"
   forbidden: "private corpus discovery, OCR, reconciliation, paths or metadata"
