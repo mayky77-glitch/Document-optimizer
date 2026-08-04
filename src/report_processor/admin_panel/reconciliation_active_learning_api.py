@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Final
 
 from report_processor.admin_panel.reconciliation_active_learning_store import (
     ActiveLearningShadowStore,
@@ -23,6 +24,17 @@ from report_processor.reconciliation_patterns.active_learning import (
     ShadowAction,
 )
 
+SHADOW_REQUEST_VERSION: Final = "ActiveLearningShadowRequest-1.0"
+_REQUEST_KEYS = {
+    "version",
+    "queue_id",
+    "expected_queue_fingerprint",
+    "expected_autosave_fingerprint",
+    "item_id",
+    "expected_item_fingerprint",
+    "action",
+    "split_member_refs",
+}
 _INTENT_KEYS = {
     "version",
     "queue_id",
@@ -41,6 +53,47 @@ class ActiveLearningApiCode(StrEnum):
     STALE_STATE = "stale_state"
     UNDO_UNAVAILABLE = "undo_unavailable"
     STORE_INVALID = "store_invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveLearningShadowRequest:
+    """The exact closed request schema accepted by the unregistered facade."""
+
+    queue_id: str
+    expected_queue_fingerprint: str
+    expected_autosave_fingerprint: str
+    item_id: str
+    expected_item_fingerprint: str
+    action: ShadowAction
+    split_member_refs: tuple[tuple[str, ...], ...]
+    version: str = SHADOW_REQUEST_VERSION
+
+    def __post_init__(self) -> None:
+        if self.version != SHADOW_REQUEST_VERSION:
+            raise ActiveLearningContractError("shadow request version mismatch")
+        # The core intent constructor owns all opaque-token and canonical split checks.
+        ActiveLearningIntent(
+            queue_id=self.queue_id,
+            expected_queue_fingerprint=self.expected_queue_fingerprint,
+            item_id=self.item_id,
+            expected_item_fingerprint=self.expected_item_fingerprint,
+            action=self.action,
+            split_member_refs=self.split_member_refs,
+        )
+        ActiveLearningShadowAutosave(
+            self.queue_id,
+            self.expected_autosave_fingerprint,
+        )
+
+    def to_intent(self) -> ActiveLearningIntent:
+        return ActiveLearningIntent(
+            queue_id=self.queue_id,
+            expected_queue_fingerprint=self.expected_queue_fingerprint,
+            item_id=self.item_id,
+            expected_item_fingerprint=self.expected_item_fingerprint,
+            action=self.action,
+            split_member_refs=self.split_member_refs,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +117,35 @@ def _parse_split_refs(value: object) -> tuple[tuple[str, ...], ...]:
     return tuple(groups)
 
 
+def parse_active_learning_shadow_request(payload: object) -> ActiveLearningShadowRequest:
+    """Parse exactly one closed wire shape; no outer CAS token is accepted."""
+
+    if not isinstance(payload, dict) or set(payload) != _REQUEST_KEYS:
+        raise ActiveLearningContractError("active-learning shadow request shape is invalid")
+    if payload["version"] != SHADOW_REQUEST_VERSION:
+        raise ActiveLearningContractError("active-learning shadow request version mismatch")
+    try:
+        action = ShadowAction(payload["action"])
+    except (TypeError, ValueError) as error:
+        raise ActiveLearningContractError("active-learning action is invalid") from error
+    return ActiveLearningShadowRequest(
+        queue_id=payload["queue_id"],
+        expected_queue_fingerprint=payload["expected_queue_fingerprint"],
+        expected_autosave_fingerprint=payload["expected_autosave_fingerprint"],
+        item_id=payload["item_id"],
+        expected_item_fingerprint=payload["expected_item_fingerprint"],
+        action=action,
+        split_member_refs=_parse_split_refs(payload["split_member_refs"]),
+    )
+
+
 def parse_active_learning_intent(payload: object) -> ActiveLearningIntent:
-    """Parse the exact closed JSON shape into a validated core intent."""
+    """Preserve the lower-level core-intent parser for non-web callers.
+
+    The web facade must use :func:`parse_active_learning_shadow_request`; this
+    compatibility function deliberately has no autosave token because an intent
+    is not itself a wire request.
+    """
 
     if not isinstance(payload, dict) or set(payload) != _INTENT_KEYS:
         raise ActiveLearningContractError("active-learning intent shape is invalid")
@@ -91,17 +171,22 @@ def apply_active_learning_payload(
     queue: ActiveLearningQueue,
     payload: object,
     *,
-    expected_autosave_fingerprint: str,
+    expected_autosave_fingerprint: str | None = None,
 ) -> ActiveLearningApiResult:
     try:
-        intent = parse_active_learning_intent(payload)
+        request = parse_active_learning_shadow_request(payload)
+        if (
+            expected_autosave_fingerprint is not None
+            and expected_autosave_fingerprint != request.expected_autosave_fingerprint
+        ):
+            raise ActiveLearningContractError("outer autosave token does not match request")
     except ActiveLearningContractError:
         return ActiveLearningApiResult(ActiveLearningApiCode.INVALID_REQUEST)
     try:
         autosave = store.apply(
             queue,
-            intent,
-            expected_autosave_fingerprint=expected_autosave_fingerprint,
+            request.to_intent(),
+            expected_autosave_fingerprint=request.expected_autosave_fingerprint,
         )
     except ActiveLearningStoreStaleConflict:
         return ActiveLearningApiResult(ActiveLearningApiCode.STALE_STATE)
@@ -135,9 +220,12 @@ def undo_active_learning(
 
 
 __all__ = [
+    "SHADOW_REQUEST_VERSION",
     "ActiveLearningApiCode",
     "ActiveLearningApiResult",
+    "ActiveLearningShadowRequest",
     "apply_active_learning_payload",
     "parse_active_learning_intent",
+    "parse_active_learning_shadow_request",
     "undo_active_learning",
 ]
