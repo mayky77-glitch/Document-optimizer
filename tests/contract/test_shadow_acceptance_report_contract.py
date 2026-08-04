@@ -96,3 +96,30 @@ def test_report_rejects_pass_without_every_bound_evidence_fingerprint() -> None:
         acceptance_report.shadow_acceptance_report_bytes(forged)
 
     assert error.value.code == "REPORT_SCHEMA_INVALID"
+
+
+def test_report_revalidates_core_reason_code_bound_after_tampering() -> None:
+    decision = _decision()
+    reason_codes = tuple(f"REASON_{index:02d}" for index in range(65))
+    values = {
+        field: getattr(decision, field)
+        for field in (
+            "status",
+            "replay_fingerprint",
+            "promotion_fingerprint",
+            "hard_gate_fingerprint",
+            "threshold_fingerprint",
+            "operational_fingerprint",
+            "version",
+        )
+    }
+    values["status"] = acceptance.ShadowAcceptanceStatus.FAIL
+    values["reason_codes"] = reason_codes
+    object.__setattr__(decision, "status", acceptance.ShadowAcceptanceStatus.FAIL)
+    object.__setattr__(decision, "reason_codes", reason_codes)
+    object.__setattr__(decision, "fingerprint", replay.replay_fingerprint(values))
+
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.shadow_acceptance_report_bytes(decision)
+
+    assert error.value.code == "REPORT_SCHEMA_INVALID"

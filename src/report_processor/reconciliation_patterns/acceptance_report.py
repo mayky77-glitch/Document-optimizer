@@ -39,6 +39,10 @@ def _schema_error() -> None:
 def _sealed_decision(decision: object) -> ShadowAcceptanceDecision:
     if type(decision) is not ShadowAcceptanceDecision:
         _schema_error()
+    try:
+        decision.__post_init__()
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID") from exc
     if decision.version != RECONCILIATION_SHADOW_ACCEPTANCE_VERSION:
         _schema_error()
     if not isinstance(decision.status, ShadowAcceptanceStatus):
