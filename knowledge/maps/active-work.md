@@ -26,7 +26,7 @@ Completed global package review:
 
 Completed reconciliation handoff: [[../tasks/reconciliation-real-data-resilience-v4-final]].
 
-Completed Excel-PDF Wave 10: [[../orchestration/excel-pdf-reconciliation-wave10-v1]].
+Completed Excel-PDF Wave 10: [[../tasks/excel-pdf-wave10-final]].
 
 - [[../ORCHESTRATION|Orchestration rules]]
 - Последняя принятая волна: [[../tasks/summary-layout-xlsx|Карточная XLSX-сводка]],

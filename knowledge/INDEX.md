@@ -29,7 +29,7 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[maps/active-work|Active work]] — live task links.
 - [[DECISIONS]] — accepted cross-cutting decisions.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
-- [[orchestration/excel-pdf-reconciliation-wave10-v1|Excel-PDF reconciliation Wave 10]] — local package CLI, bounded OCR and privacy gates.
+- [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.
 
 ## Freshness
 

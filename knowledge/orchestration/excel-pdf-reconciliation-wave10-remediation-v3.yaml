@@ -1,4 +1,4 @@
-status: remediation-planning
+status: completed
 work_id: excel-pdf-reconciliation-wave10-remediation-v3
 objective: "Close the two residual independent-review findings for Wave 10."
 integration_branch: codex/excel-pdf-reconciliation-wave10
@@ -7,6 +7,13 @@ max_spawns: 2
 max_retries: 0
 merge_method: merge-no-ff
 production_activation: stop
+accepted_integration_sha: 3a37ece3d96ea183e078bdba7dd365b853881048
+release_state: "ready on Wave 10 branch; main merge deferred until all waves complete"
+evidence:
+  focused: "43 passed; Ruff and format clean"
+  full: "1413 passed, 25 skipped, 2 known unrelated failures"
+  independent_review: "no HIGH or MEDIUM findings"
+  private_data: "no additional pilot opened during remediation; no source document committed"
 attempt_policy: "second and final implementation attempt for each residual finding"
 data_policy:
   allowed: "synthetic runtime fixtures only"
