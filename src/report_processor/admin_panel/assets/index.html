@@ -10,6 +10,7 @@
     <script src="/static/theme.js" defer></script>
     <script src="/static/reconciliation-batch-filters.js" defer></script>
     <script src="/static/reconciliation-batches.js" defer></script>
+    <script src="/static/reconciliation-active-learning.js" defer></script>
     <script src="/static/admin.js" defer></script>
   </head>
   <body>
@@ -65,6 +66,7 @@
         </div>
         <p id="review-state" class="review-state" role="status" aria-live="polite"></p>
         <div id="source-issues" class="source-issues" aria-live="polite"></div>
+        <div id="active-learning-review" hidden></div>
         <div id="review-groups" class="review-groups" aria-label="Группы строк для проверки"></div>
         <p id="empty-review" class="empty-review" hidden>Строк для решения нет. Результат готов к скачиванию.</p>
         <div id="review-apply-area" class="review-apply-area" hidden>
