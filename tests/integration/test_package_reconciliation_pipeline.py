@@ -1,4 +1,7 @@
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
+
+import pytest
 
 from report_processor.package_reconciliation.models import (
     PackageWorkbookFacts,
@@ -44,7 +47,7 @@ def test_pipeline_ocr_extracts_only_exact_work_code_aosr_candidate(tmp_path: Pat
             None,
             "Устройство основания",
             "м",
-            None,
+                Decimal("1"),
             None,
         ),
     )
@@ -73,4 +76,15 @@ def test_pipeline_ocr_extracts_only_exact_work_code_aosr_candidate(tmp_path: Pat
     report = reconcile_package(tmp_path, workbook_extractor=workbook, pdf_extractor=evidence)
 
     assert calls == [PurePosixPath("6.1.10.1.1/АОСР.pdf")]
-    assert report.results[1].status == "MATCH"
+    assert len(report.results) == 1
+    assert report.results[0].status == "MATCH"
+
+
+def test_pipeline_preserves_discovery_symlink_root_rejection(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(source, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked package root"):
+        reconcile_package(linked)

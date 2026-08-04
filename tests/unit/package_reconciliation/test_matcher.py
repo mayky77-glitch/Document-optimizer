@@ -1,6 +1,8 @@
 from decimal import Decimal
 from pathlib import PurePosixPath
 
+import pytest
+
 from report_processor.package_reconciliation.matcher import (
     drawing_codes_for_row,
     reconcile_row,
@@ -122,3 +124,52 @@ def test_equal_candidates_are_ambiguous_and_quantity_mismatch_is_reported() -> N
         reconcile_row(detail, PurePosixPath("акт.xlsx"), (candidate,), drawing_codes=context).status
         == "MISMATCH"
     )
+
+
+def test_project_code_signal_accepts_long_excel_code_and_shorter_pdf_backbone() -> None:
+    detail = _row(10, "6.1.10.1.1")
+    candidate = _pdf()
+
+    result = reconcile_row(
+        detail,
+        PurePosixPath("акт.xlsx"),
+        (candidate,),
+        drawing_codes=("0092.049.Р-123.Лист-7; unrelated",),
+    )
+
+    assert result.status == "MATCH"
+    assert "project_code_match" in result.reason_codes
+
+
+def test_reconciliation_rejects_absolute_or_traversal_paths() -> None:
+    with pytest.raises(ValueError, match="safe and relative"):
+        reconcile_row(_row(1, "1.1"), PurePosixPath("../акт.xlsx"), ())
+
+
+def test_project_code_signal_ranks_above_generic_work_name_similarity() -> None:
+    detail = _row(10, "6.1.10.1.1")
+    project_candidate = _pdf()
+    generic_candidate = PdfDocumentEvidence(
+        PurePosixPath("6.1.10.1.1/АОСР-2.pdf"),
+        "aosr",
+        1,
+        "text_layer",
+        None,
+        None,
+        (),
+        "Устройство основания",
+        (),
+        (),
+        None,
+        (),
+    )
+
+    result = reconcile_row(
+        detail,
+        PurePosixPath("акт.xlsx"),
+        (project_candidate, generic_candidate),
+        drawing_codes=("0092.049.Р-123",),
+    )
+
+    assert result.status == "MATCH"
+    assert result.pdf_path == project_candidate.relative_path

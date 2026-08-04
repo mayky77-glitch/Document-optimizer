@@ -23,8 +23,9 @@ def reconcile_package(
     pdf_extractor: PdfExtractor = analyse_pdf_document,
 ) -> ReconciliationReport:
     """Reconcile discovered packages without broad PDF OCR or guessed pairings."""
-    root = Path(package_root).resolve(strict=True)
+    root = Path(package_root)
     discovery = discover_document_packages(root)
+    root = root.resolve(strict=True)
     results = []
     for package in discovery.packages:
         results.extend(
@@ -44,7 +45,11 @@ def _reconcile_document_package(
         facts = workbook_extractor(root, workbook_path)
         for sheet in facts.sheets:
             sheet_rows = sheet.rows
-            all_rows.extend((workbook_path, row, sheet_rows) for row in sheet_rows)
+            all_rows.extend(
+                (workbook_path, row, sheet_rows)
+                for row in sheet_rows
+                if row.work_name and (row.quantity is not None or row.total_cost is not None)
+            )
     candidates_by_code = _exact_aosr_candidates(root, package, all_rows, pdf_extractor)
     return [
         reconcile_row(

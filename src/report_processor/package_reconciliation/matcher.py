@@ -35,6 +35,9 @@ class RowReconciliation:
     def __post_init__(self) -> None:
         if self.status not in STATUSES:
             raise ValueError("unsupported reconciliation status")
+        for path in (self.workbook_path, self.pdf_path):
+            if path is not None and (path.is_absolute() or ".." in path.parts):
+                raise ValueError("reconciliation paths must be safe and relative")
 
 
 def normalize_work_code(value: str | None) -> str | None:
@@ -93,9 +96,15 @@ def reconcile_row(
     supported = [(signals, candidate) for signals, candidate in scored if signals]
     if not supported:
         return _result(base, "NEEDS_REVIEW", ("independent_content_signal_missing",))
-    supported.sort(key=lambda item: (len(item[0]), item[1].relative_path.as_posix()), reverse=True)
-    top_count = len(supported[0][0])
-    top = [(signals, candidate) for signals, candidate in supported if len(signals) == top_count]
+    supported.sort(
+        key=lambda item: (_signal_weight(item[0]), item[1].relative_path.as_posix()), reverse=True
+    )
+    top_score = _signal_weight(supported[0][0])
+    top = [
+        (signals, candidate)
+        for signals, candidate in supported
+        if _signal_weight(signals) == top_score
+    ]
     if len(top) > 1:
         return _result(base, "AMBIGUOUS", ("equally_strong_candidates",))
     signals, candidate = top[0]
@@ -155,8 +164,7 @@ def _signals(
     row: WorkbookRowFact, candidate: PdfDocumentEvidence, drawing_codes: tuple[str, ...]
 ) -> tuple[str, ...]:
     signals: list[str] = []
-    backbone = {_normalise_code(code) for code in drawing_codes if _normalise_code(code)}
-    if backbone & {_normalise_code(code) for code in candidate.project_codes}:
+    if _project_code_signal(drawing_codes, candidate.project_codes):
         signals.append("project_code_match")
     if _similar_work_names(row.work_name, candidate.work_description):
         signals.append("work_description_similarity")
@@ -165,6 +173,43 @@ def _signals(
 
 def _normalise_code(value: str) -> str:
     return re.sub(r"[^a-zа-яё0-9]+", "", value.casefold())
+
+
+def _project_code_signal(drawing_codes: tuple[str, ...], project_codes: tuple[str, ...]) -> bool:
+    """Compare only substantial project-code backbones, never loose substrings."""
+    workbook_codes = [
+        code for drawing in drawing_codes for code in _project_code_fragments(drawing)
+    ]
+    pdf_codes = [code for value in project_codes for code in _project_code_fragments(value)]
+    return any(
+        full.startswith(prefix)
+        for full in workbook_codes
+        for prefix in pdf_codes
+        if len(full) > len(prefix)
+    ) or bool(set(workbook_codes) & set(pdf_codes))
+
+
+def _signal_weight(signals: tuple[str, ...]) -> int:
+    return sum(2 if signal == "project_code_match" else 1 for signal in signals)
+
+
+def _project_code_fragments(value: str) -> tuple[str, ...]:
+    fragments: list[str] = []
+    for section in value.split(";"):
+        for candidate in re.findall(
+            r"(?<!\w)[A-ZА-ЯЁ0-9]{1,24}(?:[./-][A-ZА-ЯЁ0-9]{1,24}){2,}(?!\w)",
+            section,
+            re.IGNORECASE,
+        ):
+            normalized = _normalise_code(candidate)
+            if (
+                candidate.count(".") >= 2
+                and len(normalized) >= 8
+                and re.search(r"\d", normalized)
+                and re.search(r"[a-zа-яё]", normalized)
+            ):
+                fragments.append(normalized)
+    return tuple(dict.fromkeys(fragments))
 
 
 def _similar_work_names(left: str | None, right: str | None) -> bool:
