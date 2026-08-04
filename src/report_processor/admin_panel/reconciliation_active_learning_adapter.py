@@ -13,6 +13,7 @@ from report_processor.reconciliation_patterns.active_learning import (
     INTENT_VERSION,
     MAX_INTEGER_AGGREGATE,
     MAX_PRESENTATION_CODES,
+    MAX_QUEUE_ITEMS,
     ActiveLearningContractError,
     ActiveLearningIntent,
     ActiveLearningMode,
@@ -171,6 +172,8 @@ class ActiveLearningWebQueue:
             raise ActiveLearningContractError("web queue version mismatch")
         if not isinstance(self.items, tuple):
             raise ActiveLearningContractError("web queue items must be a tuple")
+        if len(self.items) > MAX_QUEUE_ITEMS:
+            raise ActiveLearningContractError("web queue item count is out of bounds")
         if any(not isinstance(item, ActiveLearningWebItem) for item in self.items):
             raise ActiveLearningContractError("web queue items must be controlled records")
         ActiveLearningShadowAutosave(
@@ -224,11 +227,17 @@ def _web_item(
     item: ActiveLearningQueueItem,
     proposal: ActiveLearningWebSplitProposal | None,
 ) -> ActiveLearningWebItem:
-    split_member_refs = _validated_split(item, proposal)
-    allowed_actions = tuple(
-        action
-        for action in item.allowed_actions
-        if action is not ShadowAction.SPLIT or split_member_refs
+    if item.row_override_count and proposal is not None:
+        raise ActiveLearningContractError("row-overridden web items cannot accept split proposals")
+    split_member_refs = () if item.row_override_count else _validated_split(item, proposal)
+    allowed_actions = (
+        ()
+        if item.row_override_count
+        else tuple(
+            action
+            for action in item.allowed_actions
+            if action is not ShadowAction.SPLIT or split_member_refs
+        )
     )
     return ActiveLearningWebItem(
         item_id=item.item_id,
