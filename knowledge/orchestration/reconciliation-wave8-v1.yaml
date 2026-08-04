@@ -1,0 +1,56 @@
+status: gate0-frozen
+work_id: reconciliation-wave8-v1
+objective: "Build an inert active-learning queue, shadow intent adapter/store and optional operator UI without changing authoritative reconciliation runtime."
+source_base_sha: 1a152e344cb5578777479891508533a0c9971f27
+integration_branch: codex/reconciliation-group-optimization-wave8
+wave: 8
+max_parallel: 2
+max_spawns: 4
+max_retries: 1
+merge_method: merge-no-ff
+data_classification: restricted
+shared_paths_owner: integration
+runtime_wiring: forbidden
+production_activation: stop
+forbidden_paths:
+  - src/report_processor/admin_panel/reconciliation_state.py
+  - src/report_processor/admin_panel/reconciliation_review_routes.py
+  - src/report_processor/admin_panel/reconciliation_batch_store.py
+  - src/report_processor/admin_panel/reconciliation_batch_presentation.py
+  - src/report_processor/admin_panel/assets/reconciliation-batches.js
+  - src/report_processor/admin_panel/assets/reconciliation-batch-filters.js
+  - src/report_processor/reconciliation_patterns/pattern_registry.py
+  - src/report_processor/reconciliation_patterns/feedback_graph.py
+  - src/report_processor/reconciliation_grouping
+  - src/report_processor/calculation
+  - src/report_processor/excel_writer
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+contract_versions:
+  queue: ActiveLearningQueue-1.0
+  intent: ActiveLearningIntent-1.0
+  autosave: ActiveLearningShadowAutosave-1.0
+dependency_order:
+  - active-learning-core
+  - parallel:
+      - active-learning-adapter
+      - active-learning-ui
+baseline:
+  gate0: "84 passed"
+  existing_ui: "20 passed"
+  node_syntax: passed
+  worktree: clean
+acceptance:
+  focused: "core contract, adapter/store and optional UI tests"
+  regression: "legacy reconciliation package/review behavior unchanged"
+  static: "scoped Ruff, format, Node syntax and git diff checks"
+  final_review: P6
+owner_decisions_deferred_until_wave9:
+  - production queue weights and diversity policy
+  - promotion and rollback owners
+  - action effects beyond shadow intent
+  - example-display privacy policy
+  - shadow retention and undo depth
+  - route registration and mass-action eligibility
+  - holdout thresholds and rollout gates

@@ -131,6 +131,7 @@ wave7_recovery:
   method: one-bounded-red-first-recovery
   accepted_integration_sha: e67df0cbb377f4b9eac06d8b46747164deca3795
   final_p6_reaudit: accepted
+wave8_status: gate0-frozen-shadow-only
 waves:
   - gate0
   - wave0-dense-rag-verification
