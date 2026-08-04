@@ -18,8 +18,8 @@ def _digest(label: str) -> str:
 
 def _decision() -> acceptance.ShadowAcceptanceDecision:
     values = {
-        "status": acceptance.ShadowAcceptanceStatus.PASS,
-        "reason_codes": (),
+        "status": acceptance.ShadowAcceptanceStatus.FAIL,
+        "reason_codes": ("BLOCKED",),
         "replay_fingerprint": _digest("replay"),
         "promotion_fingerprint": _digest("promotion"),
         "hard_gate_fingerprint": _digest("gates"),
@@ -134,7 +134,7 @@ def test_report_writer_caps_payload_bytes(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         acceptance_report,
         "shadow_acceptance_report_bytes",
-        lambda decision: b"x" * (acceptance_report._MAX_REPORT_BYTES + 1),
+        lambda decision, *, inputs=None: b"x" * (acceptance_report._MAX_REPORT_BYTES + 1),
     )
 
     with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
@@ -158,3 +158,33 @@ def test_report_writer_rejects_ancestor_symlink_to_git(tmp_path) -> None:
         )
 
     assert error.value.code == "REPORT_OUTPUT_UNSAFE"
+
+
+def test_report_writer_never_clobbers_concurrent_output_without_overwrite(
+    tmp_path, monkeypatch
+) -> None:
+    target = tmp_path / "acceptance.json"
+    original_link = acceptance_report.os.link
+    raced = False
+
+    def create_destination_before_link(src, dst, **kwargs):
+        nonlocal raced
+        raced = True
+        descriptor = os.open(
+            dst,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=kwargs["dst_dir_fd"],
+        )
+        os.write(descriptor, b"concurrent")
+        os.close(descriptor)
+        return original_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(acceptance_report.os, "link", create_destination_before_link)
+
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.write_shadow_acceptance_report(target, _decision(), overwrite=False)
+
+    assert raced
+    assert error.value.code == "REPORT_OUTPUT_EXISTS"
+    assert target.read_bytes() == b"concurrent"

@@ -16,6 +16,7 @@ from .acceptance import (
     ShadowAcceptanceDecision,
     ShadowAcceptanceStatus,
 )
+from .acceptance_runner import ShadowAcceptanceInputs, run_shadow_acceptance
 from .replay import replay_fingerprint
 
 RECONCILIATION_SHADOW_ACCEPTANCE_REPORT_VERSION = "ReconciliationShadowAcceptanceReport-1.0"
@@ -36,7 +37,9 @@ def _schema_error() -> None:
     raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID")
 
 
-def _sealed_decision(decision: object) -> ShadowAcceptanceDecision:
+def _sealed_decision(
+    decision: object, inputs: ShadowAcceptanceInputs | None
+) -> ShadowAcceptanceDecision:
     if type(decision) is not ShadowAcceptanceDecision:
         _schema_error()
     try:
@@ -85,12 +88,23 @@ def _sealed_decision(decision: object) -> ShadowAcceptanceDecision:
     }
     if decision.fingerprint != replay_fingerprint(values):
         _schema_error()
+    if decision.status is ShadowAcceptanceStatus.PASS:
+        if type(inputs) is not ShadowAcceptanceInputs:
+            _schema_error()
+        try:
+            expected = run_shadow_acceptance(inputs)
+        except ValueError as exc:
+            raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID") from exc
+        if expected != decision:
+            _schema_error()
     return decision
 
 
-def shadow_acceptance_report_payload(decision: ShadowAcceptanceDecision) -> dict[str, object]:
+def shadow_acceptance_report_payload(
+    decision: ShadowAcceptanceDecision, *, inputs: ShadowAcceptanceInputs | None = None
+) -> dict[str, object]:
     """Return only the controlled acceptance aggregate, not its source evidence."""
-    sealed = _sealed_decision(decision)
+    sealed = _sealed_decision(decision, inputs)
     return {
         "schema_version": RECONCILIATION_SHADOW_ACCEPTANCE_REPORT_VERSION,
         "status": sealed.status.value,
@@ -99,11 +113,13 @@ def shadow_acceptance_report_payload(decision: ShadowAcceptanceDecision) -> dict
     }
 
 
-def shadow_acceptance_report_bytes(decision: ShadowAcceptanceDecision) -> bytes:
+def shadow_acceptance_report_bytes(
+    decision: ShadowAcceptanceDecision, *, inputs: ShadowAcceptanceInputs | None = None
+) -> bytes:
     """Encode the controlled aggregate as canonical, newline-terminated JSON."""
     try:
         encoded = json.dumps(
-            shadow_acceptance_report_payload(decision),
+            shadow_acceptance_report_payload(decision, inputs=inputs),
             allow_nan=False,
             ensure_ascii=True,
             separators=(",", ":"),
@@ -183,12 +199,16 @@ def _write_all(fd: int, payload: bytes) -> None:
 
 
 def write_shadow_acceptance_report(
-    path: Path, decision: ShadowAcceptanceDecision, *, overwrite: bool
+    path: Path,
+    decision: ShadowAcceptanceDecision,
+    *,
+    overwrite: bool,
+    inputs: ShadowAcceptanceInputs | None = None,
 ) -> bytes:
     """Atomically publish a mode-0600 report outside a Git worktree."""
     if type(overwrite) is not bool:
         raise ShadowAcceptanceReportError("REPORT_OUTPUT_UNSAFE")
-    payload = shadow_acceptance_report_bytes(decision)
+    payload = shadow_acceptance_report_bytes(decision, inputs=inputs)
     if len(payload) > _MAX_REPORT_BYTES:
         raise ShadowAcceptanceReportError("REPORT_SCHEMA_INVALID")
     output, descriptors = _open_verified_output_parent(path)
@@ -208,7 +228,21 @@ def write_shadow_acceptance_report(
         os.close(temp_fd)
         temp_fd = -1
         _verify_no_git_ancestor(descriptors)
-        os.replace(temp_name, output.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        if overwrite:
+            os.replace(temp_name, output.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        else:
+            try:
+                os.link(
+                    temp_name,
+                    output.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError as exc:
+                raise ShadowAcceptanceReportError("REPORT_OUTPUT_EXISTS") from exc
+            os.unlink(temp_name, dir_fd=parent_fd)
+            temp_name = ""
         os.fsync(parent_fd)
         return payload
     except ShadowAcceptanceReportError:

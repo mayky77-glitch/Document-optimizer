@@ -9,10 +9,13 @@ from enum import StrEnum
 from .replay import (
     GroupingReplayError,
     GroupingReplayReport,
+    IndexMeasurement,
     MeasurementStatus,
     PromotionDecision,
     PromotionVerdict,
     Ratio,
+    ReplayMeasurements,
+    SplitReplayMetrics,
     replay_fingerprint,
 )
 
@@ -58,8 +61,12 @@ def _count(value: object) -> int:
 def _ratio(value: object, *, defined: bool = True) -> Ratio:
     if (
         type(value) is not Ratio
+        or type(value.numerator) is not int
+        or type(value.denominator) is not int
         or not 0 <= value.numerator <= _MAX_SIGNED_64
         or not 0 <= value.denominator <= _MAX_SIGNED_64
+        or (value.denominator == 0 and value.numerator != 0)
+        or (value.denominator != 0 and value.numerator > value.denominator)
         or (defined and value.undefined)
     ):
         _error("ACCEPTANCE_SCHEMA_INVALID")
@@ -342,6 +349,13 @@ def _revalidate_supplied(
     )
     try:
         if len(promotion.reason_codes) > _MAX_REASON_CODES:
+            _error("ACCEPTANCE_SCHEMA_INVALID")
+        if (
+            type(report.baseline_metrics) is not SplitReplayMetrics
+            or type(report.holdout_metrics) is not SplitReplayMetrics
+            or type(report.measurements) is not ReplayMeasurements
+            or type(report.measurements.index) is not IndexMeasurement
+        ):
             _error("ACCEPTANCE_SCHEMA_INVALID")
         for metric in (report.baseline_metrics, report.holdout_metrics):
             for ratio in (metric.coverage_rows, metric.coverage_groups, metric.precision):

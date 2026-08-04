@@ -6,7 +6,12 @@ import dataclasses
 
 import pytest
 
-from report_processor.reconciliation_patterns import acceptance, acceptance_runner, replay
+from report_processor.reconciliation_patterns import (
+    acceptance,
+    acceptance_report,
+    acceptance_runner,
+    replay,
+)
 
 
 def _ref(value: str) -> str:
@@ -415,3 +420,56 @@ def test_runner_returns_unavailable_only_from_controlled_operational_dto() -> No
         changed
     )
     assert result.status is acceptance.ShadowAcceptanceStatus.UNAVAILABLE
+
+
+def test_report_accepts_pass_only_after_fresh_runner_verification() -> None:
+    inputs = _inputs()
+    decision = acceptance_runner.run_shadow_acceptance(inputs)
+
+    payload = acceptance_report.shadow_acceptance_report_bytes(decision, inputs=inputs)
+
+    assert b'"status":"PASS"' in payload
+    forged_values = {
+        field.name: getattr(decision, field.name)
+        for field in dataclasses.fields(decision)
+        if field.name != "fingerprint"
+    }
+    forged_values["replay_fingerprint"] = _ref("99")
+    forged = _sealed(acceptance.ShadowAcceptanceDecision, forged_values)
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.shadow_acceptance_report_bytes(forged, inputs=inputs)
+    assert error.value.code == "REPORT_SCHEMA_INVALID"
+
+
+def test_runner_rejects_nested_subclasses_and_signed_64_overflow() -> None:
+    inputs = _inputs()
+
+    class DerivedMetric(replay.SplitReplayMetrics):
+        pass
+
+    metric_values = {
+        field.name: getattr(inputs.report.baseline_metrics, field.name)
+        for field in dataclasses.fields(inputs.report.baseline_metrics)
+        if field.name != "fingerprint"
+    }
+    derived = _sealed(DerivedMetric, metric_values)
+    changed_report = _replace_sealed(inputs.report, baseline_metrics=derived)
+    changed = _replace_sealed(inputs, report=changed_report)
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
+        acceptance_runner.run_shadow_acceptance(changed)
+
+    oversized_snapshot = _replace_sealed(inputs.baseline, row_count=1 << 63)
+    changed = _replace_sealed(inputs, baseline=oversized_snapshot)
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
+        acceptance_runner.run_shadow_acceptance(changed)
+
+    oversized_measurements = _replace_sealed(
+        inputs.report.measurements,
+        latency_samples_ns=(1 << 63,) * 4,
+        p50_latency_ns=1 << 63,
+        p95_latency_ns=1 << 63,
+    )
+    changed_report = _replace_sealed(inputs.report, measurements=oversized_measurements)
+    changed = _replace_sealed(inputs, report=changed_report)
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
+        acceptance_runner.run_shadow_acceptance(changed)

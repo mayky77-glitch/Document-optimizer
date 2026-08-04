@@ -20,15 +20,19 @@ from .acceptance import (
 )
 from .replay import (
     GroupingReplayReport,
+    IndexMeasurement,
     PromotionDecision,
+    ReplayMeasurements,
     ReplaySnapshotIdentity,
     ReplaySplit,
+    SplitReplayMetrics,
     replay_fingerprint,
 )
 
 SHADOW_ACCEPTANCE_RUNNER_VERSION = "ReconciliationShadowAcceptanceRunner-1.0"
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _MAX_SIGNED_64 = (1 << 63) - 1
+_MAX_LATENCY_SAMPLES = 1_000_000
 
 
 class ShadowAcceptanceRunnerError(ShadowAcceptanceError):
@@ -210,7 +214,25 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
     )
     if any(type(value) is not kind for value, kind in zip(values, expected, strict=True)):
         _error()
+    if (
+        type(inputs.report.baseline_metrics) is not SplitReplayMetrics
+        or type(inputs.report.holdout_metrics) is not SplitReplayMetrics
+        or type(inputs.report.measurements) is not ReplayMeasurements
+        or type(inputs.report.measurements.index) is not IndexMeasurement
+    ):
+        _error()
     if len(inputs.promotion.reason_codes) > 64:
+        _error()
+    for snapshot in (inputs.baseline, inputs.holdout):
+        for count in (snapshot.row_count, snapshot.review_row_count, snapshot.review_group_count):
+            if type(count) is not int or not 0 <= count <= _MAX_SIGNED_64:
+                _error()
+    samples = inputs.report.measurements.latency_samples_ns
+    if (
+        type(samples) is not tuple
+        or len(samples) > _MAX_LATENCY_SAMPLES
+        or any(type(sample) is not int or not 0 <= sample <= _MAX_SIGNED_64 for sample in samples)
+    ):
         _error()
     try:
         for value in values:

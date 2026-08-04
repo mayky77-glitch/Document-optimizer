@@ -15,7 +15,7 @@ def _digest(label: str) -> str:
 
 
 def _decision(
-    *, status: acceptance.ShadowAcceptanceStatus = acceptance.ShadowAcceptanceStatus.PASS
+    *, status: acceptance.ShadowAcceptanceStatus = acceptance.ShadowAcceptanceStatus.FAIL
 ):
     values = {
         "status": status,
@@ -41,9 +41,9 @@ def test_report_is_canonical_controlled_aggregate_only() -> None:
     decoded = json.loads(payload)
     assert decoded == {
         "decision_fingerprint": _decision().fingerprint,
-        "reason_codes": [],
+        "reason_codes": ["BLOCKED"],
         "schema_version": "ReconciliationShadowAcceptanceReport-1.0",
-        "status": "PASS",
+        "status": "FAIL",
     }
     text = payload.decode("utf-8")
     for forbidden in ("replay", "promotion", "threshold", "operational", "path", "row", "formula"):
@@ -73,7 +73,7 @@ def test_report_rejects_raw_codes_and_fingerprint_tampering() -> None:
 
 
 def test_report_rejects_pass_without_every_bound_evidence_fingerprint() -> None:
-    decision = _decision()
+    decision = _decision(status=acceptance.ShadowAcceptanceStatus.PASS)
     values = {
         field: getattr(decision, field)
         for field in (
@@ -88,12 +88,21 @@ def test_report_rejects_pass_without_every_bound_evidence_fingerprint() -> None:
         )
     }
     values["operational_fingerprint"] = None
-    forged = _decision()
+    forged = _decision(status=acceptance.ShadowAcceptanceStatus.PASS)
     object.__setattr__(forged, "operational_fingerprint", None)
     object.__setattr__(forged, "fingerprint", replay.replay_fingerprint(values))
 
     with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
         acceptance_report.shadow_acceptance_report_bytes(forged)
+
+    assert error.value.code == "REPORT_SCHEMA_INVALID"
+
+
+def test_report_rejects_self_sealed_pass_without_runner_inputs() -> None:
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.shadow_acceptance_report_bytes(
+            _decision(status=acceptance.ShadowAcceptanceStatus.PASS)
+        )
 
     assert error.value.code == "REPORT_SCHEMA_INVALID"
 

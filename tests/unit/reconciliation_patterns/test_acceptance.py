@@ -287,6 +287,27 @@ def test_forged_values_and_raw_or_unbounded_values_fail_closed() -> None:
     assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
 
 
+@pytest.mark.parametrize(
+    ("numerator", "denominator"),
+    ((True, 1), (0.5, 1), (2, 1), (1, 0), (1 << 63, 1 << 63)),
+)
+def test_ratio_operands_are_revalidated_after_tampering(numerator, denominator) -> None:
+    ratio = replay.Ratio(1, 1)
+    object.__setattr__(ratio, "numerator", numerator)
+    object.__setattr__(ratio, "denominator", denominator)
+    values = {
+        field.name: getattr(_thresholds(), field.name)
+        for field in dataclasses.fields(_thresholds())
+        if field.name != "fingerprint"
+    }
+    values["min_recall_at_5"] = ratio
+
+    with pytest.raises(PatternRegistryError) as error:
+        _sealed(acceptance.OwnerThresholds, values)
+
+    assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
+
+
 def test_report_metric_sums_and_per_split_coverage_are_bound_to_hard_gates() -> None:
     report, promotion, gates, thresholds, operational = _input()
     metric = _reseal(report.baseline_metrics, forbidden_merge_count=1)
