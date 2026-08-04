@@ -1,56 +1,144 @@
 (() => {
   "use strict";
 
-  const STATES = new Set(["loading", "empty", "ready", "saving", "saved", "stale", "unavailable"]);
-  const ACTIONS = new Map([
+  const WEB_QUEUE_VERSION = "ActiveLearningWebQueue-1.0";
+  const SHADOW_REQUEST_VERSION = "ActiveLearningShadowRequest-1.0";
+  const MAX_INTEGER_AGGREGATE = 2147483647;
+  const MAX_PRESENTATION_CODES = 32;
+  const MAX_SPLIT_GROUPS = 64;
+  const MAX_MEMBER_REFS = 512;
+  const QUEUE_ID = /^active-learning-queue-[0-9a-f]{64}$/;
+  const ITEM_ID = /^active-learning-item-[0-9a-f]{64}$/;
+  const SHA_REF = /^sha256:[0-9a-f]{64}$/;
+  const QUEUE_KEYS = [
+    "version", "queue_id", "expected_queue_fingerprint", "expected_autosave_fingerprint", "items",
+  ];
+  const ITEM_KEYS = [
+    "item_id", "expected_item_fingerprint", "kind", "mode", "coverage_family_count",
+    "coverage_group_count", "affected_row_count", "affected_cost_minor_units",
+    "document_frequency_count", "expected_action_reduction", "summary_codes", "difference_codes",
+    "exception_codes", "allowed_actions", "split_member_refs",
+  ];
+  const KIND_LABELS = new Map([
+    ["pattern", "Шаблон для проверки"],
+    ["package", "Пакет для уточнения"],
+  ]);
+  const MODE_LABELS = new Map([
+    ["quantity_cost", "Количество + стоимость"],
+    ["cost_only", "Только стоимость"],
+  ]);
+  const ACTION_LABELS = new Map([
     ["accept_pattern", "Принять шаблон"],
     ["case_only", "Оставить только для этого случая"],
     ["split", "Разделить"],
     ["reject", "Отклонить"],
   ]);
-  const INTENT_VERSION = "ActiveLearningIntent-1.0";
-  const MAX_INTEGER_AGGREGATE = 2147483647;
-  const QUEUE_ID = /^active-learning-queue-[0-9a-f]{64}$/;
-  const ITEM_ID = /^active-learning-item-[0-9a-f]{64}$/;
-  const SHA_REF = /^sha256:[0-9a-f]{64}$/;
+  const CODE_LABELS = new Map([
+    ["authority_unattested", "Нет подтверждённого основания"],
+    ["cannot_link", "Нельзя объединять"],
+    ["category_difference", "Различается категория"],
+    ["critical_signature_difference", "Различается критический признак"],
+    ["hard_negative", "Есть подтверждённое исключение"],
+    ["mode_difference", "Различается способ учёта"],
+    ["outlier", "Есть исключение"],
+    ["package_candidate", "Кандидат в пакет"],
+    ["pattern_candidate", "Кандидат в шаблон"],
+    ["typed_signature_difference", "Различается типизированный признак"],
+    ["unit_difference", "Различается единица"],
+  ]);
+  const ACTION_ORDER = [...ACTION_LABELS.keys()];
   const asArray = (value) => Array.isArray(value) ? value : [];
-  const text = (value, fallback = "") => {
-    if (typeof value !== "string") return fallback;
-    const normalized = value.trim();
-    return normalized && normalized.length <= 200 ? normalized : fallback;
+  const exactKeys = (value, keys) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const actual = Object.keys(value);
+    return actual.length === keys.length && actual.every((key) => keys.includes(key));
   };
-  const opaqueRef = (value, pattern) => {
-    if (typeof value !== "string") return "";
-    const normalized = value.trim();
-    return normalized && pattern.test(normalized) ? normalized : "";
-  };
-  const count = (value) => Number.isSafeInteger(value) && value >= 0 && value <= MAX_INTEGER_AGGREGATE
+  const opaque = (value, pattern) => typeof value === "string" && pattern.test(value) ? value : "";
+  const integer = (value) => Number.isSafeInteger(value) && value >= 0 && value <= MAX_INTEGER_AGGREGATE
     ? value
-    : 0;
-  const uniqueActions = (value) => {
-    const unique = [];
-    asArray(value).slice(0, 4).forEach((action) => {
-      if (ACTIONS.has(action) && !unique.includes(action)) unique.push(action);
-    });
-    return unique;
+    : null;
+  const ascending = (values) => values.every((value, index) => index === 0 || values[index - 1] < value);
+  const codes = (value) => {
+    if (!Array.isArray(value) || value.length > MAX_PRESENTATION_CODES) return null;
+    return value.every((code) => CODE_LABELS.has(code))
+      && new Set(value).size === value.length && ascending(value) ? value : null;
   };
-  const isAscending = (values) => values.every((value, index) => index === 0 || values[index - 1] < value);
-  const canonicalSplitRefs = (value) => {
-    const groups = asArray(value);
-    if (groups.length < 2 || groups.length > 64) return [];
-    const normalized = groups.map((group) => {
-      if (!Array.isArray(group) || !group.length || group.length > 512) return [];
-      const refs = group.map((ref) => opaqueRef(ref, SHA_REF));
-      return refs.every(Boolean) && isAscending(refs) ? refs : [];
+  const actions = (value) => {
+    if (!Array.isArray(value) || value.length > ACTION_ORDER.length) return null;
+    const positions = value.map((action) => ACTION_ORDER.indexOf(action));
+    return positions.every((position) => position >= 0)
+      && new Set(value).size === value.length && ascending(positions) ? value : null;
+  };
+  const splitRefs = (value) => {
+    if (!Array.isArray(value) || value.length > MAX_SPLIT_GROUPS) return null;
+    if (!value.length) return [];
+    const groups = value.map((group) => {
+      if (!Array.isArray(group) || !group.length) return null;
+      return group.every((ref) => opaque(ref, SHA_REF)) && ascending(group) ? group : null;
     });
-    if (normalized.some((group) => !group.length) || !isAscending(normalized.map((group) => group.join(":")))) return [];
-    const members = normalized.flat();
-    return members.length <= 512 && new Set(members).size === members.length ? normalized : [];
+    if (groups.some((group) => group === null)) return null;
+    const members = groups.flat();
+    return members.length <= MAX_MEMBER_REFS
+      && new Set(members).size === members.length
+      && ascending(groups.map((group) => group.join(":"))) ? groups : null;
   };
   const plural = (value, one, few, many = few) => {
     const tail = Math.abs(value) % 100;
     const last = tail % 10;
     return tail > 10 && tail < 20 ? many : last === 1 ? one : last > 1 && last < 5 ? few : many;
+  };
+
+  const parseItem = (value) => {
+    if (!exactKeys(value, ITEM_KEYS)) return null;
+    const itemId = opaque(value.item_id, ITEM_ID);
+    const expectedItemFingerprint = opaque(value.expected_item_fingerprint, SHA_REF);
+    const kind = KIND_LABELS.has(value.kind) ? value.kind : "";
+    const mode = MODE_LABELS.has(value.mode) ? value.mode : "";
+    const aggregates = [
+      value.coverage_family_count, value.coverage_group_count, value.affected_row_count,
+      value.affected_cost_minor_units, value.document_frequency_count, value.expected_action_reduction,
+    ].map(integer);
+    const summaryCodes = codes(value.summary_codes);
+    const differenceCodes = codes(value.difference_codes);
+    const exceptionCodes = codes(value.exception_codes);
+    const allowedActions = actions(value.allowed_actions);
+    const proposedSplit = splitRefs(value.split_member_refs);
+    const requiredSummary = kind === "pattern" ? "pattern_candidate" : "package_candidate";
+    if (!itemId || !expectedItemFingerprint || !kind || !mode || aggregates.some((item) => item === null)
+      || !summaryCodes || !differenceCodes || !exceptionCodes || !allowedActions || proposedSplit === null
+      || !summaryCodes.includes(requiredSummary)) return null;
+    if ((allowedActions.includes("split")) !== Boolean(proposedSplit.length)) return null;
+    if (kind === "package" && allowedActions.some((action) => action !== "split" && action !== "reject")) return null;
+    return {
+      itemId,
+      expectedItemFingerprint,
+      kind,
+      mode,
+      coverageFamilyCount: aggregates[0],
+      coverageGroupCount: aggregates[1],
+      affectedRowCount: aggregates[2],
+      affectedCostMinorUnits: aggregates[3],
+      documentFrequencyCount: aggregates[4],
+      expectedActionReduction: aggregates[5],
+      summaryCodes,
+      differenceCodes,
+      exceptionCodes,
+      allowedActions,
+      proposedSplit,
+    };
+  };
+
+  const parseQueue = (value) => {
+    if (!exactKeys(value, QUEUE_KEYS) || value.version !== WEB_QUEUE_VERSION || !Array.isArray(value.items)) return null;
+    const queueId = opaque(value.queue_id, QUEUE_ID);
+    const expectedQueueFingerprint = opaque(value.expected_queue_fingerprint, SHA_REF);
+    const expectedAutosaveFingerprint = opaque(value.expected_autosave_fingerprint, SHA_REF);
+    const items = value.items.map(parseItem);
+    if (!queueId || !expectedQueueFingerprint || !expectedAutosaveFingerprint || items.some((item) => item === null)) return null;
+    const records = items;
+    return new Set(records.map((item) => item.itemId)).size === records.length
+      ? { queueId, expectedQueueFingerprint, expectedAutosaveFingerprint, items: records }
+      : null;
   };
 
   class ReconciliationActiveLearning {
@@ -62,6 +150,9 @@
       this.focusItemId = "";
       this.savingItemId = "";
       this.localState = "";
+      this.cardsById = new Map();
+      this.heading = null;
+      this.queue = null;
     }
 
     static supports(payload) {
@@ -72,137 +163,82 @@
       this.focusItemId = "";
       this.savingItemId = "";
       this.localState = "";
+      this.cardsById = new Map();
+      this.heading = null;
+      this.queue = null;
       this.root.replaceChildren();
       this.root.hidden = true;
-    }
-
-    queueFrom(payload) {
-      const source = payload?.active_learning_queue;
-      if (Array.isArray(source)) return {
-        state: source.length ? "ready" : "empty", items: source, queueId: "", expectedQueueFingerprint: "",
-      };
-      if (!source || typeof source !== "object") return {
-        state: "unavailable", items: [], queueId: "", expectedQueueFingerprint: "",
-      };
-      const state = STATES.has(source.state) ? source.state : "ready";
-      return {
-        state,
-        items: asArray(source.items),
-        queueId: opaqueRef(source.queue_id, QUEUE_ID),
-        expectedQueueFingerprint: opaqueRef(source.expected_queue_fingerprint, SHA_REF),
-      };
-    }
-
-    itemFrom(value) {
-      if (!value || typeof value !== "object") return null;
-      const itemId = opaqueRef(value.item_id, ITEM_ID);
-      const expectedItemFingerprint = opaqueRef(value.expected_item_fingerprint, SHA_REF);
-      const title = text(value.title);
-      if (!itemId || !expectedItemFingerprint || !title) return null;
-      return {
-        itemId,
-        expectedItemFingerprint,
-        kind: value.kind === "package" ? "package" : "pattern",
-        title,
-        category: text(value.category_label, "Категория не определена"),
-        mode: value.mode === "cost_only" ? "Только стоимость" : "Количество + стоимость",
-        familyCount: count(value.family_count),
-        groupCount: count(value.group_count),
-        rowCount: count(value.row_count),
-        reduction: count(value.action_reduction),
-        reason: text(value.reason, "Требуется решение оператора."),
-        slots: asArray(value.slots).slice(0, 8).map((entry) => text(entry)).filter(Boolean),
-        differences: asArray(value.differences).slice(0, 8).map((entry) => text(entry)).filter(Boolean),
-        exceptions: asArray(value.exceptions).slice(0, 8).map((entry) => text(entry)).filter(Boolean),
-        splitMemberRefs: canonicalSplitRefs(value.split_member_refs),
-        actions: uniqueActions(value.actions),
-      };
+      return false;
     }
 
     render(payload) {
       this.payload = payload;
-      const queue = this.queueFrom(payload);
-      this.queue = {
-        state: this.localState || queue.state,
-        items: queue.items.slice(0, 50).map((item) => this.itemFrom(item)).filter(Boolean),
-        queueId: queue.queueId,
-        expectedQueueFingerprint: queue.expectedQueueFingerprint,
-      };
-      if (this.queue.state === "ready" && !this.queue.items.length) this.queue.state = "empty";
+      const queue = parseQueue(payload?.active_learning_queue);
+      this.queue = queue;
+      this.cardsById = new Map();
       this.root.hidden = false;
-      this.root.replaceChildren(this.buildPanel());
-      this.restoreFocus();
+      const state = this.localState || (queue ? (queue.items.length ? "ready" : "empty") : "unavailable");
+      this.root.replaceChildren(this.buildPanel(state));
+      return this.restoreFocus();
     }
 
-    buildPanel() {
+    buildPanel(state) {
       const panel = document.createElement("section");
       panel.className = "active-learning-review";
       panel.setAttribute("aria-labelledby", "active-learning-title");
-      const heading = document.createElement("div");
-      heading.className = "active-learning-heading";
-      const title = document.createElement("h3");
-      title.id = "active-learning-title";
-      title.tabIndex = -1;
-      title.textContent = "Вопросы для уточнения";
-      const copy = document.createElement("p");
-      copy.textContent = "Подтвердите шаблон или уточните только этот случай. Безопасные пакеты доступны ниже.";
-      heading.append(title, copy);
-      panel.append(heading, this.buildState());
-      if (this.queue.state === "ready" || this.queue.state === "saving") {
+      const heading = document.createElement("h3");
+      heading.id = "active-learning-title";
+      heading.tabIndex = -1;
+      heading.textContent = "Вопросы для уточнения";
+      this.heading = heading;
+      const status = document.createElement("p");
+      status.className = `active-learning-state is-${state}`;
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      status.textContent = this.stateText(state);
+      panel.append(heading, status);
+      if ((state === "ready" || state === "saving") && this.queue) {
         const list = document.createElement("div");
         list.className = "active-learning-list";
         list.setAttribute("aria-live", "polite");
-        this.queue.items.forEach((item, index) => list.append(this.buildCard(item, index)));
+        this.queue.items.forEach((item) => list.append(this.buildCard(item, state)));
         panel.append(list);
       }
       return panel;
     }
 
-    buildState() {
-      const state = document.createElement("p");
-      state.className = `active-learning-state is-${this.queue.state}`;
-      state.setAttribute("role", "status");
-      state.setAttribute("aria-live", "polite");
+    stateText(state) {
       const messages = {
-        loading: "Подбираем вопросы для уточнения. Безопасные пакеты уже можно проверить.",
-        empty: "Новых вопросов нет. Продолжите проверку безопасных пакетов ниже.",
-        ready: `Вопросов: ${this.queue.items.length}. Сначала показаны вопросы с наибольшим сокращением действий.`,
-        saving: "Сохраняем решение. Другие вопросы остаются доступны.",
-        saved: "Решение сохранено. Состав вопросов обновлён.",
+        loading: "Подбираем вопросы для уточнения.",
+        empty: "Новых вопросов нет.",
+        ready: "Порядок вопросов определён на сервере.",
+        saving: "Сохраняем решение.",
+        saved: "Решение сохранено.",
         stale: "Данные изменились. Обновите сверку перед следующим решением.",
         unavailable: "Вопросы сейчас недоступны. Проверьте обычные пакеты ниже.",
       };
-      state.textContent = messages[this.queue.state] || messages.unavailable;
-      return state;
+      return messages[state] || messages.unavailable;
     }
 
-    buildCard(item, index) {
+    buildCard(item, state) {
       const card = document.createElement("article");
       card.className = "active-learning-card";
       card.tabIndex = 0;
-      const focusKey = String(index);
-      card.dataset.focusKey = focusKey;
-      card.addEventListener("focus", () => { this.focusItemId = focusKey; });
-      const head = document.createElement("header");
+      card.addEventListener("focus", () => { this.focusItemId = item.itemId; });
+      this.cardsById.set(item.itemId, card);
       const kind = document.createElement("p");
       kind.className = "active-learning-kicker";
-      kind.textContent = item.kind === "package" ? "Пакет для уточнения" : "Шаблон для проверки";
-      const title = document.createElement("h4");
-      title.textContent = item.title;
-      const proposal = document.createElement("p");
-      proposal.className = "active-learning-proposal";
-      proposal.textContent = `Предложено: ${item.category} · ${item.mode}`;
-      head.append(kind, title, proposal);
+      kind.textContent = KIND_LABELS.get(item.kind);
+      const mode = document.createElement("p");
+      mode.className = "active-learning-proposal";
+      mode.textContent = MODE_LABELS.get(item.mode);
       const impact = document.createElement("p");
       impact.className = "active-learning-impact";
-      impact.textContent = `Сокращает до ${item.reduction} ${plural(item.reduction, "действия", "действий", "действий")}`;
+      impact.textContent = `Сокращение действий: ${item.expectedActionReduction}`;
       const coverage = document.createElement("p");
       coverage.className = "active-learning-coverage";
-      coverage.textContent = `${item.familyCount} ${plural(item.familyCount, "семейство", "семейства", "семейств")} · ${item.groupCount} ${plural(item.groupCount, "группа", "группы", "групп")} · ${item.rowCount} ${plural(item.rowCount, "строка", "строки", "строк")}`;
-      const reason = document.createElement("p");
-      reason.className = "active-learning-reason";
-      reason.textContent = item.reason;
-      card.append(head, impact, coverage, reason, this.buildDetails(item), this.buildActions(item, focusKey));
+      coverage.textContent = `${item.coverageFamilyCount} ${plural(item.coverageFamilyCount, "семейство", "семейства", "семейств")} · ${item.coverageGroupCount} ${plural(item.coverageGroupCount, "группа", "группы", "групп")} · ${item.affectedRowCount} ${plural(item.affectedRowCount, "строка", "строки", "строк")}`;
+      card.append(kind, mode, impact, coverage, this.buildDetails(item), this.buildActions(item, state));
       return card;
     }
 
@@ -210,89 +246,79 @@
       const details = document.createElement("details");
       details.className = "active-learning-details";
       const summary = document.createElement("summary");
-      summary.textContent = "Шаблон, различия и исключения";
+      summary.textContent = "Коды различий и исключений";
       const body = document.createElement("div");
       body.className = "active-learning-detail-list";
-      this.appendDetail(body, "Шаблон", item.slots);
-      this.appendDetail(body, "Различия", item.differences);
-      this.appendDetail(body, "Исключения", item.exceptions);
+      this.appendCodes(body, "Основания", item.summaryCodes);
+      this.appendCodes(body, "Различия", item.differenceCodes);
+      this.appendCodes(body, "Исключения", item.exceptionCodes);
       details.append(summary, body);
       return details;
     }
 
-    appendDetail(parent, label, entries) {
-      if (!entries.length) return;
+    appendCodes(parent, label, values) {
+      if (!values.length) return;
       const section = document.createElement("section");
-      const heading = document.createElement("h5");
+      const heading = document.createElement("h4");
       heading.textContent = label;
       const list = document.createElement("ul");
-      entries.forEach((entry) => {
+      values.forEach((value) => {
         const row = document.createElement("li");
-        row.textContent = entry;
+        row.textContent = CODE_LABELS.get(value);
         list.append(row);
       });
       section.append(heading, list);
       parent.append(section);
     }
 
-    buildActions(item, focusKey) {
+    buildActions(item, state) {
       const actions = document.createElement("div");
       actions.className = "active-learning-actions";
-      if (this.queue.state === "stale" || this.queue.state === "unavailable") return actions;
-      const offered = this.queue.queueId && this.queue.expectedQueueFingerprint
-        ? item.actions.filter((action) => action !== "split" || item.splitMemberRefs.length > 1)
-        : [];
-      offered.forEach((action) => {
+      if (state !== "ready") return actions;
+      item.allowedActions.forEach((action) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = `active-learning-action is-${action}`;
-        button.textContent = ACTIONS.get(action);
+        button.textContent = ACTION_LABELS.get(action);
         button.disabled = this.savingItemId === item.itemId;
-        button.addEventListener("click", () => { void this.save(item, action, focusKey); });
+        button.addEventListener("click", () => { void this.save(item, action); });
         actions.append(button);
       });
-      if (!offered.length) {
-        const hint = document.createElement("p");
-        hint.className = "active-learning-action-hint";
-        hint.textContent = "Действия для этого вопроса пока недоступны.";
-        actions.append(hint);
-      }
       return actions;
     }
 
-    async save(item, action, focusKey) {
-      if (this.savingItemId) return;
-      const jobId = this.getJobId();
-      if (!jobId || !this.queue.queueId || !this.queue.expectedQueueFingerprint) return;
-      this.focusItemId = focusKey;
+    async save(item, action) {
+      if (!this.queue || this.savingItemId || !this.getJobId()) return false;
+      this.focusItemId = item.itemId;
       this.savingItemId = item.itemId;
       this.localState = "saving";
       this.render(this.payload);
+      const request = {
+        version: SHADOW_REQUEST_VERSION,
+        queue_id: this.queue.queueId,
+        expected_queue_fingerprint: this.queue.expectedQueueFingerprint,
+        expected_autosave_fingerprint: this.queue.expectedAutosaveFingerprint,
+        item_id: item.itemId,
+        expected_item_fingerprint: item.expectedItemFingerprint,
+        action,
+        split_member_refs: action === "split" ? item.proposedSplit : [],
+      };
       try {
         this.localState = "";
         this.savingItemId = "";
-        const decision = {
-          queue_id: this.queue.queueId,
-          expected_queue_fingerprint: this.queue.expectedQueueFingerprint,
-          item_id: item.itemId,
-          expected_item_fingerprint: item.expectedItemFingerprint,
-          version: INTENT_VERSION,
-          action,
-          split_member_refs: action === "split" ? item.splitMemberRefs : [],
-        };
-        this.renderPayload(await this.submitShadowAction(jobId, item.itemId, decision));
+        return this.renderPayload(await this.submitShadowAction(this.getJobId(), item.itemId, request)) === true;
       } catch (error) {
         this.savingItemId = "";
-        this.localState = /stale|устар/i.test(text(error?.message)) ? "stale" : "unavailable";
-        this.render(this.payload);
+        this.localState = error?.code === "stale_state" ? "stale" : "unavailable";
+        return this.render(this.payload);
       }
     }
 
     restoreFocus() {
-      if (!this.focusItemId || this.queue.state === "saved") return;
-      const card = [...this.root.querySelectorAll(".active-learning-card")]
-        .find((item) => item.dataset.focusKey === this.focusItemId);
-      (card || this.root.querySelector("#active-learning-title"))?.focus({ preventScroll: true });
+      if (!this.focusItemId) return false;
+      const card = this.cardsById.get(this.focusItemId);
+      (card || this.heading)?.focus({ preventScroll: true });
+      return Boolean(card || this.heading);
     }
   }
 

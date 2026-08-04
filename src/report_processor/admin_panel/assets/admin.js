@@ -332,6 +332,7 @@
   };
 
   const renderReview = (payload) => {
+    let reviewFocusRestored = false;
     if (window.ReconciliationActiveLearning?.supports(payload)) {
       if (!activeLearningReview) {
         activeLearningReview = new window.ReconciliationActiveLearning({
@@ -344,7 +345,7 @@
           ),
         });
       }
-      activeLearningReview.render(payload);
+      reviewFocusRestored = activeLearningReview.render(payload) === true;
     } else {
       activeLearningReview?.clear();
       activeLearningReview = null;
@@ -365,7 +366,7 @@
       reviewState.textContent = payload.review_can_apply === true
         ? "Все решения готовы. Сформируйте итоговый файл."
         : "Выберите решение для пакета или точного семейства.";
-      return;
+      return reviewFocusRestored;
     }
     batchReview?.destroy();
     batchReview = null;
@@ -379,6 +380,7 @@
       : payload.review_can_apply === true ? "Все решения готовы к применению." : "Проверка не требует решений.";
     emptyReview.hidden = groups.length !== 0 || payload.status === "failed";
     applyArea.hidden = payload.review_can_apply !== true;
+    return reviewFocusRestored;
   };
 
   const renderSourceIssues = (payload) => {
@@ -420,11 +422,11 @@
 
   const renderJob = (payload) => {
     currentJobId = typeof payload.job_id === "string" ? payload.job_id : currentJobId;
-    renderReview(payload);
+    const reviewFocusRestored = renderReview(payload);
     renderSourceIssues(payload);
     renderDownload(payload);
     reviewPanel.hidden = false;
-    reviewPanel.focus({ preventScroll: true });
+    if (!reviewFocusRestored) reviewPanel.focus({ preventScroll: true });
     const messages = {
       ready: "Сверка завершена. Результат готов к скачиванию.",
       review_required: "Сверка завершена. Проверьте замечания перед скачиванием результата.",
