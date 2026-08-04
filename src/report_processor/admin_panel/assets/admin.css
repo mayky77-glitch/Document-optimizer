@@ -267,6 +267,38 @@ kbd { display: inline-block; min-width: 1.45em; padding: 1px 4px; border: 1px so
 .batch-row-actions .batch-action { min-width: 0; font-size: .8rem; }
 .batch-empty { margin: 0; padding: 14px; border-left: 4px solid var(--gazprom); background: var(--soft-blue); color: var(--gazprom-dark); }
 
+/* Active learning is additive: it appears before, and never replaces, package review. */
+.active-learning-review { display: grid; gap: 12px; min-width: 0; margin: 0 0 18px; }
+.active-learning-heading { padding-left: 14px; border-left: 5px solid var(--manual-blue); }
+.active-learning-heading h3, .active-learning-heading p { margin: 0; }
+.active-learning-heading h3 { font-size: clamp(1.1rem, 3vw, 1.4rem); }
+.active-learning-heading p, .active-learning-proposal, .active-learning-coverage, .active-learning-reason { color: var(--muted); }
+.active-learning-state { margin: 0; padding: 10px 12px; border-left: 4px solid var(--manual-blue); background: var(--surface-input); color: var(--gazprom-dark); font-weight: 750; }
+.active-learning-state.is-stale, .active-learning-state.is-unavailable { border-left-color: var(--red); background: var(--surface-warning); color: var(--warning-ink); }
+.active-learning-list { display: grid; gap: 12px; min-width: 0; }
+.active-learning-card { min-width: 0; padding: clamp(15px, 3vw, 22px); border: 1px solid var(--input-border); border-left: 5px solid var(--manual-blue); background: var(--white); }
+.active-learning-card:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.active-learning-card header { min-width: 0; }
+.active-learning-kicker { margin: 0 0 4px; color: var(--manual-blue); font-size: .72rem; font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }
+.active-learning-card h4 { margin: 0; overflow-wrap: anywhere; font-size: clamp(1.02rem, 2.7vw, 1.32rem); line-height: 1.2; }
+.active-learning-proposal { margin: 7px 0 0; font-size: .86rem; }
+.active-learning-impact { display: inline-block; margin: 14px 0 0; padding: 5px 8px; background: var(--soft-blue); color: var(--gazprom-dark); font-size: .82rem; font-weight: 850; }
+.active-learning-coverage, .active-learning-reason { margin: 10px 0 0; font-size: .88rem; }
+.active-learning-details { margin-top: 14px; border: 1px solid var(--line); background: var(--surface-input); }
+.active-learning-details > summary { padding: 9px 10px; color: var(--gazprom-dark); font-weight: 800; cursor: pointer; }
+.active-learning-detail-list { display: grid; gap: 10px; padding: 0 10px 10px; }
+.active-learning-detail-list h5 { margin: 0; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.active-learning-detail-list ul { display: grid; gap: 4px; margin: 6px 0 0; padding-left: 20px; }
+.active-learning-detail-list li { overflow-wrap: anywhere; }
+.active-learning-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.active-learning-action { min-height: 44px; padding: 8px 12px; border-color: var(--input-border); background: var(--white); color: var(--gazprom-dark); font-weight: 800; }
+.active-learning-action.is-accept_pattern { border-color: var(--gazprom); background: var(--gazprom); color: var(--white); }
+.active-learning-action.is-case_only { border-color: var(--manual-blue); color: var(--manual-blue); }
+.active-learning-action.is-split { background: var(--soft-blue); }
+.active-learning-action.is-reject { border-color: var(--red); color: var(--red); }
+.active-learning-action:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.active-learning-action-hint { margin: 0; color: var(--muted); font-size: .85rem; }
+
 @container (max-width: 840px) {
   .batch-decision { grid-template-columns: minmax(180px, 280px) minmax(0, 1fr); }
   .batch-decision .batch-actions { grid-column: 1 / -1; }
@@ -320,6 +352,8 @@ button:disabled { cursor: default; opacity: .62; }
   .batch-secondary-fields { grid-template-columns: 1fr; }
   .batch-secondary-mode > div { display: grid; grid-template-columns: 1fr; }
   .batch-secondary-mode button + button { border-top: 1px solid var(--input-border); border-left: 0; }
+  .active-learning-actions { display: grid; grid-template-columns: 1fr; }
+  .active-learning-action { width: 100%; white-space: normal; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -9,6 +9,7 @@
   const reviewPanel = document.querySelector("#review-panel");
   const reviewState = document.querySelector("#review-state");
   const reviewGroups = document.querySelector("#review-groups");
+  const activeLearningRoot = document.querySelector("#active-learning-review");
   const sourceIssues = document.querySelector("#source-issues");
   const emptyReview = document.querySelector("#empty-review");
   const applyArea = document.querySelector("#review-apply-area");
@@ -19,6 +20,7 @@
   const workbookExtensions = new Set([".xlsx", ".xlsm"]);
   let currentJobId = "";
   let batchReview = null;
+  let activeLearningReview = null;
 
   const setProgress = (step) => {
     const order = ["files", "run", "result"];
@@ -330,6 +332,23 @@
   };
 
   const renderReview = (payload) => {
+    if (window.ReconciliationActiveLearning?.supports(payload)) {
+      if (!activeLearningReview) {
+        activeLearningReview = new window.ReconciliationActiveLearning({
+          root: activeLearningRoot,
+          getJobId: () => currentJobId,
+          renderPayload: renderJob,
+          submitShadowAction: (jobId, itemId, decision) => requestJson(
+            `/api/jobs/${encodeURIComponent(jobId)}/review/active-learning/items/${encodeURIComponent(itemId)}/shadow`,
+            { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(decision) },
+          ),
+        });
+      }
+      activeLearningReview.render(payload);
+    } else {
+      activeLearningReview?.clear();
+      activeLearningReview = null;
+    }
     if (window.ReconciliationBatchReview?.supports(payload)) {
       if (!batchReview) {
         batchReview = new window.ReconciliationBatchReview({
