@@ -8,20 +8,37 @@
     ["split", "Разделить"],
     ["reject", "Отклонить"],
   ]);
+  const INTENT_VERSION = "ActiveLearningIntent-1.0";
+  const QUEUE_ID = /^active-learning-queue-[0-9a-f]{64}$/;
+  const ITEM_ID = /^active-learning-item-[0-9a-f]{64}$/;
+  const SHA_REF = /^sha256:[0-9a-f]{64}$/;
   const asArray = (value) => Array.isArray(value) ? value : [];
   const text = (value, fallback = "") => {
     if (typeof value !== "string") return fallback;
     const normalized = value.trim();
     return normalized && normalized.length <= 200 ? normalized : fallback;
   };
-  const opaqueRef = (value) => {
+  const opaqueRef = (value, pattern) => {
     if (typeof value !== "string") return "";
     const normalized = value.trim();
-    return normalized && normalized.length <= 256 ? normalized : "";
+    return normalized && pattern.test(normalized) ? normalized : "";
   };
-  const count = (value) => Number.isSafeInteger(Number(value)) && Number(value) >= 0
-    ? Number(value)
+  const count = (value) => Number.isSafeInteger(value) && value >= 0
+    ? value
     : 0;
+  const isAscending = (values) => values.every((value, index) => index === 0 || values[index - 1] < value);
+  const canonicalSplitRefs = (value) => {
+    const groups = asArray(value);
+    if (groups.length < 2 || groups.length > 64) return [];
+    const normalized = groups.map((group) => {
+      if (!Array.isArray(group) || !group.length || group.length > 512) return [];
+      const refs = group.map((ref) => opaqueRef(ref, SHA_REF));
+      return refs.every(Boolean) && isAscending(refs) ? refs : [];
+    });
+    if (normalized.some((group) => !group.length) || !isAscending(normalized.map((group) => group.join(":")))) return [];
+    const members = normalized.flat();
+    return members.length <= 512 && new Set(members).size === members.length ? normalized : [];
+  };
   const plural = (value, one, few, many = few) => {
     const tail = Math.abs(value) % 100;
     const last = tail % 10;
@@ -53,21 +70,30 @@
 
     queueFrom(payload) {
       const source = payload?.active_learning_queue;
-      if (Array.isArray(source)) return { state: source.length ? "ready" : "empty", items: source };
-      if (!source || typeof source !== "object") return { state: "unavailable", items: [] };
+      if (Array.isArray(source)) return {
+        state: source.length ? "ready" : "empty", items: source, queueId: "", expectedQueueFingerprint: "",
+      };
+      if (!source || typeof source !== "object") return {
+        state: "unavailable", items: [], queueId: "", expectedQueueFingerprint: "",
+      };
       const state = STATES.has(source.state) ? source.state : "ready";
-      return { state, items: asArray(source.items) };
+      return {
+        state,
+        items: asArray(source.items),
+        queueId: opaqueRef(source.queue_id, QUEUE_ID),
+        expectedQueueFingerprint: opaqueRef(source.expected_queue_fingerprint, SHA_REF),
+      };
     }
 
     itemFrom(value) {
       if (!value || typeof value !== "object") return null;
-      const itemId = opaqueRef(value.item_id);
-      const version = opaqueRef(value.version);
+      const itemId = opaqueRef(value.item_id, ITEM_ID);
+      const expectedItemFingerprint = opaqueRef(value.expected_item_fingerprint, SHA_REF);
       const title = text(value.title);
-      if (!itemId || !version || !title) return null;
+      if (!itemId || !expectedItemFingerprint || !title) return null;
       return {
         itemId,
-        version,
+        expectedItemFingerprint,
         kind: value.kind === "package" ? "package" : "pattern",
         title,
         category: text(value.category_label, "Категория не определена"),
@@ -80,8 +106,7 @@
         slots: asArray(value.slots).slice(0, 8).map((entry) => text(entry)).filter(Boolean),
         differences: asArray(value.differences).slice(0, 8).map((entry) => text(entry)).filter(Boolean),
         exceptions: asArray(value.exceptions).slice(0, 8).map((entry) => text(entry)).filter(Boolean),
-        splitMemberRefs: asArray(value.split_member_refs)
-          .slice(0, 64).map((entry) => opaqueRef(entry)).filter(Boolean),
+        splitMemberRefs: canonicalSplitRefs(value.split_member_refs),
         actions: asArray(value.actions).slice(0, 4).filter((action) => ACTIONS.has(action)),
       };
     }
@@ -92,6 +117,8 @@
       this.queue = {
         state: this.localState || queue.state,
         items: queue.items.slice(0, 50).map((item) => this.itemFrom(item)).filter(Boolean),
+        queueId: queue.queueId,
+        expectedQueueFingerprint: queue.expectedQueueFingerprint,
       };
       if (this.queue.state === "ready" && !this.queue.items.length) this.queue.state = "empty";
       this.root.hidden = false;
@@ -204,7 +231,10 @@
       const actions = document.createElement("div");
       actions.className = "active-learning-actions";
       if (this.queue.state === "stale" || this.queue.state === "unavailable") return actions;
-      item.actions.filter((action) => action !== "split" || item.splitMemberRefs.length > 1).forEach((action) => {
+      const offered = this.queue.queueId && this.queue.expectedQueueFingerprint
+        ? item.actions.filter((action) => action !== "split" || item.splitMemberRefs.length > 1)
+        : [];
+      offered.forEach((action) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = `active-learning-action is-${action}`;
@@ -213,7 +243,7 @@
         button.addEventListener("click", () => { void this.save(item, action, focusKey); });
         actions.append(button);
       });
-      if (!item.actions.length) {
+      if (!offered.length) {
         const hint = document.createElement("p");
         hint.className = "active-learning-action-hint";
         hint.textContent = "Действия для этого вопроса пока недоступны.";
@@ -225,7 +255,7 @@
     async save(item, action, focusKey) {
       if (this.savingItemId) return;
       const jobId = this.getJobId();
-      if (!jobId) return;
+      if (!jobId || !this.queue.queueId || !this.queue.expectedQueueFingerprint) return;
       this.focusItemId = focusKey;
       this.savingItemId = item.itemId;
       this.localState = "saving";
@@ -233,9 +263,15 @@
       try {
         this.localState = "";
         this.savingItemId = "";
-        const decision = action === "split"
-          ? { version: item.version, action, split_member_refs: item.splitMemberRefs }
-          : { version: item.version, action };
+        const decision = {
+          queue_id: this.queue.queueId,
+          expected_queue_fingerprint: this.queue.expectedQueueFingerprint,
+          item_id: item.itemId,
+          expected_item_fingerprint: item.expectedItemFingerprint,
+          version: INTENT_VERSION,
+          action,
+          ...(action === "split" ? { split_member_refs: item.splitMemberRefs } : {}),
+        };
         this.renderPayload(await this.submitShadowAction(jobId, item.itemId, decision));
       } catch (error) {
         this.savingItemId = "";

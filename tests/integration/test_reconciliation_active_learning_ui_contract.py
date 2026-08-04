@@ -62,3 +62,28 @@ def test_active_learning_submits_only_server_offered_shadow_actions() -> None:
     assert "split_member_refs: item.splitMemberRefs" in script
     assert "/review/active-learning/items/${encodeURIComponent(itemId)}/shadow" in admin
     assert "accept-safe" not in script
+
+
+def test_active_learning_uses_exact_intent_staleness_tokens_and_nested_split_groups() -> None:
+    script = (ASSETS / "reconciliation-active-learning.js").read_text(encoding="utf-8")
+
+    assert "Number.isSafeInteger(value)" in script
+    assert "Number(value)" not in script
+    assert "active-learning-queue-[0-9a-f]{64}" in script
+    assert "active-learning-item-[0-9a-f]{64}" in script
+    assert "sha256:[0-9a-f]{64}" in script
+    for field in (
+        "queue_id: this.queue.queueId",
+        "expected_queue_fingerprint: this.queue.expectedQueueFingerprint",
+        "item_id: item.itemId",
+        "expected_item_fingerprint: item.expectedItemFingerprint",
+        "version: INTENT_VERSION",
+    ):
+        assert field in script
+    assert 'const INTENT_VERSION = "ActiveLearningIntent-1.0"' in script
+    assert "split_member_refs: item.splitMemberRefs" in script
+    assert "if (!Array.isArray(group)" in script
+    assert "normalized.flat()" in script
+    assert "split group" not in script
+    assert "splitMemberRefs.length > 1" in script
+    assert "dataset.itemId" not in script and "data-item-id" not in script
