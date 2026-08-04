@@ -57,6 +57,8 @@ def _reconcile_document_package(
                 for row in sheet_rows
                 if row.work_name and (row.quantity is not None or row.total_cost is not None)
             )
+    if not all_rows:
+        raise ValueError("workbook package has no comparable rows")
     candidates_by_code = _exact_aosr_candidates(root, package, all_rows, pdf_extractor)
     return [
         reconcile_row(

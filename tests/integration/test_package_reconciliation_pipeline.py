@@ -109,3 +109,45 @@ def test_exact_scope_unsupported_pdf_returns_review_without_extraction(tmp_path:
 
     assert report.results[0].status == "NEEDS_REVIEW"
     assert report.results[0].reason_codes == ("unsupported_document_type",)
+    assert report.results[0].pdf_path == PurePosixPath("1.1/ОЖР.pdf")
+    assert report.results[0].candidate_paths == (PurePosixPath("1.1/ОЖР.pdf"),)
+
+
+def test_multiple_unsupported_candidates_are_ambiguous_without_extraction(tmp_path: Path) -> None:
+    (tmp_path / "act.xlsx").touch()
+    code_directory = tmp_path / "1.1"
+    code_directory.mkdir()
+    (code_directory / "ОЖР-B.pdf").touch()
+    (code_directory / "ОЖР-A.pdf").touch()
+    row = WorkbookRowFact(
+        "Лист", 2, None, None, None, "1.1", None, None, "Монтаж опор", "шт", Decimal("2"), None
+    )
+
+    def workbook(_root: Path, path: PurePosixPath) -> PackageWorkbookFacts:
+        return PackageWorkbookFacts(path, (WorkbookSheetFacts("Лист", None, None, None, (row,)),))
+
+    def evidence(*_args: object) -> PdfDocumentEvidence:
+        raise AssertionError("unsupported PDF must not be extracted")
+
+    report = reconcile_package(tmp_path, workbook_extractor=workbook, pdf_extractor=evidence)
+
+    result = report.results[0]
+    assert result.status == "AMBIGUOUS"
+    assert result.pdf_path is None
+    assert result.candidate_paths == (
+        PurePosixPath("1.1/ОЖР-A.pdf"),
+        PurePosixPath("1.1/ОЖР-B.pdf"),
+    )
+
+
+def test_package_with_no_comparable_rows_fails_closed(tmp_path: Path) -> None:
+    (tmp_path / "act.xlsx").touch()
+    row = WorkbookRowFact(
+        "Лист", 2, None, None, None, "1.1", None, None, "Раздел", None, None, None
+    )
+
+    def workbook(_root: Path, path: PurePosixPath) -> PackageWorkbookFacts:
+        return PackageWorkbookFacts(path, (WorkbookSheetFacts("Лист", None, None, None, (row,)),))
+
+    with pytest.raises(ValueError, match="no comparable rows"):
+        reconcile_package(tmp_path, workbook_extractor=workbook)

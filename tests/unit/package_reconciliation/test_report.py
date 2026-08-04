@@ -27,6 +27,7 @@ def test_writes_private_canonical_report_without_absolute_path(tmp_path: Path) -
                 "м",
                 None,
                 None,
+                candidate_paths=(PurePosixPath("1.2/АОСР.pdf"),),
             ),
         )
     )
@@ -36,5 +37,6 @@ def test_writes_private_canonical_report_without_absolute_path(tmp_path: Path) -
 
     payload = json.loads(target.read_text())
     assert payload["results"][0]["workbook_path"] == "акт.xlsx"
+    assert payload["results"][0]["candidate_paths"] == ["1.2/АОСР.pdf"]
     assert str(tmp_path) not in target.read_text()
     assert stat.S_IMODE(target.stat().st_mode) == 0o600

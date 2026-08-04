@@ -25,3 +25,17 @@ def test_cli_returns_controlled_error_when_no_workbook_package_exists(tmp_path: 
 
     assert main(["reconcile-package", "--package", str(tmp_path), "--output", str(output)]) == 2
     assert not output.exists()
+
+
+def test_cli_returns_error_when_workbook_has_no_comparable_rows(tmp_path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    for column, value in enumerate(("Позиция", "Наименование работ"), 1):
+        sheet.cell(1, column, value)
+    sheet.append(("1.1", "Раздел"))
+    workbook.save(tmp_path / "акт.xlsx")
+    workbook.close()
+    output = tmp_path / "report.json"
+
+    assert main(["reconcile-package", "--package", str(tmp_path), "--output", str(output)]) == 2
+    assert not output.exists()
