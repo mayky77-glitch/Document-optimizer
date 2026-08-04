@@ -131,23 +131,17 @@ def extract_aosr_fields(text: str, *, basename: str | None = None) -> AosrFields
     act_date = _adjacent_act_date(act_header.group("nearby")) if act_header else None
     if act_date is None and basename:
         act_date = _basename_date(basename)
-    project_codes = _project_codes(_sections_one_to_two(compact), excluded=(act_number,))
+    project_codes = _project_codes(_project_documentation_section(compact), excluded=(act_number,))
     work_description = _work_description(compact)
-    quantities, quantity_units = _quantity_candidates(compact)
-    units = tuple(
-        dict.fromkeys(
-            (
-                *quantity_units,
-                *(
-                    unit.casefold()
-                    for unit in re.findall(
-                        r"\b(м3|м²|м2|м\.п\.|м|шт\.|шт|т|кг)\b", compact, re.IGNORECASE
-                    )
-                ),
-            )
-        )
-    )[:12]
-    return AosrFields(act_number, act_date, project_codes, work_description, quantities, units)
+    quantities, quantity_units = _quantity_candidates(work_description or "")
+    return AosrFields(
+        act_number,
+        act_date,
+        project_codes,
+        work_description,
+        quantities,
+        quantity_units,
+    )
 
 
 def _empty_fields() -> AosrFields:
@@ -233,19 +227,29 @@ def _work_description(value: str) -> str | None:
 
 def _quantity_candidates(value: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     pairs = re.findall(
-        r"\b(?:[LSV]\s*=\s*|(?:количество|объем|объём)\s*[:=—-]?\s*)"
-        r"(\d+(?:[., ]\d+)?)\s*(м3|м²|м2|м\.п\.|м|шт\.|шт|т|кг)\b",
+        r"(?:\b[LSV]\s*=\s*|[\[({][^=\s]{0,3}\s*=\s*|"
+        r"(?:количество|объем|объём)\s*[:=—-]?\s*)"
+        r"(\d+(?:[., ]\d+)?)\s*[_ ]*"
+        r"(км|м3|м²|м2|м\.п\.|м|шт\.|шт|т|кг)\b",
         value,
         re.IGNORECASE,
     )
     return (
-        tuple(dict.fromkeys(quantity.replace(" ", "") for quantity, _unit in pairs))[:12],
+        tuple(
+            dict.fromkeys(quantity.replace(" ", "").replace(",", ".") for quantity, _unit in pairs)
+        )[:12],
         tuple(dict.fromkeys(unit.casefold() for _quantity, unit in pairs))[:12],
     )
 
 
-def _sections_one_to_two(value: str) -> str:
-    return re.split(r"\b3\s*[.)]", value, maxsplit=1)[0]
+def _project_documentation_section(value: str) -> str:
+    match = re.search(
+        r"\b2\s*[.)]\s*работы\s+выполнены\s+по\s+проект(?:ной\s+документации)?\s*"
+        r"[:—-]?\s*(.{0,800}?)(?=\b3\s*[.)]|$)",
+        value,
+        re.IGNORECASE,
+    )
+    return match.group(1) if match else ""
 
 
 def _project_codes(value: str, *, excluded: tuple[str | None, ...] = ()) -> tuple[str, ...]:
@@ -260,7 +264,7 @@ def _project_codes(value: str, *, excluded: tuple[str | None, ...] = ()) -> tupl
             continue
         if len(code) < 5 or re.fullmatch(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}", code):
             continue
-        if not ("/" in code or re.search(r"[A-ZА-ЯЁ]", code) or code.count(".") >= 2):
+        if code.count(".") < 2 or not re.search(r"\d", code) or not re.search(r"[A-ZА-ЯЁ]", code):
             continue
         accepted.append(code)
     return tuple(dict.fromkeys(accepted))[:12]

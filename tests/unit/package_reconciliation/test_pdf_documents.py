@@ -28,10 +28,10 @@ def test_extracts_explicit_aosr_fields_from_text_fixture() -> None:
     assert evidence == AosrFields(
         act_number="А-17",
         act_date="03.02.2026",
-        project_codes=("АБ-123/4",),
+        project_codes=(),
         work_description="Устройство бетонной подготовки",
-        quantity_candidates=("12,5",),
-        unit_candidates=("м3",),
+        quantity_candidates=(),
+        unit_candidates=(),
     )
 
 
@@ -42,7 +42,7 @@ def test_does_not_invent_aosr_fields_when_text_has_no_labels() -> None:
     assert evidence.act_date is None
     assert evidence.work_description is None
     assert evidence.quantity_candidates == ()
-    assert evidence.unit_candidates == ("м3",)
+    assert evidence.unit_candidates == ()
 
 
 def test_aosr_header_prevents_unrelated_number_date_and_extracts_sections() -> None:
@@ -51,16 +51,16 @@ def test_aosr_header_prevents_unrelated_number_date_and_extracts_sections() -> N
         "АКТ ОСВИДЕТЕЛЬСТВОВАНИЯ СКРЫТЫХ РАБОТ № АОСР-77 от «03» февраля 2026. "
         "1. К освидетельствованию предъявлены следующие работы: Устройство основания. "
         "L=12,5 м; S = 18 м2; V=7,25 м3. "
-        "2. Работы выполнены по проекту 906.1/2 и АБ-123/4. "
+        "2. Работы выполнены по проектной документации 0092.049.Р-123. "
         "3. Приказ № 12.01.2026."
     )
 
     assert evidence.act_number == "АОСР-77"
     assert evidence.act_date == "«03» февраля 2026"
     assert evidence.work_description == "Устройство основания. L=12,5 м; S = 18 м2; V=7,25 м3"
-    assert evidence.quantity_candidates == ("12,5", "18", "7,25")
+    assert evidence.quantity_candidates == ("12.5", "18", "7.25")
     assert evidence.unit_candidates == ("м", "м2", "м3")
-    assert evidence.project_codes == ("906.1/2", "АБ-123/4")
+    assert evidence.project_codes == ("0092.049.Р-123",)
 
 
 def test_act_fields_require_full_header_and_allow_only_basename_date_fallback() -> None:
@@ -71,6 +71,20 @@ def test_act_fields_require_full_header_and_allow_only_basename_date_fallback() 
     assert evidence.act_date is None
     assert fallback.act_number is None
     assert fallback.act_date == "05.06.2026"
+
+
+def test_quantities_and_project_codes_are_limited_to_their_explicit_sections() -> None:
+    evidence = extract_aosr_fields(
+        "АКТ ОСВИДЕТЕЛЬСТВОВАНИЯ СКРЫТЫХ РАБОТ № 44 от 05.06.2026. "
+        "1. К освидетельствованию предъявлены следующие работы: Дорога [,=5,513_км. "
+        "2. Работы выполнены по проектной документации 0092.049.Р-123 и телефон 8.999.123.45. "
+        "3. Материалы: V=5510 м3, проект Проза.12.слово."
+    )
+
+    assert evidence.work_description == "Дорога [,=5,513_км"
+    assert evidence.quantity_candidates == ("5.513",)
+    assert evidence.unit_candidates == ("км",)
+    assert evidence.project_codes == ("0092.049.Р-123",)
 
 
 def test_pdf_evidence_uses_text_layer_before_ocr_and_has_relative_path(tmp_path: Path) -> None:
@@ -96,7 +110,7 @@ def test_pdf_evidence_uses_text_layer_before_ocr_and_has_relative_path(tmp_path:
     assert evidence.page_count == 3
     assert evidence.text_source == "text_layer"
     assert evidence.act_number == "А-17"
-    assert evidence.quantity_candidates == ("12,5",)
+    assert evidence.quantity_candidates == ("12.5",)
     assert not evidence.issues
 
 
