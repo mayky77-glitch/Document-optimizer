@@ -35,6 +35,8 @@ def _atom(
     return contracts.PackageAtom(
         semantic_ref=_ref(token),
         atom_version_ref=_ref(token),
+        critical_signature_ref=_ref("a"),
+        typed_signature_ref=_ref("b"),
         boundary=boundary or _boundary(),
         manual_blockers=blockers,
     )
@@ -109,10 +111,16 @@ def test_boundary_and_atom_bind_opaque_unit_and_group_version() -> None:
     atom = _atom("e")
     assert boundary.unit_ref == _ref("0")
     assert atom.atom_version_ref == _ref("e")
+    assert atom.critical_signature_ref == _ref("a")
+    assert atom.typed_signature_ref == _ref("b")
     with pytest.raises(contracts.DecisionPackageContractError):
         dataclasses.replace(boundary, unit_ref="metres")
     with pytest.raises(contracts.DecisionPackageContractError):
         dataclasses.replace(atom, atom_version_ref="group-v2")
+    with pytest.raises(contracts.DecisionPackageContractError):
+        dataclasses.replace(atom, critical_signature_ref="critical modifiers")
+    with pytest.raises(contracts.DecisionPackageContractError):
+        dataclasses.replace(atom, typed_signature_ref="typed slots")
     with pytest.raises(contracts.DecisionPackageContractError):
         _atom("e", blockers=(contracts.BlockerCode.MANUAL_REVIEW,) * 2)
 
@@ -226,6 +234,22 @@ def test_pair_constraints_require_full_ids_and_controlled_opaque_evidence() -> N
             contracts.PairRelation.MUST_LINK,
             blocker_codes=(contracts.BlockerCode.OUTLIER,) * 2,
         )
+    unattested = contracts.PairConstraint(
+        package.atoms[0].atom_id,
+        package.atoms[1].atom_id,
+        contracts.PairRelation.MUST_LINK,
+    )
+    assert unattested.is_compatible is False
+    unattested_family = contracts.CandidateFamily(package.atoms, (unattested,))
+    assert (
+        contracts.DecisionPackage(
+            (unattested_family,),
+            (unattested,),
+            package.policy,
+            package.version_context,
+        ).safe
+        is False
+    )
 
 
 def test_manual_family_and_outlier_paths_are_visible_and_disjoint() -> None:
@@ -291,6 +315,59 @@ def test_result_rejects_duplicate_atom_membership_between_packages_and_manual_pa
             package.policy,
             package.version_context,
         )
+
+
+def test_rejects_duplicate_semantic_membership_with_distinct_atom_versions() -> None:
+    first = _atom("7")
+    changed_version = dataclasses.replace(first, atom_version_ref=_ref("8"))
+    with pytest.raises(contracts.DecisionPackageContractError):
+        contracts.CandidateFamily((first, changed_version))
+
+    package = _package()
+    left = contracts.CandidateFamily((first,))
+    right = contracts.CandidateFamily((changed_version,))
+    with pytest.raises(contracts.DecisionPackageContractError):
+        contracts.DecisionPackage((left, right), (), package.policy, package.version_context)
+
+    outlier = dataclasses.replace(package.atoms[0], atom_version_ref=_ref("7"))
+    manual = contracts.CandidateFamily(
+        (_atom("6"),),
+        blocker_codes=(contracts.BlockerCode.OUTLIER,),
+        outlier_atom_ids=(outlier.atom_id,),
+    )
+    with pytest.raises(contracts.DecisionPackageContractError):
+        contracts.DecisionPackageResult(
+            (package,),
+            package.policy,
+            package.version_context,
+            manual_families=(manual,),
+            outlier_atoms=(outlier,),
+        )
+
+
+def test_action_reduction_is_deterministic_and_counts_safe_packages_only() -> None:
+    safe = _package()
+    assert safe.action_reduction == 1
+    unsafe_atoms = (_atom("6"), _atom("7"))
+    unattested = contracts.PairConstraint(
+        unsafe_atoms[0].atom_id,
+        unsafe_atoms[1].atom_id,
+        contracts.PairRelation.MUST_LINK,
+    )
+    unsafe_family = contracts.CandidateFamily(unsafe_atoms, (unattested,))
+    unsafe = contracts.DecisionPackage(
+        (unsafe_family,),
+        (unattested,),
+        safe.policy,
+        safe.version_context,
+    )
+    assert unsafe.action_reduction == 1 and unsafe.safe is False
+    result = contracts.DecisionPackageResult(
+        (unsafe, safe),
+        safe.policy,
+        safe.version_context,
+    )
+    assert result.action_reduction == safe.action_reduction
 
 
 def test_rejects_unknown_boundary_and_float_or_raw_values() -> None:

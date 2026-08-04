@@ -134,6 +134,11 @@ def _canonical_blockers(values: tuple[BlockerCode, ...], *, label: str) -> tuple
     return _canonical_tuple(values, key=lambda value: value.value, label=label)
 
 
+def _require_unique_semantic_refs(atoms: tuple[PackageAtom, ...], *, label: str) -> None:
+    if len(atoms) != len({atom.semantic_ref for atom in atoms}):
+        raise DecisionPackageContractError(f"{label} must not repeat semantic references")
+
+
 @dataclass(frozen=True, slots=True)
 class PackageBoundary:
     """Controlled outcome boundary for atoms, families, and packages."""
@@ -181,6 +186,8 @@ class PackageAtom:
 
     semantic_ref: str
     atom_version_ref: str
+    critical_signature_ref: str
+    typed_signature_ref: str
     boundary: PackageBoundary
     manual_blockers: tuple[BlockerCode, ...] = ()
     version: str = DECISION_PACKAGE_VERSION
@@ -188,6 +195,8 @@ class PackageAtom:
     def __post_init__(self) -> None:
         _require_sha_ref(self.semantic_ref, field_name="semantic_ref")
         _require_sha_ref(self.atom_version_ref, field_name="atom_version_ref")
+        _require_sha_ref(self.critical_signature_ref, field_name="critical_signature_ref")
+        _require_sha_ref(self.typed_signature_ref, field_name="typed_signature_ref")
         if not isinstance(self.boundary, PackageBoundary):
             raise DecisionPackageContractError("atom boundary must be controlled")
         if self.version != DECISION_PACKAGE_VERSION:
@@ -206,6 +215,8 @@ class PackageAtom:
                 "kind": "atom",
                 "semantic_ref": self.semantic_ref,
                 "atom_version_ref": self.atom_version_ref,
+                "critical_signature_ref": self.critical_signature_ref,
+                "typed_signature_ref": self.typed_signature_ref,
                 "boundary": self.boundary,
                 "manual_blockers": self.manual_blockers,
             }
@@ -258,7 +269,11 @@ class PairConstraint:
 
     @property
     def is_compatible(self) -> bool:
-        return self.relation is PairRelation.MUST_LINK and not self.blocker_codes
+        return (
+            self.relation is PairRelation.MUST_LINK
+            and bool(self.evidence_refs)
+            and not self.blocker_codes
+        )
 
     @property
     def fingerprint(self) -> str:
@@ -299,6 +314,7 @@ class CandidateFamily:
         if any(not isinstance(atom, PackageAtom) for atom in self.atoms):
             raise DecisionPackageContractError("candidate atoms must be contract atoms")
         atoms = _canonical_tuple(self.atoms, key=lambda item: item.atom_id, label="candidate atoms")
+        _require_unique_semantic_refs(atoms, label="candidate atoms")
         object.__setattr__(self, "atoms", atoms)
         if len(self.pair_constraints) > MAX_PAIR_CONSTRAINTS_PER_PACKAGE:
             raise DecisionPackageContractError("candidate pair constraints exceed the bound")
@@ -492,6 +508,7 @@ class DecisionPackage:
         atoms = tuple(atom for family in self.families for atom in family.atoms)
         if len(atoms) != len({atom.atom_id for atom in atoms}):
             raise DecisionPackageContractError("package atoms must be unique across families")
+        _require_unique_semantic_refs(atoms, label="package atoms")
         return tuple(sorted(atoms, key=lambda item: item.atom_id))
 
     @property
@@ -553,6 +570,10 @@ class DecisionPackage:
     @property
     def package_id(self) -> str:
         return _opaque_id("decision-package", self.identity_fingerprint)
+
+    @property
+    def action_reduction(self) -> int:
+        return max(0, len(self.atoms) - 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -636,6 +657,12 @@ class DecisionPackageResult:
         }
         if declared_outlier_ids != outlier_atom_ids:
             raise DecisionPackageContractError("visible outliers must match family outlier paths")
+        all_atoms = (
+            tuple(atom for package in packages for atom in package.atoms)
+            + tuple(atom for family in manual_families for atom in family.atoms)
+            + outlier_atoms
+        )
+        _require_unique_semantic_refs(all_atoms, label="result atoms")
 
     @property
     def manual_family_ids(self) -> tuple[str, ...]:
@@ -644,6 +671,10 @@ class DecisionPackageResult:
     @property
     def outlier_atom_ids(self) -> tuple[str, ...]:
         return tuple(atom.atom_id for atom in self.outlier_atoms)
+
+    @property
+    def action_reduction(self) -> int:
+        return sum(package.action_reduction for package in self.packages if package.safe)
 
     @property
     def fingerprint(self) -> str:
