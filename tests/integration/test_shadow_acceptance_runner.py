@@ -237,6 +237,22 @@ def test_runner_rejects_mismatched_or_unavailable_bound_evidence(field: str) -> 
         acceptance_runner.ShadowAcceptanceRunner(acceptance.evaluate_shadow_acceptance).run(changed)
 
 
+def test_source_evidence_rejects_matching_raw_path_and_outage_must_be_proven() -> None:
+    inputs = _inputs()
+    raw_source_values = {
+        "before_fingerprint": "/confidential/source.xlsx",
+        "after_fingerprint": "/confidential/source.xlsx",
+        "mutation_count": 0,
+        "version": acceptance_runner.SHADOW_ACCEPTANCE_RUNNER_VERSION,
+    }
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
+        _sealed(acceptance_runner.SourceIntegrityEvidence, raw_source_values)
+    no_outage = _replace_sealed(inputs.outage, qdrant_unavailable=False)
+    changed = _replace_sealed(inputs, outage=no_outage)
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
+        acceptance_runner.ShadowAcceptanceRunner(acceptance.evaluate_shadow_acceptance).run(changed)
+
+
 def test_runner_refuses_mutation_and_preserves_repeat_equivalence() -> None:
     inputs = _inputs()
     before = repr(inputs)

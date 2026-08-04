@@ -6,6 +6,7 @@ does not discover inputs, access a workbook, or interact with runtime state.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 
@@ -26,6 +27,7 @@ from .replay import (
 )
 
 SHADOW_ACCEPTANCE_RUNNER_VERSION = "ReconciliationShadowAcceptanceRunner-1.0"
+_HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 class ShadowAcceptanceRunnerError(ShadowAcceptanceError):
@@ -59,6 +61,10 @@ class SourceIntegrityEvidence:
     def __post_init__(self) -> None:
         if (
             self.version != SHADOW_ACCEPTANCE_RUNNER_VERSION
+            or not isinstance(self.before_fingerprint, str)
+            or not isinstance(self.after_fingerprint, str)
+            or not _HASH.fullmatch(self.before_fingerprint)
+            or not _HASH.fullmatch(self.after_fingerprint)
             or not isinstance(self.mutation_count, int)
             or isinstance(self.mutation_count, bool)
             or self.mutation_count < 0
@@ -174,6 +180,7 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
         or inputs.source.before_fingerprint != inputs.source.after_fingerprint
         or inputs.source.mutation_count != 0
         or inputs.outage.authoritative_decision_delta != 0
+        or inputs.outage.qdrant_unavailable is not True
     ):
         _error()
 
