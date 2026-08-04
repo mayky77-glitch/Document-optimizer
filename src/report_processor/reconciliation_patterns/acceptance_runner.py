@@ -20,15 +20,20 @@ from .acceptance import (
 )
 from .replay import (
     GroupingReplayReport,
+    IndexMeasurement,
     PromotionDecision,
+    ReplayMeasurements,
     ReplaySnapshotIdentity,
     ReplaySplit,
+    SplitReplayMetrics,
     replay_fingerprint,
 )
 
 SHADOW_ACCEPTANCE_RUNNER_VERSION = "ReconciliationShadowAcceptanceRunner-1.0"
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _MAX_SIGNED_64 = (1 << 63) - 1
+_MAX_LATENCY_SAMPLES = 1_000_000
+_MAX_SNAPSHOT_REFS = 10_000
 
 
 class ShadowAcceptanceRunnerError(ShadowAcceptanceError):
@@ -180,9 +185,18 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
     if type(inputs) is not ShadowAcceptanceInputs:
         _error()
     try:
-        inputs.__post_init__()
-        _sealed(inputs)
-    except Exception as exc:
+        values = (
+            inputs.baseline,
+            inputs.holdout,
+            inputs.report,
+            inputs.promotion,
+            inputs.gates,
+            inputs.thresholds,
+            inputs.operational,
+            inputs.source,
+            inputs.outage,
+        )
+    except (AttributeError, TypeError) as exc:
         raise ShadowAcceptanceRunnerError(
             "RUNNER_BINDING_INVALID", "runner binding is invalid"
         ) from exc
@@ -197,22 +211,42 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
         SourceIntegrityEvidence,
         OutageDecisionDelta,
     )
-    values = (
-        inputs.baseline,
-        inputs.holdout,
-        inputs.report,
-        inputs.promotion,
-        inputs.gates,
-        inputs.thresholds,
-        inputs.operational,
-        inputs.source,
-        inputs.outage,
-    )
     if any(type(value) is not kind for value, kind in zip(values, expected, strict=True)):
         _error()
-    if len(inputs.promotion.reason_codes) > 64:
+    report = inputs.report
+    baseline_metrics = getattr(report, "baseline_metrics", None)
+    holdout_metrics = getattr(report, "holdout_metrics", None)
+    measurements = getattr(report, "measurements", None)
+    index = getattr(measurements, "index", None)
+    if (
+        type(baseline_metrics) is not SplitReplayMetrics
+        or type(holdout_metrics) is not SplitReplayMetrics
+        or type(measurements) is not ReplayMeasurements
+        or type(index) is not IndexMeasurement
+    ):
+        _error()
+    reason_codes = getattr(inputs.promotion, "reason_codes", None)
+    if type(reason_codes) is not tuple or len(reason_codes) > 64:
+        _error()
+    for snapshot in (inputs.baseline, inputs.holdout):
+        for name in ("row_count", "review_row_count", "review_group_count"):
+            count = getattr(snapshot, name, None)
+            if type(count) is not int or not 0 <= count <= _MAX_SIGNED_64:
+                _error()
+        for name in ("source_set_refs", "document_set_refs"):
+            refs = getattr(snapshot, name, None)
+            if type(refs) is not tuple or len(refs) > _MAX_SNAPSHOT_REFS:
+                _error()
+    samples = getattr(measurements, "latency_samples_ns", None)
+    if (
+        type(samples) is not tuple
+        or len(samples) > _MAX_LATENCY_SAMPLES
+        or any(type(sample) is not int or not 0 <= sample <= _MAX_SIGNED_64 for sample in samples)
+    ):
         _error()
     try:
+        inputs.__post_init__()
+        _sealed(inputs)
         for value in values:
             value.__post_init__()
             _sealed(value)
@@ -234,7 +268,6 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
         )
     ):
         _error()
-    report = inputs.report
     gates = inputs.gates
     if (
         report.baseline_snapshot_fingerprint != inputs.baseline.fingerprint
@@ -292,6 +325,7 @@ class ShadowAcceptanceRunner:
 
     def run(self, inputs: ShadowAcceptanceInputs) -> ShadowAcceptanceDecision:
         _bind(inputs)
+        bound_fingerprint = inputs.fingerprint
         try:
             decision = self.evaluator(
                 inputs.report,
@@ -304,6 +338,9 @@ class ShadowAcceptanceRunner:
             raise ShadowAcceptanceRunnerError(
                 "RUNNER_EVALUATOR_UNAVAILABLE", "runner evaluator is unavailable"
             ) from exc
+        _bind(inputs)
+        if inputs.fingerprint != bound_fingerprint:
+            _error()
         if type(decision) is not ShadowAcceptanceDecision:
             _error()
         try:

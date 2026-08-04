@@ -287,6 +287,47 @@ def test_forged_values_and_raw_or_unbounded_values_fail_closed() -> None:
     assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
 
 
+@pytest.mark.parametrize(
+    ("numerator", "denominator"),
+    ((True, 1), (0.5, 1), (2, 1), (1, 0), (1 << 63, 1 << 63)),
+)
+def test_ratio_operands_are_revalidated_after_tampering(numerator, denominator) -> None:
+    ratio = replay.Ratio(1, 1)
+    object.__setattr__(ratio, "numerator", numerator)
+    object.__setattr__(ratio, "denominator", denominator)
+    values = {
+        field.name: getattr(_thresholds(), field.name)
+        for field in dataclasses.fields(_thresholds())
+        if field.name != "fingerprint"
+    }
+    values["min_recall_at_5"] = ratio
+
+    with pytest.raises(PatternRegistryError) as error:
+        _sealed(acceptance.OwnerThresholds, values)
+
+    assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
+
+
+def test_core_revalidates_hidden_latency_tail_and_partial_supplied_evidence() -> None:
+    report, promotion, gates, _, operational = _input()
+    measurements = _reseal(
+        report.measurements,
+        latency_samples_ns=(7,) * 19 + (1 << 63,),
+        p50_latency_ns=7,
+        p95_latency_ns=7,
+    )
+    changed_report = _reseal(report, measurements=measurements)
+
+    with pytest.raises(PatternRegistryError) as error:
+        acceptance.evaluate_shadow_acceptance(changed_report, promotion, gates, None, operational)
+    assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
+
+    object.__setattr__(report.baseline_metrics, "contradiction_count", "invalid")
+    with pytest.raises(PatternRegistryError) as error:
+        acceptance.evaluate_shadow_acceptance(report, promotion, gates, None, operational)
+    assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
+
+
 def test_report_metric_sums_and_per_split_coverage_are_bound_to_hard_gates() -> None:
     report, promotion, gates, thresholds, operational = _input()
     metric = _reseal(report.baseline_metrics, forbidden_merge_count=1)

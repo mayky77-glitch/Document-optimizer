@@ -6,7 +6,12 @@ import dataclasses
 
 import pytest
 
-from report_processor.reconciliation_patterns import acceptance, acceptance_runner, replay
+from report_processor.reconciliation_patterns import (
+    acceptance,
+    acceptance_report,
+    acceptance_runner,
+    replay,
+)
 
 
 def _ref(value: str) -> str:
@@ -415,3 +420,114 @@ def test_runner_returns_unavailable_only_from_controlled_operational_dto() -> No
         changed
     )
     assert result.status is acceptance.ShadowAcceptanceStatus.UNAVAILABLE
+
+
+def test_report_accepts_pass_only_after_fresh_runner_verification() -> None:
+    inputs = _inputs()
+    decision = acceptance_runner.run_shadow_acceptance(inputs)
+
+    payload = acceptance_report.shadow_acceptance_report_bytes(decision, inputs=inputs)
+
+    assert b'"status":"PASS"' in payload
+    forged_values = {
+        field.name: getattr(decision, field.name)
+        for field in dataclasses.fields(decision)
+        if field.name != "fingerprint"
+    }
+    forged_values["replay_fingerprint"] = _ref("99")
+    forged = _sealed(acceptance.ShadowAcceptanceDecision, forged_values)
+    with pytest.raises(acceptance_report.ShadowAcceptanceReportError) as error:
+        acceptance_report.shadow_acceptance_report_bytes(forged, inputs=inputs)
+    assert error.value.code == "REPORT_SCHEMA_INVALID"
+
+
+def test_runner_rejects_nested_subclasses_and_signed_64_overflow() -> None:
+    inputs = _inputs()
+
+    class DerivedMetric(replay.SplitReplayMetrics):
+        pass
+
+    metric_values = {
+        field.name: getattr(inputs.report.baseline_metrics, field.name)
+        for field in dataclasses.fields(inputs.report.baseline_metrics)
+        if field.name != "fingerprint"
+    }
+    derived = _sealed(DerivedMetric, metric_values)
+    changed_report = _replace_sealed(inputs.report, baseline_metrics=derived)
+    changed = _replace_sealed(inputs, report=changed_report)
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
+        acceptance_runner.run_shadow_acceptance(changed)
+
+    oversized_snapshot = _replace_sealed(inputs.baseline, row_count=1 << 63)
+    changed = _replace_sealed(inputs, baseline=oversized_snapshot)
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
+        acceptance_runner.run_shadow_acceptance(changed)
+
+    oversized_measurements = _replace_sealed(
+        inputs.report.measurements,
+        latency_samples_ns=(1 << 63,) * 4,
+        p50_latency_ns=1 << 63,
+        p95_latency_ns=1 << 63,
+    )
+    changed_report = _replace_sealed(inputs.report, measurements=oversized_measurements)
+    changed = _replace_sealed(inputs, report=changed_report)
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError):
+        acceptance_runner.run_shadow_acceptance(changed)
+
+
+@pytest.mark.parametrize(
+    ("snapshot_name", "refs_name"),
+    (
+        ("baseline", "source_set_refs"),
+        ("baseline", "document_set_refs"),
+        ("holdout", "source_set_refs"),
+        ("holdout", "document_set_refs"),
+    ),
+)
+def test_runner_caps_every_snapshot_reference_collection(
+    snapshot_name: str, refs_name: str
+) -> None:
+    inputs = _inputs()
+    refs = tuple(_ref(f"{index:x}") for index in range(10_001))
+    snapshot = getattr(inputs, snapshot_name)
+    oversized_snapshot = _replace_sealed(snapshot, **{refs_name: refs})
+    changed = _replace_sealed(inputs, **{snapshot_name: oversized_snapshot})
+
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError) as error:
+        acceptance_runner.run_shadow_acceptance(changed)
+
+    assert error.value.code == "RUNNER_BINDING_INVALID"
+
+
+@pytest.mark.parametrize(
+    "threshold_field", ("representative_snapshot_fingerprint", "threshold_ref")
+)
+def test_runner_rebinds_and_requires_unchanged_inputs_after_evaluator(
+    threshold_field: str,
+) -> None:
+    inputs = _inputs()
+
+    def mutating_evaluator(*values: object) -> acceptance.ShadowAcceptanceDecision:
+        object.__setattr__(inputs.thresholds, threshold_field, _ref("98"))
+        threshold_values = {
+            field.name: getattr(inputs.thresholds, field.name)
+            for field in dataclasses.fields(inputs.thresholds)
+            if field.name != "fingerprint"
+        }
+        object.__setattr__(
+            inputs.thresholds,
+            "fingerprint",
+            replay.replay_fingerprint(threshold_values),
+        )
+        input_values = {
+            field.name: getattr(inputs, field.name)
+            for field in dataclasses.fields(inputs)
+            if field.name != "fingerprint"
+        }
+        object.__setattr__(inputs, "fingerprint", replay.replay_fingerprint(input_values))
+        return acceptance.evaluate_shadow_acceptance(*values)  # type: ignore[arg-type]
+
+    with pytest.raises(acceptance_runner.ShadowAcceptanceRunnerError) as error:
+        acceptance_runner.ShadowAcceptanceRunner(mutating_evaluator).run(inputs)
+
+    assert error.value.code == "RUNNER_BINDING_INVALID"
