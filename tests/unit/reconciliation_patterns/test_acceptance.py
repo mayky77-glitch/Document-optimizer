@@ -19,6 +19,34 @@ def _sealed(cls: type[object], values: dict[str, object]) -> object:
     return cls(**values, fingerprint=replay.replay_fingerprint(values))  # type: ignore[operator]
 
 
+def _reseal(value: object, **updates: object) -> object:
+    values = {
+        field.name: getattr(value, field.name)
+        for field in dataclasses.fields(value)
+        if field.name != "fingerprint"
+    }
+    values.update(updates)
+    return _sealed(type(value), values)
+
+
+def _report_with_metrics(
+    report: replay.GroupingReplayReport,
+    baseline: replay.SplitReplayMetrics,
+    holdout: replay.SplitReplayMetrics,
+) -> replay.GroupingReplayReport:
+    values = {
+        field.name: getattr(report, field.name)
+        for field in dataclasses.fields(report)
+        if field.name not in {"fingerprint", "semantic_fingerprint"}
+    }
+    values.update({"baseline_metrics": baseline, "holdout_metrics": holdout})
+    semantic_values = {
+        name: value for name, value in values.items() if name not in {"measurements", "fingerprint"}
+    }
+    values["semantic_fingerprint"] = replay.replay_fingerprint(semantic_values)
+    return _sealed(replay.GroupingReplayReport, values)  # type: ignore[return-value]
+
+
 def _metric(split: replay.ReplaySplit, name: str) -> replay.SplitReplayMetrics:
     values: dict[str, object] = {
         "split": split,
@@ -237,3 +265,36 @@ def test_forged_values_and_raw_or_unbounded_values_fail_closed() -> None:
     with pytest.raises(PatternRegistryError) as error:
         acceptance.evaluate_shadow_acceptance(object(), None, None, None, None)  # type: ignore[arg-type]
     assert error.value.code == "ACCEPTANCE_SCHEMA_INVALID"
+
+
+def test_report_metric_sums_and_per_split_coverage_are_bound_to_hard_gates() -> None:
+    report, promotion, gates, thresholds, operational = _input()
+    metric = _reseal(report.baseline_metrics, forbidden_merge_count=1)
+    changed_report = _report_with_metrics(report, metric, report.holdout_metrics)
+    changed_promotion = _reseal(
+        promotion,
+        report_fingerprint=changed_report.fingerprint,
+        policy_fingerprint=changed_report.policy_fingerprint,
+        head_fingerprint=changed_report.evaluated_head_fingerprint,
+    )
+    changed_gates = _reseal(gates, replay_fingerprint=changed_report.fingerprint)
+    decision = acceptance.evaluate_shadow_acceptance(
+        changed_report, changed_promotion, changed_gates, thresholds, operational
+    )
+    assert decision.status is acceptance.ShadowAcceptanceStatus.FAIL
+    assert "HARD_GATE_METRICS_MISMATCH" in decision.reason_codes
+
+    incomplete = _reseal(report.baseline_metrics, coverage_rows=replay.Ratio(1, 2))
+    incomplete_report = _report_with_metrics(report, incomplete, report.holdout_metrics)
+    incomplete_promotion = _reseal(
+        promotion,
+        report_fingerprint=incomplete_report.fingerprint,
+        policy_fingerprint=incomplete_report.policy_fingerprint,
+        head_fingerprint=incomplete_report.evaluated_head_fingerprint,
+    )
+    incomplete_gates = _reseal(gates, replay_fingerprint=incomplete_report.fingerprint)
+    decision = acceptance.evaluate_shadow_acceptance(
+        incomplete_report, incomplete_promotion, incomplete_gates, thresholds, operational
+    )
+    assert decision.status is acceptance.ShadowAcceptanceStatus.FAIL
+    assert "ROW_COVERAGE_INCOMPLETE" in decision.reason_codes

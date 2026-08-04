@@ -347,6 +347,18 @@ def evaluate_shadow_acceptance(
         reasons.append("PROMOTION_STOP")
     if gates.replay_fingerprint != report.fingerprint:
         reasons.append("HARD_GATE_BINDING_INVALID")
+    replay_metrics = (report.baseline_metrics, report.holdout_metrics)
+    if (
+        gates.forbidden_merge_count
+        != sum(metric.forbidden_merge_count for metric in replay_metrics)
+        or gates.double_membership_count
+        != sum(metric.double_membership_count for metric in replay_metrics)
+        or gates.calculation_mismatch_count
+        != sum(metric.calculation_mismatch_count for metric in replay_metrics)
+        or gates.xlsx_mismatch_count != sum(metric.xlsx_mismatch_count for metric in replay_metrics)
+        or gates.deterministic_repeatability != report.deterministic_repeatability
+    ):
+        reasons.append("HARD_GATE_METRICS_MISMATCH")
     if (
         gates.source_before_fingerprint != gates.source_after_fingerprint
         or gates.source_mutation_count
@@ -362,7 +374,9 @@ def evaluate_shadow_acceptance(
         reasons.append("FORBIDDEN_MERGE_PRESENT")
     if gates.double_membership_count:
         reasons.append("DOUBLE_MEMBERSHIP_PRESENT")
-    if gates.relevant_nonzero_row_coverage != Ratio(1, 1):
+    if gates.relevant_nonzero_row_coverage != Ratio(1, 1) or any(
+        metric.coverage_rows != Ratio(1, 1) for metric in replay_metrics
+    ):
         reasons.append("ROW_COVERAGE_INCOMPLETE")
     if gates.calculation_mismatch_count:
         reasons.append("CALCULATION_MISMATCH_PRESENT")
