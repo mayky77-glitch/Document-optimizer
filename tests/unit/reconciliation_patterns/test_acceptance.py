@@ -133,6 +133,8 @@ def _thresholds() -> acceptance.OwnerThresholds:
         "owner_ref": _hash("owner"),
         "representative_corpus_ref": _hash("corpus"),
         "independent_holdout_ref": _hash("holdout"),
+        "representative_snapshot_fingerprint": _hash("base-snapshot"),
+        "independent_holdout_snapshot_fingerprint": _hash("hold-snapshot"),
         "min_recall_at_5": replay.Ratio(4, 5),
         "min_mrr": replay.Ratio(3, 4),
         "max_top_1_error": replay.Ratio(1, 5),
@@ -169,9 +171,13 @@ def _input() -> tuple[
         "replay_fingerprint": report.fingerprint,
         "source_before_fingerprint": _hash("source"),
         "source_after_fingerprint": _hash("source"),
+        "group_action_observation_fingerprint": _hash("group-action"),
+        "outage_oracle_fingerprint": _hash("outage-oracle"),
         "current_top_level_group_count": 50,
         "repeat_top_level_group_count": 30,
         "disputed_individual_decision_count": 20,
+        "contradiction_count": 0,
+        "decision_mismatch_count": 0,
         "forbidden_merge_count": 0,
         "double_membership_count": 0,
         "relevant_nonzero_row_coverage": replay.Ratio(1, 1),
@@ -186,6 +192,7 @@ def _input() -> tuple[
     operational_values: dict[str, object] = {
         "status": acceptance.OperationalEvidenceStatus.MEASURED,
         "replay_measurements_fingerprint": report.measurements.fingerprint,
+        "observation_fingerprint": _hash("operational-observation"),
         "recall_at_5": replay.Ratio(4, 5),
         "mrr": replay.Ratio(3, 4),
         "top_1_error": replay.Ratio(1, 5),
@@ -234,6 +241,7 @@ def test_missing_thresholds_blocks_and_unavailable_dependency_never_passes() -> 
     unavailable_values = {
         "status": acceptance.OperationalEvidenceStatus.UNAVAILABLE,
         "replay_measurements_fingerprint": None,
+        "observation_fingerprint": None,
         "recall_at_5": None,
         "mrr": None,
         "top_1_error": None,
@@ -298,3 +306,28 @@ def test_report_metric_sums_and_per_split_coverage_are_bound_to_hard_gates() -> 
     )
     assert decision.status is acceptance.ShadowAcceptanceStatus.FAIL
     assert "ROW_COVERAGE_INCOMPLETE" in decision.reason_codes
+
+
+@pytest.mark.parametrize("field", ("contradiction_count", "decision_mismatch_count"))
+def test_replay_contradictions_and_decision_mismatches_fail_directly(field: str) -> None:
+    report, promotion, gates, thresholds, operational = _input()
+    changed_metric = _reseal(report.baseline_metrics, **{field: 1})
+    changed_report = _report_with_metrics(report, changed_metric, report.holdout_metrics)
+    changed_promotion = _reseal(
+        promotion,
+        report_fingerprint=changed_report.fingerprint,
+        policy_fingerprint=changed_report.policy_fingerprint,
+        head_fingerprint=changed_report.evaluated_head_fingerprint,
+    )
+    changed_gates = _reseal(
+        gates,
+        replay_fingerprint=changed_report.fingerprint,
+        **{field: 1},
+    )
+    decision = acceptance.evaluate_shadow_acceptance(
+        changed_report, changed_promotion, changed_gates, thresholds, operational
+    )
+    assert decision.status is acceptance.ShadowAcceptanceStatus.FAIL
+    assert (
+        "CONTRADICTION_PRESENT" if field == "contradiction_count" else "DECISION_MISMATCH_PRESENT"
+    ) in decision.reason_codes

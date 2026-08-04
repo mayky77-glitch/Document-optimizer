@@ -28,6 +28,7 @@ from .replay import (
 
 SHADOW_ACCEPTANCE_RUNNER_VERSION = "ReconciliationShadowAcceptanceRunner-1.0"
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_MAX_SIGNED_64 = (1 << 63) - 1
 
 
 class ShadowAcceptanceRunnerError(ShadowAcceptanceError):
@@ -55,6 +56,10 @@ class SourceIntegrityEvidence:
     before_fingerprint: str
     after_fingerprint: str
     mutation_count: int
+    before_manifest_fingerprint: str
+    after_manifest_fingerprint: str
+    before_source_set_fingerprint: str
+    after_source_set_fingerprint: str
     fingerprint: str
     version: str = SHADOW_ACCEPTANCE_RUNNER_VERSION
 
@@ -68,8 +73,17 @@ class SourceIntegrityEvidence:
             or not isinstance(self.mutation_count, int)
             or isinstance(self.mutation_count, bool)
             or self.mutation_count < 0
+            or self.mutation_count > _MAX_SIGNED_64
         ):
             _error()
+        for value in (
+            self.before_manifest_fingerprint,
+            self.after_manifest_fingerprint,
+            self.before_source_set_fingerprint,
+            self.after_source_set_fingerprint,
+        ):
+            if not isinstance(value, str) or not _HASH.fullmatch(value):
+                _error()
         _sealed(self)
 
 
@@ -77,6 +91,7 @@ class SourceIntegrityEvidence:
 class OutageDecisionDelta:
     qdrant_unavailable: bool
     authoritative_decision_delta: int
+    oracle_fingerprint: str
     fingerprint: str
     version: str = SHADOW_ACCEPTANCE_RUNNER_VERSION
 
@@ -87,6 +102,9 @@ class OutageDecisionDelta:
             or not isinstance(self.authoritative_decision_delta, int)
             or isinstance(self.authoritative_decision_delta, bool)
             or self.authoritative_decision_delta < 0
+            or self.authoritative_decision_delta > _MAX_SIGNED_64
+            or not isinstance(self.oracle_fingerprint, str)
+            or not _HASH.fullmatch(self.oracle_fingerprint)
         ):
             _error()
         _sealed(self)
@@ -125,8 +143,15 @@ ShadowAcceptanceEvaluator = Callable[
 
 
 def _bind(inputs: ShadowAcceptanceInputs) -> None:
-    if not isinstance(inputs, ShadowAcceptanceInputs):
+    if type(inputs) is not ShadowAcceptanceInputs:
         _error()
+    try:
+        inputs.__post_init__()
+        _sealed(inputs)
+    except Exception as exc:
+        raise ShadowAcceptanceRunnerError(
+            "RUNNER_BINDING_INVALID", "runner binding is invalid"
+        ) from exc
     expected = (
         ReplaySnapshotIdentity,
         ReplaySnapshotIdentity,
@@ -149,8 +174,18 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
         inputs.source,
         inputs.outage,
     )
-    if any(not isinstance(value, kind) for value, kind in zip(values, expected, strict=True)):
+    if any(type(value) is not kind for value, kind in zip(values, expected, strict=True)):
         _error()
+    if len(inputs.promotion.reason_codes) > 64:
+        _error()
+    try:
+        for value in values:
+            value.__post_init__()
+            _sealed(value)
+    except Exception as exc:
+        raise ShadowAcceptanceRunnerError(
+            "RUNNER_BINDING_INVALID", "runner binding is invalid"
+        ) from exc
     if (
         inputs.baseline.split is not ReplaySplit.BASELINE
         or inputs.holdout.split is not ReplaySplit.HOLDOUT
@@ -181,6 +216,37 @@ def _bind(inputs: ShadowAcceptanceInputs) -> None:
         or inputs.source.mutation_count != 0
         or inputs.outage.authoritative_decision_delta != 0
         or inputs.outage.qdrant_unavailable is not True
+        or inputs.thresholds.representative_snapshot_fingerprint != inputs.baseline.fingerprint
+        or inputs.thresholds.independent_holdout_snapshot_fingerprint != inputs.holdout.fingerprint
+        or inputs.thresholds.representative_corpus_ref != inputs.baseline.corpus_fingerprint
+        or inputs.thresholds.independent_holdout_ref != inputs.holdout.corpus_fingerprint
+        or inputs.source.before_manifest_fingerprint != inputs.baseline.manifest_fingerprint
+        or inputs.source.after_manifest_fingerprint != inputs.holdout.manifest_fingerprint
+        or inputs.source.before_source_set_fingerprint
+        != replay_fingerprint(inputs.baseline.source_set_refs)
+        or inputs.source.after_source_set_fingerprint
+        != replay_fingerprint(inputs.holdout.source_set_refs)
+        or gates.group_action_observation_fingerprint
+        != replay_fingerprint(
+            {
+                "baseline": report.baseline_metrics.fingerprint,
+                "holdout": report.holdout_metrics.fingerprint,
+                "current_groups": gates.current_top_level_group_count,
+                "repeat_groups": gates.repeat_top_level_group_count,
+            }
+        )
+        or gates.outage_oracle_fingerprint != inputs.outage.oracle_fingerprint
+        or (
+            inputs.operational.status.value == "MEASURED"
+            and inputs.operational.observation_fingerprint
+            != replay_fingerprint(
+                {
+                    "measurements": report.measurements.fingerprint,
+                    "operational": inputs.operational.replay_measurements_fingerprint,
+                    "outage_oracle": inputs.outage.oracle_fingerprint,
+                }
+            )
+        )
     ):
         _error()
 
@@ -209,9 +275,25 @@ class ShadowAcceptanceRunner:
             raise ShadowAcceptanceRunnerError(
                 "RUNNER_EVALUATOR_UNAVAILABLE", "runner evaluator is unavailable"
             ) from exc
-        if not isinstance(decision, ShadowAcceptanceDecision):
+        if type(decision) is not ShadowAcceptanceDecision:
             _error()
-        return decision
+        try:
+            decision.__post_init__()
+            _sealed(decision)
+        except Exception as exc:
+            raise ShadowAcceptanceRunnerError(
+                "RUNNER_BINDING_INVALID", "runner binding is invalid"
+            ) from exc
+        expected = evaluate_shadow_acceptance(
+            inputs.report,
+            inputs.promotion,
+            inputs.gates,
+            inputs.thresholds,
+            inputs.operational,
+        )
+        if decision != expected:
+            _error()
+        return expected
 
 
 def run_shadow_acceptance(
