@@ -1,0 +1,56 @@
+{
+  "schema_version": "WorkSemanticsOntology-1.0",
+  "domain_version": "DomainOntology-1.0",
+  "unit_version": "UnitOntology-1.0",
+  "conflict_pairs": {
+    "action": [["installation", "dismantling"]],
+    "object": []
+  },
+  "actions": {
+    "installation": {"aliases": ["монтаж", "монтировать", "установка", "установить"], "stems": ["монтир", "установк"], "phrases": []},
+    "laying": {"aliases": ["прокладка", "укладка"], "stems": ["проклад", "уклад"], "phrases": []},
+    "welding": {"aliases": ["сварка", "сварить"], "stems": ["свар"], "phrases": []},
+    "concreting": {"aliases": ["бетонирование", "бетонировать"], "stems": ["бетонир"], "phrases": []},
+    "supply": {"aliases": ["поставка", "поставить"], "stems": ["поставк"], "phrases": []},
+    "testing": {"aliases": ["испытание", "испытать"], "stems": ["испытан"], "phrases": []},
+    "dismantling": {"aliases": ["демонтаж", "демонтировать", "разборка"], "stems": ["демонт", "разбор"], "phrases": []},
+    "fabrication": {"aliases": ["изготовление", "изготовить"], "stems": ["изготовл"], "phrases": []},
+    "supervision": {"aliases": ["надзор"], "stems": ["надзор"], "phrases": []},
+    "painting": {"aliases": ["окраска", "покраска"], "stems": ["окраш", "покрас"], "phrases": []},
+    "insulation": {"aliases": ["изоляция", "изолировать"], "stems": ["изоляц"], "phrases": []},
+    "cleaning": {"aliases": ["очистка", "очистить"], "stems": ["очист"], "phrases": []},
+    "earthworks": {"aliases": [], "stems": ["землян"], "phrases": [["земляные", "работы"], ["разработка", "грунта"]]},
+    "transportation": {"aliases": ["перевозка", "транспортировка"], "stems": ["перевоз", "транспортир"], "phrases": []},
+    "connection": {"aliases": ["подключение", "подключить"], "stems": ["подключ"], "phrases": []},
+    "commissioning": {"aliases": ["наладка", "пусконаладка"], "stems": ["налад"], "phrases": []}
+  },
+  "objects": {
+    "cable": {"aliases": ["кабель", "провод"], "stems": ["кабел", "провод"], "phrases": []},
+    "pipeline": {"aliases": ["трубопровод", "труба"], "stems": ["трубопровод", "труб"], "phrases": []},
+    "reinforcement": {"aliases": ["арматура"], "stems": ["арматур"], "phrases": []},
+    "metal_structure": {"aliases": ["металлоконструкция"], "stems": ["металлоконструк"], "phrases": []},
+    "foundation": {"aliases": ["фундамент"], "stems": ["фундамент"], "phrases": []},
+    "equipment": {"aliases": ["оборудование"], "stems": ["оборудован"], "phrases": []},
+    "tray": {"aliases": ["лоток"], "stems": ["лотк"], "phrases": []},
+    "support": {"aliases": ["опора"], "stems": ["опор"], "phrases": []},
+    "coupling": {"aliases": ["муфта"], "stems": ["муфт"], "phrases": []},
+    "insulation": {"aliases": ["изоляция"], "stems": ["изоляц"], "phrases": []},
+    "coating": {"aliases": ["покрытие"], "stems": ["покрыт"], "phrases": []},
+    "automation": {"aliases": ["автоматика"], "stems": ["автоматик"], "phrases": []},
+    "lighting": {"aliases": ["освещение"], "stems": ["освещ"], "phrases": []},
+    "grounding": {"aliases": ["заземление"], "stems": ["заземл"], "phrases": []}
+  },
+  "scoped_aliases": [
+    {"alias": "кс", "canonical": "cable", "kind": "object", "categories": ["electrical"]}
+  ],
+  "units": {
+    "piece": {"family": "count", "scale": "1", "aliases": ["шт", "шт.", "штука", "ед", "ед."], "forbidden_conversions": ["set"]},
+    "set": {"family": "count", "scale": "1", "aliases": ["комплект", "компл", "компл."], "forbidden_conversions": ["piece"]},
+    "meter": {"family": "length", "scale": "1", "aliases": ["м", "м.", "метр", "метры", "пм"], "forbidden_conversions": []},
+    "kilometer": {"family": "length", "scale": "1000", "aliases": ["км", "километр"], "forbidden_conversions": []},
+    "square_meter": {"family": "area", "scale": "1", "aliases": ["м2", "м²", "кв.м", "кв м", "квадратный метр"], "forbidden_conversions": []},
+    "cubic_meter": {"family": "volume", "scale": "1", "aliases": ["м3", "м³", "куб.м", "куб м", "кубический метр"], "forbidden_conversions": []},
+    "kilogram": {"family": "mass", "scale": "1", "aliases": ["кг", "килограмм"], "forbidden_conversions": []},
+    "tonne": {"family": "mass", "scale": "1000", "aliases": ["т", "т.", "тонна", "тонны"], "forbidden_conversions": []}
+  }
+}

@@ -1,0 +1,139 @@
+status: gate0-pilot-go
+work_id: reconciliation-group-optimization-v1
+objective: "Safely reduce reconciliation group fragmentation under hard semantic and XLSX-equivalence constraints."
+base_sha: 10eb20f00a63d6eb44714cc5a624d43809dfb665
+branch: codex/reconciliation-group-optimization-v1
+adopted_range: 648d3c9..10eb20f
+plan: docs/RECONCILIATION_GROUP_OPTIMIZATION_PLAN.md
+max_parallel: 3
+max_spawns: 9
+max_retries: 1
+merge_method: merge-no-ff
+data_classification: restricted
+triage_route: Codex
+providers: skipped
+codegraph_first: true
+shared_paths_owner: integration
+forbidden_paths: [".env*", cache, logs, output, "**/*.xlsx", "**/*.xlsm", "**/*.xlsb"]
+contract_versions:
+  canonicalization: TermCanonicalization-2.0
+  ontology: DomainOntology-1.0
+  typed_slots: TypedSlots-1.0
+  pattern_candidate: PatternCandidate-1.0
+  pattern_registry: PatternRegistry-1.0
+  feedback_graph: FeedbackGraph-1.0
+  replay: GroupingReplay-1.0
+  package_target: DecisionPackage-2.0
+gate0_decision: PILOT_GO_SHADOW_ONLY
+blocking_evidence:
+  - production representative corpus and independent holdout
+  - production activation owner assignments and approvals
+verified_wave0:
+  focused_dense_grouping: "92 passed"
+  reconciliation_xlsx_safety: "33 passed, 2 expected opt-in skips"
+  offline_rubert: "5 passed"
+  full_pytest: "928 passed, 24 skipped, 2 unrelated known failures"
+  disposable_qdrant_restore_smoke: passed
+  authoritative_rag_boundary: passed
+baseline_recovery:
+  historical_manifest: not-found
+  exact_candidate_substitution: rejected
+  historical_recovery: superseded-by-user
+  pilot_contract: ReconciliationPilotBaseline-1.0
+  pilot_aggregate_sha256: 2caea02058b30caf45067646da3c24018b9f8a93581091028de808e7f271a42d
+  pilot_repeatability: byte-identical
+  pilot_counts:
+    source_rows: 798
+    visible_rows: 326
+    hidden_zero_activity_rows: 472
+    groups: 174
+    families: 143
+    packages: 143
+    safe_packages: 3
+    manual_packages: 140
+  production_fallback_contract: RepresentativeCorpusSplit-1.0-required-before-activation
+reserved_scopes:
+  wave1:
+    - src/report_processor/work_semantics
+    - tests/unit/work_semantics
+    - tests/contract/test_work_semantics_contract.py
+  wave2:
+    - src/report_processor/work_semantics/typed_slots.py
+    - src/report_processor/work_semantics/semantic_skeleton.py
+    - tests/unit/work_semantics/test_typed_slots.py
+    - tests/unit/work_semantics/test_semantic_skeleton.py
+  wave3:
+    - scripts/profile_reconciliation_corpus.py
+    - scripts/mine_reconciliation_patterns.py
+    - scripts/evaluate_reconciliation_patterns.py
+completed_waves:
+  wave0:
+    evidence: dense-rag-and-authoritative-boundary-accepted
+  wave1:
+    contracts:
+      - TermCanonicalization-2.0
+      - DomainOntology-1.0
+      - UnitOntology-1.0
+    evidence: "65 passed; Ruff/format passed; isolated wheel import passed; final audit accepted"
+    integration: isolated-not-wired-to-legacy
+  wave2:
+    contracts:
+      - TypedSlots-1.0
+      - SemanticSkeleton-1.0
+    evidence: "121 relevant tests passed; Ruff/format passed; ORDA re-audit and bounded recovery accepted"
+    integration: isolated-not-wired-to-legacy
+  wave3:
+    contracts:
+      - CorpusProfile-1.0
+      - PatternCandidate-1.0
+      - PatternCandidateEvaluation-1.0
+    evidence: "159 relevant tests passed; Ruff/format passed; exact 2+2 privacy replay accepted by independent P6 audit"
+    integration: offline-inert-not-wired-to-legacy-or-wave5-promotion
+  wave4:
+    contracts:
+      - PatternRegistry-1.0
+      - FeedbackGraph-1.0
+      - PatternRegistryEvent-1.0
+      - FeedbackGraphHardNegative-1.0
+      - PatternRegistryStoreSchema-1
+    evidence: "234 relevant tests passed; Ruff/format passed; dual final audit accepted schema, canonical chains, conflict atomicity, replay, concurrency and inode-race closure"
+    integration: inert-not-wired-to-legacy-runtime-or-wave5-activation
+  wave5:
+    contracts:
+      - GroupingReplay-1.0
+      - GroupingPromotionPolicy-1.0
+    evidence: "36 focused and 44 relevant tests passed; Ruff/format passed; dual final audit accepted sealed split isolation, independent oracles, hard gates, owner binding and activation forgery resistance"
+    integration: offline-inert-not-wired-to-legacy-runtime
+  wave6:
+    contracts:
+      - HybridRetrieval-1.0
+      - HybridSources-1.0
+    evidence: "adapter 16 passed; adapter plus core 32 passed; relevant reconciliation 129 passed; scoped Ruff/format/py_compile/diff checks passed; independent P6 audit accepted"
+    integration: offline-inert-not-wired-to-legacy-runtime
+wave6_status: accepted-offline-inert
+wave6_recovery:
+  prior_blockers: 5
+  method: red-first-frozen-tests-one-production-pass
+  p6_process_gate: passed
+  p6_final_audit: accepted
+wave6_evidence: "core focused 16 passed; adapter 16 passed; combined 32 passed; relevant reconciliation 129 passed; independent P6 audit accepted"
+next_wave: wave7-safe-clustering-packages
+waves:
+  - gate0
+  - wave0-dense-rag-verification
+  - wave1-canonicalization-ontology
+  - wave2-typed-slots
+  - wave3-profiler-miner
+  - wave4-pattern-registry-feedback
+  - wave5-offline-replay
+  - wave6-hybrid-retrieval
+  - wave7-safe-clustering-packages
+  - wave8-active-learning-ui
+  - wave9-acceptance-rollout
+acceptance_commands:
+  - "uv run pytest -q"
+  - "uv run ruff check src tests"
+  - "uv run ruff format --check src tests"
+  - "git diff --check"
+  - "node --check src/report_processor/admin_panel/assets/admin.js"
+  - "node --check src/report_processor/admin_panel/assets/drawing-card.js"

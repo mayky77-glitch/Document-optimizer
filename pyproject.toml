@@ -53,6 +53,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "report_processor.admin_panel" = ["assets/*.css", "assets/*.html", "assets/*.js"]
 "report_processor.drawing_card" = ["resources/*.json", "resources/*.jsonl", "resources/*.xlsx"]
+"report_processor.work_semantics" = ["resources/*.json"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
