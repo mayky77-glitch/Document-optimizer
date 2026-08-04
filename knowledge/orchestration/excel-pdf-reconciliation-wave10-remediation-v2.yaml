@@ -1,0 +1,28 @@
+status: remediation-planning
+work_id: excel-pdf-reconciliation-wave10-remediation-v2
+objective: "Close independent Wave 10 review findings without reading additional private packages."
+integration_branch: codex/excel-pdf-reconciliation-wave10
+max_parallel: 1
+max_spawns: 2
+max_retries: 1
+merge_method: merge-no-ff
+production_activation: stop
+data_policy:
+  allowed: "synthetic runtime fixtures only"
+  forbidden: "private corpus discovery, OCR, reconciliation, paths or metadata"
+findings:
+  - compare project-code components without collapsed-prefix false positives
+  - prefer a row's own drawing code before inherited parent context
+  - OCR when a PDF text layer is structurally unusable
+  - preserve exact-scope unsupported documents as manual-review evidence without OCR
+  - fail closed on symlink directories
+  - reject empty package discovery through a controlled CLI error
+  - enforce a discovery-only budget for opt-in pilots before OCR
+  - remove pilot-derived values from synthetic tests and documentation
+acceptance:
+  - focused package tests and Ruff pass
+  - independent review reports no HIGH or MEDIUM finding
+  - full suite has no new failure relative to the recorded baseline
+  - no additional private package is opened
+  - integration branch is pushed before cleanup
+  - clean absorbed task worktrees and task branches are removed

@@ -4,8 +4,8 @@ tags:
   - knowledge/map
   - domain/document-processing
   - capability/admin-panel
-last_verified: 2026-08-02
-updated: 2026-08-02
+last_verified: 2026-08-04
+updated: 2026-08-04
 ---
 
 # Карта проекта
@@ -21,6 +21,7 @@ updated: 2026-08-02
 | Карточка остатков | `/drawing-card` | `admin_panel/drawing_card_*`, `drawing_card/`, `assets/drawing-card.*` | `tests/unit/drawing_card`, `test_drawing_card_admin.py` |
 | Поиск периодов | `/api/drawing-card/periods` | `drawing_card/periods.py` | `test_drawing_card_periods.py` |
 | Локальный RAG | внутри карточки | `stage_rag/`, `drawing_card/review.py` | `tests/unit/stage_rag`, `test_block18_rag.py` |
+| Excel ↔ PDF пакет | CLI `reconcile-package` | `package_reconciliation/`, `cli_package_reconciliation.py` | `tests/unit/package_reconciliation`, `test_package_reconciliation_pipeline.py`, `test_package_reconciliation_cli.py` |
 
 ## Компоненты и целевые проверки
 
@@ -31,6 +32,7 @@ updated: 2026-08-02
 | Admin API и сервис | `admin_panel/app.py`, `review_api.py`, `service.py`, `drawing_card_service.py`: локальные HTTP-контракты и изолированные задания. | `test_block18_admin_panel.py`, `test_drawing_card_admin.py`, unit-тесты `admin_panel/`. |
 | Сопоставление и feedback | `drawing_card/matching/`, `drawing_card/review/`, `drawing_card/autopilot/`: подбор категории и приоритет явных решений. | `tests/unit/drawing_card/test_*matcher*`, `test_inline_review_flow.py`, `test_block16_feedback.py`. |
 | XLSX-результат | `drawing_card/output/`: шаблон, раскладка, форматы и сводка. | `test_drawing_card_service_contract.py`, `test_summary_report.py`, `test_xlsx_xml_precision.py`. |
+| Пакетная сверка Excel ↔ PDF | Динамически читает КС-2, локально извлекает ограниченные АОСР и сопоставляет только по коду работ плюс независимому содержательному сигналу. | `tests/unit/package_reconciliation`, `tests/integration/test_package_reconciliation_pipeline.py`, `tests/integration/test_package_reconciliation_cli.py`. |
 
 Политика проверки: локальное уточнение проверяется целевыми component-тестами и
 визуальной/file smoke; полный suite запускается только для сквозного изменения,
@@ -90,6 +92,9 @@ updated: 2026-08-02
   значения.
 - Реальные проверки задаются через `DOCUMENT_OPTIMIZER_*` environment variables;
   приватные пути и имена файлов в vault не записываются.
+- Реальная проверка Excel ↔ PDF включается только через
+  `REPORT_PROCESSOR_RECONCILIATION_PILOT`; исходные документы, абсолютные пути и
+  сырой OCR не входят в репозиторий или JSON-отчёт.
 - Реестр завершённых web-задач ограничен; активная проверка не вытесняется.
 
 ## Быстрые проверки

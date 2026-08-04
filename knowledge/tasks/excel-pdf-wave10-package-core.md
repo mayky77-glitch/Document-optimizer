@@ -27,7 +27,7 @@ forbidden_paths:
   - src/report_processor/package_reconciliation/pdf_documents.py
   - src/report_processor/cli.py
   - src/report_processor/admin_panel
-  - /Users/x/Downloads
+  - "<private-corpus-root>"
   - "**/*.xlsx"
   - "**/*.pdf"
 depends_on:
@@ -52,4 +52,3 @@ code, drawing code, basis, work name, unit, quantity and total cost. Rows withou
 a stable work code or comparable work facts remain controlled issues. Open with
 `read_only=True`, `data_only=True`, `keep_links=False`; always close; never save.
 Tests must generate workbooks under `tmp_path` and must not add binary fixtures.
-

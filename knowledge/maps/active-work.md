@@ -3,8 +3,8 @@ type: map
 tags:
   - knowledge/map
   - status/done
-last_verified: 2026-08-03
-updated: 2026-08-03
+last_verified: 2026-08-04
+updated: 2026-08-04
 ---
 
 # Active work
@@ -25,6 +25,8 @@ Completed global package review:
 [[../tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]].
 
 Completed reconciliation handoff: [[../tasks/reconciliation-real-data-resilience-v4-final]].
+
+Completed Excel-PDF Wave 10: [[../orchestration/excel-pdf-reconciliation-wave10-v1]].
 
 - [[../ORCHESTRATION|Orchestration rules]]
 - Последняя принятая волна: [[../tasks/summary-layout-xlsx|Карточная XLSX-сводка]],

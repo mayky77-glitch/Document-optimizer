@@ -1,4 +1,4 @@
-status: wave-1-integrating
+status: superseded-by-remediation-v2
 work_id: excel-pdf-reconciliation-wave10-v1
 objective: "Reconcile KS-2 workbook rows against locally OCR-extracted evidence from related PDF packages without committing private documents or OCR text."
 source_base_sha: 967da5f58ee6508ebbfc3fc1d9fa2d7fe77dc0bb
@@ -11,6 +11,7 @@ merge_method: merge-no-ff
 data_classification: restricted
 shared_paths_owner: integration
 production_activation: stop
+superseded_by: excel-pdf-reconciliation-wave10-remediation-v2
 contracts:
   workbook_output: PackageWorkbookFacts-1.0
   pdf_output: PackagePdfEvidence-1.0
@@ -33,7 +34,7 @@ test_data_policy:
   development_pilot: "two small packages, 2 workbooks and 6 PDFs total"
   reserved_holdout: "all remaining packages; no full OCR or reconciliation in Wave 10"
 forbidden_paths:
-  - /Users/x/Downloads
+  - "<private-corpus-root>"
   - "**/*.xlsx"
   - "**/*.xlsm"
   - "**/*.xlsb"
@@ -50,4 +51,3 @@ acceptance:
   - synthetic fixtures are generated at test runtime; no real documents enter Git
   - representative real holdout is read-only and opt-in
   - final P6 audit and cleanup gate
-

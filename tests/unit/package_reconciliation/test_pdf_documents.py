@@ -51,7 +51,7 @@ def test_aosr_header_prevents_unrelated_number_date_and_extracts_sections() -> N
         "АКТ ОСВИДЕТЕЛЬСТВОВАНИЯ СКРЫТЫХ РАБОТ № АОСР-77 от «03» февраля 2026. "
         "1. К освидетельствованию предъявлены следующие работы: Устройство основания. "
         "L=12,5 м; S = 18 м2; V=7,25 м3. "
-        "2. Работы выполнены по проектной документации 0092.049.Р-123. "
+        "2. Работы выполнены по проектной документации DEMO.321.PROJ-123. "
         "3. Приказ № 12.01.2026."
     )
 
@@ -60,7 +60,7 @@ def test_aosr_header_prevents_unrelated_number_date_and_extracts_sections() -> N
     assert evidence.work_description == "Устройство основания. L=12,5 м; S = 18 м2; V=7,25 м3"
     assert evidence.quantity_candidates == ("12.5", "18", "7.25")
     assert evidence.unit_candidates == ("м", "м2", "м3")
-    assert evidence.project_codes == ("0092.049.Р-123",)
+    assert evidence.project_codes == ("DEMO.321.PROJ-123",)
 
 
 def test_act_fields_require_full_header_and_allow_only_basename_date_fallback() -> None:
@@ -76,15 +76,15 @@ def test_act_fields_require_full_header_and_allow_only_basename_date_fallback() 
 def test_quantities_and_project_codes_are_limited_to_their_explicit_sections() -> None:
     evidence = extract_aosr_fields(
         "АКТ ОСВИДЕТЕЛЬСТВОВАНИЯ СКРЫТЫХ РАБОТ № 44 от 05.06.2026. "
-        "1. К освидетельствованию предъявлены следующие работы: Дорога [,=5,513_км. "
-        "2. Работы выполнены по проектной документации 0092.049.Р-123 и телефон 8.999.123.45. "
+        "1. К освидетельствованию предъявлены следующие работы: Дорога [,=6,25_км. "
+        "2. Работы выполнены по проектной документации DEMO.321.PROJ-123 и телефон 8.999.123.45. "
         "3. Материалы: V=5510 м3, проект Проза.12.слово."
     )
 
-    assert evidence.work_description == "Дорога [,=5,513_км"
-    assert evidence.quantity_candidates == ("5.513",)
+    assert evidence.work_description == "Дорога [,=6,25_км"
+    assert evidence.quantity_candidates == ("6.25",)
     assert evidence.unit_candidates == ("км",)
-    assert evidence.project_codes == ("0092.049.Р-123",)
+    assert evidence.project_codes == ("DEMO.321.PROJ-123",)
 
 
 def test_pdf_evidence_uses_text_layer_before_ocr_and_has_relative_path(tmp_path: Path) -> None:

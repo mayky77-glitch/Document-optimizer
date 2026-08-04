@@ -14,11 +14,11 @@ from report_processor.package_reconciliation.pipeline import reconcile_package
 
 def test_pipeline_ocr_extracts_only_exact_work_code_aosr_candidate(tmp_path: Path) -> None:
     (tmp_path / "act.xlsx").touch()
-    exact = tmp_path / "6.1.10.1.1"
+    exact = tmp_path / "2.4.6.8.10"
     exact.mkdir()
     (exact / "АОСР.pdf").touch()
     (exact / "ОЖР.pdf").touch()
-    other = tmp_path / "6.1.10.1.2"
+    other = tmp_path / "2.4.6.8.11"
     other.mkdir()
     (other / "АОСР.pdf").touch()
     rows = (
@@ -28,8 +28,8 @@ def test_pipeline_ocr_extracts_only_exact_work_code_aosr_candidate(tmp_path: Pat
             None,
             None,
             None,
-            "6.1.10.1",
-            "0092.049.Р-123",
+            "2.4.6.8",
+            "DEMO.321.PROJ-123",
             None,
             "Раздел",
             None,
@@ -42,12 +42,12 @@ def test_pipeline_ocr_extracts_only_exact_work_code_aosr_candidate(tmp_path: Pat
             None,
             None,
             None,
-            "6.1.10.1.1",
+            "2.4.6.8.10",
             None,
             None,
             "Устройство основания",
             "м",
-                Decimal("1"),
+            Decimal("1"),
             None,
         ),
     )
@@ -65,7 +65,7 @@ def test_pipeline_ocr_extracts_only_exact_work_code_aosr_candidate(tmp_path: Pat
             "text_layer",
             None,
             None,
-            ("0092.049.Р-123",),
+            ("DEMO.321.PROJ-123",),
             "Устройство основания",
             (),
             (),
@@ -75,7 +75,7 @@ def test_pipeline_ocr_extracts_only_exact_work_code_aosr_candidate(tmp_path: Pat
 
     report = reconcile_package(tmp_path, workbook_extractor=workbook, pdf_extractor=evidence)
 
-    assert calls == [PurePosixPath("6.1.10.1.1/АОСР.pdf")]
+    assert calls == [PurePosixPath("2.4.6.8.10/АОСР.pdf")]
     assert len(report.results) == 1
     assert report.results[0].status == "MATCH"
 

@@ -27,7 +27,7 @@ forbidden_paths:
   - src/report_processor/package_reconciliation/workbook.py
   - src/report_processor/cli.py
   - src/report_processor/admin_panel
-  - /Users/x/Downloads
+  - "<private-corpus-root>"
   - "**/*.xlsx"
   - "**/*.pdf"
 depends_on:

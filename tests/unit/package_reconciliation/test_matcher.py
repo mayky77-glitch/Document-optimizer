@@ -23,20 +23,20 @@ def _row(number: int, code: str, *, drawing: str | None = None) -> WorkbookRowFa
         None,
         "Устройство основания",
         "м",
-        Decimal("5513"),
+        Decimal("6250"),
         None,
     )
 
 
-def _pdf(*, quantity: str = "5.513", unit: str = "км") -> PdfDocumentEvidence:
+def _pdf(*, quantity: str = "6.25", unit: str = "км") -> PdfDocumentEvidence:
     return PdfDocumentEvidence(
-        PurePosixPath("6.1.10.1.1/АОСР.pdf"),
+        PurePosixPath("2.4.6.8.10/АОСР.pdf"),
         "aosr",
         1,
         "text_layer",
         None,
         None,
-        ("0092.049.Р-123",),
+        ("DEMO.321.PROJ-123",),
         "Устройство основания",
         (quantity,),
         (unit,),
@@ -46,19 +46,19 @@ def _pdf(*, quantity: str = "5.513", unit: str = "км") -> PdfDocumentEvidence:
 
 
 def test_uses_nearest_preceding_dotted_parent_drawing_only() -> None:
-    grandparent = _row(5, "6.1", drawing="WRONG")
-    parent = _row(9, "6.1.10.1", drawing="0092.049.Р-123")
-    detail = _row(10, "6.1.10.1.1")
-    sibling = _row(11, "6.1.10.2", drawing="SIBLING")
+    grandparent = _row(5, "2.4", drawing="WRONG")
+    parent = _row(9, "2.4.6.8", drawing="DEMO.321.PROJ-123")
+    detail = _row(10, "2.4.6.8.10")
+    sibling = _row(11, "2.4.6.9", drawing="SIBLING")
 
     assert drawing_codes_for_row(detail, (grandparent, parent, detail, sibling)) == (
-        "0092.049.Р-123",
+        "DEMO.321.PROJ-123",
     )
 
 
 def test_requires_content_signal_and_converts_m_to_km() -> None:
-    parent = _row(9, "6.1.10.1", drawing="0092.049.Р-123")
-    detail = _row(10, "6.1.10.1.1")
+    parent = _row(9, "2.4.6.8", drawing="DEMO.321.PROJ-123")
+    detail = _row(10, "2.4.6.8.10")
 
     result = reconcile_row(
         detail,
@@ -70,12 +70,12 @@ def test_requires_content_signal_and_converts_m_to_km() -> None:
     assert result.status == "MATCH"
     assert result.quantity_comparison == "MATCH"
     assert result.cost_comparison == "NOT_COMPARABLE"
-    assert result.workbook_quantity == Decimal("5513")
+    assert result.workbook_quantity == Decimal("6250")
 
 
 def test_does_not_match_from_basename_or_without_signal() -> None:
     candidate = PdfDocumentEvidence(
-        PurePosixPath("6.1.10.1.1/АОСР.pdf"),
+        PurePosixPath("2.4.6.8.10/АОСР.pdf"),
         "aosr",
         1,
         "text_layer",
@@ -88,7 +88,7 @@ def test_does_not_match_from_basename_or_without_signal() -> None:
         None,
         (),
     )
-    result = reconcile_row(_row(10, "6.1.10.1.1"), PurePosixPath("акт.xlsx"), (candidate,))
+    result = reconcile_row(_row(10, "2.4.6.8.10"), PurePosixPath("акт.xlsx"), (candidate,))
 
     assert result.status == "NEEDS_REVIEW"
     assert result.pdf_path is None
@@ -96,10 +96,10 @@ def test_does_not_match_from_basename_or_without_signal() -> None:
 
 
 def test_equal_candidates_are_ambiguous_and_quantity_mismatch_is_reported() -> None:
-    detail = _row(10, "6.1.10.1.1")
+    detail = _row(10, "2.4.6.8.10")
     candidate = _pdf(quantity="5.5")
     other = PdfDocumentEvidence(
-        PurePosixPath("6.1.10.1.1/АОСР-2.pdf"),
+        PurePosixPath("2.4.6.8.10/АОСР-2.pdf"),
         "aosr",
         1,
         "text_layer",
@@ -112,7 +112,7 @@ def test_equal_candidates_are_ambiguous_and_quantity_mismatch_is_reported() -> N
         None,
         (),
     )
-    context = ("0092.049.Р-123",)
+    context = ("DEMO.321.PROJ-123",)
 
     assert (
         reconcile_row(
@@ -127,14 +127,14 @@ def test_equal_candidates_are_ambiguous_and_quantity_mismatch_is_reported() -> N
 
 
 def test_project_code_signal_accepts_long_excel_code_and_shorter_pdf_backbone() -> None:
-    detail = _row(10, "6.1.10.1.1")
+    detail = _row(10, "2.4.6.8.10")
     candidate = _pdf()
 
     result = reconcile_row(
         detail,
         PurePosixPath("акт.xlsx"),
         (candidate,),
-        drawing_codes=("0092.049.Р-123.Лист-7; unrelated",),
+        drawing_codes=("DEMO.321.PROJ-123.SHEET-7; unrelated",),
     )
 
     assert result.status == "MATCH"
@@ -147,10 +147,10 @@ def test_reconciliation_rejects_absolute_or_traversal_paths() -> None:
 
 
 def test_project_code_signal_ranks_above_generic_work_name_similarity() -> None:
-    detail = _row(10, "6.1.10.1.1")
+    detail = _row(10, "2.4.6.8.10")
     project_candidate = _pdf()
     generic_candidate = PdfDocumentEvidence(
-        PurePosixPath("6.1.10.1.1/АОСР-2.pdf"),
+        PurePosixPath("2.4.6.8.10/АОСР-2.pdf"),
         "aosr",
         1,
         "text_layer",
@@ -168,7 +168,7 @@ def test_project_code_signal_ranks_above_generic_work_name_similarity() -> None:
         detail,
         PurePosixPath("акт.xlsx"),
         (project_candidate, generic_candidate),
-        drawing_codes=("0092.049.Р-123",),
+        drawing_codes=("DEMO.321.PROJ-123",),
     )
 
     assert result.status == "MATCH"
