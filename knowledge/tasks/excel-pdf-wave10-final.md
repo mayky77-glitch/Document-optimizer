@@ -37,5 +37,5 @@ deferred until the remaining waves are complete.
 - all remaining private packages are reserved for later holdout.
 
 No workbook, PDF, raw OCR, private absolute path or pilot-derived synthetic value
-is present in the final tracked tree. Production/main activation remains stopped
-until the user-directed all-waves merge.
+is present in the Wave 10 tracked files. Production/main activation remains
+stopped until the user-directed all-waves merge.
