@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 
 from .models import DocumentPackage, PackageDiscovery
 
-_WORKBOOK_EXTENSIONS = {".xlsx", ".xlsm"}
+_WORKBOOK_EXTENSIONS = {".xlsx", ".xlsm", ".ods"}
 _PDF_EXTENSION = ".pdf"
 
 

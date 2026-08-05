@@ -24,6 +24,7 @@ mode, focus states, reduced motion and small-screen usability.
 ## Completion evidence
 
 - Folder reconciliation and help pages are linked throughout the admin UI.
-- Excel-only and optional-PDF behavior is explained in plain Russian.
+- The workflow is named «Сравнение Excel с PDF-отчётами» throughout the UI.
+- Excel, LibreOffice Calc `.ods` and optional-PDF behavior is explained in plain Russian.
 - Desktop/mobile browser smoke passed at checkpoint
   `41943ec9141f6b6cdf5ddbd978c239c35423f313`.

@@ -16,7 +16,8 @@ from report_processor.package_reconciliation.report import ReconciliationReport,
 
 MAX_PACKAGE_FILES = 128
 MAX_PACKAGE_UPLOAD_BYTES = 256 * 1024 * 1024
-_ALLOWED_SUFFIXES = frozenset({".pdf", ".xlsx", ".xlsm"})
+_ALLOWED_SUFFIXES = frozenset({".pdf", ".xlsx", ".xlsm", ".ods"})
+_WORKBOOK_SUFFIXES = frozenset({".xlsx", ".xlsm", ".ods"})
 _RESULT_NAME = "package-reconciliation.json"
 
 PackageRunner = Callable[[Path], ReconciliationReport]
@@ -146,7 +147,7 @@ def _validated_files(files: Sequence[tuple[str, bytes]]) -> tuple[tuple[PurePosi
         if total > MAX_PACKAGE_UPLOAD_BYTES:
             raise ValueError("combined package upload is too large")
         output.append((relative, content))
-    if not any(path.suffix.casefold() in {".xlsx", ".xlsm"} for path, _content in output):
+    if not any(path.suffix.casefold() in _WORKBOOK_SUFFIXES for path, _content in output):
         raise ValueError("package workbook is required")
     return tuple(output)
 

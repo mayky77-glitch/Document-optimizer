@@ -152,7 +152,7 @@ def create_app(
             current = await to_thread.run_sync(lambda: package_panel.create_job(files=files))
             payload = package_panel.payload_for(current.job_id)
         except (KeyError, OSError, TypeError, ValueError):
-            return _error("Проверьте состав папки и Excel-файлы (.xlsx, .xlsm)", 400)
+            return _error("Проверьте состав папки и таблицы (.xlsx, .xlsm, .ods)", 400)
         return _secure(JSONResponse(payload, status_code=201))
 
     async def package_reconciliation_job(request):

@@ -16,7 +16,7 @@ def test_package_page_uses_folder_selection_and_the_fixed_local_api() -> None:
     assert 'const API = "/api/package-reconciliation/jobs";' in script
     assert 'data.append("files", file, file.webkitRelativePath || file.name)' in script
     assert "MAX_PACKAGE_FILES = 128" in script
-    assert 'new Set([".xlsx", ".xlsm"])' in script
+    assert 'new Set([".xlsx", ".xlsm", ".ods"])' in script
     assert 'ALLOWED_EXTENSIONS = new Set([...WORKBOOK_EXTENSIONS, ".pdf"])' in script
     assert "Добавьте хотя бы один PDF АОСР." not in script
     assert "`${API}/${encodeURIComponent(jobId)}`" in script
@@ -49,7 +49,8 @@ def test_help_covers_all_workflows_statuses_privacy_and_recovery() -> None:
     for copy in (
         "Проверка документов",
         "Составление отчёта",
-        "Папка Excel с PDF-доказательствами",
+        "Сравнение Excel с PDF-отчётами",
+        "LibreOffice Calc",
         "MATCH",
         "MISMATCH",
         "AMBIGUOUS",

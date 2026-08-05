@@ -12,6 +12,7 @@ def test_discovers_workbooks_and_related_pdfs_without_nested_package_files(tmp_p
     (tmp_path / "ordinary" / "evidence.PDF").touch()
     (tmp_path / "nested").mkdir()
     (tmp_path / "nested" / "child.xlsm").touch()
+    (tmp_path / "nested" / "calc.ods").touch()
     (tmp_path / "nested" / "child.pdf").touch()
 
     discovery = discover_document_packages(tmp_path)
@@ -23,7 +24,10 @@ def test_discovers_workbooks_and_related_pdfs_without_nested_package_files(tmp_p
         "ordinary/evidence.PDF",
         "root.pdf",
     )
-    assert tuple(path.as_posix() for path in nested.workbook_paths) == ("nested/child.xlsm",)
+    assert tuple(path.as_posix() for path in nested.workbook_paths) == (
+        "nested/calc.ods",
+        "nested/child.xlsm",
+    )
     assert tuple(path.as_posix() for path in nested.pdf_paths) == ("nested/child.pdf",)
 
 

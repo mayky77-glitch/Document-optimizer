@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="package-reconciliation-api-contract" content="POST /api/package-reconciliation/jobs files; GET job and result">
-    <title>Папка Excel с PDF-доказательствами</title>
+    <title>Сравнение Excel с PDF-отчётами</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/package-reconciliation.css">
     <script src="/static/theme.js" defer></script>
@@ -15,15 +15,15 @@
       <nav class="product-nav" aria-label="Разделы контроля документов">
         <a href="/">Проверка документов</a>
         <a href="/drawing-card">Составление отчёта</a>
-        <a class="is-current" href="/package-reconciliation" aria-current="page">Папка Excel</a>
+        <a class="is-current" href="/package-reconciliation" aria-current="page">Сравнение Excel с PDF-отчётами</a>
         <a href="/help">Справка</a>
         <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Тёмная тема</button>
       </nav>
 
       <header class="mast">
         <p class="eyebrow">Исполнительная документация</p>
-        <h1>Сверьте папку Excel</h1>
-        <p>Выберите одну папку с книгами Excel. Если в ней есть PDF АОСР, панель добавит их как доказательства и покажет строки, требующие проверки.</p>
+        <h1>Сравните Excel с PDF-отчётами</h1>
+        <p>Выберите одну папку с таблицами Excel или LibreOffice Calc. Если в ней есть PDF АОСР, панель добавит их как доказательства и покажет строки, требующие проверки.</p>
       </header>
 
       <ol class="progress-rail" aria-label="Ход сверки пакета">
@@ -37,13 +37,13 @@
         <div class="section-heading">
           <p class="step-label">Шаг 1 · пакет документов</p>
           <h2 id="package-upload-title">Выберите папку с документами</h2>
-          <p>Нужна хотя бы одна Excel-книга. PDF АОСР можно добавить как дополнительные доказательства; вложенные папки сохраняют свою структуру.</p>
+          <p>Нужна хотя бы одна таблица .xlsx, .xlsm или LibreOffice Calc .ods. PDF АОСР можно добавить как дополнительные доказательства; вложенные папки сохраняют свою структуру.</p>
         </div>
         <form id="package-form" novalidate>
           <label class="file-field" for="package-files">
             <span>Папка пакета <em>обязательно</em></span>
-            <input id="package-files" name="package-files" type="file" accept=".xlsx,.xlsm,.pdf" webkitdirectory multiple required aria-describedby="package-files-help package-file-count">
-            <small id="package-files-help">Выберите папку целиком: до 128 файлов, минимум одна книга .xlsx/.xlsm. PDF АОСР можно добавить дополнительно. Имена и структура папок передаются только локальной панели.</small>
+            <input id="package-files" name="package-files" type="file" accept=".xlsx,.xlsm,.ods,.pdf" webkitdirectory multiple required aria-describedby="package-files-help package-file-count">
+            <small id="package-files-help">Выберите папку целиком: до 128 файлов, минимум одна таблица .xlsx/.xlsm/.ods. PDF АОСР можно добавить дополнительно. Имена и структура папок передаются только локальной панели.</small>
             <strong id="package-file-count" class="file-count" aria-live="polite">Папка пока не выбрана</strong>
           </label>
           <button id="start-package-job" class="primary" type="submit">Запустить сверку папки</button>

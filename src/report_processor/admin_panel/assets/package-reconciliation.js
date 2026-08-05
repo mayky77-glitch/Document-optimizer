@@ -7,7 +7,7 @@
   const STATUS_READY = "ready";
   const STATUS_FAILED = "failed";
   const MAX_PACKAGE_FILES = 128;
-  const WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm"]);
+  const WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".ods"]);
   const ALLOWED_EXTENSIONS = new Set([...WORKBOOK_EXTENSIONS, ".pdf"]);
   const STATUS_ORDER = ["MATCH", "MISMATCH", "AMBIGUOUS", "NO_EVIDENCE", "NEEDS_REVIEW"];
   const STATUS_LABELS = {
@@ -92,8 +92,8 @@
     const issues = [];
     if (files.length > MAX_PACKAGE_FILES) issues.push(`В папке больше ${MAX_PACKAGE_FILES} файлов. Выберите пакет меньшего размера.`);
     const unsupported = files.filter((file) => !ALLOWED_EXTENSIONS.has(extension(file)));
-    if (unsupported.length) issues.push("В папке есть неподдерживаемые файлы. Оставьте только .xlsx, .xlsm и .pdf.");
-    if (!files.some((file) => WORKBOOK_EXTENSIONS.has(extension(file)))) issues.push("Добавьте хотя бы одну Excel-книгу .xlsx или .xlsm.");
+    if (unsupported.length) issues.push("В папке есть неподдерживаемые файлы. Оставьте только .xlsx, .xlsm, .ods и .pdf.");
+    if (!files.some((file) => WORKBOOK_EXTENSIONS.has(extension(file)))) issues.push("Добавьте хотя бы одну таблицу .xlsx, .xlsm или LibreOffice Calc .ods.");
     return issues;
   };
 

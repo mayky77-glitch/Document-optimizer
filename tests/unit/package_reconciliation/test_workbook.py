@@ -6,6 +6,7 @@ import pytest
 from openpyxl import Workbook
 
 from report_processor.package_reconciliation import extract_package_workbook_facts
+from report_processor.package_reconciliation import workbook as workbook_module
 
 
 def _workbook(path: Path) -> None:
@@ -130,3 +131,39 @@ def test_rejects_path_escape_and_does_not_accept_symlinked_workbook(tmp_path: Pa
         extract_package_workbook_facts(tmp_path, "../act.xlsx")
     with pytest.raises(ValueError, match="symlinked workbook"):
         extract_package_workbook_facts(tmp_path, "link.xlsx")
+
+
+def test_libreoffice_calc_is_converted_privately_and_keeps_original_report_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "act.ods"
+    source.write_bytes(b"private-ods")
+    converted = tmp_path / "converted.xlsx"
+    _workbook(converted)
+    calls = []
+
+    def convert(path: Path, temporary_root: Path) -> Path:
+        calls.append((path, temporary_root))
+        return converted
+
+    monkeypatch.setattr(workbook_module, "_convert_ods_to_xlsx", convert)
+
+    facts = extract_package_workbook_facts(tmp_path, "act.ods")
+
+    assert facts.workbook_path.as_posix() == "act.ods"
+    assert facts.sheets[0].rows[0].work_code == "1.02"
+    assert calls[0][0] == source
+    assert source.read_bytes() == b"private-ods"
+
+
+def test_libreoffice_calc_fails_closed_when_converter_is_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "act.ods"
+    source.write_bytes(b"private-ods")
+    monkeypatch.setattr(workbook_module.shutil, "which", lambda _name: None)
+
+    with pytest.raises(ValueError, match="conversion is unavailable"):
+        extract_package_workbook_facts(tmp_path, "act.ods")
+
+    assert source.read_bytes() == b"private-ods"

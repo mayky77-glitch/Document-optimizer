@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
+import tempfile
+import zipfile
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
@@ -22,6 +27,9 @@ _PERIOD_VALUE_RE = re.compile(
     r"^(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})$"
 )
 _OBJECT_RE = re.compile(r"(?:код|шифр)\s+объект\w*\s*(?:[:№-]\s*)?([\w./-]+)", re.IGNORECASE)
+_WORKBOOK_SUFFIXES = {".xlsx", ".xlsm", ".ods"}
+_LIBREOFFICE_TIMEOUT_SECONDS = 60
+_MAX_CONVERTED_WORKBOOK_BYTES = 256 * 1024 * 1024
 
 
 def _safe_relative_path(value: PurePosixPath | Path | str) -> PurePosixPath:
@@ -44,8 +52,8 @@ def _resolve_workbook(source_root: Path, relative_path: PurePosixPath) -> Path:
         resolved.relative_to(resolved_root)
     except ValueError as error:
         raise ValueError("workbook path escapes the source root") from error
-    if not resolved.is_file() or resolved.suffix.lower() not in {".xlsx", ".xlsm"}:
-        raise ValueError("workbook must be an .xlsx or .xlsm regular file")
+    if not resolved.is_file() or resolved.suffix.lower() not in _WORKBOOK_SUFFIXES:
+        raise ValueError("workbook must be an .xlsx, .xlsm or .ods regular file")
     return resolved
 
 
@@ -309,15 +317,76 @@ def extract_package_workbook_facts(
 
     relative_path = _safe_relative_path(workbook_path)
     resolved = _resolve_workbook(source_root, relative_path)
+    if resolved.suffix.lower() == ".ods":
+        with tempfile.TemporaryDirectory(prefix="document-optimizer-ods-") as temporary:
+            converted = _convert_ods_to_xlsx(resolved, Path(temporary))
+            return _extract_openxml_facts(converted, relative_path)
+    return _extract_openxml_facts(resolved, relative_path)
+
+
+def _extract_openxml_facts(
+    readable_path: Path, relative_path: PurePosixPath
+) -> PackageWorkbookFacts:
     workbook = openpyxl.load_workbook(
-        resolved,
+        readable_path,
         read_only=True,
         data_only=True,
         keep_links=False,
-        keep_vba=resolved.suffix.lower() == ".xlsm",
+        keep_vba=readable_path.suffix.lower() == ".xlsm",
     )
     try:
         sheets = tuple(_sheet_facts(worksheet, relative_path) for worksheet in workbook.worksheets)
     finally:
         workbook.close()
     return PackageWorkbookFacts(workbook_path=relative_path, sheets=sheets)
+
+
+def _convert_ods_to_xlsx(source: Path, temporary_root: Path) -> Path:
+    """Convert one private Calc workbook in an isolated LibreOffice profile."""
+
+    executable = shutil.which("soffice")
+    if executable is None:
+        raise ValueError("LibreOffice Calc conversion is unavailable")
+    root = Path(temporary_root)
+    output = root / "output"
+    profile = root / "profile"
+    output.mkdir(mode=0o700)
+    profile.mkdir(mode=0o700)
+    command = (
+        executable,
+        "--headless",
+        "--safe-mode",
+        "--nologo",
+        "--nodefault",
+        "--nofirststartwizard",
+        "--norestore",
+        f"-env:UserInstallation={profile.resolve().as_uri()}",
+        "--convert-to",
+        "xlsx",
+        "--outdir",
+        str(output),
+        str(source),
+    )
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=_LIBREOFFICE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError("LibreOffice Calc conversion failed") from error
+    if result.returncode:
+        raise ValueError("LibreOffice Calc conversion failed")
+    candidates = tuple(output.glob("*.xlsx"))
+    if (
+        len(candidates) != 1
+        or not candidates[0].is_file()
+        or candidates[0].is_symlink()
+        or candidates[0].stat().st_size > _MAX_CONVERTED_WORKBOOK_BYTES
+        or not zipfile.is_zipfile(candidates[0])
+    ):
+        raise ValueError("LibreOffice Calc produced no valid XLSX workbook")
+    os.chmod(candidates[0], 0o600)
+    return candidates[0]

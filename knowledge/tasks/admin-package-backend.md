@@ -24,5 +24,7 @@ absolute paths.
 ## Completion evidence
 
 - Safe folder upload, private job storage and bounded JSON result are integrated.
-- Excel-only packages run normally; PDF evidence remains optional.
+- Excel/LibreOffice-only packages run normally; PDF evidence remains optional.
+- LibreOffice Calc `.ods` is converted only in a private isolated safe-mode
+  profile; the original file and public relative path remain unchanged.
 - Accepted in checkpoint `41943ec9141f6b6cdf5ddbd978c239c35423f313`.

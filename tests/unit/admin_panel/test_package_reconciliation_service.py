@@ -110,6 +110,15 @@ def test_service_allows_workbook_only_folder(tmp_path: Path) -> None:
     assert calls == [job.input_root]
 
 
+def test_service_accepts_libreoffice_calc_workbook(tmp_path: Path) -> None:
+    service = PackageReconciliationService(tmp_path / "private", runner=_report)
+
+    job = service.create_job(files=[("acts/calc.ods", b"ods-workbook")])
+
+    assert job.status == "ready"
+    assert (job.input_root / "acts" / "calc.ods").read_bytes() == b"ods-workbook"
+
+
 @dataclass(frozen=True)
 class _ExtraResult:
     status: str = "MATCH"
