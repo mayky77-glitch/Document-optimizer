@@ -1,0 +1,51 @@
+status: active
+work_id: admin-verification-report-v1
+objective: "Separate document verification from report composition: clean verification shows an all-good result, while failed verification returns safe workbook copies with failed rows highlighted red."
+source_base_sha: 41943ec9141f6b6cdf5ddbd978c239c35423f313
+integration_branch: codex/admin-package-reconciliation-ui
+max_parallel: 3
+max_spawns: 4
+max_retries: 1
+merge_method: shared-worktree-reviewed-commit
+shared_paths_owner: integration
+contracts:
+  operation: "verify | reconcile; omitted operation remains reconcile"
+  technical_status: "ready | failed"
+  verification_status: "passed | failed"
+  single_result: "Проверено_<safe source name>.xlsx|xlsm"
+  multiple_result: "Проверка_документов.zip"
+dependency_order:
+  - parallel:
+      - verification-ooxml
+      - verification-service
+      - verification-ui
+  - integration-browser-check
+  - final-audit
+authority:
+  - existing exact matching, grouping hard constraints and DecisionPackage.safe define automatic pass
+  - latest explicit authoritative feedback ACCEPT/REJECT participates in verification
+  - local RAG hints never change pass or fail
+  - unreadable or partially unusable input is a technical failure, never a clean result
+artifact_policy:
+  - originals and private uploaded copies remain byte-identical
+  - one source returns one annotated workbook; multiple sources return a bounded ZIP
+  - target is comparison authority and is not included because failed locations belong to source rows
+  - non-failed workbook parts and VBA payloads are preserved byte-for-byte
+  - signed OOXML packages fail closed
+  - no filename, sheet, coordinate, value, formula or private path enters the public payload
+acceptance:
+  - `/` submits operation verify and displays exact all-good Russian success when no row fails
+  - failed verification offers the annotated workbook or ZIP and explains red rows
+  - failed physical rows are red; neighbouring rows are not changed
+  - zero-activity rows are neutral
+  - omitted operation preserves the existing authoritative reconcile API flow
+  - `/drawing-card` is presented as report composition with built-in auto-reconciliation
+  - single/multiple source MIME types and safe filenames are correct
+  - focused, full suite, browser smoke and final P6 audit pass
+forbidden_paths:
+  - "/Users/x/Downloads/**"
+  - "**/private-workspaces/**"
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+  - "**/*.pdf"

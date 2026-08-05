@@ -12,6 +12,10 @@ updated: 2026-08-04
 Active admin integration: [[../tasks/admin-package-backend|safe Excel-PDF API]] and
 [[../tasks/admin-package-ui|workflow UI and in-panel guide]].
 
+Active verification split: [[../tasks/admin-verification-ooxml|red-row OOXML]],
+[[../tasks/admin-verification-service|verification service/API]] and
+[[../tasks/admin-verification-ui|verification/report UI]].
+
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 
 Wave 1: [[../tasks/qdrant-dense-rag-core|core]] and
