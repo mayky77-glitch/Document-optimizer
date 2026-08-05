@@ -9,6 +9,9 @@ updated: 2026-08-04
 
 # Active work
 
+Active admin integration: [[../tasks/admin-package-backend|safe Excel-PDF API]] and
+[[../tasks/admin-package-ui|workflow UI and in-panel guide]].
+
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 
 Wave 1: [[../tasks/qdrant-dense-rag-core|core]] and

@@ -1,0 +1,44 @@
+status: active
+work_id: admin-package-reconciliation-ui-v1
+objective: "Expose the accepted Excel-PDF package reconciliation in the local admin panel, explain every user-facing function, and add an in-panel usage guide."
+source_base_sha: 953eec7e4bf571ca076d48d3c486bf66bd716584
+integration_branch: codex/admin-package-reconciliation-ui
+max_parallel: 2
+max_spawns: 3
+max_retries: 1
+merge_method: shared-worktree-reviewed-commit
+data_classification: restricted
+shared_paths_owner: integration
+dependency_order:
+  - parallel:
+      - admin-package-backend
+      - admin-package-ui
+  - integration-browser-check
+  - final-audit
+design_contract:
+  palette: "Keep the existing Gazprom blue, paper white, ink, rule and focus-yellow tokens with full dark-mode parity."
+  typography: "Keep the existing system UI stack and strong editorial heading scale."
+  layout: "One local workflow per page, three numbered steps, compact evidence table, and the existing tab-like product navigation."
+  signature: "Crisp ledger rules and a blue left-edge marker; no decorative redesign."
+  critique: "The current visual system is coherent, but navigation does not expose the new capability and there is no user-oriented map of which workflow to choose."
+test_data_policy:
+  - synthetic fixtures only
+  - no files from user download folders
+  - no workbook, PDF, OCR text, or absolute private path enters Git
+acceptance:
+  - select one local package folder containing a workbook and related PDFs
+  - preserve relative upload paths without permitting path traversal
+  - execute package reconciliation outside the async event loop
+  - render status summary and row evidence without raw OCR or absolute paths
+  - provide a bounded private JSON download
+  - describe all three admin workflows in plain Russian
+  - provide a responsive, keyboard-usable in-panel guide
+  - preserve existing reconciliation and drawing-card behavior
+  - focused tests, full suite, browser smoke, P6 audit, push and cleanup
+forbidden_paths:
+  - "/Users/x/Downloads/**"
+  - "**/*.xlsx"
+  - "**/*.xlsm"
+  - "**/*.xlsb"
+  - "**/*.pdf"
+  - ".env*"
