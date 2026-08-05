@@ -1,7 +1,7 @@
 ---
 type: task
-status: ready
-tags: [status/ready, capability/reconciliation, surface/admin, domain/design]
+status: done
+tags: [status/done, capability/reconciliation, surface/admin, domain/design]
 assigned_profile: L1
 assigned_grade: P3
 ---
@@ -20,3 +20,10 @@ must explain when to use each workflow, what inputs are accepted, what every sta
 means, that PDFs are optional evidence, local-processing/privacy behavior and common
 recovery actions. Preserve dark
 mode, focus states, reduced motion and small-screen usability.
+
+## Completion evidence
+
+- Folder reconciliation and help pages are linked throughout the admin UI.
+- Excel-only and optional-PDF behavior is explained in plain Russian.
+- Desktop/mobile browser smoke passed at checkpoint
+  `41943ec9141f6b6cdf5ddbd978c239c35423f313`.

@@ -1,4 +1,4 @@
-status: active
+status: complete
 work_id: admin-package-reconciliation-ui-v1
 objective: "Expose the accepted Excel-PDF package reconciliation in the local admin panel, explain every user-facing function, and add an in-panel usage guide."
 source_base_sha: 953eec7e4bf571ca076d48d3c486bf66bd716584
@@ -43,3 +43,7 @@ forbidden_paths:
   - "**/*.xlsb"
   - "**/*.pdf"
   - ".env*"
+completion_evidence:
+  checkpoint_commit: 41943ec9141f6b6cdf5ddbd978c239c35423f313
+  validation: "1432 passed, 25 skipped; desktop/mobile Excel-only browser smoke PASS"
+  cleanup: "synthetic browser data moved to Trash; no user workbook or PDF committed"

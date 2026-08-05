@@ -309,7 +309,7 @@ def _canonical_rows(
         location = SourceLocation(
             source_file_id=source_id,
             filename=descriptor.safe_basename,
-            sheet_name="",
+            sheet_name=sheet.title,
             sheet_type=source_type,
             row_number=row_number,
         )

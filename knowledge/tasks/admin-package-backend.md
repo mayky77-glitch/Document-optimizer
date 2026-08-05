@@ -1,7 +1,7 @@
 ---
 type: task
-status: ready
-tags: [status/ready, capability/reconciliation, surface/admin]
+status: done
+tags: [status/done, capability/reconciliation, surface/admin]
 assigned_profile: L1
 assigned_grade: P3
 ---
@@ -20,3 +20,9 @@ Validate relative paths, type/count/combined size and duplicate names. Require a
 least one workbook; PDFs are optional evidence and Excel-only folders must run. Run the
 accepted synchronous reconciliation in a thread pool. Never return raw OCR or
 absolute paths.
+
+## Completion evidence
+
+- Safe folder upload, private job storage and bounded JSON result are integrated.
+- Excel-only packages run normally; PDF evidence remains optional.
+- Accepted in checkpoint `41943ec9141f6b6cdf5ddbd978c239c35423f313`.

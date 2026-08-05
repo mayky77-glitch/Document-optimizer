@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="drawing-card-api-contract" content="POST /api/drawing-card/jobs; inline review API">
-    <title>Карточка остатков</title>
+    <title>Составление отчёта</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/drawing-card.css">
     <script src="/static/theme.js" defer></script>
@@ -14,17 +14,17 @@
   <body>
     <main class="drawing-shell">
       <nav class="product-nav" aria-label="Разделы контроля документов">
-        <a href="/">Сверка документов</a>
-        <a class="is-current" href="/drawing-card" aria-current="page">Карточка остатков</a>
+        <a href="/">Проверка документов</a>
+        <a class="is-current" href="/drawing-card" aria-current="page">Составление отчёта</a>
         <a href="/package-reconciliation">Папка Excel</a>
         <a href="/help">Справка</a>
         <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Тёмная тема</button>
       </nav>
 
       <header class="page-heading">
-        <p class="eyebrow">Исполнительная документация</p>
-        <h1>Карточка остатков</h1>
-        <p>Загрузите документы, подтвердите спорные строки прямо в панели и скачайте готовую карточку.</p>
+        <p class="eyebrow">Отчёт с автоматической сверкой</p>
+        <h1>Составьте отчёт об остатках</h1>
+        <p>Панель сама сопоставит строки и сразу сформирует карточку, если всё однозначно. Спорные строки попросит подтвердить перед выпуском.</p>
       </header>
 
       <ol class="progress-rail" aria-label="Готовность карточки">

@@ -1,7 +1,7 @@
 ---
 type: task
-status: ready
-tags: [status/ready, capability/reconciliation, domain/excel]
+status: done
+tags: [status/done, capability/reconciliation, domain/excel]
 assigned_profile: L2
 assigned_grade: P4
 ---
@@ -18,3 +18,12 @@ Provide a package-preserving function with the agreed interface:
 sheet names to positive physical row numbers. Copy OOXML atomically, add red style
 variants only to existing cells on failed rows, keep other package parts and VBA
 bytes unchanged, reject signed/unsafe packages, and never mutate the source.
+
+## Completion evidence
+
+- Physical sheet provenance is retained privately.
+- Failed rows receive red style variants through raw OOXML patching; originals,
+  formulas, values, VBA bytes and unrelated package parts are preserved.
+- Missing/cellless rows, signed packages, duplicate/unsafe entries and clobber
+  attempts fail closed.
+- Office namespace declarations and `mc:Ignorable` survive unchanged.

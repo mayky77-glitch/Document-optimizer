@@ -47,8 +47,8 @@ def test_help_covers_all_workflows_statuses_privacy_and_recovery() -> None:
     styles = (ASSETS / "help.css").read_text(encoding="utf-8")
 
     for copy in (
-        "Сверка документов",
-        "Карточка остатков",
+        "Проверка документов",
+        "Составление отчёта",
         "Папка Excel с PDF-доказательствами",
         "MATCH",
         "MISMATCH",
@@ -60,6 +60,8 @@ def test_help_covers_all_workflows_statuses_privacy_and_recovery() -> None:
         "Poppler",
         "Tesseract",
         "сверка Excel всё равно выполняется",
+        "красные строки появляются только в отдельной копии",
+        "Автосверка встроена",
     ):
         assert copy in page
     assert 'src="/static/theme.js" defer' in page

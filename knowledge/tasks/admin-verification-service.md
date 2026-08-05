@@ -1,7 +1,7 @@
 ---
 type: task
-status: ready
-tags: [status/ready, capability/reconciliation, surface/admin]
+status: done
+tags: [status/done, capability/reconciliation, surface/admin]
 assigned_profile: L2
 assigned_grade: P4
 ---
@@ -18,3 +18,12 @@ OOXML annotator interface. Return exact clean/failed verification payloads witho
 location metadata. One source downloads an annotated workbook; multiple source
 copies are a bounded safe ZIP. Preserve legacy reconciliation flow and controlled
 failure for unreadable/partial inputs.
+
+## Completion evidence
+
+- `operation=verify|reconcile` is additive; omitted operation remains reconcile.
+- Clean verification returns the exact success message without an artifact.
+- Failed verification returns one annotated workbook or a ZIP containing every
+  submitted source workbook once; technical failures never appear as a clean result.
+- Safe basenames are limited to repair guidance; paths, sheets, coordinates,
+  values and formulas remain private.

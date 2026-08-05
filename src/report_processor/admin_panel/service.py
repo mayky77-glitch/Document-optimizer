@@ -40,6 +40,7 @@ class AdminJob:
     mode: str
     source_digest: str
     target_digest: str
+    operation: str = "reconcile"
     sources: tuple[Path, ...] = ()
     source_digests: tuple[str, ...] = ()
     source_names: tuple[str, ...] = ()
@@ -54,6 +55,10 @@ class AdminJob:
     errors: tuple[str, ...] = ()
     result_name: str | None = None
     review_state: ReconciliationReviewState | None = None
+    verification_status: str | None = None
+    verification_message: str | None = None
+    checked_row_count: int = 0
+    failed_row_count: int = 0
 
     @property
     def result_available(self) -> bool:
@@ -116,6 +121,7 @@ class AdminPanelService:
         target_content: bytes,
         stage: str,
         mode: str = "write",
+        operation: str = "reconcile",
     ) -> AdminJob:
         upload_sources = validated_sources(sources, source_name, source_content)
         validate_workbook_upload(target_name, target_content)
@@ -126,6 +132,7 @@ class AdminPanelService:
             raise ValueError("combined upload is too large")
         clean_stage = validate_stage(stage)
         clean_mode = validate_mode(mode)
+        clean_operation = validate_operation(operation)
         job_id = secrets.token_urlsafe(18)
         directory = self.workspace_root / job_id
         registered = False
@@ -152,6 +159,7 @@ class AdminPanelService:
                 source_digests=tuple(_digest(content) for _name, content in upload_sources),
                 source_names=tuple(name for name, _content in upload_sources),
                 target_name=target_name,
+                operation=clean_operation,
             )
             self.jobs[job_id] = job
             registered = True
@@ -170,17 +178,25 @@ class AdminPanelService:
             raise ValueError("job cannot be run from its current state")
         job.status = "running"
         try:
-            execution_result = (
-                self.execute(job)
-                if self.execute is not None
-                else prepare_review(job, self.feedback_store.records(job.target_digest))
-            )
+            if job.operation == "verify":
+                from .reconciliation_verification import verify_reconciliation
+
+                execution_result = verify_reconciliation(
+                    job, self.feedback_store.records(job.target_digest)
+                )
+            else:
+                execution_result = (
+                    self.execute(job)
+                    if self.execute is not None
+                    else prepare_review(job, self.feedback_store.records(job.target_digest))
+                )
             self._apply_execution_result(job, execution_result)
             _verify_inputs(job)
-        except (OSError, TypeError, ValueError, RuntimeError):
+        except (OSError, TypeError, ValueError, RuntimeError) as error:
             _remove_partial_output(job)
             job.status = "failed"
             job.errors = ("PROCESSING_FAILED",)
+            _verification_failure_issues(job, error)
         except Exception:
             LOGGER.exception("Unexpected admin-panel executor failure for job %s", job.job_id)
             _remove_partial_output(job)
@@ -405,6 +421,11 @@ class AdminPanelService:
             self.jobs.pop(job_id, None)
 
     def _apply_execution_result(self, job: AdminJob, result: object) -> None:
+        from .reconciliation_verification import VerificationResult
+
+        if isinstance(result, VerificationResult):
+            _apply_verification_result(job, result)
+            return
         if isinstance(result, ReconciliationReviewResult):
             job.review_state = result.state
             job.source_issues = tuple(
@@ -473,6 +494,46 @@ class AdminPanelService:
             job.result_name = "review-journal.json"
 
 
+def _apply_verification_result(job: AdminJob, result) -> None:
+    job.review_state = None
+    job.summary = {}
+    job.discrepancies = []
+    job.suggestions = []
+    job.decisions = []
+    job.source_issues = ()
+    job.verification_status = result.verification_status
+    job.verification_message = result.message
+    job.checked_row_count = result.checked_row_count
+    job.failed_row_count = result.failed_row_count
+    if result.output is None:
+        job.output = None
+        job.result_name = None
+        job.status = "ready"
+        return
+    output = result.output
+    if (
+        not output.is_file()
+        or output.is_symlink()
+        or not output.resolve().is_relative_to(job.directory.resolve())
+        or result.result_name is None
+    ):
+        raise RuntimeError("VERIFICATION_OUTPUT_INVALID")
+    os.chmod(output, 0o600)
+    job.output = output
+    job.result_name = result.result_name
+    job.status = "ready"
+
+
+def _verification_failure_issues(job: AdminJob, error: Exception) -> None:
+    if job.operation != "verify":
+        return
+    from .reconciliation_verification import VerificationTechnicalFailure
+
+    if not isinstance(error, VerificationTechnicalFailure):
+        return
+    job.source_issues = tuple(error.issues)
+
+
 def _has_unresolved_reviews(job: AdminJob) -> bool:
     return bool(job.unresolved_suggestion_ids or job.unresolved_manual_discrepancy_ids)
 
@@ -517,6 +578,12 @@ def _default_execute(job: AdminJob) -> object:
         else:
             break
     return result
+
+
+def validate_operation(operation: object) -> str:
+    if not isinstance(operation, str) or operation not in {"reconcile", "verify"}:
+        raise ValueError("invalid operation")
+    return operation
 
 
 def _verify_inputs(job: AdminJob) -> None:

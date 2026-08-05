@@ -254,10 +254,10 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
 
     assert page.status_code == stylesheet.status_code == theme_script.status_code == 200
     for label in (
-        "сверка документов",
-        "исходные документы",
-        "целевой отчёт",
-        "запустить сверку",
+        "проверка документов",
+        "исходные книги",
+        "отчёт для сравнения",
+        "проверить документы",
     ):
         assert label in html
     assert 'id="sources"' in html and 'name="sources"' in html

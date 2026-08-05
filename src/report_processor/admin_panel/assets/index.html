@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="admin-api-contract" content="POST /api/jobs: sources[] + target">
-    <title>Сверка документов</title>
+    <title>Проверка документов</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/admin.css">
     <script src="/static/theme.js" defer></script>
@@ -16,48 +16,49 @@
   <body>
     <main class="shell">
       <nav class="product-nav" aria-label="Разделы контроля документов">
-        <a class="is-current" href="/" aria-current="page">Сверка документов</a>
-        <a href="/drawing-card">Карточка остатков</a>
+        <a class="is-current" href="/" aria-current="page">Проверка документов</a>
+        <a href="/drawing-card">Составление отчёта</a>
         <a href="/package-reconciliation">Папка Excel</a>
         <a href="/help">Справка</a>
         <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Тёмная тема</button>
       </nav>
 
       <header class="mast">
-        <p class="eyebrow">Локальная проверка документов</p>
-        <h1>Сверьте комплект документов</h1>
-        <p>Загрузите исходные книги и один целевой отчёт. Панель покажет только то, что требует решения.</p>
+        <p class="eyebrow">Автоматическая проверка Excel</p>
+        <h1>Проверьте документы</h1>
+        <p>Загрузите исходные книги и отчёт для сравнения. Если расхождений нет, панель подтвердит результат. Если есть — подготовит безопасные копии с красными строками.</p>
       </header>
 
       <ol class="progress-rail" aria-label="Ход работы">
         <li class="is-active" data-progress="files"><span>01</span><b>Файлы</b></li>
-        <li data-progress="run"><span>02</span><b>Проверка</b></li>
+        <li data-progress="run"><span>02</span><b>Автосверка</b></li>
         <li data-progress="result"><span>03</span><b>Результат</b></li>
       </ol>
 
       <section class="workbench" aria-labelledby="upload-title">
         <div class="section-heading">
           <p class="step-label">Шаг 1 · документы</p>
-          <h2 id="upload-title">Что сравнить?</h2>
-          <p>Исходники можно добавлять по одному или сразу всей подборкой.</p>
+          <h2 id="upload-title">Какие документы проверить?</h2>
+          <p>Добавьте исходные книги и один отчёт, с которым их нужно сравнить.</p>
         </div>
         <form id="job-form" novalidate>
           <div class="file-grid">
             <label class="file-field" for="sources">
-              <span>Исходные документы <em>обязательно</em></span>
+              <span>Исходные книги <em>обязательно</em></span>
               <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm" multiple required aria-describedby="sources-help source-count">
               <small id="sources-help">Excel-файлы .xlsx или .xlsm · от 1 до 32 файлов.</small>
               <strong id="source-count" class="file-count" aria-live="polite">Файлы пока не выбраны</strong>
             </label>
             <label class="file-field" for="target">
-              <span>Целевой отчёт <em>обязательно</em></span>
+              <span>Отчёт для сравнения <em>обязательно</em></span>
               <input id="target" name="target" type="file" accept=".xlsx,.xlsm" required aria-describedby="target-help">
-              <small id="target-help">Один Excel-файл, с которым нужно выполнить сверку.</small>
+              <small id="target-help">Один Excel-файл, относительно которого проверяются исходные строки.</small>
             </label>
           </div>
-          <button class="primary" type="submit">Запустить сверку</button>
+          <input name="operation" type="hidden" value="verify">
+          <button class="primary" type="submit">Проверить документы</button>
         </form>
-        <p id="status" class="status" role="status" aria-live="polite">Файлы обрабатываются только в локальной панели.</p>
+        <p id="status" class="status" role="status" aria-live="polite">Оригиналы не изменяются: проверка работает только с приватными локальными копиями.</p>
       </section>
 
       <section id="review-panel" class="review-panel" aria-labelledby="review-title" tabindex="-1" hidden>
@@ -79,9 +80,9 @@
 
       <section class="result-panel" aria-labelledby="result-title">
         <div>
-          <p class="step-label">Шаг 3 · выгрузка</p>
-          <h2 id="result-title">Результат сверки</h2>
-          <p id="result-hint">Станет доступен после проверки.</p>
+          <p class="step-label">Шаг 3 · результат</p>
+          <h2 id="result-title">Итог проверки</h2>
+          <p id="result-hint">После автосверки здесь появится подтверждение или отчёт с красными строками.</p>
         </div>
         <a id="download" class="download is-disabled" aria-disabled="true">Результат ещё не готов</a>
       </section>

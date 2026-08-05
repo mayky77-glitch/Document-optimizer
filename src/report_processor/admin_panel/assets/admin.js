@@ -7,6 +7,7 @@
   const sourceCount = document.querySelector("#source-count");
   const status = document.querySelector("#status");
   const reviewPanel = document.querySelector("#review-panel");
+  const reviewTitle = document.querySelector("#review-title");
   const reviewState = document.querySelector("#review-state");
   const reviewGroups = document.querySelector("#review-groups");
   const activeLearningRoot = document.querySelector("#active-learning-review");
@@ -16,7 +17,9 @@
   const applyButton = document.querySelector("#review-apply");
   const download = document.querySelector("#download");
   const resultHint = document.querySelector("#result-hint");
+  const resultPanel = document.querySelector(".result-panel");
   const submit = form.querySelector('button[type="submit"]');
+  const operation = form.querySelector('input[name="operation"]');
   const workbookExtensions = new Set([".xlsx", ".xlsm"]);
   let currentJobId = "";
   let batchReview = null;
@@ -425,8 +428,61 @@
     download.setAttribute("aria-disabled", "true");
   };
 
+  const renderVerification = (payload) => {
+    const isVerification = payload.operation === "verify"
+      || typeof payload.verification_status === "string";
+    if (!isVerification) return false;
+    batchReview?.destroy();
+    batchReview = null;
+    activeLearningReview?.destroy?.();
+    activeLearningReview = null;
+    renderSourceIssues(payload);
+    const outcome = text(payload.verification_status, "");
+    const technicalFailure = payload.status === "failed";
+    const passed = outcome === "passed" && !technicalFailure;
+    const failed = outcome === "failed" && !technicalFailure;
+    const message = text(
+      payload.message,
+      technicalFailure
+        ? "Проверка не завершилась. Исправьте документы и повторите действие."
+        : passed
+          ? "Все документы проверены. Ошибок не найдено."
+          : "Проверка завершена: обнаружены ошибки. Проблемные строки выделены красным.",
+    );
+    const hasSourceIssues = Array.isArray(payload.source_issues) && payload.source_issues.length > 0;
+    reviewPanel.hidden = !(technicalFailure && hasSourceIssues);
+    if (!reviewPanel.hidden) {
+      reviewTitle.textContent = "Исправьте документы";
+      reviewState.textContent = "Проверка не выполнена: исправьте указанные файлы и запустите её снова.";
+      reviewGroups.replaceChildren();
+      activeLearningRoot.hidden = true;
+      emptyReview.hidden = true;
+      applyArea.hidden = true;
+    }
+    resultPanel.classList.toggle("is-verification-passed", passed);
+    resultPanel.classList.toggle("is-verification-failed", failed || technicalFailure);
+    resultHint.textContent = message;
+    if (failed && typeof payload.download_url === "string" && payload.download_url) {
+      download.href = payload.download_url;
+      download.textContent = "Скачать отчёт с красными строками";
+      download.classList.remove("is-disabled");
+      download.removeAttribute("aria-disabled");
+    } else {
+      download.removeAttribute("href");
+      download.textContent = passed ? "Отчёт не требуется" : "Отчёт недоступен";
+      download.classList.add("is-disabled");
+      download.setAttribute("aria-disabled", "true");
+    }
+    if (!technicalFailure) setProgress("result");
+    setStatus(message, failed || technicalFailure);
+    return true;
+  };
+
   const renderJob = (payload) => {
     currentJobId = typeof payload.job_id === "string" ? payload.job_id : currentJobId;
+    if (renderVerification(payload)) return;
+    reviewTitle.textContent = "Подтвердите соответствия";
+    resultPanel.classList.remove("is-verification-passed", "is-verification-failed");
     const reviewFocusRestored = renderReview(payload);
     renderSourceIssues(payload);
     renderDownload(payload);
@@ -468,6 +524,7 @@
       const data = new FormData();
       [...sourceFiles.files].forEach((file) => data.append("sources", file));
       data.append("target", targetFile.files[0]);
+      data.append("operation", operation?.value || "verify");
       renderJob(await requestJson("/api/jobs", { method: "POST", body: data }));
     } catch (requestError) {
       setStatus(requestError.message, true);

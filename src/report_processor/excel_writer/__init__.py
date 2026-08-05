@@ -15,6 +15,7 @@ from .models import (
     WriteStatus,
     WrittenCell,
 )
+from .row_annotations import annotate_failed_rows
 
 __all__ = (
     "EXCEL_WRITER_CONTRACT_VERSION",
@@ -27,5 +28,6 @@ __all__ = (
     "WriteResult",
     "WriteStatus",
     "WrittenCell",
+    "annotate_failed_rows",
     "write_target_report",
 )

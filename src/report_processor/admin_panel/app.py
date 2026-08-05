@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import quote
 
 from .drawing_card_presentation import (
     drawing_card_cluster_review_page,
@@ -39,6 +40,7 @@ from .service import (
     MAX_UPLOAD_BYTES,
     AdminPanelService,
     validate_mode,
+    validate_operation,
     validate_stage,
     validate_workbook_upload,
 )
@@ -50,8 +52,10 @@ from .view import (
     static_asset,
 )
 
-_SAFE_DOWNLOAD_NAME = re.compile(r"[^0-9A-Za-z._-]+")
+_SAFE_DOWNLOAD_NAME = re.compile(r"[^\w.-]+", re.UNICODE)
 _WORKBOOK_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12"
+_ZIP_MEDIA_TYPE = "application/zip"
 _DRAWING_CARD_UPLOAD_ERRORS = {
     "combined upload is too large": "Общий размер загружаемых файлов превышает допустимый предел",
     "existing card is only valid for update": (
@@ -183,7 +187,7 @@ def create_app(
             _validate_content_length(request.headers.get("content-length"))
             async with request.form(
                 max_files=ADMIN_MAX_SOURCES + 1,
-                max_fields=2,
+                max_fields=3,
                 max_part_size=MAX_UPLOAD_BYTES + 1,
             ) as form:
                 source_uploads = list(form.getlist("sources"))
@@ -208,6 +212,8 @@ def create_app(
                 validate_workbook_upload(target.filename, target_content)
                 stage = validate_stage(form.get("stage", "13.1"))
                 mode = validate_mode(form.get("mode", "write"))
+                operation = validate_operation(form.get("operation", "reconcile"))
+                operation_kwargs = {"operation": operation} if operation != "reconcile" else {}
                 if legacy_source:
                     job = panel.create_job(
                         source_name=sources[0][0],
@@ -216,6 +222,7 @@ def create_app(
                         target_content=target_content,
                         stage=stage,
                         mode=mode,
+                        **operation_kwargs,
                     )
                 else:
                     job = panel.create_job(
@@ -224,9 +231,10 @@ def create_app(
                         target_content=target_content,
                         stage=stage,
                         mode=mode,
+                        **operation_kwargs,
                     )
         except (KeyError, TypeError, ValueError):
-            return _error("Проверьте два Excel-файла, этап и режим", 400)
+            return _error("Проверьте исходные книги и отчёт, этап и режим", 400)
         return _secure(JSONResponse(job_payload(job), status_code=201))
 
     async def drawing_card_periods(request):
@@ -344,16 +352,12 @@ def create_app(
         except (OSError, TypeError, ValueError):
             return _error("Результат недоступен", 409)
         safe_name = _safe_download_name(filename)
-        media_type = (
-            "application/json"
-            if Path(safe_name).suffix.casefold() == ".json"
-            else _WORKBOOK_MEDIA_TYPE
-        )
+        media_type = _result_media_type(safe_name)
         return _secure(
             Response(
                 content,
                 media_type=media_type,
-                headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+                headers={"Content-Disposition": _content_disposition(safe_name)},
             )
         )
 
@@ -733,7 +737,32 @@ def _safe_download_name(value: object) -> str:
         raise TypeError("filename must be a string")
     name = Path(value).name.replace("\r", "").replace("\n", "")
     name = _SAFE_DOWNLOAD_NAME.sub("-", name).strip(".-")
-    return name[:120] or "result.bin"
+    if not name:
+        return "result.bin"
+    if len(name) <= 120:
+        return name
+    suffix = Path(name).suffix
+    if suffix and len(suffix) < 120:
+        return name[: 120 - len(suffix)] + suffix
+    return name[:120]
+
+
+def _result_media_type(filename: str) -> str:
+    suffix = Path(filename).suffix.casefold()
+    if suffix == ".json":
+        return "application/json"
+    if suffix == ".xlsm":
+        return _XLSM_MEDIA_TYPE
+    if suffix == ".zip":
+        return _ZIP_MEDIA_TYPE
+    return _WORKBOOK_MEDIA_TYPE
+
+
+def _content_disposition(filename: str) -> str:
+    """Build a header-safe name while retaining a UTF-8 download filename."""
+
+    ascii_name = filename.encode("ascii", "ignore").decode("ascii") or "result.bin"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
 
 def _drawing_card_download(service, job_id: str, *, kind: str):

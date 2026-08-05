@@ -1,7 +1,7 @@
 ---
 type: task
-status: ready
-tags: [status/ready, capability/reconciliation, surface/admin, domain/design]
+status: done
+tags: [status/done, capability/reconciliation, surface/admin, domain/design]
 assigned_profile: L1
 assigned_grade: P3
 ---
@@ -17,3 +17,11 @@ pass, and offer the annotated report on failure. Present `/drawing-card` in nav 
 copy as «Составление отчёта» with built-in auto-reconciliation while retaining the
 card workflow. Update help/navigation consistently. Preserve current design tokens,
 dark mode, keyboard behavior, reduced motion and mobile layout.
+
+## Completion evidence
+
+- `/` is «Проверка документов» and submits explicit verification.
+- `/drawing-card` is «Составление отчёта» and explains built-in auto-reconciliation.
+- Clean and failed outcomes render without manual-review controls; the latter
+  offers the red-row workbook/ZIP.
+- Desktop/mobile browser smoke passed without console, page or external-request errors.

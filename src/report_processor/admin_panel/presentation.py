@@ -42,6 +42,8 @@ _ABSOLUTE_PATH = re.compile(r"(?<![\w])(?:/[^\s,;]+|[A-Za-z]:\\[^\s,;]+)")
 
 def job_payload(job: object) -> dict[str, object]:
     """Serialize only frozen, client-facing fields from a job or fake mapping."""
+    if getattr(job, "operation", None) == "verify":
+        return _verification_payload(job)
     review_state = getattr(job, "review_state", None)
     if review_state is not None:
         return _authoritative_review_payload(job, review_state)
@@ -91,6 +93,42 @@ def job_payload(job: object) -> dict[str, object]:
         else None,
         "source_issues": source_issues,
     }
+
+
+def _verification_payload(job: object) -> dict[str, object]:
+    """Expose verification totals only; workbook provenance remains private."""
+
+    status = _required_text(getattr(job, "status", None), "status")
+    verification_status = getattr(job, "verification_status", None)
+    completed = status == "ready" and verification_status in {"passed", "failed"}
+    message = (
+        _public_text(getattr(job, "verification_message", ""), 240)
+        if completed
+        else "Не удалось завершить проверку документов."
+    )
+    payload = {
+        "job_id": _required_text(getattr(job, "job_id", None), "job_id"),
+        "operation": "verify",
+        "status": status,
+        "verification_status": verification_status if completed else None,
+        "message": message,
+        "checked_row_count": _verification_count(getattr(job, "checked_row_count", 0)),
+        "failed_row_count": _verification_count(getattr(job, "failed_row_count", 0)),
+        "download_url": (
+            f"/api/jobs/{job.job_id}/result"
+            if completed
+            and verification_status == "failed"
+            and bool(getattr(job, "result_available", False))
+            else None
+        ),
+    }
+    if not completed:
+        payload["source_issues"] = _source_issues(getattr(job, "source_issues", ()))
+    return payload
+
+
+def _verification_count(value: object) -> int:
+    return value if isinstance(value, int) and value >= 0 else 0
 
 
 def _authoritative_review_payload(job: object, state: object) -> dict[str, object]:
