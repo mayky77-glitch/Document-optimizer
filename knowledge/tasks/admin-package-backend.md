@@ -16,6 +16,7 @@ other workers' files.
 
 Deliver a safe folder-upload API, private job/result storage, injected test seam,
 controlled public errors, JSON download and routes for the new workflow and guide.
-Validate relative paths, type/count/combined size and duplicate names. Run the
+Validate relative paths, type/count/combined size and duplicate names. Require at
+least one workbook; PDFs are optional evidence and Excel-only folders must run. Run the
 accepted synchronous reconciliation in a thread pool. Never return raw OCR or
 absolute paths.

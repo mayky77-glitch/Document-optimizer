@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="package-reconciliation-api-contract" content="POST /api/package-reconciliation/jobs files; GET job and result">
+    <title>Папка Excel с PDF-доказательствами</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/package-reconciliation.css">
+    <script src="/static/theme.js" defer></script>
+    <script src="/static/package-reconciliation.js" defer></script>
+  </head>
+  <body>
+    <main class="package-shell">
+      <nav class="product-nav" aria-label="Разделы контроля документов">
+        <a href="/">Сверка документов</a>
+        <a href="/drawing-card">Карточка остатков</a>
+        <a class="is-current" href="/package-reconciliation" aria-current="page">Папка Excel</a>
+        <a href="/help">Справка</a>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Тёмная тема</button>
+      </nav>
+
+      <header class="mast">
+        <p class="eyebrow">Исполнительная документация</p>
+        <h1>Сверьте папку Excel</h1>
+        <p>Выберите одну папку с книгами Excel. Если в ней есть PDF АОСР, панель добавит их как доказательства и покажет строки, требующие проверки.</p>
+      </header>
+
+      <ol class="progress-rail" aria-label="Ход сверки пакета">
+        <li class="is-active" data-progress="files"><span>01</span><b>Папка</b></li>
+        <li data-progress="run"><span>02</span><b>Сверка</b></li>
+        <li data-progress="result"><span>03</span><b>Отчёт</b></li>
+      </ol>
+
+      <section class="workbench package-workbench" aria-labelledby="package-upload-title">
+        <div class="ledger-tab" aria-hidden="true"><span>ПАКЕТ</span><span>ДОКАЗАТЕЛЬСТВА</span><span>JSON</span></div>
+        <div class="section-heading">
+          <p class="step-label">Шаг 1 · пакет документов</p>
+          <h2 id="package-upload-title">Выберите папку с документами</h2>
+          <p>Нужна хотя бы одна Excel-книга. PDF АОСР можно добавить как дополнительные доказательства; вложенные папки сохраняют свою структуру.</p>
+        </div>
+        <form id="package-form" novalidate>
+          <label class="file-field" for="package-files">
+            <span>Папка пакета <em>обязательно</em></span>
+            <input id="package-files" name="package-files" type="file" accept=".xlsx,.xlsm,.pdf" webkitdirectory multiple required aria-describedby="package-files-help package-file-count">
+            <small id="package-files-help">Выберите папку целиком: до 128 файлов, минимум одна книга .xlsx/.xlsm. PDF АОСР можно добавить дополнительно. Имена и структура папок передаются только локальной панели.</small>
+            <strong id="package-file-count" class="file-count" aria-live="polite">Папка пока не выбрана</strong>
+          </label>
+          <button id="start-package-job" class="primary" type="submit">Запустить сверку папки</button>
+        </form>
+        <p id="status" class="status" role="status" aria-live="polite">Документы не покидают этот компьютер.</p>
+        <ul id="error-list" class="package-errors" aria-live="assertive" hidden></ul>
+      </section>
+
+      <section id="package-report" class="result-panel package-report" aria-labelledby="package-report-title" tabindex="-1" hidden>
+        <div class="section-heading package-report-heading">
+          <div>
+            <p class="step-label">Шаг 2 · результат</p>
+            <h2 id="package-report-title">Сводка и доказательства</h2>
+            <p>Пути показаны только относительно выбранной папки. Откройте JSON, чтобы передать результат в дальнейшую проверку.</p>
+          </div>
+          <a id="package-download" class="download is-disabled" aria-disabled="true">JSON ещё не готов</a>
+        </div>
+        <dl id="status-summary" class="package-summary" aria-label="Статусы сверки"></dl>
+        <p id="package-empty" class="empty-review" hidden>Сверенных строк пока нет.</p>
+        <div class="evidence-wrap" tabindex="0">
+          <table class="evidence-table">
+            <caption>Строки и безопасные доказательства сопоставления</caption>
+            <thead>
+              <tr>
+                <th scope="col">Статус</th>
+                <th scope="col">Строка Excel</th>
+                <th scope="col">Код работы</th>
+                <th scope="col">АОСР</th>
+                <th scope="col">Количество</th>
+                <th scope="col">Основания</th>
+              </tr>
+            </thead>
+            <tbody id="evidence-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

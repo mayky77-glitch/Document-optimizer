@@ -26,9 +26,10 @@ test_data_policy:
   - no files from user download folders
   - no workbook, PDF, OCR text, or absolute private path enters Git
 acceptance:
-  - select one local package folder containing a workbook and related PDFs
+  - select one local package folder containing at least one workbook; related PDFs are optional evidence
   - preserve relative upload paths without permitting path traversal
   - execute package reconciliation outside the async event loop
+  - process Excel-only folders normally and report NO_EVIDENCE where no PDF evidence exists
   - render status summary and row evidence without raw OCR or absolute paths
   - provide a bounded private JSON download
   - describe all three admin workflows in plain Russian

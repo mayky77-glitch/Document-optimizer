@@ -20,6 +20,11 @@ from .drawing_card_service import (
 from .drawing_card_service import (
     DrawingCardService,
 )
+from .package_reconciliation_service import (
+    MAX_PACKAGE_FILES,
+    MAX_PACKAGE_UPLOAD_BYTES,
+    PackageReconciliationService,
+)
 from .presentation import job_payload
 from .reconciliation_review_routes import reconciliation_review_routes
 from .review_api import (
@@ -37,7 +42,13 @@ from .service import (
     validate_stage,
     validate_workbook_upload,
 )
-from .view import drawing_card_page, index_page, static_asset
+from .view import (
+    drawing_card_page,
+    help_page,
+    index_page,
+    package_reconciliation_page,
+    static_asset,
+)
 
 _SAFE_DOWNLOAD_NAME = re.compile(r"[^0-9A-Za-z._-]+")
 _WORKBOOK_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -65,7 +76,12 @@ _DRAWING_CARD_UPLOAD_ERRORS = {
 _DRAWING_CARD_UPLOAD_FALLBACK = "Проверьте исходные Excel-файлы и выбранную операцию"
 
 
-def create_app(service=None, workspace_root=None, drawing_card_service=None):
+def create_app(
+    service=None,
+    workspace_root=None,
+    drawing_card_service=None,
+    package_reconciliation_service=None,
+):
     """Return the frozen local panel API without starting a server."""
 
     from starlette.applications import Starlette
@@ -77,6 +93,9 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
     )
     panel = service or AdminPanelService(workspace)
     drawing_panel = drawing_card_service or DrawingCardService(workspace / "drawing-card")
+    package_panel = package_reconciliation_service or PackageReconciliationService(
+        workspace / "package-reconciliation"
+    )
 
     async def index(request):
         del request
@@ -92,6 +111,72 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
     async def drawing_card_index(request):
         del request
         return _secure(HTMLResponse(drawing_card_page()))
+
+    async def package_reconciliation_index(request):
+        del request
+        try:
+            return _secure(HTMLResponse(package_reconciliation_page()))
+        except OSError:
+            return _error("Ресурс не найден", 404)
+
+    async def help_index(request):
+        del request
+        try:
+            return _secure(HTMLResponse(help_page()))
+        except OSError:
+            return _error("Ресурс не найден", 404)
+
+    async def package_reconciliation_upload(request):
+        try:
+            _validate_content_length(
+                request.headers.get("content-length"),
+                maximum=MAX_PACKAGE_UPLOAD_BYTES + 1024 * 1024,
+            )
+            async with request.form(
+                max_files=MAX_PACKAGE_FILES,
+                max_fields=0,
+                max_part_size=MAX_PACKAGE_UPLOAD_BYTES + 1,
+            ) as form:
+                uploads = list(form.getlist("files"))
+                files = []
+                for item in uploads:
+                    upload = _upload_value(item)
+                    content = await _read_upload(upload, maximum=MAX_PACKAGE_UPLOAD_BYTES)
+                    files.append((upload.filename, content))
+            from anyio import to_thread
+
+            current = await to_thread.run_sync(lambda: package_panel.create_job(files=files))
+            payload = package_panel.payload_for(current.job_id)
+        except (KeyError, OSError, TypeError, ValueError):
+            return _error("Проверьте состав папки и Excel-файлы (.xlsx, .xlsm)", 400)
+        return _secure(JSONResponse(payload, status_code=201))
+
+    async def package_reconciliation_job(request):
+        try:
+            payload = package_panel.payload_for(request.path_params["job_id"])
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Состояние задачи недоступно", 500)
+        return _secure(JSONResponse(payload))
+
+    async def package_reconciliation_result(request):
+        try:
+            path, filename = package_panel.get_result(request.path_params["job_id"])
+            content = _bounded_result(Path(path))
+        except KeyError:
+            return _error("Результат пока недоступен", 404)
+        except (OSError, TypeError, ValueError):
+            return _error("Результат недоступен", 409)
+        return _secure(
+            Response(
+                content,
+                media_type="application/json",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{_safe_download_name(filename)}"'
+                },
+            )
+        )
 
     async def upload(request):
         try:
@@ -502,7 +587,24 @@ def create_app(service=None, workspace_root=None, drawing_card_service=None):
         routes=[
             Route("/", index),
             Route("/drawing-card", drawing_card_index),
+            Route("/package-reconciliation", package_reconciliation_index),
+            Route("/help", help_index),
             Route("/static/{path}", static),
+            Route(
+                "/api/package-reconciliation/jobs",
+                package_reconciliation_upload,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/package-reconciliation/jobs/{job_id}",
+                package_reconciliation_job,
+                methods=["GET"],
+            ),
+            Route(
+                "/api/package-reconciliation/jobs/{job_id}/result",
+                package_reconciliation_result,
+                methods=["GET"],
+            ),
             Route("/api/jobs", upload, methods=["POST"]),
             Route("/api/jobs/{job_id}", get_job),
             Route("/api/jobs/{job_id}/decisions", decision, methods=["POST"]),

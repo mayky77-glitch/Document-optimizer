@@ -17,5 +17,6 @@ Add `/package-reconciliation` and `/help` pages in the existing visual language,
 wire folder selection through `webkitRelativePath`, show progress, status counts,
 evidence rows and JSON download, and add consistent navigation to all pages. Copy
 must explain when to use each workflow, what inputs are accepted, what every status
-means, local-processing/privacy behavior and common recovery actions. Preserve dark
+means, that PDFs are optional evidence, local-processing/privacy behavior and common
+recovery actions. Preserve dark
 mode, focus states, reduced motion and small-screen usability.

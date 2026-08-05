@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Справка по проверке документов</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/help.css">
+    <script src="/static/theme.js" defer></script>
+  </head>
+  <body>
+    <main class="help-shell">
+      <nav class="product-nav" aria-label="Разделы контроля документов">
+        <a href="/">Сверка документов</a>
+        <a href="/drawing-card">Карточка остатков</a>
+        <a href="/package-reconciliation">Папка Excel</a>
+        <a class="is-current" href="/help" aria-current="page">Справка</a>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Тёмная тема</button>
+      </nav>
+
+      <header class="mast">
+        <p class="eyebrow">Локальная панель</p>
+        <h1>Как выбрать нужную проверку</h1>
+        <p>Три рабочих процесса решают разные задачи. Выберите тот, где итоговый файл и набор входных документов совпадают с вашей задачей.</p>
+      </header>
+
+      <section class="help-card" aria-labelledby="workflows-title">
+        <p class="step-label">Три процесса</p>
+        <h2 id="workflows-title">Что использовать</h2>
+        <div class="workflow-grid">
+          <article>
+            <h3>Сверка документов</h3>
+            <p>Когда нужно сопоставить несколько исходных Excel-книг с одним целевым отчётом и получить отчёт о расхождениях.</p>
+            <a href="/">Открыть сверку документов</a>
+          </article>
+          <article>
+            <h3>Карточка остатков</h3>
+            <p>Когда из КС-2, накопительных ведомостей и других Excel-источников нужно создать или обновить карточку остатков.</p>
+            <a href="/drawing-card">Открыть карточку остатков</a>
+          </article>
+          <article>
+            <h3>Папка Excel с PDF-доказательствами</h3>
+            <p>Когда нужно проверить строки Excel из одной папки. PDF АОСР можно добавить дополнительно, чтобы получить документальные доказательства.</p>
+            <a href="/package-reconciliation">Открыть сверку пакета</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="help-card" aria-labelledby="inputs-title">
+        <p class="step-label">Входные данные</p>
+        <h2 id="inputs-title">Какие файлы принимаются</h2>
+        <dl class="help-list">
+          <div><dt>Сверка документов</dt><dd>От 1 до 32 исходных файлов <code>.xlsx</code> или <code>.xlsm</code> и один целевой Excel-файл.</dd></div>
+          <div><dt>Карточка остатков</dt><dd>От 1 до 32 источников <code>.xlsx</code>, <code>.xlsm</code> или <code>.xlsb</code>; для обновления также готовая карточка <code>.xlsx</code>.</dd></div>
+          <div><dt>Папка Excel с PDF-доказательствами</dt><dd>Одна папка целиком: до 128 файлов и минимум одна Excel-книга <code>.xlsx</code> или <code>.xlsm</code>. PDF АОСР необязательны: добавьте их, если нужны документальные доказательства. Структуру вложенных папок не меняйте.</dd></div>
+        </dl>
+      </section>
+
+      <section class="help-card" aria-labelledby="statuses-title">
+        <p class="step-label">Результат пакета</p>
+        <h2 id="statuses-title">Что означают статусы</h2>
+        <dl class="status-guide">
+          <div><dt>MATCH</dt><dd>Для строки найдено достаточное доказательство, количество не расходится.</dd></div>
+          <div><dt>MISMATCH</dt><dd>Доказательство найдено, но количество в Excel и АОСР расходится. Проверьте оба документа.</dd></div>
+          <div><dt>AMBIGUOUS</dt><dd>Подходят несколько документов с равной силой доказательств. Выберите корректный АОСР вручную.</dd></div>
+          <div><dt>NO_EVIDENCE</dt><dd>Подходящего доказательства не найдено. Это ожидаемо, если в папке нет PDF АОСР: сверка Excel всё равно выполняется. Если PDF добавлены, проверьте состав папки, код работы и наличие нужного АОСР.</dd></div>
+          <div><dt>NEEDS_REVIEW</dt><dd>Автоматическая проверка остановилась безопасно: не хватает кода, текст PDF недоступен, OCR ненадёжен или тип документа не подходит.</dd></div>
+        </dl>
+      </section>
+
+      <section class="help-card help-callout" aria-labelledby="recovery-title">
+        <p class="step-label">Конфиденциальность и восстановление</p>
+        <h2 id="recovery-title">Если что-то пошло не так</h2>
+        <p>Все операции выполняются на этом компьютере через локальную панель. Исходные Excel и PDF не изменяются. В результате сохраняются только структурированные сведения и относительные пути; абсолютные пути и сырой OCR не выводятся.</p>
+        <ul>
+          <li>Папка не выбирается: используйте современный Chrome, Edge или другой браузер с выбором папки; выберите саму папку, а не отдельные файлы.</li>
+          <li>Excel отклонён: закройте книгу, уберите временный файл, начинающийся с <code>~$</code>, и сохраните документ в допустимом формате.</li>
+          <li>PDF не дал доказательств: это не мешает сверке Excel. Чтобы сравнить строку с документом, убедитесь, что это АОСР, проверьте код работы и качество скана; при необходимости добавьте текстовый PDF или проверьте строку вручную.</li>
+          <li>Если добавлены сканированные PDF, нужны локальные Poppler и Tesseract с языками <code>rus</code> и <code>eng</code>. Если они не установлены или распознавание ненадёжно, строка получит <code>NEEDS_REVIEW</code> с причиной о недоступном тексте PDF или низкой уверенности OCR.</li>
+          <li>Панель не отвечает: убедитесь, что локальный запуск ещё работает, затем обновите страницу и запустите задачу заново.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

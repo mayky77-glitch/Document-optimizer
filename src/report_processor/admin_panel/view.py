@@ -33,6 +33,15 @@ _PUBLIC_ASSETS = {
         "text/javascript; charset=utf-8",
         _ASSET_DIRECTORY / "drawing-card-review.js",
     ),
+    "package-reconciliation.css": (
+        "text/css; charset=utf-8",
+        _ASSET_DIRECTORY / "package-reconciliation.css",
+    ),
+    "package-reconciliation.js": (
+        "text/javascript; charset=utf-8",
+        _ASSET_DIRECTORY / "package-reconciliation.js",
+    ),
+    "help.css": ("text/css; charset=utf-8", _ASSET_DIRECTORY / "help.css"),
 }
 
 
@@ -46,6 +55,18 @@ def drawing_card_page() -> str:
     """Return the separate drawing-card application shell."""
 
     return (_ASSET_DIRECTORY / "drawing-card.html").read_text(encoding="utf-8")
+
+
+def package_reconciliation_page() -> str:
+    """Return the package reconciliation workflow shell."""
+
+    return (_ASSET_DIRECTORY / "package-reconciliation.html").read_text(encoding="utf-8")
+
+
+def help_page() -> str:
+    """Return the local workflow guide shell."""
+
+    return (_ASSET_DIRECTORY / "help.html").read_text(encoding="utf-8")
 
 
 def static_asset(path: str) -> tuple[str, bytes]:
