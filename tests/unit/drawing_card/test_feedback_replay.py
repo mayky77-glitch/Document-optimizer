@@ -166,21 +166,23 @@ def test_exact_replay_survives_independent_private_job_directories(tmp_path: Pat
 
 
 def test_exact_replay_survives_reversed_direct_file_upload_order(tmp_path: Path) -> None:
-    first_job = tmp_path / "private-job-a"
-    second_job = tmp_path / "private-job-b"
-    first_job.mkdir()
-    second_job.mkdir()
+    first_job = tmp_path / "private-job-a" / "sources"
+    second_job = tmp_path / "private-job-b" / "sources"
+    first_job.mkdir(parents=True)
+    second_job.mkdir(parents=True)
     first_paths = (
-        first_job / "01-drawing-a.xlsx",
-        first_job / "02-drawing-b.xlsx",
+        first_job / "01" / "drawing-a.xlsx",
+        first_job / "02" / "drawing-b.xlsx",
     )
     second_paths = (
-        second_job / "01-drawing-b.xlsx",
-        second_job / "02-drawing-a.xlsx",
+        second_job / "01" / "drawing-b.xlsx",
+        second_job / "02" / "drawing-a.xlsx",
     )
     for path, content in zip(first_paths, (b"drawing a", b"drawing b"), strict=True):
+        path.parent.mkdir()
         path.write_bytes(content)
     for path, content in zip(second_paths, (b"drawing b", b"drawing a"), strict=True):
+        path.parent.mkdir()
         path.write_bytes(content)
 
     first_entries = [scan_file(path)[0] for path in first_paths]
