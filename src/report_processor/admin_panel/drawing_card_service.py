@@ -8,12 +8,15 @@ import os
 import re
 import secrets
 import shutil
+import threading
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from report_processor.drawing_card.lifecycle import DrawingCardWorkflowCancelled
 from report_processor.drawing_card.matching.matcher import ReviewApproval
 from report_processor.drawing_card.models import (
     DrawingSourceRow,
@@ -37,6 +40,7 @@ from report_processor.drawing_card.workflow import default_template_path, run_wo
 from report_processor.metadata.period_models import DocumentPeriod
 from report_processor.metadata.period_patterns import MONTHS
 
+from .drawing_card_job_store import MANIFEST_CONTRACT, DrawingCardJobStore
 from .drawing_card_review_payload import drawing_card_cluster_payload
 
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
@@ -69,6 +73,7 @@ class DrawingCardJob:
     mode: Literal["create", "update"]
     period: str | None
     existing_card: Path | None
+    existing_name: str | None = None
     status: str = "processing"
     result: Path | None = None
     review: Path | None = None
@@ -89,6 +94,21 @@ class DrawingCardJob:
     cluster_actions: dict[str, dict[str, ReviewApproval]] = field(default_factory=dict, repr=False)
     rag_mode: Literal["off", "semantic"] = "semantic"
     run_count: int = 0
+    # Lifecycle fields are intentionally primitive: they can be mirrored in a
+    # private manifest without serialising workbook values or local paths.
+    phase: str = "upload"
+    processed_files: int = 0
+    total_files: int | None = None
+    processed_rows: int = 0
+    total_rows: int | None = None
+    started_at: str = ""
+    updated_at: str = ""
+    terminal_cause: str | None = None
+    attempt: int = 0
+    idempotency_key: str | None = None
+    cancel_event: threading.Event = field(
+        default_factory=threading.Event, repr=False, compare=False
+    )
 
     def __repr__(self) -> str:
         return (
@@ -102,6 +122,10 @@ class DrawingCardJob:
         return self.status == "ready" and self.result is not None and self.result.is_file()
 
 
+class DrawingCardPersistenceError(RuntimeError):
+    """A private job state mutation could not be durably committed."""
+
+
 class DrawingCardService:
     """Keep uploaded sources and all workflow artifacts in an opaque private job."""
 
@@ -109,6 +133,9 @@ class DrawingCardService:
         self,
         workspace_root: Path,
         runner: Callable[[WorkflowRequest], WorkflowResult] | None = None,
+        *,
+        background: bool = False,
+        max_background_workers: int = 2,
     ) -> None:
         self.workspace_root = Path(workspace_root)
         if self.workspace_root.is_symlink():
@@ -116,7 +143,14 @@ class DrawingCardService:
         self.workspace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.workspace_root, 0o700)
         self.runner = runner or run_workflow
+        self.background = background
         self._jobs: dict[str, DrawingCardJob] = {}
+        self._store = DrawingCardJobStore(self.workspace_root)
+        self._lock = threading.RLock()
+        self._worker_slots = threading.BoundedSemaphore(max(1, max_background_workers))
+        self._idempotency: dict[str, str] = {}
+        self._pending_idempotency: dict[str, threading.Event] = {}
+        self._restore_jobs()
 
     def create_job(
         self,
@@ -127,6 +161,8 @@ class DrawingCardService:
         existing_content: bytes | None = None,
         period: str | None = None,
         rag_mode: Literal["off", "semantic"] = "semantic",
+        background: bool | None = None,
+        idempotency_key: str | None = None,
     ) -> DrawingCardJob:
         if mode not in {"create", "update"}:
             raise ValueError("mode must be create or update")
@@ -140,8 +176,66 @@ class DrawingCardService:
         if rag_mode not in {"off", "semantic"}:
             raise ValueError("rag_mode must be off or semantic")
         clean_period = _validate_period(period)
+        use_background = self.background if background is None else background
+        clean_idempotency_key = _validate_idempotency_key(idempotency_key)
+        reservation: threading.Event | None = None
+        owns_reservation = False
+        with self._lock:
+            if clean_idempotency_key is not None:
+                existing_job_id = self._idempotency.get(clean_idempotency_key)
+                if existing_job_id is not None:
+                    existing_job = self.get_job(existing_job_id)
+                    if not _same_idempotent_request(
+                        existing_job,
+                        sources=sources,
+                        mode=mode,
+                        period=clean_period,
+                        rag_mode=rag_mode,
+                        existing_name=existing_name,
+                        existing_content=existing_content,
+                    ):
+                        raise ValueError("idempotency key conflicts with another request")
+                    return existing_job
+                reservation = self._pending_idempotency.get(clean_idempotency_key)
+                if reservation is None:
+                    reservation = threading.Event()
+                    self._pending_idempotency[clean_idempotency_key] = reservation
+                    owns_reservation = True
+        if clean_idempotency_key is not None and reservation is not None and reservation.is_set():
+            # A previous creator completed between lock release and this check.
+            with self._lock:
+                existing_job = self.get_job(self._idempotency[clean_idempotency_key])
+                if not _same_idempotent_request(
+                    existing_job,
+                    sources=sources,
+                    mode=mode,
+                    period=clean_period,
+                    rag_mode=rag_mode,
+                    existing_name=existing_name,
+                    existing_content=existing_content,
+                ):
+                    raise ValueError("idempotency key conflicts with another request")
+                return existing_job
+        if clean_idempotency_key is not None and reservation is not None and not owns_reservation:
+            reservation.wait()
+            with self._lock:
+                existing_job_id = self._idempotency.get(clean_idempotency_key)
+                if existing_job_id is None:
+                    raise ValueError("idempotent upload was not created")
+                existing_job = self.get_job(existing_job_id)
+                if not _same_idempotent_request(
+                    existing_job,
+                    sources=sources,
+                    mode=mode,
+                    period=clean_period,
+                    rag_mode=rag_mode,
+                    existing_name=existing_name,
+                    existing_content=existing_content,
+                ):
+                    raise ValueError("idempotency key conflicts with another request")
+                return existing_job
 
-        job_id = secrets.token_urlsafe(18)
+        job_id = "job_" + secrets.token_urlsafe(18)
         directory = self.workspace_root / job_id
         directory.mkdir(mode=0o700, parents=False, exist_ok=False)
         try:
@@ -162,14 +256,36 @@ class DrawingCardService:
                 mode=mode,
                 period=clean_period,
                 existing_card=existing,
+                existing_name=existing_name,
                 rag_mode=rag_mode,
+                status="queued" if use_background else "processing",
+                total_files=len(source_paths),
+                started_at=_utc_now(),
+                updated_at=_utc_now(),
+                idempotency_key=clean_idempotency_key,
             )
-            self._jobs[job_id] = job
+            with self._lock:
+                self._jobs[job_id] = job
+                if clean_idempotency_key is not None:
+                    self._idempotency[clean_idempotency_key] = job_id
+                    pending = self._pending_idempotency.pop(clean_idempotency_key, None)
+                    if pending is not None:
+                        pending.set()
+                self._persist_job(job)
+            if use_background:
+                self._schedule(job)
+                return job
             result = self._run(job)
             self._prune_terminal_jobs()
             return result
         except Exception:
-            self._jobs.pop(job_id, None)
+            with self._lock:
+                self._jobs.pop(job_id, None)
+                if clean_idempotency_key is not None:
+                    self._idempotency.pop(clean_idempotency_key, None)
+                    pending = self._pending_idempotency.pop(clean_idempotency_key, None)
+                    if pending is not None:
+                        pending.set()
             shutil.rmtree(directory, ignore_errors=True)
             raise
 
@@ -332,8 +448,10 @@ class DrawingCardService:
             raise ValueError("job does not await inline review")
         approvals = cluster_approvals(cluster, action, category)
         # ``cluster_approvals`` validates every member before this one mutation.
+        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
         job.inline_approvals.update(approvals)
         job.cluster_actions[cluster.cluster_id] = approvals
+        self._persist_review_mutation(job, before_approvals, before_actions)
         return job
 
     def undo_review_cluster(self, *, job_id: str, cluster_id: str, version: str) -> DrawingCardJob:
@@ -347,9 +465,11 @@ class DrawingCardService:
             job.inline_approvals.get(row_id) != approval for row_id, approval in applied.items()
         ):
             raise ValueError("stale cluster identity")
+        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
         for row_id in applied:
             job.inline_approvals.pop(row_id, None)
         job.cluster_actions.pop(cluster.cluster_id, None)
+        self._persist_review_mutation(job, before_approvals, before_actions)
         return job
 
     def put_review_item(
@@ -359,16 +479,20 @@ class DrawingCardService:
         job = self.get_job(job_id)
         if job.status != "review_required" or review_id not in job.review_items:
             raise ValueError("unknown review item")
+        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
         job.inline_approvals[review_id] = review_approval(review_id, action, category)
         self._discard_cluster_actions_for(job, review_id)
+        self._persist_review_mutation(job, before_approvals, before_actions)
         return job
 
     def delete_review_item(self, *, job_id: str, review_id: str) -> DrawingCardJob:
         job = self.get_job(job_id)
         if review_id not in job.review_items:
             raise ValueError("unknown review item")
+        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
         job.inline_approvals.pop(review_id, None)
         self._discard_cluster_actions_for(job, review_id)
+        self._persist_review_mutation(job, before_approvals, before_actions)
         return job
 
     def bulk_review(self, *, job_id: str, action: str) -> DrawingCardJob:
@@ -378,6 +502,7 @@ class DrawingCardService:
         job = self.get_job(job_id)
         if job.status != "review_required":
             raise ValueError("job does not await inline review")
+        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
         for review_id, item in job.review_items.items():
             proposed = item.get("предлагаемая_категория")
             if action == "approve_all_proposed" and proposed:
@@ -388,6 +513,7 @@ class DrawingCardService:
             elif action == "reject_all":
                 job.inline_approvals[review_id] = review_approval(review_id, "reject", None)
                 self._discard_cluster_actions_for(job, review_id)
+        self._persist_review_mutation(job, before_approvals, before_actions)
         return job
 
     def apply_inline_review(self, *, job_id: str) -> DrawingCardJob:
@@ -397,8 +523,12 @@ class DrawingCardService:
             raise ValueError("unresolved review items remain")
         initial_review_rows = dict(job.review_rows)
         initial_inline_approvals = dict(job.inline_approvals)
-        approvals_path = job.directory / "inline_review_decisions.json"
+        approvals_path = (
+            self._attempt_directory(job, job.attempt + 1) / "inline_review_decisions.json"
+        )
+        approvals_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         write_approvals(approvals_path, job.inline_approvals)
+        self._persist_job(job)
         rerun = self._run(job, review_decisions=approvals_path, strict=True)
         if rerun.status == "ready":
             append_feedback(
@@ -408,6 +538,50 @@ class DrawingCardService:
             )
         self._prune_terminal_jobs()
         return rerun
+
+    def cancel_job(self, job_id: str) -> DrawingCardJob:
+        """Request cooperative cancellation of a queued or active background job."""
+        job = self.get_job(job_id)
+        if job.status not in {"queued", "processing"}:
+            raise ValueError("job cannot be cancelled")
+        job.cancel_event.set()
+        job.updated_at = _utc_now()
+        self._persist_job(job)
+        # A queued task can be made terminal without waiting for a worker slot.
+        if job.status == "queued":
+            self._finish_cancelled(job)
+        return job
+
+    def retry_job(self, job_id: str, *, background: bool | None = None) -> DrawingCardJob:
+        """Start a fresh attempt without destroying earlier private artifacts."""
+        job = self.get_job(job_id)
+        if job.status not in {"cancelled", "failed", "blocked"}:
+            raise ValueError("job cannot be retried")
+        job.cancel_event = threading.Event()
+        use_background = self.background if background is None else background
+        job.status = "queued" if use_background else "processing"
+        job.result = None
+        job.review = None
+        job.errors = ()
+        job.summary = {}
+        job.warnings = []
+        job.warning_counts = {}
+        job.blockers = []
+        job.blocker_counts = {}
+        job.funnel = {}
+        job.schema_recognition = ()
+        job.exclusion_audit = None
+        job.review_items = {}
+        job.review_rows = {}
+        job.review_decisions = {}
+        job.terminal_cause = None
+        job.updated_at = _utc_now()
+        decisions_path = self._retry_decisions_path(job)
+        self._persist_job(job)
+        if use_background:
+            self._schedule(job, review_decisions=decisions_path)
+            return job
+        return self._run(job, review_decisions=decisions_path)
 
     def _run(
         self,
@@ -419,12 +593,44 @@ class DrawingCardService:
         if not _sources_unchanged(job):
             job.status = "failed"
             job.errors = ("SOURCE_HASH_CHANGED",)
+            job.terminal_cause = "source_hash_changed"
+            job.updated_at = _utc_now()
+            self._persist_job(job)
             return job
+        if job.cancel_event.is_set():
+            return self._finish_cancelled(job)
         job.status = "processing"
         job.errors = ()
         job.result = None
         job.run_count += 1
-        output = job.directory / _RESULT_NAME
+        job.attempt += 1
+        attempt_directory = self._attempt_directory(job, job.attempt)
+        attempt_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(attempt_directory, 0o700)
+        output = attempt_directory / _RESULT_NAME
+        job.phase = "upload"
+        job.processed_files = 0
+        job.processed_rows = 0
+        job.total_files = len(job.sources)
+        job.total_rows = None
+        job.terminal_cause = None
+        job.updated_at = _utc_now()
+        self._persist_job(job)
+
+        def on_progress(progress: object) -> None:
+            phase = getattr(progress, "phase", "upload")
+            job.phase = str(phase)
+            job.processed_files = int(getattr(progress, "processed_files", 0))
+            job.total_files = getattr(progress, "total_files", None)
+            job.processed_rows = int(getattr(progress, "processed_rows", 0))
+            job.total_rows = getattr(progress, "total_rows", None)
+            job.started_at = str(getattr(progress, "started_at", job.started_at))
+            job.updated_at = str(getattr(progress, "updated_at", _utc_now()))
+            terminal_cause = getattr(progress, "terminal_cause", None)
+            if terminal_cause is not None:
+                job.terminal_cause = _normalize_terminal_cause(terminal_cause)
+            self._persist_job(job)
+
         request = WorkflowRequest(
             inputs=job.sources,
             template=default_template_path() if job.mode == "create" else None,
@@ -437,18 +643,28 @@ class DrawingCardService:
             feedback_examples=self.workspace_root / "review-feedback.jsonl",
             machine_consensus=self._machine_consensus_path(),
             strict=strict,
-            work_dir=job.directory / "runs",
+            work_dir=attempt_directory / "runs",
+            progress_callback=on_progress,
+            cancel_requested=job.cancel_event.is_set,
         )
         try:
             result = self.runner(request)
+        except DrawingCardWorkflowCancelled:
+            return self._finish_cancelled(job)
         except Exception:
             job.status = "failed"
             job.errors = ("PROCESSING_FAILED",)
             output.unlink(missing_ok=True)
+            job.terminal_cause = "processing_failed"
+            job.updated_at = _utc_now()
+            self._persist_job(job)
             return job
         if not _inside_job(result.work_dir, job):
             job.status = "failed"
             job.errors = ("UNSAFE_WORKSPACE",)
+            job.terminal_cause = "unsafe_workspace"
+            job.updated_at = _utc_now()
+            self._persist_job(job)
             return job
         _private_tree(result.work_dir)
         job.summary = {
@@ -486,6 +702,9 @@ class DrawingCardService:
             job.status = "failed"
             job.errors = ("SOURCE_HASH_CHANGED",)
             output.unlink(missing_ok=True)
+            job.terminal_cause = "source_hash_changed"
+            job.updated_at = _utc_now()
+            self._persist_job(job)
             return job
         review = result.work_dir / _REVIEW_NAME
         if result.manual_review_count and review.is_file() and _inside_job(review, job):
@@ -503,6 +722,9 @@ class DrawingCardService:
             if not _inside_job(result.output_path, job):
                 job.status = "failed"
                 job.errors = ("UNSAFE_OUTPUT",)
+                job.terminal_cause = "unsafe_output"
+                job.updated_at = _utc_now()
+                self._persist_job(job)
                 return job
             os.chmod(result.output_path, 0o600)
             job.result = result.output_path
@@ -514,15 +736,236 @@ class DrawingCardService:
                 code for code in ("NO_CARD_ROWS", "OUTPUT_BASE_MISSING") if code in job.warnings
             )
             job.errors = (*terminal_causes, "WORKFLOW_BLOCKED")
+            job.terminal_cause = "workflow_blocked"
         else:
             job.status = "failed"
             job.errors = ("PROCESSING_FAILED",)
+            job.terminal_cause = "processing_failed"
+        job.phase = "ready" if job.status == "ready" else job.phase
+        job.updated_at = _utc_now()
+        self._persist_job(job)
         return job
 
     def _machine_consensus_path(self) -> Path | None:
         """Use one canonical private replay input; absence is the rollback switch."""
         path = self.workspace_root / _MACHINE_CONSENSUS_NAME
         return path if path.is_file() and not path.is_symlink() else None
+
+    def _schedule(self, job: DrawingCardJob, *, review_decisions: Path | None = None) -> None:
+        """Run one job off-request while keeping the direct API synchronous by default."""
+
+        def worker() -> None:
+            with self._worker_slots:
+                if job.cancel_event.is_set():
+                    self._finish_cancelled(job)
+                    return
+                self._run(job, review_decisions=review_decisions)
+                self._prune_terminal_jobs()
+
+        threading.Thread(target=worker, name=f"drawing-card-{job.job_id}", daemon=True).start()
+
+    def _schedule_review_recovery(self, job: DrawingCardJob) -> None:
+        """Rebuild private review context from retained sources after restart."""
+        approvals = dict(job.inline_approvals)
+        job.status = "queued"
+        self._persist_job(job)
+
+        def worker() -> None:
+            with self._worker_slots:
+                recovered = self._run(job)
+                if recovered.status == "review_required":
+                    recovered.inline_approvals = {
+                        row_id: approval
+                        for row_id, approval in approvals.items()
+                        if row_id in recovered.review_items
+                    }
+                    self._persist_job(recovered)
+
+        threading.Thread(
+            target=worker, name=f"drawing-card-recovery-{job.job_id}", daemon=True
+        ).start()
+
+    def _attempt_directory(self, job: DrawingCardJob, attempt: int) -> Path:
+        return job.directory / "attempts" / f"{attempt:04d}"
+
+    def _retry_decisions_path(self, job: DrawingCardJob) -> Path | None:
+        if not job.inline_approvals:
+            return None
+        path = self._attempt_directory(job, job.attempt + 1) / "inline_review_decisions.json"
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        write_approvals(path, job.inline_approvals)
+        return path
+
+    def _finish_cancelled(self, job: DrawingCardJob) -> DrawingCardJob:
+        attempt = self._attempt_directory(job, job.attempt) if job.attempt else None
+        if attempt is not None:
+            for filename in (_RESULT_NAME, _REVIEW_NAME):
+                (attempt / filename).unlink(missing_ok=True)
+        job.result = None
+        job.review = None
+        job.status = "cancelled"
+        job.errors = ("CANCELLED",)
+        job.terminal_cause = "cancelled"
+        job.updated_at = _utc_now()
+        self._persist_job(job)
+        return job
+
+    def _persist_job(self, job: DrawingCardJob) -> None:
+        """Commit a bounded, path-relative private snapshot before returning state."""
+        try:
+            self._store.save(job.job_id, self._manifest_for(job))
+        except (OSError, ValueError) as error:
+            raise DrawingCardPersistenceError("drawing-card state was not saved") from error
+
+    def _persist_review_mutation(
+        self,
+        job: DrawingCardJob,
+        approvals: dict[str, ReviewApproval],
+        cluster_actions: dict[str, dict[str, ReviewApproval]],
+    ) -> None:
+        try:
+            self._persist_job(job)
+        except DrawingCardPersistenceError:
+            job.inline_approvals = approvals
+            job.cluster_actions = cluster_actions
+            raise
+
+    def _manifest_for(self, job: DrawingCardJob) -> dict[str, object]:
+        def relative(path: Path | None) -> str | None:
+            if path is None or not _inside_job(path, job):
+                return None
+            return path.relative_to(job.directory).as_posix()
+
+        return {
+            "contract": MANIFEST_CONTRACT,
+            "job_id": job.job_id,
+            "mode": job.mode,
+            "period": job.period,
+            "rag_mode": job.rag_mode,
+            "source_paths": [relative(path) for path in job.sources],
+            "source_hashes": list(job.source_hashes),
+            "existing_card_path": relative(job.existing_card),
+            "existing_name": job.existing_name,
+            "status": job.status,
+            "result_path": relative(job.result),
+            "review_path": relative(job.review),
+            "exclusion_audit_path": relative(job.exclusion_audit),
+            "attempt": job.attempt,
+            "run_count": job.run_count,
+            "phase": job.phase,
+            "processed_files": job.processed_files,
+            "total_files": job.total_files,
+            "processed_rows": job.processed_rows,
+            "total_rows": job.total_rows,
+            "started_at": job.started_at,
+            "updated_at": job.updated_at,
+            "terminal_cause": job.terminal_cause,
+            "idempotency_key": job.idempotency_key,
+            "errors": list(job.errors),
+            "summary": _safe_summary(job.summary),
+            "warnings": list(job.warnings),
+            "warning_counts": {key: int(value) for key, value in job.warning_counts.items()},
+            "blockers": list(job.blockers),
+            "blocker_counts": {key: int(value) for key, value in job.blocker_counts.items()},
+            "funnel": _safe_funnel(job.funnel),
+            "inline_approvals": {
+                review_id: {
+                    "action": approval.action,
+                    "category": approval.category.value if approval.category else None,
+                }
+                for review_id, approval in job.inline_approvals.items()
+            },
+        }
+
+    def _restore_jobs(self) -> None:
+        for job_id, manifest in self._store.load_all().items():
+            try:
+                job = self._job_from_manifest(job_id, manifest)
+            except (OSError, TypeError, ValueError):
+                continue
+            # A hostile or stale duplicate manifest must not resurrect a second
+            # active worker for the same client request.
+            if job.idempotency_key and job.idempotency_key in self._idempotency:
+                continue
+            self._jobs[job_id] = job
+            if job.idempotency_key:
+                self._idempotency[job.idempotency_key] = job_id
+            if self.background and job.status in {"queued", "processing"}:
+                job.status = "queued"
+                self._schedule(job)
+            elif self.background and job.status == "review_required":
+                self._schedule_review_recovery(job)
+
+    def _job_from_manifest(self, job_id: str, manifest: dict[str, object]) -> DrawingCardJob:
+        directory = self.workspace_root / job_id
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError("unsafe job directory")
+        source_paths = tuple(
+            _restored_path(directory, value) for value in _required_list(manifest, "source_paths")
+        )
+        hashes = tuple(str(value) for value in _required_list(manifest, "source_hashes"))
+        if (
+            len(source_paths) != len(hashes)
+            or not source_paths
+            or not all(path.is_file() and not path.is_symlink() for path in source_paths)
+        ):
+            raise ValueError("unsafe source paths")
+        job = DrawingCardJob(
+            job_id=job_id,
+            directory=directory,
+            sources=source_paths,
+            source_hashes=hashes,
+            mode=_manifest_mode(manifest.get("mode")),
+            period=_validate_period(manifest.get("period")),
+            existing_card=_optional_restored_path(directory, manifest.get("existing_card_path")),
+            existing_name=_safe_existing_name(manifest.get("existing_name")),
+            status=_manifest_status(manifest.get("status")),
+            rag_mode=_manifest_rag_mode(manifest.get("rag_mode")),
+            attempt=_bounded_int(manifest.get("attempt")),
+            run_count=_bounded_int(manifest.get("run_count")),
+            phase=str(manifest.get("phase", "upload"))[:64],
+            processed_files=_bounded_int(manifest.get("processed_files")),
+            total_files=_optional_bounded_int(manifest.get("total_files")),
+            processed_rows=_bounded_int(manifest.get("processed_rows")),
+            total_rows=_optional_bounded_int(manifest.get("total_rows")),
+            started_at=_safe_timestamp(manifest.get("started_at")),
+            updated_at=_safe_timestamp(manifest.get("updated_at")),
+            terminal_cause=_safe_terminal(manifest.get("terminal_cause")),
+            idempotency_key=_validate_idempotency_key(manifest.get("idempotency_key")),
+            errors=tuple(_safe_codes(manifest.get("errors"))),
+            summary=_safe_summary(manifest.get("summary")),
+            warnings=_safe_codes(manifest.get("warnings")),
+            warning_counts=_safe_int_map(manifest.get("warning_counts")),
+            blockers=_safe_codes(manifest.get("blockers")),
+            blocker_counts=_safe_int_map(manifest.get("blocker_counts")),
+            funnel=_safe_funnel(manifest.get("funnel")),
+        )
+        job.result = _optional_restored_path(directory, manifest.get("result_path"))
+        if job.result is not None and (not job.result.is_file() or job.result.is_symlink()):
+            raise ValueError("unsafe result path")
+        job.review = _optional_restored_path(directory, manifest.get("review_path"))
+        if job.review is not None and (not job.review.is_file() or job.review.is_symlink()):
+            raise ValueError("unsafe review path")
+        job.exclusion_audit = _optional_restored_path(
+            directory, manifest.get("exclusion_audit_path")
+        )
+        if job.exclusion_audit is not None and (
+            not job.exclusion_audit.is_file() or job.exclusion_audit.is_symlink()
+        ):
+            raise ValueError("unsafe audit path")
+        if job.existing_card is not None and (
+            not job.existing_card.is_file() or job.existing_card.is_symlink()
+        ):
+            raise ValueError("unsafe existing card")
+        if job.status == "ready" and job.result is None:
+            raise ValueError("ready job has no result")
+        for review_id, raw in _safe_approval_map(manifest.get("inline_approvals")).items():
+            job.inline_approvals[review_id] = review_approval(
+                review_id, raw["action"], raw["category"]
+            )
+        if not _sources_unchanged(job):
+            raise ValueError("source hash changed")
+        return job
 
     @staticmethod
     def _current_clusters(job: DrawingCardJob) -> tuple[ReviewCluster, ...]:
@@ -624,8 +1067,203 @@ def _digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _validate_idempotency_key(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", value):
+        raise ValueError("invalid idempotency key")
+    return value
+
+
+def _required_list(manifest: dict[str, object], key: str) -> list[object]:
+    value = manifest.get(key)
+    if not isinstance(value, list):
+        raise ValueError(f"invalid {key}")
+    return value
+
+
+def _restored_path(directory: Path, value: object) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError("invalid restored path")
+    candidate = directory / value
+    try:
+        if not candidate.resolve().is_relative_to(directory.resolve()):
+            raise ValueError("restored path escapes job")
+    except OSError as error:
+        raise ValueError("unsafe restored path") from error
+    return candidate
+
+
+def _optional_restored_path(directory: Path, value: object) -> Path | None:
+    return None if value is None else _restored_path(directory, value)
+
+
+def _bounded_int(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 10_000_000:
+        raise ValueError("invalid persisted counter")
+    return value
+
+
+def _optional_bounded_int(value: object) -> int | None:
+    return None if value is None else _bounded_int(value)
+
+
+def _manifest_mode(value: object) -> Literal["create", "update"]:
+    if value not in {"create", "update"}:
+        raise ValueError("invalid persisted mode")
+    return value
+
+
+def _manifest_rag_mode(value: object) -> Literal["off", "semantic"]:
+    if value not in {"off", "semantic"}:
+        raise ValueError("invalid persisted rag mode")
+    return value
+
+
+def _manifest_status(value: object) -> str:
+    allowed = {"queued", "processing", "ready", "review_required", "failed", "blocked", "cancelled"}
+    if value not in allowed:
+        raise ValueError("invalid persisted status")
+    return str(value)
+
+
+def _safe_timestamp(value: object) -> str:
+    if not isinstance(value, str) or len(value) > 64:
+        raise ValueError("invalid persisted timestamp")
+    return value
+
+
+def _safe_terminal(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z0-9_]{1,64}", value):
+        raise ValueError("invalid terminal cause")
+    return value
+
+
+def _normalize_terminal_cause(value: object) -> str:
+    """Turn workflow enums/codes into the persisted lowercase terminal vocabulary."""
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(value).casefold()).strip("_")
+    return normalized[:64] if normalized else "unknown"
+
+
+def _safe_codes(value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("invalid persisted codes")
+    return [
+        str(item)
+        for item in value
+        if isinstance(item, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", item)
+    ][:50]
+
+
+def _safe_int_map(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        raise ValueError("invalid persisted counters")
+    return {
+        key: count
+        for key, raw in value.items()
+        if isinstance(key, str)
+        and re.fullmatch(r"[A-Z][A-Z0-9_]*", key)
+        and isinstance(raw, int)
+        and not isinstance(raw, bool)
+        and 0 <= (count := raw) <= 10_000_000
+    }
+
+
+def _safe_summary(value: object) -> dict[str, int]:
+    allowed = {
+        "source_files",
+        "extracted_rows",
+        "card_rows",
+        "manual_review",
+        "hierarchy_issues",
+    }
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: count
+        for key, raw in value.items()
+        if key in allowed
+        and isinstance(raw, int)
+        and not isinstance(raw, bool)
+        and 0 <= (count := raw) <= 10_000_000
+    }
+
+
+def _safe_existing_name(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or Path(value).name != value or "\x00" in value:
+        raise ValueError("invalid persisted existing name")
+    return value
+
+
+def _safe_funnel(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    # Funnel is operational metadata only.  Keep string keys and scalar counts;
+    # no row payload, path or workbook value can survive a restart snapshot.
+    return {
+        key: item
+        for key, item in value.items()
+        if isinstance(key, str)
+        and len(key) <= 96
+        and isinstance(item, (str, int, float, bool, type(None)))
+    }
+
+
+def _safe_approval_map(value: object) -> dict[str, dict[str, str | None]]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, dict[str, str | None]] = {}
+    for review_id, raw in value.items():
+        if not isinstance(review_id, str) or len(review_id) > 256 or not isinstance(raw, dict):
+            continue
+        action, category = raw.get("action"), raw.get("category")
+        if isinstance(action, str) and (category is None or isinstance(category, str)):
+            result[review_id] = {"action": action, "category": category}
+    return result
+
+
+def _same_idempotent_request(
+    job: DrawingCardJob,
+    *,
+    sources: list[tuple[str, bytes]],
+    mode: Literal["create", "update"],
+    period: str | None,
+    rag_mode: Literal["off", "semantic"],
+    existing_name: str | None,
+    existing_content: bytes | None,
+) -> bool:
+    return (
+        job.source_hashes == tuple(_digest(content) for _name, content in sources)
+        and tuple(path.name.partition("-")[2] for path in job.sources)
+        == tuple(name for name, _content in sources)
+        and job.mode == mode
+        and job.period == period
+        and job.rag_mode == rag_mode
+        and job.existing_name == existing_name
+        and (
+            (job.existing_card is None and existing_content is None)
+            or (
+                job.existing_card is not None
+                and existing_content is not None
+                and _digest(job.existing_card.read_bytes()) == _digest(existing_content)
+            )
+        )
+    )
+
+
 def _sources_unchanged(job: DrawingCardJob) -> bool:
-    return tuple(_digest(path.read_bytes()) for path in job.sources) == job.source_hashes
+    try:
+        return tuple(_digest(path.read_bytes()) for path in job.sources) == job.source_hashes
+    except OSError:
+        return False
 
 
 def _private_tree(directory: Path) -> None:
