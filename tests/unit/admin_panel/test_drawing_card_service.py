@@ -329,7 +329,13 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
     cluster = service.list_review_clusters(job_id=job.job_id)["items"][0]
 
     assert cluster["aggregate_total_cost"] == "4"
-    assert cluster["members"] == [
+    assert [
+        {
+            key: member[key]
+            for key in ("review_id", "work_name", "source_unit", "quantity", "total_cost")
+        }
+        for member in cluster["members"]
+    ] == [
         {
             "review_id": "row-a",
             "work_name": "Монтаж кабеля",

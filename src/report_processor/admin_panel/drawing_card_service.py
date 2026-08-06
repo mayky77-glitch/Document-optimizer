@@ -1746,6 +1746,11 @@ def _safe_approval_map(value: object) -> dict[str, dict[str, str | None]]:
 def _manifest_text(value: object, default: str) -> str:
     if value is None:
         return default
+    if value == "" and default == "":
+        # An older in-memory job has not run far enough to derive feedback
+        # scope yet.  This explicit empty representation is safe to restore;
+        # it is refreshed before a workflow request can replay feedback.
+        return ""
     if not isinstance(value, str) or not value or len(value) > 512 or "\x00" in value:
         raise ValueError("invalid persisted feedback scope")
     return value
@@ -1754,8 +1759,10 @@ def _manifest_text(value: object, default: str) -> str:
 def _manifest_hashes(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list):
         raise ValueError("invalid persisted feedback hashes")
+    if not value:
+        return ()
     hashes = tuple(sorted(set(str(item) for item in value)))
     if any(re.fullmatch(r"[a-f0-9]{64}", item) is None for item in hashes):
         raise ValueError("invalid persisted feedback hashes")
@@ -1821,7 +1828,10 @@ def _complete_review_contexts(job: DrawingCardJob) -> dict[str, ReviewPacketCont
             normalized_work=normalize_text(row.work_name_raw) or None,
             source_type=normalize_text(row.source_document_type) or None,
             review_reason=_review_reason(decision, row),
-            proposed_category=decision.category.value if decision.category else "__none__",
+            # The cluster contract uses None for the known absence of a
+            # proposed category.  The feedback ledger converts that absence to
+            # its own controlled sentinel in build_feedback_context.
+            proposed_category=decision.category.value if decision.category else None,
             match_mode=decision.matching_strategy or None,
             unit_compatibility_class=(
                 "unit_mismatch"
