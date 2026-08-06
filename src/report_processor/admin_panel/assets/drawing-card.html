@@ -127,8 +127,41 @@
             <p>Одно решение применяется к одинаковым строкам в группе. Состав группы защищён от устаревших изменений.</p>
           </div>
         </div>
+        <form id="review-filters" class="review-filters" aria-label="Фильтры пакетов проверки">
+          <label for="review-filter-reason">
+            <span>Причина</span>
+            <input id="review-filter-reason" name="reason" type="search" autocomplete="off" placeholder="Например, единицы измерения">
+          </label>
+          <label for="review-filter-category">
+            <span>Категория</span>
+            <select id="review-filter-category" name="category">
+              <option value="">Все категории</option>
+            </select>
+          </label>
+          <label for="review-filter-filename">
+            <span>Безопасное имя файла</span>
+            <input id="review-filter-filename" name="filename" type="search" autocomplete="off" placeholder="Имя исходного файла">
+          </label>
+          <label for="review-filter-confidence">
+            <span>Уверенность не ниже</span>
+            <select id="review-filter-confidence" name="confidence">
+              <option value="">Любая</option>
+              <option value="0.9">90%</option>
+              <option value="0.75">75%</option>
+              <option value="0.5">50%</option>
+            </select>
+          </label>
+          <label class="review-filter-checkbox" for="review-filter-only-unresolved">
+            <input id="review-filter-only-unresolved" name="only_unresolved" type="checkbox" checked>
+            <span>Только нерешённые</span>
+          </label>
+          <div class="review-filter-actions">
+            <button class="secondary-action" type="submit">Применить фильтры</button>
+            <button id="reset-review-filters" class="text-action" type="button">Сбросить</button>
+          </div>
+        </form>
         <div id="summary" class="summary" aria-label="Итог проверки"></div>
-        <p id="review-empty" class="empty-review" hidden>Групп для проверки нет.</p>
+        <p id="review-empty" class="empty-review" tabindex="-1" hidden>Пакетов для проверки по этим фильтрам нет.</p>
         <div id="review-items" class="review-items" aria-live="polite" tabindex="-1"></div>
         <nav id="review-pagination" class="pagination" aria-label="Страницы проверки" hidden>
           <button id="previous-page" class="page-button" type="button">Назад</button>
@@ -138,6 +171,10 @@
         <div class="review-footer">
           <button id="apply-review" class="primary-action" type="button">Применить решения</button>
           <p id="review-hint">Сначала примите решение по каждой группе.</p>
+        </div>
+        <div id="review-mobile-bar" class="review-mobile-bar" aria-label="Навигация по нерешённым пакетам" hidden>
+          <span id="review-mobile-count" aria-live="polite">Осталось: 0</span>
+          <button id="review-mobile-next" class="primary-action" type="button">Следующий нерешённый</button>
         </div>
 
         <div id="legacy-review" class="legacy-review" hidden>

@@ -153,3 +153,50 @@ def test_idempotency_key_resets_for_request_changes_and_terminal_jobs() -> None:
     assert 'period.addEventListener("change", () => {\n    idempotencyKey = null;' in script
     assert "if (TERMINAL_JOB_STATUSES.has(payload.status)) idempotencyKey = null;" in script
     assert "idempotencyKey ||= newIdempotencyKey();" in script
+
+
+def test_packet_review_uses_server_categories_filters_and_per_job_session_state() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card-review.js").read_text()
+
+    for element_id in (
+        "review-filters",
+        "review-filter-reason",
+        "review-filter-category",
+        "review-filter-filename",
+        "review-filter-confidence",
+        "review-filter-only-unresolved",
+    ):
+        assert f'id="{element_id}"' in page
+    assert "const categoriesFrom = (payload) => Array.isArray(payload?.review_categories)" in script
+    assert "const CATEGORIES" not in script
+    assert 'query.set("only_unresolved", String(this.filters.onlyUnresolved));' in script
+    assert '["reason", this.filters.reason]' in script
+    assert '["category", this.filters.category]' in script
+    assert '["safe_filename", this.filters.filename]' in script
+    assert '["confidence", this.filters.confidence]' in script
+    assert 'SESSION_KEY_PREFIX = "report-processor.drawing-card.review.v2"' in script
+    assert "expandedMembers" in script
+
+
+def test_packet_members_show_safe_context_override_warning_and_mobile_next_action() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card-review.js").read_text()
+    styles = (ASSETS / "drawing-card.css").read_text()
+
+    assert 'id="review-mobile-bar"' in page
+    assert 'id="review-mobile-next"' in page
+    for label in ("Файл", "Лист", "Строка", "Позиция", "Шифр", "Наименование"):
+        assert f'"{label}"' in script
+    assert "confidence_explanation" in script
+    assert "reason_label" in script
+    assert "member-override-warning" in script
+    assert "Исключить из пакета" in script
+    assert 'reviewId, member.version, "exclude"' in script
+    assert "this.itemEndpoint(reviewId)" in script
+    assert "await this.loadNextUnresolved();" in script
+    assert "@media (max-width: 390px)" in styles
+    assert ".review-mobile-bar { position: sticky;" in styles
+    assert ".cluster-members-table-wrap { overflow-x: auto;" in styles
+    assert "summary:focus-visible" in styles
+    assert "approve-all" not in script.casefold()
