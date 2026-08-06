@@ -12,14 +12,19 @@ from report_processor.drawing_card.models import (
     DrawingCode,
     DrawingSourceLocation,
     DrawingSourceRow,
+    ManifestEntry,
+    ObjectIdentityResult,
+    SourceSchema,
     TargetWorkCategory,
     WorkflowRequest,
     WorkflowResult,
 )
+from report_processor.drawing_card.sources.inspection import SourceInspection, select_inspections
 from report_processor.drawing_card.statuses import Status
 from report_processor.drawing_card.workflow import (
     _publication_blocker_counts,
     _publication_blockers,
+    _schema_recognition_payload,
 )
 from report_processor.hierarchy import HierarchyIssue
 from report_processor.processing.adapters import DefaultProcessingAdapters, ProcessingContext
@@ -86,6 +91,71 @@ def test_drawing_card_hierarchy_reconciliation_is_diagnostic_not_a_publication_b
     )
 
     assert _publication_blockers(result) == []
+
+
+def test_content_only_position_schema_is_visible_but_not_selected_for_publication() -> None:
+    schema = SourceSchema(
+        sheet_name="Данные",
+        header_start_row=1,
+        header_end_row=1,
+        data_start_row=2,
+        columns={
+            "drawing_code": 2,
+            "work_name": 3,
+            "unit": 4,
+            "remaining_quantity": 5,
+            "remaining_total_cost": 6,
+        },
+        logical_headers={},
+        confidence=1.0,
+        status=Status.AMBIGUOUS_SCHEMA,
+        warnings=("POSITION_COLUMN_FROM_CONTENT_DIAGNOSTIC",),
+    )
+    inspection = SourceInspection(
+        entry=ManifestEntry(
+            file_id="content-position",
+            source_kind="file",
+            container_path="private.xlsx",
+            logical_path="private.xlsx",
+            filename="private.xlsx",
+            extension=".xlsx",
+            size=1,
+            compressed_size=None,
+            object_index_hint="0908",
+            document_type="ks6a",
+            period=None,
+            revision=None,
+            is_temporary=False,
+            is_copy=False,
+            is_outdated=False,
+            status=Status.OK,
+        ),
+        object_identity=ObjectIdentityResult(
+            value="0908",
+            source="filename",
+            confidence=1.0,
+            candidates=("0908",),
+            status=Status.OK,
+            warnings=(),
+        ),
+        sheets=(schema.sheet_name,),
+        schemas=(schema,),
+        usable_schemas=(),
+        score=0.0,
+        status=Status.MISSING_REQUIRED_COLUMNS,
+        warnings=(Status.MISSING_REQUIRED_COLUMNS,),
+    )
+
+    selected, selections, warnings = select_inspections(
+        [inspection], explicit_inputs=True, requested_period=None
+    )
+    recognition = _schema_recognition_payload([inspection])
+
+    assert selected == []
+    assert selections[0]["decision"] == "skipped_missing_required_columns"
+    assert warnings == [Status.MISSING_REQUIRED_COLUMNS, "NO_ELIGIBLE_SOURCES"]
+    assert recognition[0]["recognition"] == "uncertain"
+    assert recognition[0]["reason_codes"] == ["POSITION_COLUMN_FROM_CONTENT_DIAGNOSTIC"]
 
 
 def test_manual_review_blocker_count_reports_actual_rows(tmp_path: Path) -> None:
