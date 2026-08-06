@@ -22,6 +22,7 @@ except ImportError:  # Optional until the host application enables XLSB support.
 
 from ..models import ManifestEntry
 from ..statuses import Status
+from .openxml_safety import validate_openxml_archive
 
 _MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -126,8 +127,13 @@ class OpenXmlWorkbookReader:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._archive = zipfile.ZipFile(path)
-        self._sheet_paths = self._read_sheet_paths()
-        self._shared_strings: tuple[str, ...] | None = None
+        try:
+            validate_openxml_archive(self._archive)
+            self._sheet_paths = self._read_sheet_paths()
+            self._shared_strings: tuple[str, ...] | None = None
+        except BaseException:
+            self._archive.close()
+            raise
 
     def _read_sheet_paths(self) -> dict[str, str]:
         workbook = ET.fromstring(self._archive.read("xl/workbook.xml"))

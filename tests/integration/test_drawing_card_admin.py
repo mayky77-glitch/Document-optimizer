@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from starlette.testclient import TestClient
@@ -73,6 +75,13 @@ def _files(name: str = "source.xlsx", content: bytes | None = None):
             ),
         )
     ]
+
+
+def _compressed_workbook_member(name: str, content: bytes) -> bytes:
+    container = BytesIO()
+    with ZipFile(container, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr(name, content)
+    return container.getvalue()
 
 
 def _review_job(service: DrawingCardService, job_id: str) -> DrawingCardJob:
@@ -359,6 +368,21 @@ def test_create_rejects_invalid_workbook_content_without_leaking_upload_data(cli
     assert response.json() == {"error": "Файл не является корректной Excel-книгой"}
     assert filename not in response.text
     assert content.decode() not in response.text
+    assert service.created_job_ids == []
+
+
+def test_create_rejects_zip_bomb_workbook_before_job_creation(client) -> None:
+    test_client, service, _ = client
+    response = test_client.post(
+        "/api/drawing-card/jobs",
+        files=_files(
+            "source.xlsx",
+            _compressed_workbook_member("xl/sharedStrings.xml", b"A" * (2 * 1024 * 1024)),
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "Проверьте исходные Excel-файлы и выбранную операцию"}
     assert service.created_job_ids == []
 
 

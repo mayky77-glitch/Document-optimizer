@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from decimal import Decimal
+from io import BytesIO
+from pathlib import Path
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
+
+import pytest
 
 from report_processor.drawing_card.models import ManifestEntry
 from report_processor.drawing_card.sources import detect_sheet_schema, extract_rows
+from report_processor.drawing_card.sources.openxml_safety import validate_openxml_bytes
+from report_processor.drawing_card.sources.readers import OpenXmlWorkbookReader
 
 
 class RowsReader:
@@ -51,6 +58,37 @@ def _entry() -> ManifestEntry:
         is_outdated=False,
         status="OK",
     )
+
+
+def _openxml_container(members: dict[str, bytes]) -> bytes:
+    content = BytesIO()
+    with ZipFile(content, "w", compression=ZIP_DEFLATED) as archive:
+        for name, value in members.items():
+            archive.writestr(name, value)
+    return content.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("members", "error"),
+    [
+        ({"../escape.xml": b"safe"}, "UNSAFE_ARCHIVE_PATH"),
+        ({"xl\\escape.xml": b"safe"}, "UNSAFE_ARCHIVE_PATH"),
+        ({"xl/huge.xml": b"A" * (2 * 1024 * 1024)}, "SUSPICIOUS_COMPRESSION_RATIO"),
+    ],
+)
+def test_openxml_preflight_rejects_unsafe_members_before_reads(
+    members: dict[str, bytes], error: str
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        validate_openxml_bytes(_openxml_container(members))
+
+
+def test_openxml_reader_preflights_container_before_opening_member(tmp_path: Path) -> None:
+    path = tmp_path / "unsafe.xlsx"
+    path.write_bytes(_openxml_container({"../workbook.xml": b"safe"}))
+
+    with pytest.raises(ValueError, match="UNSAFE_ARCHIVE_PATH"):
+        OpenXmlWorkbookReader(path)
 
 
 def test_schema_normalizes_multiline_aliases_and_derives_cumulative_contract() -> None:
