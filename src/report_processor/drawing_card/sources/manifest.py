@@ -25,7 +25,6 @@ _FULL_DATE2_RE = re.compile(
 )
 _YEAR_MONTH_RE = re.compile(r"(?<!\d)(20\d{2})[._/-](0?[1-9]|1[0-2])(?!\d)")
 _MONTH_YEAR_RE = re.compile(r"(?<!\d)(0?[1-9]|1[0-2])[._/-](20\d{2})(?!\d)")
-_PRIVATE_UPLOAD_ORDINAL_RE = re.compile(r"^\d+-")
 _DIGEST_BLOCK_SIZE = 1024 * 1024
 
 
@@ -115,13 +114,6 @@ def _decode_zip_name(name: str) -> str:
     return decoded if decoded.count("�") == 0 else name
 
 
-def _identity_logical_path(source_kind: str, logical_path: str) -> str:
-    """Exclude private direct-upload ordering from stable member identity."""
-    if source_kind != "file":
-        return logical_path
-    return _PRIVATE_UPLOAD_ORDINAL_RE.sub("", logical_path)
-
-
 def _entry(
     *,
     source_kind: str,
@@ -154,7 +146,7 @@ def _entry(
         file_id=stable_id(
             source_kind,
             content_digest,
-            _identity_logical_path(source_kind, logical_path),
+            logical_path,
         ),
         source_kind=source_kind,
         container_path=str(container_path.resolve()),

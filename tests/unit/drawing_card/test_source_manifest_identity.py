@@ -4,6 +4,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from report_processor.drawing_card.sources.manifest import (
+    build_manifest,
     scan_archive,
     scan_directory,
     scan_file,
@@ -52,22 +53,26 @@ def test_direct_file_identity_keeps_semantic_filename_for_identical_content(
     assert first_entry.file_id != second_entry.file_id
 
 
-def test_direct_file_identity_ignores_private_upload_order(tmp_path: Path) -> None:
-    first_job = tmp_path / "job-a"
-    second_job = tmp_path / "job-b"
-    first_job.mkdir()
-    second_job.mkdir()
+def test_direct_file_identity_uses_explicit_ordinal_parent_not_filename_prefix(
+    tmp_path: Path,
+) -> None:
+    first_job = tmp_path / "job-a" / "sources"
+    second_job = tmp_path / "job-b" / "sources"
+    first_job.mkdir(parents=True)
+    second_job.mkdir(parents=True)
     first_paths = (
-        first_job / "01-drawing-a.xlsx",
-        first_job / "02-drawing-b.xlsx",
+        first_job / "01" / "drawing-a.xlsx",
+        first_job / "02" / "drawing-b.xlsx",
     )
     second_paths = (
-        second_job / "01-drawing-b.xlsx",
-        second_job / "02-drawing-a.xlsx",
+        second_job / "01" / "drawing-b.xlsx",
+        second_job / "02" / "drawing-a.xlsx",
     )
     for path, content in zip(first_paths, (b"drawing a", b"drawing b"), strict=True):
+        path.parent.mkdir()
         path.write_bytes(content)
     for path, content in zip(second_paths, (b"drawing b", b"drawing a"), strict=True):
+        path.parent.mkdir()
         path.write_bytes(content)
 
     first_entries = [scan_file(path)[0] for path in first_paths]
@@ -75,6 +80,23 @@ def test_direct_file_identity_ignores_private_upload_order(tmp_path: Path) -> No
 
     assert first_entries[0].file_id == second_entries[1].file_id
     assert first_entries[1].file_id == second_entries[0].file_id
+
+
+def test_direct_file_identity_preserves_numeric_semantic_basenames_and_cardinality(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "2026-report.xlsx"
+    second = tmp_path / "01-report.xlsx"
+    first.write_bytes(b"identical workbook")
+    second.write_bytes(b"identical workbook")
+
+    [first_entry] = scan_file(first)
+    [second_entry] = scan_file(second)
+    manifest = build_manifest((first, second))
+
+    assert first_entry.file_id != second_entry.file_id
+    assert [entry.filename for entry in manifest] == ["01-report.xlsx", "2026-report.xlsx"]
+    assert len(manifest) == 2
 
 
 def test_directory_members_keep_safe_logical_paths_in_identity(tmp_path: Path) -> None:
