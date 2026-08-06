@@ -38,4 +38,3 @@ Add optional callback/cancellation seams with defaults that preserve all existin
 the frozen phases at honest workflow boundaries and bounded numeric counters. Cancellation must
 raise a controlled workflow-specific exception before publication and remove any partial public
 output. Do not add background threads, manifests, routes, UI code or change matching decisions.
-

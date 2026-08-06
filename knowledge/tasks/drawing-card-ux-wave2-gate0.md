@@ -77,4 +77,3 @@ specification is added to Git.
 - Retry increments the attempt and cannot mix old and new artifacts.
 - Existing synchronous test doubles remain usable through an explicit executor/test seam rather
   than preserving synchronous production HTTP behavior.
-
