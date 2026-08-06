@@ -346,7 +346,7 @@ def test_initial_run_and_approved_inline_review_rerun_are_both_strict(
     service.apply_inline_review(job_id=job.job_id)
 
     assert calls[0] == (None, True)
-    assert calls[1][0] == job.directory / "inline_review_decisions.json"
+    assert calls[1][0] == job.directory / "attempts" / "0001" / "inline_review_decisions.json"
     assert calls[1][1] is True
 
 
@@ -550,4 +550,5 @@ def test_terminal_workflow_cause_is_exposed_as_a_blocking_reason(
     reasons = drawing_card_job_payload(job)["blocking_reasons"]
 
     assert job.errors == (terminal_cause, "WORKFLOW_BLOCKED")
+    assert job.terminal_cause == "workflow_blocked"
     assert [reason["code"] for reason in reasons] == [terminal_cause, "WORKFLOW_BLOCKED"]
