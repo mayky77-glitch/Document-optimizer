@@ -13,6 +13,17 @@ from report_processor.drawing_card.models import (
 )
 from report_processor.drawing_card.review.clusters import ReviewCluster
 
+_REASON_LABELS = {
+    "formula_or_excel_error": (
+        "В строке есть формула или ошибка Excel; её нужно проверить отдельно."
+    ),
+    "manual_review": "Для строки требуется явное решение проверяющего.",
+    "model_suggestion": "Категория предложена моделью и требует подтверждения.",
+    "multiple_categories": "Для строки подходят несколько категорий работ.",
+    "semantic_suggestion": "Семантическая подсказка не применяется без подтверждения.",
+    "unit_mismatch": "Единица измерения требует ручной проверки.",
+}
+
 
 def drawing_card_cluster_payload(
     *,
@@ -25,7 +36,17 @@ def drawing_card_cluster_payload(
     selected = _selected_approval(cluster, approvals)
     category = selected.category.value if selected and selected.category else None
     target_category = category or (cluster.category.value if cluster.category else None)
-    members = [_member_payload(row_id, rows[row_id]) for row_id in cluster.member_ids]
+    members = [
+        _member_payload(
+            row_id,
+            rows[row_id],
+            version=cluster.cluster_id,
+            confidence=cluster.confidence,
+            reason=cluster.reason_code,
+            selected_category=category,
+        )
+        for row_id in cluster.member_ids
+    ]
     aggregate_total_cost = _aggregate_total_cost(rows, cluster.member_ids)
     decision = (
         {"approve": "approved", "reject": "rejected", "quantity_only": "approved"}.get(
@@ -53,6 +74,15 @@ def drawing_card_cluster_payload(
         "selected_category_label": _category_label(selected.category) if selected else None,
         "confidence": cluster.confidence,
         "reason": cluster.reason_code,
+        "reason_label": _reason_label(cluster.reason_code),
+        "confidence_explanation": _confidence_explanation(cluster.confidence),
+        "packet_eligible": cluster.packet_eligible,
+        "singleton": len(members) == 1,
+        "hazard": cluster.has_hazard,
+        "match_mode": cluster.match_mode,
+        "unit_compatibility": cluster.unit_compatibility_class,
+        "rules_version": cluster.rules_version,
+        "controlled_differences": list(cluster.controlled_difference_fields),
         "decision": decision,
     }
 
@@ -72,17 +102,53 @@ def _selected_approval(
     return None
 
 
-def _member_payload(review_id: str, row: DrawingSourceRow) -> dict[str, str | None]:
+def _member_payload(
+    review_id: str,
+    row: DrawingSourceRow,
+    *,
+    version: str,
+    confidence: float,
+    reason: str,
+    selected_category: str | None,
+) -> dict[str, str | int | float | None]:
     """Keep the member contract intentionally smaller than source-row data."""
     return {
         "review_id": review_id,
+        "version": version,
+        "safe_filename": _safe_basename(row.location.filename),
+        "sheet_name": row.location.sheet_name,
+        "row_number": row.location.row_number,
+        "position": row.position_code_raw,
+        "drawing_code": row.drawing_code_raw,
+        "object_index": row.object_index_raw,
         "work_name": row.work_name_raw or "",
         "source_unit": row.unit_raw,
         "quantity": str(row.remaining_quantity) if row.remaining_quantity is not None else None,
         "total_cost": (
             str(row.remaining_total_cost) if row.remaining_total_cost is not None else None
         ),
+        "confidence": confidence,
+        "reason": reason,
+        "reason_label": _reason_label(reason),
+        "selected_category": selected_category,
     }
+
+
+def _safe_basename(value: str) -> str:
+    """Return a filename only, including for Windows-originated source names."""
+    return value.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+
+
+def _reason_label(reason: str) -> str:
+    return _REASON_LABELS.get(reason, "Причина проверки требует решения пользователя.")
+
+
+def _confidence_explanation(confidence: float) -> str:
+    if confidence >= 0.9:
+        return "Высокая уверенность, но решение всё равно подтверждает проверяющий."
+    if confidence >= 0.7:
+        return "Средняя уверенность: проверьте категорию и единицу измерения."
+    return "Низкая уверенность: проверьте строку по исходному документу."
 
 
 def _aggregate_total_cost(

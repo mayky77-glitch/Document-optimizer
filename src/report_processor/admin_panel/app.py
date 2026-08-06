@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
+from inspect import Parameter, signature
 from pathlib import Path
 from urllib.parse import quote
 
@@ -528,8 +530,13 @@ def create_app(
         try:
             page = int(request.query_params.get("page", "1"))
             page_size = int(request.query_params.get("page_size", "50"))
-            payload = drawing_panel.list_review_clusters(
-                job_id=request.path_params["job_id"], page=page, page_size=page_size
+            filters = _drawing_card_review_filters(request.query_params)
+            payload = _call_review_clusters(
+                drawing_panel,
+                job_id=request.path_params["job_id"],
+                page=page,
+                page_size=page_size,
+                **filters,
             )
         except KeyError:
             return _error("Задача не найдена", 404)
@@ -594,15 +601,20 @@ def create_app(
                     raise ValueError("invalid decision")
                 action = payload.get("action")
                 category = payload.get("category")
-                if not isinstance(action, str) or (
-                    category is not None and not isinstance(category, str)
+                version = payload.get("version")
+                if (
+                    not isinstance(action, str)
+                    or (category is not None and not isinstance(category, str))
+                    or (version is not None and not isinstance(version, str))
                 ):
                     raise ValueError("invalid decision")
-                current = drawing_panel.put_review_item(
+                current = _call_put_review_item(
+                    drawing_panel,
                     job_id=job_id,
                     review_id=review_id,
                     action=action,
                     category=category,
+                    version=version,
                 )
         except KeyError:
             return _error("Задача не найдена", 404)
@@ -628,6 +640,20 @@ def create_app(
         except (TypeError, ValueError):
             return _error("Выберите допустимое общее решение", 400)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
+
+    async def drawing_card_review_context(request):
+        try:
+            radius = _review_context_radius(request.query_params.get("radius", "2"))
+            payload = drawing_panel.get_review_context(
+                job_id=request.path_params["job_id"],
+                review_id=request.path_params["review_id"],
+                radius=radius,
+            )
+        except KeyError:
+            return _error("Задача или строка не найдена", 404)
+        except (TypeError, ValueError):
+            return _error("Радиус контекста должен быть числом от 1 до 5", 400)
+        return _secure(JSONResponse(_safe_review_context(payload)))
 
     async def drawing_card_review_apply(request):
         try:
@@ -719,6 +745,11 @@ def create_app(
                 methods=["PUT", "DELETE"],
             ),
             Route(
+                "/api/drawing-card/jobs/{job_id}/review/items/{review_id}/context",
+                drawing_card_review_context,
+                methods=["GET"],
+            ),
+            Route(
                 "/api/drawing-card/jobs/{job_id}/review/bulk",
                 drawing_card_review_bulk,
                 methods=["POST"],
@@ -734,6 +765,130 @@ def create_app(
 
 def _upload_part(form: Mapping[str, object], key: str):
     return _upload_value(form[key])
+
+
+def _drawing_card_review_filters(query: Mapping[str, str]) -> dict[str, object]:
+    """Parse the small, public packet-filter contract without changing its meaning."""
+    reason = _optional_filter(query.get("reason"), "reason")
+    category = _optional_filter(query.get("category"), "category")
+    safe_filename = _safe_filename_filter(query.get("safe_filename"))
+    confidence = _confidence_filter(query.get("confidence"))
+    only_unresolved = _boolean_filter(query.get("only_unresolved", "true"))
+    return {
+        "reason": reason,
+        "category": category,
+        "safe_filename": safe_filename,
+        "confidence": confidence,
+        "only_unresolved": only_unresolved,
+    }
+
+
+def _optional_filter(value: str | None, name: str) -> str | None:
+    if value is None or not value.strip():
+        return None
+    cleaned = value.strip()
+    if len(cleaned) > 200 or any(character in cleaned for character in "\x00\r\n"):
+        raise ValueError(f"invalid {name}")
+    return cleaned
+
+
+def _safe_filename_filter(value: str | None) -> str | None:
+    cleaned = _optional_filter(value, "safe_filename")
+    if cleaned is None:
+        return None
+    if "/" in cleaned or "\\" in cleaned or cleaned in {".", ".."}:
+        raise ValueError("invalid safe_filename")
+    return cleaned
+
+
+def _confidence_filter(value: str | None) -> float | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        confidence = Decimal(value)
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("invalid confidence") from error
+    if not confidence.is_finite() or not Decimal("0") <= confidence <= Decimal("1"):
+        raise ValueError("invalid confidence")
+    return float(confidence)
+
+
+def _boolean_filter(value: str) -> bool:
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ValueError("invalid only_unresolved")
+
+
+def _review_context_radius(value: str) -> int:
+    radius = int(value)
+    if not 1 <= radius <= 5:
+        raise ValueError("invalid radius")
+    return radius
+
+
+def _call_review_clusters(service, **kwargs: object) -> dict[str, object]:
+    """Call the frozen v3 signature, retaining old local service compatibility."""
+    method = service.list_review_clusters
+    accepted = signature(method).parameters
+    if any(item.kind is Parameter.VAR_KEYWORD for item in accepted.values()):
+        return method(**kwargs)
+    return method(**{key: value for key, value in kwargs.items() if key in accepted})
+
+
+def _call_put_review_item(service, **kwargs: object):
+    """Pass member version to v3 services; pre-v3 services never see the new field."""
+    method = service.put_review_item
+    accepted = signature(method).parameters
+    if any(item.kind is Parameter.VAR_KEYWORD for item in accepted.values()):
+        return method(**kwargs)
+    return method(**{key: value for key, value in kwargs.items() if key in accepted})
+
+
+def _safe_review_context(payload: object) -> object:
+    """Defence in depth: context rows cannot disclose paths or raw source containers."""
+    if isinstance(payload, Mapping):
+        result = {
+            key: payload[key]
+            for key in ("review_id", "radius", "items", "rows", "context")
+            if key in payload
+        }
+        for key in ("items", "rows", "context"):
+            if isinstance(result.get(key), (list, tuple)):
+                result[key] = [_safe_review_context_row(item) for item in result[key]]
+        return result
+    if isinstance(payload, (list, tuple)):
+        return [_safe_review_context_row(item) for item in payload]
+    raise ValueError("invalid review context")
+
+
+def _safe_review_context_row(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("invalid review context row")
+    allowed = {
+        "review_id",
+        "version",
+        "safe_filename",
+        "sheet_name",
+        "row_number",
+        "position",
+        "drawing_code",
+        "object_index",
+        "work_name",
+        "source_unit",
+        "quantity",
+        "total_cost",
+        "confidence",
+        "reason",
+        "reason_label",
+        "selected_category",
+    }
+    result = {key: value[key] for key in allowed if key in value}
+    filename = result.get("safe_filename")
+    if isinstance(filename, str):
+        result["safe_filename"] = filename.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+    return result
 
 
 def _drawing_card_upload_error(error: Exception) -> str:
