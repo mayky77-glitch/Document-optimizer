@@ -22,6 +22,9 @@ MAX_MANIFEST_BYTES = 1_048_576
 MAX_JOB_ID_LENGTH = 96
 MAX_MANIFEST_DEPTH = 16
 MAX_MANIFEST_ITEMS = 10_000
+MAX_SCANNED_JOBS = 4_096
+MAX_LOADED_JOBS = 1_024
+_ACTIVE_STATUSES = frozenset({"queued", "processing", "review_required"})
 
 _JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}\Z")
 _WINDOWS_ABSOLUTE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)")
@@ -69,13 +72,20 @@ class DrawingCardJobStore:
             return None
 
     def load_all(self) -> dict[str, dict[str, object]]:
-        """Return only valid manifests from direct, safe job children."""
-        result: dict[str, dict[str, object]] = {}
+        """Return bounded manifests, prioritising recoverable active work.
+
+        A bounded scan prevents an untrusted workspace from creating unbounded
+        restart work.  Within that scan, queued/processing/review jobs are
+        selected before terminal manifests so retention history cannot crowd
+        out work that must resume.
+        """
+        active: list[tuple[str, dict[str, object]]] = []
+        terminal: list[tuple[str, dict[str, object]]] = []
         try:
             children = sorted(self.workspace_root.iterdir(), key=lambda item: item.name)
         except OSError:
-            return result
-        for child in children:
+            return {}
+        for child in children[:MAX_SCANNED_JOBS]:
             if child.is_symlink() or not child.is_dir():
                 continue
             try:
@@ -84,8 +94,10 @@ class DrawingCardJobStore:
                 continue
             manifest = _read_manifest(child / MANIFEST_FILENAME)
             if manifest is not None:
-                result[job_id] = manifest
-        return result
+                target = active if manifest.get("status") in _ACTIVE_STATUSES else terminal
+                target.append((job_id, manifest))
+        selected = (*active, *terminal)[:MAX_LOADED_JOBS]
+        return dict(selected)
 
     def delete(self, job_id: str) -> bool:
         """Remove only a single manifest, leaving private job artifacts intact."""

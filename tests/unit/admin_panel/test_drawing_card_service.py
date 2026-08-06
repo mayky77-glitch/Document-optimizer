@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import report_processor.admin_panel.drawing_card_service as drawing_card_service
 from report_processor.admin_panel.drawing_card_presentation import drawing_card_job_payload
 from report_processor.admin_panel.drawing_card_service import DrawingCardJob, DrawingCardService
 from report_processor.drawing_card.models import (
@@ -76,6 +77,71 @@ def test_restore_rejects_ready_manifest_that_points_to_source_or_old_attempt(
     manifest = service._manifest_for(job)
     manifest["result_path"] = hostile_path
     manifest["result_hash"] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    service._store.save(job.job_id, manifest)
+
+    restored = DrawingCardService(workspace, runner=runner)
+    with pytest.raises(KeyError):
+        restored.get_job(job.job_id)
+
+
+def test_restore_rejects_symlinked_attempt_component_for_ready_result(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request):
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("done", Status.OK, run_dir, output_path=request.output)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    attempts = job.directory / "attempts"
+    relocated = job.directory / "relocated-attempts"
+    attempts.rename(relocated)
+    attempts.symlink_to(relocated, target_is_directory=True)
+
+    restored = DrawingCardService(workspace, runner=runner)
+    with pytest.raises(KeyError):
+        restored.get_job(job.job_id)
+
+
+def test_canonical_result_accepts_macos_var_alias(tmp_path: Path) -> None:
+    if not str(tmp_path).startswith("/private/var/"):
+        pytest.skip("macOS /var alias is unavailable")
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request):
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("done", Status.OK, run_dir, output_path=request.output)
+
+    service = DrawingCardService(tmp_path / "private-workspaces", runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    assert job.result is not None
+    alias = Path(str(job.result).replace("/private/var/", "/var/", 1))
+
+    assert drawing_card_service._is_canonical_attempt_result(alias, job)
+
+
+def test_restore_rejects_review_manifest_that_points_to_a_source(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request):
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        (run_dir / "manual_review.xlsx").write_bytes(b"PK\x03\x04review")
+        return WorkflowResult("done", "BLOCKED", run_dir, manual_review_count=1)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    assert job.status == "review_required"
+    manifest = service._manifest_for(job)
+    manifest["review_path"] = "sources/01-source.xlsx"
     service._store.save(job.job_id, manifest)
 
     restored = DrawingCardService(workspace, runner=runner)

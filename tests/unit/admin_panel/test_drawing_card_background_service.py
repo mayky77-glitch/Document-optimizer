@@ -339,17 +339,21 @@ def test_retry_rolls_back_every_state_field_when_manifest_persistence_fails(
 def test_bounded_terminal_retention_is_durable_and_keeps_active_review_jobs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    service = DrawingCardService(tmp_path / "private")
+    workspace = tmp_path / "private"
+    service = DrawingCardService(workspace)
     monkeypatch.setattr(drawing_card_service, "MAX_RETAINED_TERMINAL_JOBS", 1)
 
     def job(job_id: str, status: str, updated_at: str, key: str | None = None) -> DrawingCardJob:
         directory = service.workspace_root / job_id
         directory.mkdir()
+        source = directory / "sources" / "01-source.xlsx"
+        source.parent.mkdir()
+        source.write_bytes(_fixture())
         return DrawingCardJob(
             job_id=job_id,
             directory=directory,
-            sources=(),
-            source_hashes=(),
+            sources=(source,),
+            source_hashes=(hashlib.sha256(source.read_bytes()).hexdigest(),),
             mode="create",
             period=None,
             existing_card=None,
@@ -358,19 +362,27 @@ def test_bounded_terminal_retention_is_durable_and_keeps_active_review_jobs(
             idempotency_key=key,
         )
 
-    old = job("old-terminal", "ready", "2026-08-06T00:00:00Z", "old-request-key-0001")
-    cancelled = job("cancelled-terminal", "cancelled", "2026-08-06T00:01:00Z")
-    review = job("active-review", "review_required", "2026-08-06T00:02:00Z")
-    service._jobs = {item.job_id: item for item in (old, cancelled, review)}
-    service._idempotency[old.idempotency_key or ""] = old.job_id
+    terminal = [
+        job(
+            f"terminal-{index:03d}",
+            "failed",
+            f"2026-08-06T00:{index:03d}:00Z",
+            "old-request-key-0001" if index == 0 else None,
+        )
+        for index in range(300)
+    ]
+    review = job("active-review", "review_required", "2026-08-06T23:00:00Z")
+    service._jobs = {item.job_id: item for item in (*terminal, review)}
     for item in service._jobs.values():
         service._persist_job(item)
 
-    service._prune_terminal_jobs()
+    recovered = DrawingCardService(workspace)
 
-    assert set(service._jobs) == {"cancelled-terminal", "active-review"}
-    assert service._store.load("old-terminal") is None
-    assert "old-request-key-0001" not in service._idempotency
+    assert "active-review" in recovered._jobs
+    assert len([job for job in recovered._jobs.values() if job.status == "failed"]) == 1
+    assert recovered._store.load("terminal-000") is None
+    assert len(recovered._store.load_all()) == 2
+    assert "old-request-key-0001" not in recovered._idempotency
 
 
 @pytest.mark.parametrize(("terminal", "expected"), [("BLOCKED", "blocked"), (Status.OK, "ok")])

@@ -726,6 +726,13 @@ class DrawingCardService:
             return job
         review = result.work_dir / _REVIEW_NAME
         if result.manual_review_count and review.is_file() and _inside_job(review, job):
+            if not _is_canonical_attempt_review(review, job):
+                job.status = "failed"
+                job.errors = ("UNSAFE_REVIEW",)
+                job.terminal_cause = "unsafe_review"
+                job.updated_at = _utc_now()
+                self._persist_job(job)
+                return job
             os.chmod(review, 0o600)
             job.review = review
             # A rerun can produce a different review set.  Its approvals must never
@@ -1038,6 +1045,14 @@ class DrawingCardService:
             or _digest(job.result.read_bytes()) != job.result_hash
         ):
             raise ValueError("ready job has an unsafe result")
+        if (
+            job.status == "review_required"
+            and job.review is not None
+            and not _is_canonical_attempt_review(job.review, job)
+        ):
+            raise ValueError("review job has an unsafe review")
+        if job.status != "review_required" and job.review is not None:
+            raise ValueError("non-review job has a review artifact")
         for review_id, raw in _safe_approval_map(manifest.get("inline_approvals")).items():
             job.inline_approvals[review_id] = review_approval(
                 review_id, raw["action"], raw["category"]
@@ -1380,13 +1395,42 @@ def _is_canonical_attempt_result(path: Path, job: DrawingCardJob) -> bool:
     expected = job.directory / "attempts" / f"{job.attempt:04d}" / _RESULT_NAME
     try:
         return (
-            path == expected
-            and path.is_file()
-            and not path.is_symlink()
+            expected.is_file()
+            and not _has_symlink_component(expected, job.directory)
             and path.resolve() == expected.resolve()
         )
     except OSError:
         return False
+
+
+def _is_canonical_attempt_review(path: Path, job: DrawingCardJob) -> bool:
+    """Accept only a non-symlinked review workbook from the current run."""
+    try:
+        relative = path.resolve().relative_to(job.directory.resolve())
+        expected_prefix = ("attempts", f"{job.attempt:04d}", "runs")
+        return (
+            len(relative.parts) == 5
+            and relative.parts[:3] == expected_prefix
+            and relative.name == _REVIEW_NAME
+            and path.is_file()
+            and not _has_symlink_component(job.directory / relative, job.directory)
+        )
+    except (OSError, ValueError):
+        return False
+
+
+def _has_symlink_component(path: Path, root: Path) -> bool:
+    """Reject symlinks below ``root`` while allowing platform root aliases."""
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    current = root
+    for component in relative.parts:
+        current /= component
+        if current.is_symlink():
+            return True
+    return False
 
 
 def _private_tree(directory: Path) -> None:
