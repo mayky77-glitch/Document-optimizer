@@ -4,7 +4,7 @@ status: frozen
 card_id: drawing-card-review-claim-restart-safety
 version: 1
 supersedes: drawing-card-review-lock-project-multiset
-work_id: drawing-card-ux-release-remediation-v1
+work_id: drawing-card-ux-release-remediation-v2
 task_id: review-claim-restart-safety
 purpose: Consume each review generation once, roll back failed run transitions, and preserve exact restart scope.
 role: developer

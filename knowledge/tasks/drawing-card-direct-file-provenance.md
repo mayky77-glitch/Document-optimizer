@@ -4,7 +4,7 @@ status: frozen
 card_id: drawing-card-direct-file-provenance
 version: 1
 supersedes: drawing-card-upload-order-identity
-work_id: drawing-card-ux-release-remediation-v1
+work_id: drawing-card-ux-release-remediation-v2
 task_id: direct-file-provenance
 purpose: Preserve every arbitrary direct filename and rely only on explicit service storage provenance.
 role: developer
