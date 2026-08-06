@@ -7,6 +7,7 @@ import re
 import uuid
 from collections import Counter
 from dataclasses import replace
+from hashlib import sha256
 from importlib import resources
 from pathlib import Path
 
@@ -49,7 +50,12 @@ from .output import (
     validate_card,
     write_card,
 )
-from .review import export_manual_review, import_review_approvals
+from .review import (
+    FeedbackStore,
+    export_manual_review,
+    import_review_approvals,
+    replay_exact_feedback,
+)
 from .sources import (
     build_manifest,
     extract_rows,
@@ -128,6 +134,16 @@ def _validate_request(request: WorkflowRequest) -> None:
         raise FileNotFoundError(request.existing_card)
     if request.review_decisions is not None and not request.review_decisions.is_file():
         raise FileNotFoundError(request.review_decisions)
+    if request.feedback_examples is not None:
+        raise ValueError("feedback_examples is ineligible; use FeedbackStore replay")
+    if request.feedback_input_hashes is not None and (
+        not isinstance(request.feedback_input_hashes, tuple)
+        or not request.feedback_input_hashes
+        or any(
+            re.fullmatch(r"[0-9a-f]{64}", value) is None for value in request.feedback_input_hashes
+        )
+    ):
+        raise ValueError("feedback_input_hashes must be a non-empty tuple of SHA-256 hashes")
     if request.machine_consensus is not None and not request.machine_consensus.is_file():
         raise FileNotFoundError(request.machine_consensus)
     if request.remaining_strategy != "direct_remaining_columns":
@@ -269,6 +285,9 @@ def _processing_summary(
             row.remaining_total_cost is not None for row in result.card_rows
         ),
         "manual_review_decisions": result.manual_review_count,
+        "review_candidates_before_replay": result.review_candidates_before_replay,
+        "exact_feedback_hits": result.exact_feedback_hits,
+        "queued_review_rows": result.queued_review_rows,
         "funnel": result.funnel,
         "schema_recognition": result.schema_recognition,
         "model_calls": matcher_calls,
@@ -530,9 +549,12 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         _finish_lifecycle(lifecycle, terminal_cause="REVIEW_DECISIONS_INVALID")
         return result
     examples = load_confirmed_examples(examples_path)
-    if request.feedback_examples is not None:
-        feedback = load_confirmed_examples(request.feedback_examples)
-        examples = tuple({item.example_id: item for item in (*examples, *feedback)}.values())
+    feedback_store = FeedbackStore(request.feedback_store) if request.feedback_store else None
+    feedback_project_id = (
+        request.feedback_project_id
+        or sha256("".join(sorted(before_hashes.values())).encode("ascii")).hexdigest()
+    )
+    replay_input_hashes = request.feedback_input_hashes or tuple(sorted(before_hashes.values()))
     tiny_model = None
     if request.rag_mode != "off" and request.model_config is not None:
         from .matching.tiny_model import OpenAICompatibleTinyModel
@@ -666,6 +688,22 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                     if row.object_index_raw and row.drawing_code_raw:
                         drawing_rows.setdefault((row.object_index_raw, row.drawing_code_raw), row)
                     decision = matcher.match(row)
+                    if decision.requires_manual_review:
+                        result.review_candidates_before_replay += 1
+                        if feedback_store is not None:
+                            replayed = replay_exact_feedback(
+                                row,
+                                decision,
+                                store=feedback_store,
+                                tenant_id=request.feedback_tenant_id,
+                                project_id=feedback_project_id,
+                                input_hashes=replay_input_hashes,
+                                model_version=request.feedback_model_version,
+                                rules_version=rules.version,
+                            )
+                            if replayed is not None:
+                                decision = replayed
+                                result.exact_feedback_hits += 1
                     disposition = disposition_for_decision(row, decision)
                     dispositions.append(disposition)
                     disposition_writer.write(disposition)
@@ -756,6 +794,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         {decision.row_id: decision for decision in aggregate_review_decisions}
     )
     result.manual_review_count = len(review_decisions_by_id)
+    result.queued_review_rows = result.manual_review_count
     if result.manual_review_count:
         result.warnings.append(f"MANUAL_REVIEW_REQUIRED:{result.manual_review_count}")
 
@@ -791,6 +830,9 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             if isinstance(disposition_counts, dict)
             else 0,
             "manual_review_rows": result.manual_review_count,
+            "review_candidates_before_replay": result.review_candidates_before_replay,
+            "exact_feedback_hits": result.exact_feedback_hits,
+            "queued_review_rows": result.queued_review_rows,
             "output_rows": len(card_rows),
         }
     )

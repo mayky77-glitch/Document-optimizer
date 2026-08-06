@@ -252,6 +252,11 @@ class WorkflowRequest:
     model_config: Path | None = None
     review_decisions: Path | None = None
     feedback_examples: Path | None = None
+    feedback_store: Path | None = None
+    feedback_tenant_id: str = "local"
+    feedback_project_id: str | None = None
+    feedback_model_version: str = "DrawingCardMatcher-1.0"
+    feedback_input_hashes: tuple[str, ...] | None = None
     machine_consensus: Path | None = None
     objects_per_sheet: int = 4
     drawing_code_mode: str = "preserve_group"
@@ -279,6 +284,9 @@ class WorkflowResult:
     extracted_row_count: int = 0
     classification_decision_count: int = 0
     manual_review_count: int = 0
+    review_candidates_before_replay: int = 0
+    exact_feedback_hits: int = 0
+    queued_review_rows: int = 0
     aggregated: list[AggregatedDrawingResult] = field(default_factory=list)
     card_rows: list[DrawingCardResultRow] = field(default_factory=list)
     layouts: list[ObjectBlockLayout] = field(default_factory=list)
