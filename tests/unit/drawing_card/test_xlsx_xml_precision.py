@@ -17,7 +17,5 @@ from report_processor.drawing_card.output.xlsx_xml import decimal_xml_text
         (Decimal("42"), "42"),
     ],
 )
-def test_decimal_xml_text_normalizes_only_binary_float_tails(
-    value: Decimal, expected: str
-) -> None:
+def test_decimal_xml_text_normalizes_only_binary_float_tails(value: Decimal, expected: str) -> None:
     assert decimal_xml_text(value) == expected

@@ -19,8 +19,6 @@ FIXTURES = Path(__file__).parents[2] / "fixtures" / "drawing_card"
 
 
 def _source(name: str = "source.xlsx") -> tuple[str, bytes]:
-    if Path(name).suffix.casefold() == ".xlsb":
-        return name, b"PK\x03\x04binary-workbook"
     return name, (FIXTURES / "demo_source.xlsx").read_bytes()
 
 
