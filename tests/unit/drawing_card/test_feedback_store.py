@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from report_processor.drawing_card.review import feedback
 from report_processor.drawing_card.review.feedback import (
     FeedbackContext,
     FeedbackEntry,
@@ -116,7 +117,9 @@ def test_schema_versions_and_work_fingerprint_are_fixed(tmp_path: Path) -> None:
         _context(work_fingerprint="0" * 64)
 
 
-def test_invalidation_retains_audit_history_and_makes_lookup_miss(tmp_path: Path) -> None:
+def test_invalidation_retains_audit_history_and_preserves_older_unsuperseded_event(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "feedback.jsonl"
     store = FeedbackStore(path)
     earlier = _entry(created_at="2026-08-06T01:02:02Z")
@@ -127,13 +130,34 @@ def test_invalidation_retains_audit_history_and_makes_lookup_miss(tmp_path: Path
     )
     assert not invalid.valid
     assert invalid.supersedes_event_id == entry.event_id
-    assert store.lookup_exact(entry.context) is None
+    assert store.lookup_exact(entry.context) == earlier
     events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [event["event_id"] for event in events] == [
         earlier.event_id,
         entry.event_id,
         invalid.event_id,
     ]
+
+
+def test_invalidating_an_older_event_preserves_newer_exact_decision(tmp_path: Path) -> None:
+    store = FeedbackStore(tmp_path / "feedback.jsonl")
+    older = _entry(created_at="2026-08-06T01:02:02Z")
+    newer = _entry(created_at="2026-08-06T01:02:03Z", selected_category="newer-cable")
+    store.append_page((older, newer))
+
+    store.invalidate(older.event_id, "auditor", "2026-08-06T01:03:00Z", "old source")
+
+    assert store.lookup_exact(older.context) == newer
+
+
+def test_invalidating_current_event_makes_exact_lookup_miss(tmp_path: Path) -> None:
+    store = FeedbackStore(tmp_path / "feedback.jsonl")
+    entry = _entry()
+    store.append_page((entry,))
+
+    store.invalidate(entry.event_id, "auditor", "2026-08-06T01:03:00Z", "current source")
+
+    assert store.lookup_exact(entry.context) is None
 
 
 def test_invalidation_retains_explicit_review_resolutions(tmp_path: Path) -> None:
@@ -166,6 +190,46 @@ def test_conflicting_duplicate_ids_fail_whole_initial_page(tmp_path: Path) -> No
     with pytest.raises(ValueError, match="conflicting duplicate"):
         store.append_page((entry, replace(entry, action="exclude", selected_category=None)))
     assert not (tmp_path / "feedback.jsonl").exists()
+
+
+def test_append_rejects_prospective_entry_limit_without_changing_existing_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "feedback.jsonl"
+    store = FeedbackStore(path)
+    first = _entry(created_at="2026-08-06T01:02:01Z")
+    second = _entry(created_at="2026-08-06T01:02:02Z")
+    third = _entry(created_at="2026-08-06T01:02:03Z")
+    monkeypatch.setattr(feedback, "_MAX_ENTRIES", 2)
+    store.append_page((first, second))
+    before = path.read_bytes()
+
+    with pytest.raises(ValueError, match="entry limit"):
+        store.append_page((third,))
+
+    assert path.read_bytes() == before
+    assert store.lookup_exact(first.context) == second
+
+
+def test_append_rejects_prospective_byte_limit_without_changing_existing_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "feedback.jsonl"
+    store = FeedbackStore(path)
+    first = _entry(created_at="2026-08-06T01:02:01Z")
+    second = _entry(created_at="2026-08-06T01:02:02Z")
+    store.append_page((first,))
+    before = path.read_bytes()
+    second_bytes = len(
+        (feedback._canonical_json(feedback._entry_payload(second)) + "\n").encode("utf-8")
+    )
+    monkeypatch.setattr(feedback, "_MAX_LEDGER_BYTES", len(before) + second_bytes - 1)
+
+    with pytest.raises(ValueError, match="bounded read limit"):
+        store.append_page((second,))
+
+    assert path.read_bytes() == before
+    assert store.lookup_exact(first.context) == first
 
 
 def test_permissions_are_private(tmp_path: Path) -> None:
