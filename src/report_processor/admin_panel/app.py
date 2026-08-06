@@ -55,7 +55,7 @@ from .view import (
     static_asset,
 )
 
-_SAFE_DOWNLOAD_NAME = re.compile(r"[^\w.-]+", re.UNICODE)
+_SAFE_DOWNLOAD_NAME = re.compile(r"[^\w. -]+", re.UNICODE)
 _WORKBOOK_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12"
 _ZIP_MEDIA_TYPE = "application/zip"
@@ -1006,7 +1006,7 @@ def _drawing_card_download(service, job_id: str, *, kind: str):
         Response(
             content,
             media_type=_WORKBOOK_MEDIA_TYPE,
-            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+            headers={"Content-Disposition": _content_disposition(safe_name)},
         )
     )
 

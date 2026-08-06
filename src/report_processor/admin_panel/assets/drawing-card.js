@@ -224,7 +224,7 @@
     sourceCount.textContent = count
       ? `Выбрано исходных файлов: ${count}`
       : uploadedSourceCount
-        ? `Уже загружено для текущей карточки: ${uploadedSourceCount}. Чтобы создать новую, выберите файлы снова.`
+        ? `Уже загружено для текущего отчёта: ${uploadedSourceCount}. Чтобы создать новый, выберите файлы снова.`
         : "Файлы пока не выбраны";
     persistSession();
   };
@@ -308,9 +308,9 @@
     const files = [...sourceFiles.files];
     if (!files.length) return "Добавьте хотя бы один исходный документ.";
     if (files.length > 32) return "Можно выбрать не больше 32 исходных документов. Уберите лишние файлы.";
-    if (files.some((file) => !SOURCE_WORKBOOK_EXTENSIONS.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx, .xlsm или .xlsb.";
-    if (operation.value === "update" && !existingCard.files.length) return "Для обновления загрузите существующую карточку.";
-    if (operation.value === "update" && fileExtension(existingCard.files[0]) !== ".xlsx") return "Существующая карточка должна быть файлом .xlsx.";
+    if (files.some((file) => !SOURCE_WORKBOOK_EXTENSIONS.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx, .xlsm или .xlsb. LibreOffice Calc .ods и PDF доступны только в отдельном сравнении Excel с PDF-отчётами.";
+    if (operation.value === "update" && !existingCard.files.length) return "Для обновления загрузите существующий отчёт.";
+    if (operation.value === "update" && fileExtension(existingCard.files[0]) !== ".xlsx") return "Существующий отчёт должен быть файлом .xlsx.";
     return "";
   };
 
@@ -338,16 +338,16 @@
   const renderResult = (payload) => {
     if (typeof payload.result_url !== "string" || !payload.result_url) return;
     resultDownload.href = payload.result_url;
-    resultDownload.textContent = "Скачать карточку";
+    resultDownload.textContent = "Скачать отчёт";
     resultDownload.classList.remove("is-disabled");
     resultDownload.removeAttribute("aria-disabled");
-    resultHint.textContent = "Карточка готова. Скачайте файл и сохраните его в папке объекта.";
+    resultHint.textContent = "Отчёт готов. Скачайте файл и сохраните его в папке объекта.";
     setProgress("card");
   };
 
   const resetResult = () => {
     resultDownload.removeAttribute("href");
-    resultDownload.textContent = "Скачать карточку";
+    resultDownload.textContent = "Скачать отчёт";
     resultDownload.classList.add("is-disabled");
     resultDownload.setAttribute("aria-disabled", "true");
     resultHint.textContent = "Здесь появится готовый .xlsx после завершения проверки.";
@@ -404,13 +404,13 @@
     review.hide();
     if (payload.status === "blocked") {
       renderIssues(payload, true);
-      setStatus("Карточка не сформирована: обнаружены блокирующие ошибки. Причины указаны ниже.", true);
+      setStatus("Отчёт не сформирован: обнаружены блокирующие ошибки. Причины указаны ниже.", true);
     } else if (payload.status === "failed") {
       renderIssues(payload, true);
       setStatus("Обработка завершилась ошибкой. Причина и действие указаны ниже.", true);
     } else if (payload.result_url || payload.status === "ready") {
       renderIssues(payload);
-      setStatus("Карточка готова. Скачайте файл.");
+      setStatus("Отчёт готов. Скачайте файл.");
     } else if (ACTIVE_JOB_STATUSES.has(payload.status)) {
       hideIssues();
       setStatus(PHASE_LABELS[payload.phase] || "Идёт проверка исходных файлов и формирование отчёта…");
@@ -419,7 +419,7 @@
       setStatus("Обработка отменена. Частичный файл не опубликован; задачу можно запустить повторно.");
     } else {
       renderIssues(payload);
-      setStatus("Статус обработки изменился. Обновите страницу или запустите карточку снова.", true);
+      setStatus("Статус обработки изменился. Обновите страницу или запустите отчёт снова.", true);
     }
     if (TERMINAL_JOB_STATUSES.has(payload.status)) idempotencyKey = null;
     persistSession();
@@ -536,7 +536,7 @@
     review.hide();
     hideIssues();
     resetResult();
-    setStatus("Проверяем источники и готовим карточку…");
+    setStatus("Проверяем источники и готовим отчёт…");
     try {
       idempotencyKey ||= newIdempotencyKey();
       persistSession();
@@ -600,10 +600,10 @@
         clearSession();
         updateSourceCount();
         setProgress("sources");
-        setStatus("Предыдущая карточка больше недоступна. Выберите исходные файлы снова.", true);
+        setStatus("Предыдущий отчёт больше недоступен. Выберите исходные файлы снова.", true);
         return;
       }
-      setStatus("Не удалось восстановить карточку. Повторите действие или выберите файлы снова.", true);
+      setStatus("Не удалось восстановить отчёт. Повторите действие или выберите файлы снова.", true);
     }
   };
 

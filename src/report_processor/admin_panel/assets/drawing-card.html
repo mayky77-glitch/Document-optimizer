@@ -23,14 +23,14 @@
 
       <header class="page-heading">
         <p class="eyebrow">Отчёт с автоматической сверкой</p>
-        <h1>Составьте отчёт об остатках</h1>
-        <p>Панель сама сопоставит строки и сразу сформирует карточку, если всё однозначно. Спорные строки попросит подтвердить перед выпуском.</p>
+        <h1>Отчёт (карточка остатков)</h1>
+        <p>Панель сама сопоставит строки и сразу сформирует отчёт, если всё однозначно. Спорные строки попросит подтвердить перед выпуском.</p>
       </header>
 
-      <ol class="progress-rail" aria-label="Готовность карточки">
+      <ol class="progress-rail" aria-label="Готовность отчёта">
         <li class="is-active" data-progress="sources"><span>01</span><b>Источники</b><small>Выберите файлы</small></li>
         <li data-progress="review"><span>02</span><b>Проверка</b><small>Подтвердите строки</small></li>
-        <li data-progress="card"><span>03</span><b>Карточка</b><small>Скачайте файл</small></li>
+        <li data-progress="card"><span>03</span><b>Отчёт</b><small>Скачайте файл</small></li>
       </ol>
 
       <section class="ledger-card" aria-labelledby="source-title">
@@ -45,7 +45,7 @@
           <label class="file-field" for="sources">
             <span>Исходные документы <em>обязательно</em></span>
             <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm,.xlsb" multiple required aria-describedby="sources-help source-count">
-            <small id="sources-help">КС-2, накопительные ведомости и другие источники .xlsx, .xlsm или .xlsb.</small>
+            <small id="sources-help">КС-2, накопительные ведомости и другие источники .xlsx, .xlsm или .xlsb. LibreOffice Calc .ods и PDF доступны только в отдельном процессе сравнения Excel с PDF-отчётами.</small>
             <strong id="source-count" class="file-count" aria-live="polite">Файлы пока не выбраны</strong>
           </label>
 
@@ -60,27 +60,27 @@
           </div>
 
           <fieldset class="operation-choice">
-            <legend>Что сделать с карточкой?</legend>
+            <legend>Что сделать с отчётом?</legend>
             <input id="operation" name="operation" type="hidden" value="create">
-            <div class="operation-buttons" role="group" aria-label="Операция с карточкой">
+            <div class="operation-buttons" role="group" aria-label="Операция с отчётом">
               <button class="operation-button is-selected" type="button" data-operation="create" aria-pressed="true">
                 <span>Создать новую</span>
-                <small>Начать карточку по выбранным источникам</small>
+                <small>Начать отчёт по выбранным источникам</small>
               </button>
               <button class="operation-button" type="button" data-operation="update" aria-pressed="false">
                 <span>Обновить существующую</span>
-                <small>Загрузить готовую карточку и пересчитать остатки</small>
+                <small>Загрузить готовый отчёт и пересчитать остатки</small>
               </button>
             </div>
           </fieldset>
 
           <label id="existing-card-field" class="file-field existing-card" for="existing-card" hidden>
-            <span>Существующая карточка <em>обязательно для обновления</em></span>
+            <span>Существующий отчёт <em>обязательно для обновления</em></span>
             <input id="existing-card" name="existing_card" type="file" accept=".xlsx" disabled>
-            <small>Загрузите карточку, которую нужно обновить.</small>
+            <small>Загрузите отчёт, который нужно обновить.</small>
           </label>
 
-          <button id="create-job" class="primary-action" type="submit">Подготовить карточку</button>
+          <button id="create-job" class="primary-action" type="submit">Подготовить отчёт</button>
         </form>
         <p id="status" class="status" role="status" aria-live="polite">Сначала выберите исходные документы.</p>
         <section id="job-progress" class="job-progress" aria-labelledby="job-progress-title" hidden>
@@ -192,11 +192,11 @@
 
       <section class="result-card" aria-labelledby="result-title">
         <div>
-          <p class="step-label">Шаг 3 · готовая карточка</p>
-          <h2 id="result-title">Файл карточки</h2>
+          <p class="step-label">Шаг 3 · готовый отчёт</p>
+          <h2 id="result-title">Файл отчёта</h2>
           <p id="result-hint">Станет доступен после подготовки.</p>
         </div>
-        <a id="result-download" class="download is-disabled" aria-disabled="true">Карточка ещё не готова</a>
+        <a id="result-download" class="download is-disabled" aria-disabled="true">Отчёт ещё не готов</a>
       </section>
     </main>
 

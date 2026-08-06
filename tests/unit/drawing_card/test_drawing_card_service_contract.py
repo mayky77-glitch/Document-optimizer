@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from report_processor.admin_panel.drawing_card_presentation import drawing_card_job_payload
-from report_processor.admin_panel.drawing_card_service import DrawingCardService
+from report_processor.admin_panel.drawing_card_service import _RESULT_NAME, DrawingCardService
 from report_processor.drawing_card.output.contract import (
     CARD_HEADERS,
     COST_FORMAT,
@@ -73,6 +73,34 @@ def test_create_rejects_legacy_ole_payload_for_xlsb(tmp_path: Path) -> None:
         _service(tmp_path).create_job(
             sources=[("legacy.xlsb", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1binary-workbook")]
         )
+
+
+@pytest.mark.parametrize("suffix", (".ods", ".pdf"))
+def test_create_rejects_ods_and_pdf_sources(tmp_path: Path, suffix: str) -> None:
+    with pytest.raises(ValueError, match="unsupported workbook type"):
+        _service(tmp_path).create_job(sources=[_source(f"source{suffix}")])
+
+
+@pytest.mark.parametrize(
+    ("period", "expected_name"),
+    (
+        ("2026-07", "Отчёт по остаткам за июль 2026.xlsx"),
+        (None, "Отчёт по остаткам.xlsx"),
+    ),
+)
+def test_result_keeps_private_name_and_uses_localized_public_name(
+    tmp_path: Path, period: str | None, expected_name: str
+) -> None:
+    service = _service(tmp_path)
+    job = service.create_job(sources=[_source()], period=period)
+    job.result = job.directory / _RESULT_NAME
+    job.result.write_bytes(b"PK\x03\x04result")
+    job.status = "ready"
+
+    result, name = service.get_result(job.job_id)
+
+    assert result.name == _RESULT_NAME
+    assert name == expected_name
 
 
 def test_update_requires_an_existing_xlsx_card_and_period_is_optional(tmp_path: Path) -> None:
