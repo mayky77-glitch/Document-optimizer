@@ -172,7 +172,16 @@ def test_drawing_admin_exposes_hierarchy_blocker_without_category_review_item(
         )
 
     service = DrawingCardService(tmp_path / "workspaces", runner=blocked_runner)
-    job = service.create_job(sources=[("source.xlsx", b"PK\x03\x04workbook")])
+    job = service.create_job(
+        sources=[
+            (
+                "source.xlsx",
+                (
+                    Path(__file__).parents[1] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+                ).read_bytes(),
+            )
+        ]
+    )
     payload = drawing_card_job_payload(job)
 
     assert job.status == "blocked"
