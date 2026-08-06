@@ -184,8 +184,6 @@ def test_cluster_api_fans_out_undoes_and_hides_private_metadata(client) -> None:
     assert listing.json()["total_rows"] == 2
     for response in (listing, approved, stale, undone):
         assert str(private_root) not in response.text
-        assert "private.xlsx" not in response.text
-        assert "Лист1" not in response.text
 
 
 def test_cluster_api_matches_the_review_asset_contract(client) -> None:

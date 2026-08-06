@@ -300,18 +300,128 @@ def drawing_card_inline_review_page(
 
 def drawing_card_cluster_review_page(payload: Mapping[str, object]) -> dict[str, object]:
     """Expose both names during the additive transition to the cluster UI."""
-    items = list(payload.get("items", ()))
+    items = [_safe_packet(item) for item in payload.get("items", ()) if isinstance(item, Mapping)]
+    categories = _review_categories(payload.get("review_categories"))
+    total_packets = int(payload.get("total_packets", payload.get("total_clusters", 0)))
+    unresolved_packets = int(
+        payload.get("unresolved_packets", payload.get("unresolved_clusters", 0))
+    )
     return {
         "items": items,
         "clusters": items,
+        "packets": items,
         "page": payload.get("page", 1),
         "page_size": payload.get("page_size", 50),
-        "total_clusters": payload.get("total_clusters", 0),
+        "total_clusters": total_packets,
+        "total_packets": total_packets,
         "total_rows": payload.get("total_rows", 0),
-        "unresolved_clusters": payload.get("unresolved_clusters", 0),
+        "unresolved_clusters": unresolved_packets,
+        "unresolved_packets": unresolved_packets,
         "unresolved_rows": payload.get("unresolved_rows", 0),
         "can_apply": bool(payload.get("can_apply", False)),
+        "review_categories": categories,
+        "review_metrics": _primitive_mapping(payload.get("review_metrics")),
     }
+
+
+def _review_categories(value: object) -> list[dict[str, object]]:
+    if isinstance(value, (list, tuple)):
+        result = []
+        for item in value:
+            if not isinstance(item, Mapping):
+                continue
+            category_id = item.get("id", item.get("value"))
+            label = item.get("label")
+            units = item.get("units", ())
+            if isinstance(category_id, str) and isinstance(label, str):
+                result.append(
+                    {
+                        "id": category_id,
+                        "label": label,
+                        "units": [unit for unit in units if isinstance(unit, str)],
+                    }
+                )
+        return result
+    return [
+        {
+            "id": category.value,
+            "label": CATEGORY_DISPLAY_NAMES[category],
+            "units": [],
+        }
+        for category in CATEGORY_ORDER
+    ]
+
+
+def _primitive_mapping(value: object) -> dict[str, int | float | str | bool | None]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): item
+        for key, item in value.items()
+        if isinstance(item, (str, int, float, bool)) or item is None
+    }
+
+
+def _safe_packet(value: Mapping[str, object]) -> dict[str, object]:
+    """Keep presentation additive while never forwarding private source metadata."""
+    allowed = {
+        "cluster_id",
+        "packet_id",
+        "version",
+        "work_name",
+        "source_unit",
+        "target_unit",
+        "member_count",
+        "aggregate_total_cost",
+        "proposed_category",
+        "proposed_category_label",
+        "selected_category",
+        "selected_category_label",
+        "confidence",
+        "reason",
+        "reason_label",
+        "confidence_explanation",
+        "packet_eligible",
+        "singleton",
+        "hazard",
+        "match_mode",
+        "unit_compatibility",
+        "rules_version",
+        "controlled_differences",
+        "decision",
+    }
+    packet = {key: value[key] for key in allowed if key in value}
+    members = value.get("members", ())
+    packet["members"] = [
+        _safe_packet_member(member) for member in members if isinstance(member, Mapping)
+    ]
+    return packet
+
+
+def _safe_packet_member(value: Mapping[str, object]) -> dict[str, object]:
+    allowed = (
+        "review_id",
+        "version",
+        "safe_filename",
+        "sheet_name",
+        "row_number",
+        "position",
+        "drawing_code",
+        "object_index",
+        "work_name",
+        "source_unit",
+        "quantity",
+        "total_cost",
+        "confidence",
+        "reason",
+        "reason_label",
+        "selected_category",
+    )
+    member = {key: value[key] for key in allowed if key in value}
+    filename = member.get("safe_filename")
+    if isinstance(filename, str):
+        member["safe_filename"] = filename.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+    return member
 
 
 def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:
