@@ -116,17 +116,36 @@ def test_jobs_keep_workspace_private_and_disable_rag_network(tmp_path: Path, mon
     assert "rag" not in serialized.casefold() or "off" in serialized.casefold()
 
 
+def test_manifest_paths_survive_an_aliased_workspace_parent(tmp_path: Path) -> None:
+    actual_parent = tmp_path / "actual"
+    actual_parent.mkdir()
+    aliased_parent = tmp_path / "alias"
+    aliased_parent.symlink_to(actual_parent, target_is_directory=True)
+
+    job = DrawingCardService(aliased_parent / "private-workspaces").create_job(sources=[_source()])
+
+    assert job.job_id
+
+
 def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
     job = _service(tmp_path).create_job(sources=[_source()])
     payload = drawing_card_job_payload(job)
 
     assert set(payload) == {
         "active_step",
+        "attempt",
+        "can_cancel",
+        "can_retry",
         "job_id",
         "mode",
         "period",
+        "phase",
+        "progress",
+        "started_at",
         "status",
         "summary",
+        "terminal_cause",
+        "updated_at",
         "warnings",
         "issues",
         "blocking_reasons",
@@ -140,6 +159,16 @@ def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
     assert payload["mode"] == "create"
     assert payload["period"] is None
     assert payload["active_step"] == "sources"
+    assert payload["phase"] == job.phase
+    assert set(payload["progress"]) == {
+        "processed_files",
+        "total_files",
+        "processed_rows",
+        "total_rows",
+    }
+    assert payload["attempt"] == job.attempt
+    assert payload["can_cancel"] is (job.status in {"queued", "processing"})
+    assert payload["can_retry"] is (job.status in {"cancelled", "failed", "blocked"})
     assert set(payload["summary"]) == {
         "source_files",
         "extracted_rows",

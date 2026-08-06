@@ -102,4 +102,3 @@ def test_upload_returns_fast_and_cancel_retry_never_publishes_partial_xlsx(
         assert ready["attempt"] == 2
         assert ready["result_url"]
         assert client.get(str(ready["result_url"])).status_code == 200
-

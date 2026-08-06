@@ -834,7 +834,7 @@ class DrawingCardService:
         def relative(path: Path | None) -> str | None:
             if path is None or not _inside_job(path, job):
                 return None
-            return path.relative_to(job.directory).as_posix()
+            return path.resolve().relative_to(job.directory.resolve()).as_posix()
 
         return {
             "contract": MANIFEST_CONTRACT,
