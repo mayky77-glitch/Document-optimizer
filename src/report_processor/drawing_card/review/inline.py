@@ -11,6 +11,7 @@ from pathlib import Path
 from ..matching.matcher import ReviewApproval
 from ..models import CATEGORY_DISPLAY_NAMES, DrawingSourceRow, MatchDecision
 from ..sources.normalization import normalize_text, normalize_unit
+from .feedback import FeedbackContext, FeedbackEntry
 
 _ACTIONS = frozenset({"approve", "reject", "change_category", "quantity_only", "cost_only", "skip"})
 _CATEGORY_ACTIONS = frozenset({"approve", "change_category", "quantity_only", "cost_only"})
@@ -84,6 +85,49 @@ def write_approvals(path: Path, approvals: dict[str, ReviewApproval]) -> None:
     _atomic_json(path, payload)
 
 
+def feedback_entry_for_approval(
+    *,
+    context: FeedbackContext,
+    approval: ReviewApproval,
+    created_at: str,
+    author: str = "inline-review",
+    hazards: tuple[str, ...] = (),
+) -> FeedbackEntry:
+    """Encode one explicit reviewer outcome without inferring a money decision."""
+    action = approval.action
+    if action in {"reject", "skip"}:
+        return FeedbackEntry(
+            context=context,
+            selected_category=None,
+            action="exclude",
+            author=author,
+            created_at=created_at,
+            hazards=hazards,
+            selected_quantity_resolution="exclude",
+            selected_cost_resolution="exclude",
+        )
+    if approval.category is None:
+        raise ValueError("a category is required for a saved review confirmation")
+    quantity, cost = {
+        "approve": ("include", "include"),
+        "change_category": ("include", "include"),
+        "quantity_only": ("include", "exclude"),
+        "cost_only": ("exclude", "include"),
+    }.get(action, (None, None))
+    if quantity is None or cost is None:
+        raise ValueError("unsupported saved review action")
+    return FeedbackEntry(
+        context=context,
+        selected_category=approval.category.value,
+        action="confirm" if action == "approve" else "reclassify",
+        author=author,
+        created_at=created_at,
+        hazards=hazards,
+        selected_quantity_resolution=quantity,
+        selected_cost_resolution=cost,
+    )
+
+
 def append_feedback(
     path: Path,
     rows: dict[str, DrawingSourceRow],
@@ -100,8 +144,7 @@ def append_feedback(
             continue
         unit = normalize_unit(row.unit_raw) or ""
         record = {
-            "example_id": "feedback-"
-            + sha256(f"{source_text}|{unit}".encode()).hexdigest()[:20],
+            "example_id": "feedback-" + sha256(f"{source_text}|{unit}".encode()).hexdigest()[:20],
             "source_text": source_text,
             "normalized_text": source_text,
             "category": approval.category.value if approval.category else None,

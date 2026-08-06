@@ -219,14 +219,28 @@ def test_categoryless_and_missing_position_candidates_can_match_exactly(tmp_path
     assert replayed.category is TargetWorkCategory.LOW_CURRENT_CABLE
 
 
-def test_ambiguous_quantity_or_cost_resolution_remains_queued(tmp_path: Path) -> None:
+def test_explicit_review_resolution_replays_exactly(tmp_path: Path) -> None:
     row = _row()
     ambiguous = _decision(quantity_decision="review", cost_decision="review")
     store = FeedbackStore(tmp_path / "feedback.jsonl")
+    context = _context(row, ambiguous, allow_review=True)
+    assert context is not None
+    store.append_page(
+        (
+            _entry(
+                context,
+                selected_quantity_resolution="include",
+                selected_cost_resolution="exclude",
+            ),
+        )
+    )
 
-    assert _context(row, ambiguous) is None
-    assert _replay(store, row, ambiguous) is None
-    assert disposition_for_decision(row, ambiguous).disposition == "MANUAL_REVIEW"
+    replayed = _replay(store, row, ambiguous)
+
+    assert replayed is not None
+    assert replayed.quantity_decision == "include"
+    assert replayed.cost_decision == "exclude"
+    assert not replayed.requires_manual_review
 
 
 def test_similar_text_and_exclusion_replay_are_not_approximate(tmp_path: Path) -> None:

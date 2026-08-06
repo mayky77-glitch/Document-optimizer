@@ -24,12 +24,13 @@ def build_feedback_context(
     input_hashes: tuple[str, ...],
     model_version: str,
     rules_version: str,
+    allow_review: bool = False,
 ) -> FeedbackContext | None:
     """Build the complete row key, returning ``None`` for incomplete candidates."""
     normalized_work = normalize_text(row.work_name_raw)
     if not normalized_work or not decision.matching_strategy:
         return None
-    unit_policy = _unit_policy(decision)
+    unit_policy = _unit_policy(decision, allow_review=allow_review)
     if unit_policy is None:
         return None
     return FeedbackContext(
@@ -74,6 +75,7 @@ def replay_exact_feedback(
         input_hashes=input_hashes,
         model_version=model_version,
         rules_version=rules_version,
+        allow_review=True,
     )
     if context is None:
         return None
@@ -81,13 +83,19 @@ def replay_exact_feedback(
     if entry is None:
         return None
     if entry.action in {"confirm", "reclassify"}:
-        if entry.selected_category is None or context.unit_policy not in _REPLAY_POLICIES:
+        if entry.selected_category is None:
             return None
         try:
             category = TargetWorkCategory(entry.selected_category)
         except ValueError:
             return None
-        quantity_decision, cost_decision = _policy_decisions(context.unit_policy)
+        quantity_decision = entry.selected_quantity_resolution
+        cost_decision = entry.selected_cost_resolution
+        if quantity_decision not in {"include", "exclude"} or cost_decision not in {
+            "include",
+            "exclude",
+        }:
+            return None
     elif entry.action in {"reject", "exclude"}:
         category = None
         quantity_decision = cost_decision = "exclude"
@@ -110,10 +118,11 @@ def replay_exact_feedback(
     )
 
 
-def _unit_policy(decision: MatchDecision) -> str | None:
-    if decision.quantity_decision not in {"include", "exclude"}:
+def _unit_policy(decision: MatchDecision, *, allow_review: bool) -> str | None:
+    allowed = {"include", "exclude", "review"} if allow_review else {"include", "exclude"}
+    if decision.quantity_decision not in allowed:
         return None
-    if decision.cost_decision not in {"include", "exclude"}:
+    if decision.cost_decision not in allowed:
         return None
     if decision.quantity_decision == "exclude" and decision.cost_decision == "include":
         return "cost_only"
@@ -121,15 +130,7 @@ def _unit_policy(decision: MatchDecision) -> str | None:
         return "quantity_only"
     if decision.quantity_decision == decision.cost_decision == "include":
         return "quantity_cost"
-    return None
-
-
-def _policy_decisions(policy: str) -> tuple[str, str]:
-    if policy == "cost_only":
-        return "exclude", "include"
-    if policy == "quantity_only":
-        return "include", "exclude"
-    return "include", "include"
+    return f"{decision.quantity_decision}_{decision.cost_decision}"
 
 
 def _has_excel_hazard(row: DrawingSourceRow, decision: MatchDecision) -> bool:

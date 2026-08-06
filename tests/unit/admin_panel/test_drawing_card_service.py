@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -317,6 +318,9 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
         period=None,
         existing_card=None,
         status="review_required",
+        feedback_project_id="legacy-local",
+        feedback_rules_version="legacy",
+        feedback_input_hashes=("a" * 64,),
         category_units={"low_current_cable": ("м",)},
         review_items={row_id: {"review_id": row_id} for row_id in rows},
         review_rows=rows,
@@ -326,7 +330,13 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
     cluster = service.list_review_clusters(job_id=job.job_id)["items"][0]
 
     assert cluster["aggregate_total_cost"] == "4"
-    assert cluster["members"] == [
+    assert [
+        {
+            key: member[key]
+            for key in ("review_id", "work_name", "source_unit", "quantity", "total_cost")
+        }
+        for member in cluster["members"]
+    ] == [
         {
             "review_id": "row-a",
             "work_name": "Монтаж кабеля",
@@ -350,6 +360,17 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
         category="low_current_cable",
     )
     assert set(job.inline_approvals) == {"row-a", "row-b"}
+    entries = service._feedback_page(
+        job,
+        rows=job.review_rows,
+        decisions=job.review_decisions,
+        approvals=job.inline_approvals,
+        contexts=service._complete_review_contexts(job),
+        created_at="2026-08-06T01:02:03Z",
+    )
+    assert len(entries) == 3
+    packet = next(entry for entry in entries if entry.context.subject_type == "packet")
+    assert packet.context.member_ids == ("row-a", "row-b")
     with pytest.raises(ValueError, match="stale cluster identity"):
         service.put_review_cluster(
             job_id=job.job_id,
@@ -419,6 +440,8 @@ def test_cluster_payload_uses_null_aggregate_when_every_member_cost_is_absent(
         period=None,
         existing_card=None,
         status="review_required",
+        feedback_project_id="legacy-local",
+        feedback_rules_version="legacy",
         category_units={"low_current_cable": ("м",)},
         review_items={row_id: {"review_id": row_id} for row_id in rows},
         review_rows=rows,
@@ -429,6 +452,88 @@ def test_cluster_payload_uses_null_aggregate_when_every_member_cost_is_absent(
     cluster = service.list_review_clusters(job_id=job.job_id)["items"][0]
 
     assert cluster["aggregate_total_cost"] is None
+
+
+@pytest.mark.parametrize(
+    "row_change,decision_change",
+    [
+        ({"work_name_raw": None}, {}),
+        ({"source_document_type": None}, {}),
+        ({"unit_raw": None}, {}),
+        ({"remaining_quantity": None, "remaining_total_cost": None}, {}),
+        ({}, {"matching_strategy": ""}),
+    ],
+)
+def test_missing_strict_packet_dimensions_stay_singleton(
+    tmp_path: Path, row_change: dict[str, object], decision_change: dict[str, object]
+) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    directory = service.workspace_root / "strict-context-job"
+    directory.mkdir()
+    rows = {
+        row_id: DrawingSourceRow(
+            row_id=row_id,
+            location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 10, ("A10",)),
+            object_index_raw="1006",
+            drawing_code_raw="А-001",
+            work_name_raw="Монтаж кабеля",
+            unit_raw="м",
+            remaining_quantity=Decimal("1"),
+            remaining_total_cost=Decimal("2"),
+            formula_values=(),
+            cached_values=(),
+            source_document_type="ks6a",
+            source_period=None,
+            source_revision=None,
+            status=Status.OK,
+            warnings=(),
+        )
+        for row_id in ("row-a", "row-b")
+    }
+    rows["row-b"] = replace(rows["row-b"], **row_change)
+    decisions = {
+        row_id: MatchDecision(
+            row_id,
+            TargetWorkCategory.LOW_CURRENT_CABLE,
+            "review",
+            "review",
+            None,
+            None,
+            0.7,
+            0.7,
+            "manual_review",
+            (),
+            "review",
+            True,
+            Status.OK,
+            (),
+        )
+        for row_id in rows
+    }
+    decisions["row-b"] = replace(decisions["row-b"], **decision_change)
+    job = DrawingCardJob(
+        job_id="strict-context-job",
+        directory=directory,
+        sources=(),
+        source_hashes=(),
+        mode="create",
+        period=None,
+        existing_card=None,
+        status="review_required",
+        feedback_project_id="strict-project",
+        feedback_rules_version="strict-rules",
+        category_units={"low_current_cable": ("м",)},
+        review_items={row_id: {"review_id": row_id} for row_id in rows},
+        review_rows=rows,
+        review_decisions=decisions,
+    )
+    service._jobs[job.job_id] = job
+
+    clusters = service._current_clusters(job)
+
+    assert [len(item.member_ids) for item in clusters] == [1, 1]
+    missing = next(item for item in clusters if item.member_ids == ("row-b",))
+    assert not missing.packet_eligible
 
 
 def test_machine_consensus_uses_only_the_canonical_regular_private_file(tmp_path: Path) -> None:
