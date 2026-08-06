@@ -18,9 +18,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from report_processor.drawing_card.config import load_rules
 from report_processor.drawing_card.lifecycle import DrawingCardWorkflowCancelled
 from report_processor.drawing_card.matching.matcher import ReviewApproval
 from report_processor.drawing_card.models import (
+    CATEGORY_DISPLAY_NAMES,
     DrawingSourceRow,
     MatchDecision,
     WorkflowRequest,
@@ -36,9 +38,21 @@ from report_processor.drawing_card.review import (
     review_approval,
     write_approvals,
 )
-from report_processor.drawing_card.review.clusters import ReviewCluster
+from report_processor.drawing_card.review.clusters import ReviewCluster, ReviewPacketContext
+from report_processor.drawing_card.review.context import build_feedback_context
+from report_processor.drawing_card.review.feedback import (
+    FeedbackContext,
+    FeedbackEntry,
+    FeedbackStore,
+)
+from report_processor.drawing_card.review.inline import feedback_entry_for_approval
+from report_processor.drawing_card.sources.normalization import normalize_text, normalize_unit
 from report_processor.drawing_card.statuses import Status
-from report_processor.drawing_card.workflow import default_template_path, run_workflow
+from report_processor.drawing_card.workflow import (
+    default_rules_path,
+    default_template_path,
+    run_workflow,
+)
 from report_processor.metadata.period_models import DocumentPeriod
 from report_processor.metadata.period_patterns import MONTHS
 
@@ -53,6 +67,8 @@ _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
 _MACHINE_CONSENSUS_NAME = "machine-consensus.jsonl"
+_FEEDBACK_STORE_NAME = "review-feedback-v2.jsonl"
+_FEEDBACK_MODEL_VERSION = "DrawingCardMatcher-1.0"
 _PUBLISHABLE_WORKFLOW_STATUSES = {
     Status.OK,
     Status.COMPLETED_WITH_WARNINGS,
@@ -111,6 +127,14 @@ class DrawingCardJob:
     terminal_cause: str | None = None
     attempt: int = 0
     idempotency_key: str | None = None
+    feedback_tenant_id: str = "local"
+    feedback_project_id: str = ""
+    feedback_model_version: str = _FEEDBACK_MODEL_VERSION
+    feedback_rules_version: str = ""
+    feedback_input_hashes: tuple[str, ...] = ()
+    review_generation: str | None = None
+    opened_cluster_ids: tuple[str, ...] = ()
+    review_metrics: dict[str, int] = field(default_factory=dict)
     cancel_event: threading.Event = field(
         default_factory=threading.Event, repr=False, compare=False
     )
@@ -141,6 +165,7 @@ class DrawingCardService:
         *,
         background: bool = False,
         max_background_workers: int = 2,
+        tenant_id: str = "local",
     ) -> None:
         self.workspace_root = Path(workspace_root)
         if self.workspace_root.is_symlink():
@@ -148,6 +173,7 @@ class DrawingCardService:
         self.workspace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.workspace_root, 0o700)
         self.runner = runner or run_workflow
+        self.tenant_id = _validate_tenant_id(tenant_id)
         self.background = background
         self._jobs: dict[str, DrawingCardJob] = {}
         self._store = DrawingCardJobStore(self.workspace_root)
@@ -272,6 +298,7 @@ class DrawingCardService:
                 updated_at=_utc_now(),
                 idempotency_key=clean_idempotency_key,
             )
+            self._refresh_feedback_scope(job)
             with self._lock:
                 self._jobs[job_id] = job
                 if clean_idempotency_key is not None:
@@ -422,17 +449,62 @@ class DrawingCardService:
         }
 
     def list_review_clusters(
-        self, *, job_id: str, page: int = 1, page_size: int = 50
+        self,
+        *,
+        job_id: str,
+        page: int = 1,
+        page_size: int = 50,
+        reason: str | None = None,
+        category: str | None = None,
+        safe_filename: str | None = None,
+        confidence: float | None = None,
+        only_unresolved: bool = True,
     ) -> dict[str, object]:
         """Return current cluster identities; callers must echo the version to act."""
         job = self.get_job(job_id)
         if page < 1 or not 1 <= page_size <= 100:
             raise ValueError("page must be positive and page_size must be between 1 and 100")
+        if reason is not None and (not isinstance(reason, str) or len(reason) > 80):
+            raise ValueError("invalid review reason")
+        if category is not None and (not isinstance(category, str) or len(category) > 80):
+            raise ValueError("invalid review category")
+        if safe_filename is not None and (
+            not isinstance(safe_filename, str) or len(safe_filename) > 128
+        ):
+            raise ValueError("invalid safe filename")
+        if confidence is not None and (
+            not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1
+        ):
+            raise ValueError("invalid confidence")
         clusters = self._current_clusters(job)
+        clusters = tuple(
+            cluster
+            for cluster in clusters
+            if (reason is None or cluster.reason_code == reason)
+            and (category is None or (cluster.category and cluster.category.value == category))
+            and (confidence is None or cluster.confidence >= float(confidence))
+            and (not only_unresolved or not self._cluster_resolved(job, cluster))
+            and (
+                safe_filename is None
+                or any(
+                    safe_filename.casefold()
+                    in _safe_basename(job.review_rows[member_id].location.filename).casefold()
+                    for member_id in cluster.member_ids
+                    if member_id in job.review_rows
+                )
+            )
+        )
         start = (page - 1) * page_size
         visible = clusters[start : start + page_size]
         items = [self._cluster_payload(job, cluster) for cluster in visible]
         unresolved = [cluster for cluster in clusters if not self._cluster_resolved(job, cluster)]
+        opened = tuple(
+            sorted(set(job.opened_cluster_ids).union(cluster.cluster_id for cluster in visible))
+        )
+        if opened != job.opened_cluster_ids:
+            job.opened_cluster_ids = opened
+            self._set_review_metric(job, "opened_cards", len(opened))
+            self._persist_job(job)
         return {
             "items": items,
             "page": page,
@@ -442,6 +514,36 @@ class DrawingCardService:
             "unresolved_clusters": len(unresolved),
             "unresolved_rows": sum(len(cluster.member_ids) for cluster in unresolved),
             "can_apply": bool(clusters) and set(job.review_items) <= set(job.inline_approvals),
+            "review_categories": _review_categories(job.category_units),
+            "review_metrics": dict(job.review_metrics),
+        }
+
+    def get_review_context(
+        self, *, job_id: str, review_id: str, radius: int = 2
+    ) -> dict[str, object]:
+        """Return bounded adjacent, presentation-safe review records only."""
+        job = self.get_job(job_id)
+        if review_id not in job.review_items:
+            raise ValueError("unknown review item")
+        if not isinstance(radius, int) or isinstance(radius, bool) or not 1 <= radius <= 5:
+            raise ValueError("radius must be between 1 and 5")
+        target = job.review_rows.get(review_id)
+        if target is None:
+            raise ValueError("review context is unavailable")
+        ordered = sorted(
+            (
+                row
+                for row in job.review_rows.values()
+                if row.location.file_id == target.location.file_id
+                and row.location.sheet_name == target.location.sheet_name
+            ),
+            key=lambda row: (row.location.row_number, row.row_id),
+        )
+        index = next(index for index, row in enumerate(ordered) if row.row_id == review_id)
+        adjacent = ordered[max(0, index - radius) : index + radius + 1]
+        return {
+            "review_id": review_id,
+            "items": [_safe_review_context_item(job, item) for item in adjacent],
         }
 
     def put_review_cluster(
@@ -485,12 +587,20 @@ class DrawingCardService:
         return job
 
     def put_review_item(
-        self, *, job_id: str, review_id: str, action: str, category: str | None = None
+        self,
+        *,
+        job_id: str,
+        review_id: str,
+        action: str,
+        category: str | None = None,
+        version: str | None = None,
     ) -> DrawingCardJob:
         """Create or replace one decision; replacement makes a choice reversible."""
         job = self.get_job(job_id)
         if job.status != "review_required" or review_id not in job.review_items:
             raise ValueError("unknown review item")
+        if version is not None and version != self._membership_version(job, review_id):
+            raise ValueError("stale membership version")
         before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
         job.inline_approvals[review_id] = review_approval(review_id, action, category)
         self._discard_cluster_actions_for(job, review_id)
@@ -534,15 +644,58 @@ class DrawingCardService:
         if job.status != "review_required" or set(job.review_items) != set(job.inline_approvals):
             raise ValueError("unresolved review items remain")
         initial_review_rows = dict(job.review_rows)
+        initial_review_decisions = dict(job.review_decisions)
         initial_inline_approvals = dict(job.inline_approvals)
+        generation = job.review_generation or _utc_now()
+        if not initial_review_rows or not initial_review_decisions:
+            # Legacy in-memory callers that have not retained extracted review
+            # state cannot form a replayable feedback context. They still get
+            # the old bounded approval rerun, never an inferred feedback rule.
+            approvals_path = (
+                self._attempt_directory(job, job.attempt + 1) / "inline_review_decisions.json"
+            )
+            approvals_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            write_approvals(approvals_path, initial_inline_approvals)
+            self._persist_job(job)
+            rerun = self._run(job, review_decisions=approvals_path, strict=True)
+            if rerun.status == "ready" and initial_review_rows:
+                append_feedback(
+                    self.workspace_root / "review-feedback.jsonl",
+                    initial_review_rows,
+                    initial_inline_approvals,
+                )
+            return rerun
+        contexts = self._complete_review_contexts(job)
+        entries = self._feedback_page(
+            job,
+            rows=initial_review_rows,
+            decisions=initial_review_decisions,
+            approvals=initial_inline_approvals,
+            contexts=contexts,
+            created_at=generation,
+        )
         approvals_path = (
             self._attempt_directory(job, job.attempt + 1) / "inline_review_decisions.json"
         )
-        approvals_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        write_approvals(approvals_path, job.inline_approvals)
-        self._persist_job(job)
+        try:
+            approvals_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            write_approvals(approvals_path, initial_inline_approvals)
+            FeedbackStore(self._feedback_store_path()).append_page(entries)
+            job.review_generation = generation
+            self._increment_review_decision_metrics(job, initial_inline_approvals)
+            self._persist_job(job)
+        except (OSError, ValueError, DrawingCardPersistenceError):
+            # No runner call follows a failed decision, feedback-page, or manifest commit.
+            raise
         rerun = self._run(job, review_decisions=approvals_path, strict=True)
-        if rerun.status == "ready":
+        if rerun.status != "ready":
+            self._set_review_metric(
+                job,
+                "post_review_errors",
+                job.review_metrics.get("post_review_errors", 0) + 1,
+            )
+            self._persist_job(job)
+        else:
             append_feedback(
                 self.workspace_root / "review-feedback.jsonl",
                 initial_review_rows,
@@ -653,6 +806,7 @@ class DrawingCardService:
                 job.terminal_cause = _normalize_terminal_cause(terminal_cause)
             self._persist_job(job)
 
+        self._refresh_feedback_scope(job)
         request = WorkflowRequest(
             inputs=job.sources,
             template=default_template_path() if job.mode == "create" else None,
@@ -662,7 +816,11 @@ class DrawingCardService:
             period=job.period,
             rag_mode=job.rag_mode,
             review_decisions=review_decisions,
-            feedback_examples=self.workspace_root / "review-feedback.jsonl",
+            feedback_store=self._feedback_store_path(),
+            feedback_tenant_id=job.feedback_tenant_id,
+            feedback_project_id=job.feedback_project_id,
+            feedback_model_version=job.feedback_model_version,
+            feedback_input_hashes=job.feedback_input_hashes,
             machine_consensus=self._machine_consensus_path(),
             strict=strict,
             work_dir=attempt_directory / "runs",
@@ -720,7 +878,28 @@ class DrawingCardService:
         )
         job.review_rows = {row.row_id: row for row in result.source_rows}
         job.review_decisions = {decision.row_id: decision for decision in result.decisions}
-        job.funnel["manual_review_groups"] = len(self._current_clusters(job))
+        contexts = self._complete_review_contexts(job)
+        clusters = self._current_clusters(job, contexts=contexts)
+        job.funnel["manual_review_groups"] = len(clusters)
+        job.review_generation = _utc_now() if job.review_items else None
+        job.opened_cluster_ids = ()
+        job.review_metrics = {
+            **job.review_metrics,
+            "review_candidates": result.review_candidates_before_replay,
+            "queued_review_rows": result.queued_review_rows,
+            "packets": sum(1 for cluster in clusters if cluster.packet_eligible),
+            "singleton_packets": sum(1 for cluster in clusters if len(cluster.member_ids) == 1),
+            "feedback_hits": result.exact_feedback_hits,
+        }
+        for metric in (
+            "packet_exclusions",
+            "overrides",
+            "review_applies",
+            "post_review_errors",
+            "opened_cards",
+        ):
+            job.review_metrics.setdefault(metric, 0)
+        _set_review_rates(job.review_metrics)
         job.cluster_actions.clear()
         if not _inputs_unchanged(job):
             job.status = "failed"
@@ -946,6 +1125,14 @@ class DrawingCardService:
             "terminal_cause": job.terminal_cause,
             "cancel_requested": job.cancel_event.is_set(),
             "idempotency_key": job.idempotency_key,
+            "feedback_tenant_id": job.feedback_tenant_id,
+            "feedback_project_id": job.feedback_project_id,
+            "feedback_model_version": job.feedback_model_version,
+            "feedback_rules_version": job.feedback_rules_version,
+            "feedback_input_hashes": list(job.feedback_input_hashes),
+            "review_generation": job.review_generation,
+            "opened_cluster_ids": list(job.opened_cluster_ids),
+            "review_metrics": dict(job.review_metrics),
             "errors": list(job.errors),
             "summary": _safe_summary(job.summary),
             "warnings": list(job.warnings),
@@ -1055,6 +1242,16 @@ class DrawingCardService:
             blockers=_safe_codes(manifest.get("blockers")),
             blocker_counts=_safe_int_map(manifest.get("blocker_counts")),
             funnel=_safe_funnel(manifest.get("funnel")),
+            feedback_tenant_id=_manifest_text(manifest.get("feedback_tenant_id"), "local"),
+            feedback_project_id=_manifest_text(manifest.get("feedback_project_id"), ""),
+            feedback_model_version=_manifest_text(
+                manifest.get("feedback_model_version"), _FEEDBACK_MODEL_VERSION
+            ),
+            feedback_rules_version=_manifest_text(manifest.get("feedback_rules_version"), ""),
+            feedback_input_hashes=_manifest_hashes(manifest.get("feedback_input_hashes")),
+            review_generation=_optional_review_generation(manifest.get("review_generation")),
+            opened_cluster_ids=_manifest_member_ids(manifest.get("opened_cluster_ids")),
+            review_metrics=_safe_review_metrics(manifest.get("review_metrics")),
         )
         if _manifest_cancel_requested(manifest.get("cancel_requested")):
             job.cancel_event.set()
@@ -1110,8 +1307,16 @@ class DrawingCardService:
         return job
 
     @staticmethod
-    def _current_clusters(job: DrawingCardJob) -> tuple[ReviewCluster, ...]:
-        return build_review_clusters(job.review_rows, job.review_decisions)
+    def _current_clusters(
+        job: DrawingCardJob,
+        *,
+        contexts: dict[str, ReviewPacketContext] | None = None,
+    ) -> tuple[ReviewCluster, ...]:
+        return build_review_clusters(
+            job.review_rows,
+            job.review_decisions,
+            contexts=contexts if contexts is not None else _complete_review_contexts(job),
+        )
 
     @staticmethod
     def _cluster_resolved(job: DrawingCardJob, cluster: ReviewCluster) -> bool:
@@ -1126,6 +1331,139 @@ class DrawingCardService:
             if cluster.cluster_id == cluster_id:
                 return cluster
         raise ValueError("stale cluster identity")
+
+    def _membership_version(self, job: DrawingCardJob, review_id: str) -> str:
+        for cluster in self._current_clusters(job):
+            if review_id in cluster.member_ids:
+                return cluster.cluster_id
+        raise ValueError("unknown review item")
+
+    def _refresh_feedback_scope(self, job: DrawingCardJob) -> None:
+        rules_version = load_rules(default_rules_path()).version
+        hashes = tuple(
+            sorted(
+                set(
+                    (
+                        *job.source_hashes,
+                        *((job.existing_card_hash,) if job.existing_card_hash else ()),
+                    )
+                )
+            )
+        )
+        project_material = "|".join((*hashes, job.feedback_model_version, rules_version))
+        job.feedback_tenant_id = self.tenant_id
+        job.feedback_rules_version = rules_version
+        job.feedback_input_hashes = hashes
+        job.feedback_project_id = hashlib.sha256(project_material.encode("ascii")).hexdigest()
+
+    def _feedback_store_path(self) -> Path:
+        path = self.workspace_root / _FEEDBACK_STORE_NAME
+        if path.is_symlink():
+            raise ValueError("feedback ledger must not be a symlink")
+        return path
+
+    def _complete_review_contexts(self, job: DrawingCardJob) -> dict[str, ReviewPacketContext]:
+        return _complete_review_contexts(job)
+
+    def _feedback_page(
+        self,
+        job: DrawingCardJob,
+        *,
+        rows: dict[str, DrawingSourceRow],
+        decisions: dict[str, MatchDecision],
+        approvals: dict[str, ReviewApproval],
+        contexts: dict[str, ReviewPacketContext],
+        created_at: str,
+    ) -> tuple[FeedbackEntry, ...]:
+        entries: list[FeedbackEntry] = []
+        row_contexts: dict[str, FeedbackContext] = {}
+        for review_id in sorted(approvals):
+            row, decision = rows.get(review_id), decisions.get(review_id)
+            if row is None or decision is None:
+                raise ValueError("review membership changed; retry with the current page")
+            context = build_feedback_context(
+                row,
+                decision,
+                tenant_id=job.feedback_tenant_id,
+                project_id=job.feedback_project_id,
+                input_hashes=job.feedback_input_hashes,
+                model_version=job.feedback_model_version,
+                rules_version=job.feedback_rules_version,
+                allow_review=True,
+            )
+            if context is None:
+                raise ValueError("incomplete feedback context")
+            row_contexts[review_id] = context
+            entries.append(
+                feedback_entry_for_approval(
+                    context=context,
+                    approval=approvals[review_id],
+                    created_at=created_at,
+                    hazards=_review_hazards(row, decision),
+                )
+            )
+        for cluster_id, packet_approvals in sorted(job.cluster_actions.items()):
+            cluster = next(
+                (
+                    item
+                    for item in self._current_clusters(job, contexts=contexts)
+                    if item.cluster_id == cluster_id
+                ),
+                None,
+            )
+            if (
+                cluster is None
+                or not cluster.packet_eligible
+                or tuple(sorted(packet_approvals)) != cluster.member_ids
+                or any(
+                    approvals.get(member) != packet_approvals[member]
+                    for member in cluster.member_ids
+                )
+            ):
+                continue
+            representative = packet_approvals[cluster.member_ids[0]]
+            if any(approval != representative for approval in packet_approvals.values()):
+                continue
+            packet_context = _packet_feedback_context(
+                row_contexts,
+                cluster,
+                representative,
+            )
+            entries.append(
+                feedback_entry_for_approval(
+                    context=packet_context,
+                    approval=representative,
+                    created_at=created_at,
+                )
+            )
+        return tuple(entries)
+
+    @staticmethod
+    def _set_review_metric(job: DrawingCardJob, key: str, value: int) -> None:
+        job.review_metrics = {**job.review_metrics, key: value}
+
+    def _increment_review_decision_metrics(
+        self, job: DrawingCardJob, approvals: dict[str, ReviewApproval]
+    ) -> None:
+        exclusions = sum(approval.action in {"reject", "skip"} for approval in approvals.values())
+        overrides = sum(
+            approval.action in {"change_category", "quantity_only", "cost_only"}
+            for approval in approvals.values()
+        )
+        self._set_review_metric(
+            job,
+            "packet_exclusions",
+            job.review_metrics.get("packet_exclusions", 0) + exclusions,
+        )
+        self._set_review_metric(
+            job, "overrides", job.review_metrics.get("overrides", 0) + overrides
+        )
+        self._set_review_metric(
+            job,
+            "review_applies",
+            job.review_metrics.get("review_applies", 0) + 1,
+        )
+        _set_review_rates(job.review_metrics)
 
     def _cluster_payload(self, job: DrawingCardJob, cluster: ReviewCluster) -> dict[str, object]:
         return drawing_card_cluster_payload(
@@ -1403,6 +1741,239 @@ def _safe_approval_map(value: object) -> dict[str, dict[str, str | None]]:
         if isinstance(action, str) and (category is None or isinstance(category, str)):
             result[review_id] = {"action": action, "category": category}
     return result
+
+
+def _manifest_text(value: object, default: str) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str) or not value or len(value) > 512 or "\x00" in value:
+        raise ValueError("invalid persisted feedback scope")
+    return value
+
+
+def _manifest_hashes(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not value:
+        raise ValueError("invalid persisted feedback hashes")
+    hashes = tuple(sorted(set(str(item) for item in value)))
+    if any(re.fullmatch(r"[a-f0-9]{64}", item) is None for item in hashes):
+        raise ValueError("invalid persisted feedback hashes")
+    return hashes
+
+
+def _optional_review_generation(value: object) -> str | None:
+    if value is None:
+        return None
+    return _safe_timestamp(value)
+
+
+def _manifest_member_ids(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or len(value) > 10_000:
+        raise ValueError("invalid persisted opened clusters")
+    result = tuple(sorted(set(str(item) for item in value)))
+    if any(not re.fullmatch(r"cluster-[a-f0-9]{24}", item) for item in result):
+        raise ValueError("invalid persisted opened clusters")
+    return result
+
+
+def _safe_review_metrics(value: object) -> dict[str, int | float]:
+    allowed = {
+        "review_candidates",
+        "queued_review_rows",
+        "packets",
+        "singleton_packets",
+        "singleton_packet_share",
+        "feedback_hits",
+        "feedback_hit_rate",
+        "packet_exclusions",
+        "overrides",
+        "review_applies",
+        "post_review_errors",
+        "post_review_error_rate",
+        "opened_cards",
+    }
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("invalid persisted review metrics")
+    return {
+        key: count
+        for key, raw in value.items()
+        if key in allowed
+        and isinstance(raw, (int, float))
+        and not isinstance(raw, bool)
+        and 0 <= (count := raw) <= 10_000_000
+    }
+
+
+def _complete_review_contexts(job: DrawingCardJob) -> dict[str, ReviewPacketContext]:
+    contexts: dict[str, ReviewPacketContext] = {}
+    for review_id, decision in job.review_decisions.items():
+        row = job.review_rows.get(review_id)
+        if row is None or not decision.requires_manual_review:
+            continue
+        contexts[review_id] = ReviewPacketContext(
+            tenant_id=job.feedback_tenant_id or "local",
+            project_id=job.feedback_project_id or "legacy-local",
+            normalized_work=normalize_text(row.work_name_raw) or "__missing_work__",
+            source_type=normalize_text(row.source_document_type) or "__missing_source_type__",
+            review_reason=_review_reason(decision, row),
+            proposed_category=decision.category.value if decision.category else "__none__",
+            match_mode=decision.matching_strategy or "__missing_match_mode__",
+            unit_compatibility_class=(
+                "unit_mismatch"
+                if Status.UNIT_MISMATCH in decision.warnings
+                else normalize_unit(row.unit_raw) or "__missing_unit__"
+            ),
+            transactional_row_role=_transactional_row_role(row),
+            rules_version=job.feedback_rules_version or "__missing_rules_version__",
+            quantity_resolution_mode=decision.quantity_decision,
+            cost_resolution_mode=decision.cost_decision,
+        )
+    return contexts
+
+
+def _review_reason(decision: MatchDecision, row: DrawingSourceRow) -> str:
+    hazard_values = (*row.warnings, row.status, *decision.warnings, decision.status)
+    if any(str(value).upper().startswith(("FORMULA", "EXCEL")) for value in hazard_values):
+        return "formula_or_excel_error"
+    if Status.UNIT_MISMATCH in decision.warnings:
+        return "unit_mismatch"
+    if "SEMANTIC_SUGGESTION_NOT_APPLIED" in decision.warnings:
+        return "semantic_suggestion"
+    if "MULTIPLE_CATEGORY_MATCHES" in decision.warnings:
+        return "multiple_categories"
+    if decision.matching_strategy == "tiny_model_suggestion":
+        return "model_suggestion"
+    return "manual_review"
+
+
+def _review_hazards(row: DrawingSourceRow, decision: MatchDecision) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(value)
+                for value in (*row.warnings, row.status, *decision.warnings, decision.status)
+                if str(value).upper().startswith(("FORMULA", "EXCEL"))
+            }
+        )
+    )
+
+
+def _transactional_row_role(row: DrawingSourceRow) -> str:
+    if normalize_text(row.work_name_raw) and (
+        row.remaining_quantity is not None or row.remaining_total_cost is not None
+    ):
+        return "work_item"
+    return "unknown"
+
+
+def _safe_basename(value: str) -> str:
+    return Path(value.replace("\\", "/")).name[:128]
+
+
+def _validate_tenant_id(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", value):
+        raise ValueError("invalid tenant_id")
+    return value
+
+
+def _set_review_rates(metrics: dict[str, object]) -> None:
+    candidates = int(metrics.get("review_candidates", 0))
+    packets = int(metrics.get("packets", 0))
+    metrics["singleton_packet_share"] = (
+        float(metrics.get("singleton_packets", 0)) / packets if packets else 0.0
+    )
+    metrics["feedback_hit_rate"] = (
+        float(metrics.get("feedback_hits", 0)) / candidates if candidates else 0.0
+    )
+    metrics["post_review_error_rate"] = (
+        float(metrics.get("post_review_errors", 0)) / int(metrics.get("review_applies", 0))
+        if metrics.get("review_applies", 0)
+        else 0.0
+    )
+
+
+def _packet_feedback_context(
+    row_contexts: dict[str, FeedbackContext],
+    cluster: ReviewCluster,
+    approval: ReviewApproval,
+) -> FeedbackContext:
+    first = row_contexts[cluster.member_ids[0]]
+    member_hash = hashlib.sha256("\x1f".join(cluster.member_ids).encode("utf-8")).hexdigest()
+    return FeedbackContext(
+        tenant_id=first.tenant_id,
+        project_id=first.project_id,
+        normalized_work=first.normalized_work,
+        work_fingerprint=first.work_fingerprint,
+        proposed_category=first.proposed_category,
+        contract_position=f"packet:{member_hash}",
+        match_mode=first.match_mode,
+        source_unit=cluster.unit,
+        unit_policy=first.unit_policy,
+        input_hashes=first.input_hashes,
+        model_version=first.model_version,
+        rules_version=first.rules_version,
+        subject_type="packet",
+        member_ids=cluster.member_ids,
+    )
+
+
+def _review_categories(
+    category_units: dict[str, tuple[str, ...]],
+) -> list[dict[str, object]]:
+    from report_processor.drawing_card.models import TargetWorkCategory
+
+    return [
+        {
+            "id": category_id,
+            "label": CATEGORY_DISPLAY_NAMES[TargetWorkCategory(category_id)],
+            "units": list(units),
+        }
+        for category_id, units in sorted(category_units.items())
+        if category_id in {category.value for category in TargetWorkCategory}
+    ]
+
+
+def _safe_review_context_item(job: DrawingCardJob, row: DrawingSourceRow) -> dict[str, object]:
+    item = job.review_items.get(row.row_id, {})
+    decision = job.review_decisions.get(row.row_id)
+    return {
+        "review_id": row.row_id,
+        "safe_filename": _safe_basename(row.location.filename),
+        "sheet": row.location.sheet_name,
+        "row_number": row.location.row_number,
+        "object_index": row.object_index_raw,
+        "drawing_code": row.drawing_code_raw,
+        "position_code": row.position_code_raw,
+        "work_name": str(item.get("наименование") or row.work_name_raw or ""),
+        "source_unit": item.get("source_unit", row.unit_raw),
+        "quantity": item.get(
+            "количество",
+            str(row.remaining_quantity) if row.remaining_quantity is not None else None,
+        ),
+        "total_cost": item.get(
+            "стоимость",
+            str(row.remaining_total_cost) if row.remaining_total_cost is not None else None,
+        ),
+        "proposed_category": item.get(
+            "предлагаемая_категория_id",
+            decision.category.value if decision and decision.category else None,
+        ),
+        "reason": item.get("причина", decision.reason if decision else None),
+        "confidence": item.get("confidence"),
+        "membership_version": next(
+            (
+                cluster.cluster_id
+                for cluster in DrawingCardService._current_clusters(job)
+                if row.row_id in cluster.member_ids
+            ),
+            None,
+        ),
+    }
 
 
 def _same_idempotent_request(

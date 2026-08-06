@@ -125,6 +125,8 @@ class FeedbackEntry:
     hazards: tuple[str, ...] = field(default_factory=tuple)
     supersedes_event_id: str | None = None
     reason: str | None = None
+    selected_quantity_resolution: str | None = None
+    selected_cost_resolution: str | None = None
 
     def __post_init__(self) -> None:
         if self.action not in _ACTIONS:
@@ -145,6 +147,12 @@ class FeedbackEntry:
             else None
         )
         reason = _required_text(self.reason, "reason") if self.reason is not None else None
+        quantity_resolution, cost_resolution = _selected_resolutions(
+            self.context.unit_policy,
+            self.action,
+            self.selected_quantity_resolution,
+            self.selected_cost_resolution,
+        )
         created_at = _utc_timestamp(self.created_at)
         object.__setattr__(self, "selected_category", selected)
         object.__setattr__(self, "author", _required_text(self.author, "author"))
@@ -152,6 +160,8 @@ class FeedbackEntry:
         object.__setattr__(self, "hazards", hazards)
         object.__setattr__(self, "supersedes_event_id", supersedes)
         object.__setattr__(self, "reason", reason)
+        object.__setattr__(self, "selected_quantity_resolution", quantity_resolution)
+        object.__setattr__(self, "selected_cost_resolution", cost_resolution)
         event_id = self.event_id or _event_id(self)
         if _SAFE_ID_RE.fullmatch(event_id) is None:
             raise ValueError("event_id has unsupported characters")
@@ -191,6 +201,8 @@ def _entry_payload(entry: FeedbackEntry, *, include_event_id: bool = True) -> di
         "hazards": list(entry.hazards),
         "supersedes_event_id": entry.supersedes_event_id,
         "reason": entry.reason,
+        "selected_quantity_resolution": entry.selected_quantity_resolution,
+        "selected_cost_resolution": entry.selected_cost_resolution,
     }
     if include_event_id:
         payload["event_id"] = entry.event_id
@@ -205,7 +217,11 @@ def _entry_from_payload(payload: object) -> FeedbackEntry:
     if not isinstance(payload, dict):
         raise ValueError("feedback ledger entry must be an object")
     required = set(_entry_payload(_sample_entry(), include_event_id=True))
-    if set(payload) != required:
+    legacy_required = required - {
+        "selected_quantity_resolution",
+        "selected_cost_resolution",
+    }
+    if set(payload) != required and set(payload) != legacy_required:
         raise ValueError("feedback ledger entry has an unsupported schema")
     if payload["schema_version"] != _SCHEMA_VERSION:
         raise ValueError("feedback ledger schema version is unsupported")
@@ -238,10 +254,44 @@ def _entry_from_payload(payload: object) -> FeedbackEntry:
         hazards=tuple(payload["hazards"]),
         supersedes_event_id=payload["supersedes_event_id"],
         reason=payload["reason"],
+        selected_quantity_resolution=payload.get("selected_quantity_resolution"),
+        selected_cost_resolution=payload.get("selected_cost_resolution"),
     )
-    if _entry_payload(entry) != payload:
+    # The two selected resolution fields were added to the unreleased 2.0
+    # ledger.  Keep old, unambiguous entries readable, while all new writes
+    # use the complete canonical form.
+    if set(payload) == required and _entry_payload(entry) != payload:
         raise ValueError("feedback ledger entry is not canonical")
     return entry
+
+
+def _selected_resolutions(
+    unit_policy: str,
+    action: str,
+    quantity: str | None,
+    cost: str | None,
+) -> tuple[str, str]:
+    """Require explicit safe saved outcomes for every replayable event.
+
+    The small legacy compatibility branch is intentionally limited to an
+    unambiguous original policy.  It makes pre-extension 2.0 records readable
+    and canonical on their next write; a policy containing ``review`` never
+    gains an inferred financial resolution.
+    """
+    if action in {"reject", "exclude"}:
+        # Normalise stale callers that carried the prior confirmation modes.
+        return "exclude", "exclude"
+    allowed = {"include", "exclude"}
+    if quantity in allowed and cost in allowed:
+        return quantity, cost
+    legacy = {
+        "quantity_cost": ("include", "include"),
+        "quantity_only": ("include", "exclude"),
+        "cost_only": ("exclude", "include"),
+    }.get(unit_policy)
+    if legacy is not None and quantity is None and cost is None:
+        return legacy
+    raise ValueError("confirm and reclassify require explicit safe resolutions")
 
 
 def _sample_entry() -> FeedbackEntry:
@@ -337,6 +387,8 @@ class FeedbackStore:
     def _read(self) -> tuple[FeedbackEntry, ...]:
         if not self.path.exists():
             return ()
+        if self.path.is_symlink():
+            raise ValueError("feedback ledger must not be a symlink")
         if self.path.stat().st_size > _MAX_LEDGER_BYTES:
             raise ValueError("feedback ledger exceeds bounded read limit")
         result: list[FeedbackEntry] = []
