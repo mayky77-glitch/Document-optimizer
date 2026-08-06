@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .lifecycle import CancellationProbe, ProgressCallback
 
 
 class TargetWorkCategory(StrEnum):
@@ -258,6 +261,8 @@ class WorkflowRequest:
     dry_run: bool = False
     work_dir: Path = Path("work")
     log_level: str = "INFO"
+    progress_callback: ProgressCallback | None = field(default=None, repr=False, compare=False)
+    cancel_requested: CancellationProbe | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)
