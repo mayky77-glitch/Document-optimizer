@@ -140,3 +140,16 @@ def test_background_progress_is_recoverable_cancellable_and_polled_within_five_s
     assert "partial" not in page.casefold()
     assert ".job-progress" in styles
     assert ".job-progress-details" in styles
+
+
+def test_idempotency_key_resets_for_request_changes_and_terminal_jobs() -> None:
+    script = (ASSETS / "drawing-card.js").read_text()
+
+    assert 'TERMINAL_JOB_STATUSES = new Set(["ready", "blocked", "failed", "cancelled"])' in script
+    assert "if (resetIdempotency && changed) idempotencyKey = null;" in script
+    assert "setOperation(button.dataset.operation, true)" in script
+    assert 'sourceFiles.addEventListener("change", () => {\n    idempotencyKey = null;' in script
+    assert 'existingCard.addEventListener("change", () => {\n    idempotencyKey = null;' in script
+    assert 'period.addEventListener("change", () => {\n    idempotencyKey = null;' in script
+    assert "if (TERMINAL_JOB_STATUSES.has(payload.status)) idempotencyKey = null;" in script
+    assert "idempotencyKey ||= newIdempotencyKey();" in script

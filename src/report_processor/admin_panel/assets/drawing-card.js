@@ -44,6 +44,7 @@
   );
   const ZIP_SIGNATURES = [[0x50, 0x4b, 0x03, 0x04], [0x50, 0x4b, 0x05, 0x06], [0x50, 0x4b, 0x07, 0x08]];
   const ACTIVE_JOB_STATUSES = new Set(["queued", "processing"]);
+  const TERMINAL_JOB_STATUSES = new Set(["ready", "blocked", "failed", "cancelled"]);
   const JOB_POLL_INTERVAL_MS = 2000;
   const PHASE_LABELS = {
     upload: "Файлы сохранены в приватной задаче",
@@ -361,7 +362,8 @@
     renderJob: (payload, reviewPage) => renderJob(payload, reviewPage),
   });
 
-  const setOperation = (value) => {
+  const setOperation = (value, resetIdempotency = false) => {
+    const changed = operation.value !== value;
     const isUpdate = value === "update";
     operation.value = value;
     existingCardField.hidden = !isUpdate;
@@ -372,6 +374,7 @@
       button.classList.toggle("is-selected", selected);
       button.setAttribute("aria-pressed", String(selected));
     });
+    if (resetIdempotency && changed) idempotencyKey = null;
     persistSession();
   };
 
@@ -418,6 +421,7 @@
       renderIssues(payload);
       setStatus("Статус обработки изменился. Обновите страницу или запустите карточку снова.", true);
     }
+    if (TERMINAL_JOB_STATUSES.has(payload.status)) idempotencyKey = null;
     persistSession();
   };
 
@@ -507,13 +511,20 @@
     }
   });
 
-  document.querySelectorAll("[data-operation]").forEach((button) => button.addEventListener("click", () => setOperation(button.dataset.operation)));
+  document.querySelectorAll("[data-operation]").forEach((button) => button.addEventListener("click", () => setOperation(button.dataset.operation, true)));
   sourceFiles.addEventListener("change", () => {
     idempotencyKey = null;
     updateSourceCount();
     updatePeriodOptions();
   });
-  period.addEventListener("change", () => persistSession());
+  existingCard.addEventListener("change", () => {
+    idempotencyKey = null;
+    persistSession();
+  });
+  period.addEventListener("change", () => {
+    idempotencyKey = null;
+    persistSession();
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const error = formError() || await selectedWorkbooksPreflightError();
