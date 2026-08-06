@@ -12,7 +12,17 @@ from pathlib import Path
 from report_processor.hierarchy import HierarchyEntry, filter_aggregate_rows
 
 from .aggregation.aggregator import aggregate_rows, build_complete_card_rows
-from .audit import AtomicJsonlWriter, atomic_write_json, atomic_write_jsonl, source_hashes
+from .audit import (
+    DISPOSITION_HIERARCHY_AGGREGATE_EXCLUDED,
+    DISPOSITION_HIERARCHY_RESOURCE_DETAIL_EXCLUDED,
+    AtomicJsonlWriter,
+    atomic_write_json,
+    atomic_write_jsonl,
+    disposition_for_decision,
+    disposition_for_row,
+    funnel_summary,
+    source_hashes,
+)
 from .autopilot import load_machine_consensus
 from .config import load_model_config, load_rules
 from .matching.examples import load_confirmed_examples
@@ -59,6 +69,10 @@ _GLOBAL_STRICT_BLOCKER_STATUSES = frozenset(
         Status.UNSAFE_ARCHIVE_PATH,
         Status.SUSPICIOUS_COMPRESSION_RATIO,
         Status.VERY_LARGE_ARCHIVE_ENTRY,
+        "FUNNEL_CONSERVATION_FAILED",
+        "FUNNEL_UNKNOWN_DISPOSITION",
+        "FUNNEL_UNKNOWN_ROLE_POLICY",
+        "FUNNEL_ANOMALOUS_EXCLUSION_SHARE",
     }
 )
 
@@ -434,12 +448,14 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     matched_decisions = []
     review_rows = []
     review_decisions = []
+    dispositions = []
     drawing_rows: dict[tuple[str, str], DrawingSourceRow] = {}
     with (
         AtomicJsonlWriter(run_dir / "extracted_rows.jsonl") as extracted_writer,
         AtomicJsonlWriter(run_dir / "classification_decisions.jsonl") as classification_writer,
         AtomicJsonlWriter(run_dir / "matches.jsonl") as matches_writer,
         AtomicJsonlWriter(run_dir / "rejected_rows.jsonl") as rejected_writer,
+        AtomicJsonlWriter(run_dir / "row_dispositions.jsonl") as disposition_writer,
     ):
         for inspection in selected:
             schema = _top_schema(inspection, result.warnings)
@@ -489,11 +505,27 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                     extracted_writer.write(row)
                     result.warnings.extend(row.warnings)
                     if row.row_id in parent_ids:
+                        disposition = disposition_for_row(
+                            row,
+                            disposition=DISPOSITION_HIERARCHY_AGGREGATE_EXCLUDED,
+                            reason_code="HIERARCHY_AGGREGATE_POLICY",
+                            row_role="aggregate",
+                        )
+                        dispositions.append(disposition)
+                        disposition_writer.write(disposition)
                         rejected_writer.write(
                             {"row_id": row.row_id, "status": Status.HIERARCHY_AGGREGATE_EXCLUDED}
                         )
                         continue
                     if row.row_id in resource_detail_ids:
+                        disposition = disposition_for_row(
+                            row,
+                            disposition=DISPOSITION_HIERARCHY_RESOURCE_DETAIL_EXCLUDED,
+                            reason_code="HIERARCHY_RESOURCE_DETAIL_POLICY",
+                            row_role="resource_detail",
+                        )
+                        dispositions.append(disposition)
+                        disposition_writer.write(disposition)
                         rejected_writer.write(
                             {
                                 "row_id": row.row_id,
@@ -502,6 +534,14 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                         )
                         continue
                     if _is_source_resource_detail(row):
+                        disposition = disposition_for_row(
+                            row,
+                            disposition=DISPOSITION_HIERARCHY_RESOURCE_DETAIL_EXCLUDED,
+                            reason_code="SOURCE_RESOURCE_DETAIL_POLICY",
+                            row_role="resource_detail",
+                        )
+                        dispositions.append(disposition)
+                        disposition_writer.write(disposition)
                         rejected_writer.write(
                             {
                                 "row_id": row.row_id,
@@ -512,6 +552,9 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                     if row.object_index_raw and row.drawing_code_raw:
                         drawing_rows.setdefault((row.object_index_raw, row.drawing_code_raw), row)
                     decision = matcher.match(row)
+                    disposition = disposition_for_decision(row, decision)
+                    dispositions.append(disposition)
+                    disposition_writer.write(disposition)
                     result.classification_decision_count += 1
                     classification_writer.write(decision)
                     if decision.category is not None:
@@ -539,6 +582,10 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                 materialized.close()
 
     atomic_write_jsonl(run_dir / "hierarchy_issues.jsonl", result.hierarchy_issues)
+    funnel = funnel_summary(dispositions, extracted_row_count=result.extracted_row_count)
+    atomic_write_json(run_dir / "funnel_summary.json", funnel)
+    for blocker in funnel["strict_blockers"]:
+        result.warnings.append(str(blocker))
     aggregated = aggregate_rows(
         matched_rows,
         matched_decisions,
