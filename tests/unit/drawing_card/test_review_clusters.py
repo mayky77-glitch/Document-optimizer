@@ -11,7 +11,11 @@ from report_processor.drawing_card.models import (
     MatchDecision,
     TargetWorkCategory,
 )
-from report_processor.drawing_card.review.clusters import build_review_clusters, cluster_approvals
+from report_processor.drawing_card.review.clusters import (
+    ReviewPacketContext,
+    build_review_clusters,
+    cluster_approvals,
+)
 from report_processor.drawing_card.statuses import Status
 
 
@@ -81,6 +85,19 @@ def test_formula_hazard_isolated_from_an_otherwise_identical_safe_cluster() -> N
     }
 
 
+def test_hazard_rows_are_always_singleton_even_with_identical_context() -> None:
+    rows = {"first": _row("first", formula=True), "second": _row("second", formula=True)}
+    decisions = {
+        row_id: _decision(row_id, warning=Status.FORMULA_WITHOUT_CACHED_VALUE) for row_id in rows
+    }
+
+    clusters = build_review_clusters(rows, decisions)
+
+    assert {cluster.member_ids for cluster in clusters} == {("first",), ("second",)}
+    assert all(cluster.has_hazard and not cluster.packet_eligible for cluster in clusters)
+    assert {cluster.controlled_difference_fields for cluster in clusters} == {("hazard",)}
+
+
 def test_cluster_fanout_validates_once_and_covers_every_member() -> None:
     cluster = build_review_clusters(
         {"a": _row("a"), "b": _row("b")},
@@ -127,3 +144,104 @@ def test_cable_coupling_groups_only_terminal_numbers_and_preserves_suffix() -> N
     assert next(cluster for cluster in clusters if cluster.member_ids == ("one", "two")).name == (
         "установка муфт соединительных кабельных 10 кв"
     )
+
+
+def _context(
+    *,
+    normalized_work: str = "монтаж контрольного кабеля",
+    source_type: str = "ks6a",
+    review_reason: str = "manual_review",
+    proposed_category: str = TargetWorkCategory.LOW_CURRENT_CABLE.value,
+    match_mode: str = "manual_review",
+    unit_compatibility_class: str = "same_unit",
+    quantity_resolution_mode: str = "review",
+    cost_resolution_mode: str = "review",
+) -> ReviewPacketContext:
+    return ReviewPacketContext(
+        tenant_id="tenant-a",
+        project_id="project-a",
+        normalized_work=normalized_work,
+        source_type=source_type,
+        review_reason=review_reason,
+        proposed_category=proposed_category,
+        match_mode=match_mode,
+        unit_compatibility_class=unit_compatibility_class,
+        transactional_row_role="work_item",
+        rules_version="rules-1",
+        quantity_resolution_mode=quantity_resolution_mode,
+        cost_resolution_mode=cost_resolution_mode,
+    )
+
+
+def test_strict_context_requires_exact_equality_for_each_packet_dimension() -> None:
+    rows = {"a": _row("a"), "b": _row("b")}
+    decisions = {row_id: _decision(row_id) for row_id in rows}
+    baseline = _context()
+
+    clusters = build_review_clusters(rows, decisions, contexts={"a": baseline, "b": baseline})
+
+    assert [cluster.member_ids for cluster in clusters] == [("a", "b")]
+    assert clusters[0].pivot_id == "a"
+    assert clusters[0].packet_eligible
+    assert clusters[0].match_mode == "manual_review"
+    assert clusters[0].unit_compatibility_class == "same_unit"
+    assert clusters[0].rules_version == "rules-1"
+
+    for field, changed in {
+        "tenant_id": "tenant-b",
+        "project_id": "project-b",
+        "normalized_work": "другая работа",
+        "source_type": "ks2",
+        "review_reason": "multiple_categories",
+        "proposed_category": TargetWorkCategory.CONCRETE_WORKS.value,
+        "match_mode": "dictionary",
+        "unit_compatibility_class": "cost_only",
+        "transactional_row_role": "aggregate",
+        "rules_version": "rules-2",
+        "quantity_resolution_mode": "approved",
+        "cost_resolution_mode": "approved",
+    }.items():
+        contexts = {"a": baseline, "b": replace(baseline, **{field: changed})}
+        separated = build_review_clusters(rows, decisions, contexts=contexts)
+        assert {cluster.member_ids for cluster in separated} == {("a",), ("b",)}, field
+
+
+def test_strict_context_missing_or_invalid_fails_closed_as_a_visible_singleton() -> None:
+    rows = {"a": _row("a"), "b": _row("b")}
+    decisions = {row_id: _decision(row_id) for row_id in rows}
+
+    clusters = build_review_clusters(rows, decisions, contexts={"a": _context()})
+
+    assert {cluster.member_ids for cluster in clusters} == {("a",), ("b",)}
+    invalid = next(cluster for cluster in clusters if cluster.member_ids == ("b",))
+    assert not invalid.packet_eligible
+    assert invalid.controlled_difference_fields == ("missing_strict_context",)
+
+
+def test_unit_mismatch_and_multiple_category_matches_require_exact_strict_context() -> None:
+    rows = {"a": _row("a", unit="м"), "b": _row("b", unit="шт")}
+    decisions = {row_id: _decision(row_id, warning=Status.UNIT_MISMATCH) for row_id in rows}
+    contexts = {
+        row_id: _context(
+            review_reason="unit_mismatch",
+            unit_compatibility_class="unit_mismatch",
+            quantity_resolution_mode="cost_only",
+        )
+        for row_id in rows
+    }
+
+    clusters = build_review_clusters(rows, decisions, contexts=contexts)
+
+    assert [cluster.member_ids for cluster in clusters] == [("a", "b")]
+    assert clusters[0].controlled_difference_fields == ("normalized_source_unit",)
+
+    decisions = {row_id: _decision(row_id, warning="MULTIPLE_CATEGORY_MATCHES") for row_id in rows}
+    contexts = {
+        row_id: _context(
+            review_reason="multiple_categories",
+            normalized_work="exact work" if row_id == "a" else "similar work",
+        )
+        for row_id in rows
+    }
+    clusters = build_review_clusters(rows, decisions, contexts=contexts)
+    assert {cluster.member_ids for cluster in clusters} == {("a",), ("b",)}
