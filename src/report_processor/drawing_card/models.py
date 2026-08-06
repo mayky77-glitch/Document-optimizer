@@ -281,6 +281,8 @@ class WorkflowResult:
     warnings: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
     blocker_counts: dict[str, int] = field(default_factory=dict)
+    funnel: dict[str, object] = field(default_factory=dict)
+    schema_recognition: list[dict[str, object]] = field(default_factory=list)
     output_path: Path | None = None
 
 

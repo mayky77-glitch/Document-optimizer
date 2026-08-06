@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -273,6 +274,54 @@ def test_create_and_read_job_hide_private_paths_from_path_header_and_json(client
         assert str(private_root) not in " ".join(
             f"{key}:{value}" for key, value in response.headers.items()
         )
+
+
+def test_exclusion_audit_is_bounded_and_never_exposes_absolute_paths(client) -> None:
+    test_client, service, private_root = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = service.get_job(created.json()["job_id"])
+    job.exclusion_audit = job.directory / "row_dispositions.jsonl"
+    job.exclusion_audit.write_text(
+        json.dumps(
+            {
+                "row_id": "row-1",
+                "disposition": "HIERARCHY_AGGREGATE_EXCLUDED",
+                "reason_code": "HIERARCHY_AGGREGATE_POLICY",
+                "rule_id": None,
+                "file_id": "file-1",
+                "safe_basename": "source.xlsx",
+                "sheet_name": "Лист 1",
+                "row_number": 12,
+                "position_code": "1.2",
+                "row_role": "aggregate",
+                "hazard_flags": ["INVALID_NUMBER"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = test_client.get(
+        f"/api/drawing-card/jobs/{job.job_id}/audit/exclusions?page=1&page_size=10"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {
+            "row_id": "row-1",
+            "disposition": "HIERARCHY_AGGREGATE_EXCLUDED",
+            "reason_code": "HIERARCHY_AGGREGATE_POLICY",
+            "rule_id": None,
+            "filename": "source.xlsx",
+            "sheet_name": "Лист 1",
+            "row_number": 12,
+            "position_code": "1.2",
+            "row_role": "aggregate",
+            "hazard_flags": ["INVALID_NUMBER"],
+        }
+    ]
+    assert str(private_root) not in response.text
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections import Counter
 from dataclasses import replace
@@ -88,6 +89,8 @@ _CONTRIBUTING_ROW_BLOCKER_STATUSES = frozenset(
 )
 
 _CONTRIBUTING_HIERARCHY_BLOCKER_STATUSES: frozenset[str] = frozenset()
+
+_CONTROLLED_CODE_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 
 
 def default_rules_path() -> Path:
@@ -261,6 +264,8 @@ def _processing_summary(
             row.remaining_total_cost is not None for row in result.card_rows
         ),
         "manual_review_decisions": result.manual_review_count,
+        "funnel": result.funnel,
+        "schema_recognition": result.schema_recognition,
         "model_calls": matcher_calls,
         "matching_strategies": sorted(
             {
@@ -274,6 +279,36 @@ def _processing_summary(
         "output": str(result.output_path) if result.output_path else None,
         "output_validation": validation,
     }
+
+
+def _schema_recognition_payload(inspections: list[object]) -> list[dict[str, object]]:
+    """Build a controlled, path-free sheet recognition audit."""
+    payload: list[dict[str, object]] = []
+    for inspection in inspections:
+        entry = inspection.entry
+        for schema in inspection.schemas:
+            if schema.status == Status.OK:
+                recognition = "recognized"
+            elif schema.status == Status.AMBIGUOUS_SCHEMA:
+                recognition = "uncertain"
+            else:
+                recognition = "unsupported"
+            reason_codes = []
+            for warning in schema.warnings:
+                code = str(warning).partition(":")[0]
+                if _CONTROLLED_CODE_RE.fullmatch(code):
+                    reason_codes.append(code)
+            payload.append(
+                {
+                    "file_id": entry.file_id,
+                    "filename": Path(entry.filename).name,
+                    "sheet_name": schema.sheet_name,
+                    "recognition": recognition,
+                    "confidence": round(float(schema.confidence), 4),
+                    "reason_codes": list(dict.fromkeys(reason_codes)),
+                }
+            )
+    return payload
 
 
 def _publication_blockers(result: WorkflowResult) -> list[str]:
@@ -412,6 +447,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         requested_period=request.period,
     )
     result.warnings.extend(selection_warnings)
+    result.schema_recognition = _schema_recognition_payload(inspections)
     atomic_write_json(run_dir / "source_selections.json", selections)
 
     try:
@@ -449,6 +485,10 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     review_rows = []
     review_decisions = []
     dispositions = []
+    extraction_stats: dict[str, int] = {
+        "skipped_empty_rows": 0,
+        "skipped_header_rows": 0,
+    }
     drawing_rows: dict[tuple[str, str], DrawingSourceRow] = {}
     with (
         AtomicJsonlWriter(run_dir / "extracted_rows.jsonl") as extracted_writer,
@@ -482,6 +522,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                         inspection.entry,
                         schema,
                         inspection.object_identity.value,
+                        stats=extraction_stats,
                     )
                 )
                 hierarchy = filter_aggregate_rows(
@@ -583,7 +624,15 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
 
     atomic_write_jsonl(run_dir / "hierarchy_issues.jsonl", result.hierarchy_issues)
     funnel = funnel_summary(dispositions, extracted_row_count=result.extracted_row_count)
-    atomic_write_json(run_dir / "funnel_summary.json", funnel)
+    funnel.update(
+        {
+            "source_files": len(result.manifest),
+            "source_sheets": len(result.schema_recognition),
+            **extraction_stats,
+        }
+    )
+    result.funnel = funnel
+    atomic_write_json(run_dir / "funnel_summary.json", result.funnel)
     for blocker in funnel["strict_blockers"]:
         result.warnings.append(str(blocker))
     aggregated = aggregate_rows(
@@ -634,6 +683,17 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         card_rows, update_warnings = merge_update_rows(card_rows, existing, request.update_policy)
         result.warnings.extend(update_warnings)
     result.card_rows = card_rows
+    disposition_counts = result.funnel.get("disposition_counts", {})
+    result.funnel.update(
+        {
+            "automatically_accepted_rows": int(disposition_counts.get("MATCHED", 0))
+            if isinstance(disposition_counts, dict)
+            else 0,
+            "manual_review_rows": result.manual_review_count,
+            "output_rows": len(card_rows),
+        }
+    )
+    atomic_write_json(run_dir / "funnel_summary.json", result.funnel)
     layouts = plan_layout(card_rows, objects_per_sheet=request.objects_per_sheet)
     result.layouts = layouts
     atomic_write_json(run_dir / "layout_plan.json", layouts)

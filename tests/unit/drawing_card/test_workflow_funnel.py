@@ -116,9 +116,7 @@ def test_funnel_conserves_rows_and_reports_explicit_unclassified_count() -> None
             reason_code="HIERARCHY_RESOURCE_DETAIL_POLICY",
             row_role="resource_detail",
         ),
-        disposition_for_decision(
-            _row(row_id="row-3"), _decision(row_id="row-3", category=None)
-        ),
+        disposition_for_decision(_row(row_id="row-3"), _decision(row_id="row-3", category=None)),
     ]
 
     summary = funnel_summary(records, extracted_row_count=3)

@@ -13,6 +13,11 @@
   const resultDownload = document.querySelector("#result-download");
   const resultHint = document.querySelector("#result-hint");
   const jobIssues = document.querySelector("#job-issues");
+  const processingAudit = document.querySelector("#processing-audit");
+  const funnelSummary = document.querySelector("#funnel-summary");
+  const schemaAuditItems = document.querySelector("#schema-audit-items");
+  const exclusionAudit = document.querySelector("#exclusion-audit");
+  const exclusionAuditItems = document.querySelector("#exclusion-audit-items");
 
   const SOURCE_WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xlsb"]);
   const SESSION_STORAGE_KEY = "report-processor.drawing-card.state.v2";
@@ -33,6 +38,7 @@
   let currentReviewPage = 1;
   let periodScanRevision = 0;
   let uploadedSourceCount = 0;
+  let currentExclusionAuditUrl = null;
 
   const sessionState = () => {
     try {
@@ -86,10 +92,12 @@
     }
     jobIssues.replaceChildren(...issues.map((issue) => {
       const item = document.createElement("li");
+      item.classList.toggle("is-blocking", issue?.blocking === true);
       const count = Number(issue?.count);
       const suffix = Number.isInteger(count) && count > 1 ? ` (случаев: ${count})` : "";
       const action = typeof issue?.action === "string" && issue.action ? ` ${issue.action}` : "";
-      item.textContent = `${issue?.message || "Обнаружено отклонение."}${suffix}.${action}`.replace("..", ".");
+      const prefix = issue?.blocking === true ? "Блокирует выпуск: " : "Предупреждение: ";
+      item.textContent = `${prefix}${issue?.message || "Обнаружено отклонение."}${suffix}.${action}`.replace("..", ".");
       return item;
     }));
     jobIssues.hidden = false;
@@ -276,6 +284,7 @@
       uploadedSourceCount = count;
       updateSourceCount();
     }
+    renderProcessingAudit(payload);
     resetResult();
     renderResult(payload);
     const needsReview = payload.status === "review_required" || payload.status === "awaiting_review" || payload.can_upload_review || payload.review_url;
@@ -304,6 +313,92 @@
     }
     persistSession();
   };
+
+  const appendAuditLine = (root, title, detail, state = "") => {
+    const item = document.createElement("p");
+    if (state) item.className = `audit-${state}`;
+    const strong = document.createElement("strong");
+    strong.textContent = title;
+    item.append(strong, document.createTextNode(detail ? ` — ${detail}` : ""));
+    root.append(item);
+  };
+
+  function renderProcessingAudit(payload) {
+    const funnel = payload?.funnel;
+    const schemas = Array.isArray(payload?.schema_recognition) ? payload.schema_recognition : [];
+    if ((!funnel || typeof funnel !== "object") && !schemas.length) {
+      processingAudit.hidden = true;
+      return;
+    }
+    processingAudit.hidden = false;
+    const labels = [
+      ["source_files", "Исходных файлов"],
+      ["source_sheets", "Проверено листов"],
+      ["extracted_rows", "Извлечено строк"],
+      ["skipped_header_rows", "Пропущено заголовков"],
+      ["skipped_empty_rows", "Пропущено пустых строк между данными"],
+      ["excluded_count", "Исключено структурных строк"],
+      ["automatically_accepted_rows", "Принято автоматически"],
+      ["manual_review_rows", "Передано на ручную проверку"],
+      ["manual_review_groups", "Групп ручной проверки"],
+      ["unclassified_count", "Не классифицировано"],
+      ["output_rows", "Строк в итоговом отчёте"],
+    ];
+    funnelSummary.replaceChildren(...labels.flatMap(([key, label]) => {
+      const value = Number(funnel?.[key]);
+      if (!Number.isFinite(value)) return [];
+      const wrapper = document.createElement("div");
+      const term = document.createElement("dt");
+      const description = document.createElement("dd");
+      term.textContent = label;
+      description.textContent = new Intl.NumberFormat("ru-RU").format(value);
+      wrapper.append(term, description);
+      return [wrapper];
+    }));
+    schemaAuditItems.replaceChildren();
+    schemas.forEach((schema) => {
+      const state = ["recognized", "uncertain", "unsupported"].includes(schema?.recognition)
+        ? schema.recognition
+        : "unsupported";
+      const label = { recognized: "распознано", uncertain: "нужна проверка", unsupported: "не поддерживается" }[state];
+      const reasons = Array.isArray(schema?.reason_codes) && schema.reason_codes.length
+        ? `; причины: ${schema.reason_codes.join(", ")}`
+        : "";
+      appendAuditLine(
+        schemaAuditItems,
+        `${schema?.filename || "Файл"} · ${schema?.sheet_name || "лист"}`,
+        `${label}${reasons}`,
+        state,
+      );
+    });
+    currentExclusionAuditUrl = typeof payload?.exclusion_audit_url === "string"
+      ? payload.exclusion_audit_url
+      : null;
+    exclusionAudit.hidden = !currentExclusionAuditUrl;
+    exclusionAuditItems.replaceChildren();
+  }
+
+  exclusionAudit.addEventListener("toggle", async () => {
+    if (!exclusionAudit.open || !currentExclusionAuditUrl || exclusionAuditItems.childElementCount) return;
+    appendAuditLine(exclusionAuditItems, "Загрузка", "получаем безопасный аудит исключений");
+    try {
+      const payload = await requestJson(`${currentExclusionAuditUrl}?page=1&page_size=100`);
+      exclusionAuditItems.replaceChildren();
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      items.forEach((item) => appendAuditLine(
+        exclusionAuditItems,
+        `${item.filename || "Файл"} · ${item.sheet_name || "лист"} · строка ${item.row_number || "—"}`,
+        `${item.reason_code || item.disposition || "Исключено"}; позиция: ${item.position_code || "—"}; роль: ${item.row_role || "—"}`,
+      ));
+      if (!items.length) appendAuditLine(exclusionAuditItems, "Исключений нет", "все извлечённые строки прошли дальше");
+      if (Number(payload?.total) > items.length) {
+        appendAuditLine(exclusionAuditItems, "Показаны первые 100 строк", `всего: ${payload.total}`);
+      }
+    } catch (error) {
+      exclusionAuditItems.replaceChildren();
+      appendAuditLine(exclusionAuditItems, "Аудит недоступен", error.message);
+    }
+  });
 
   document.querySelectorAll("[data-operation]").forEach((button) => button.addEventListener("click", () => setOperation(button.dataset.operation)));
   sourceFiles.addEventListener("change", () => { updateSourceCount(); updatePeriodOptions(); });

@@ -133,6 +133,9 @@ def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
         "result_url",
         "review_url",
         "can_upload_review",
+        "funnel",
+        "schema_recognition",
+        "exclusion_audit_url",
     }
     assert payload["mode"] == "create"
     assert payload["period"] is None
@@ -143,6 +146,12 @@ def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
         "card_rows",
         "manual_review",
     }
+    assert payload["funnel"]["terminal_dispositions"] == payload["funnel"]["extracted_rows"]
+    assert all(
+        item["recognition"] in {"recognized", "uncertain", "unsupported"}
+        for item in payload["schema_recognition"]
+    )
+    assert payload["exclusion_audit_url"].endswith("/audit/exclusions")
     assert str(tmp_path) not in str(payload)
 
 

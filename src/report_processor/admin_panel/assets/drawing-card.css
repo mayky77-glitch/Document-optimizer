@@ -133,6 +133,21 @@ input[type="file"]:focus-visible { border-color: var(--gazprom); }
 .warnings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .warnings[hidden] { display: none; }
 .warnings li { padding: 11px 13px; border-left: 4px solid var(--warning); background: var(--surface-warning); color: var(--ink); }
+.warnings li.is-blocking { border-left-color: var(--danger); background: var(--surface-danger); }
+.processing-audit { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+.processing-audit .section-heading { margin-bottom: 12px; }
+.processing-audit h3 { margin: 0; font-size: 1.2rem; }
+.funnel-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.funnel-summary div { min-width: 0; padding: 10px 12px; border-top: 2px solid var(--gazprom); background: var(--surface-input); }
+.funnel-summary dt { color: var(--muted); font-size: .78rem; font-weight: 700; }
+.funnel-summary dd { margin: 2px 0 0; color: var(--ink); font-size: 1.15rem; font-weight: 850; }
+.audit-details { margin-top: 12px; border-top: 1px solid var(--line); }
+.audit-details summary { padding: 11px 0; color: var(--gazprom-dark); font-weight: 800; cursor: pointer; }
+.audit-list { display: grid; gap: 7px; padding-bottom: 8px; }
+.audit-list p { margin: 0; padding: 9px 11px; background: var(--surface-input); overflow-wrap: anywhere; }
+.audit-list .audit-recognized { border-left: 3px solid var(--gazprom); }
+.audit-list .audit-uncertain { border-left: 3px solid var(--warning); background: var(--surface-warning); }
+.audit-list .audit-unsupported { border-left: 3px solid var(--danger); background: var(--surface-danger); }
 .review-actions { display: grid; gap: 16px; margin-top: 20px; }
 .secondary-action { width: fit-content; border-color: var(--input-border); background: var(--white); color: var(--gazprom-dark); }
 .secondary-action:hover { background: var(--soft-blue); }
@@ -238,6 +253,7 @@ button:disabled { cursor: default; opacity: .62; }
   .item-actions { display: grid; grid-template-columns: 1fr; }
   .item-actions button, .review-decision button { width: 100%; }
   .review-context { grid-template-columns: 1fr 1fr; }
+  .funnel-summary { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 390px) {
@@ -247,6 +263,7 @@ button:disabled { cursor: default; opacity: .62; }
   input[type="file"]::file-selector-button { margin-inline-end: 8px; padding-inline: 8px; font-size: .88rem; }
   .review-item-head { flex-direction: column; }
   .review-context { grid-template-columns: 1fr; }
+  .funnel-summary { grid-template-columns: 1fr; }
   .pagination { gap: 8px; font-size: .9rem; }
 }
 

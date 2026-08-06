@@ -16,7 +16,7 @@ from ..models import (
     MatchDecision,
     TargetWorkCategory,
 )
-from ..sources.normalization import build_drawing_code, normalize_text, normalize_unit
+from ..sources.normalization import build_drawing_code, normalize_unit
 from ..statuses import Status
 
 
@@ -42,16 +42,6 @@ class _Bucket:
     requires_review: bool = False
 
 
-def _business_key(row: DrawingSourceRow, drawing: DrawingCode) -> tuple[str, ...]:
-    return (
-        row.object_index_raw or "",
-        drawing.group_key,
-        normalize_text(row.work_name_raw),
-        normalize_unit(row.unit_raw) or "",
-        row.source_document_type or "",
-    )
-
-
 def aggregate_rows(
     rows: list[DrawingSourceRow],
     decisions: list[MatchDecision],
@@ -61,7 +51,6 @@ def aggregate_rows(
 ) -> list[AggregatedDrawingResult]:
     decision_map = {decision.row_id: decision for decision in decisions}
     buckets: dict[tuple[str, str, TargetWorkCategory], _Bucket] = {}
-    seen_business: dict[tuple[str, ...], str] = {}
     for row in rows:
         decision = decision_map.get(row.row_id)
         if decision is None or decision.category is None:
@@ -69,11 +58,6 @@ def aggregate_rows(
         if not row.object_index_raw or not row.drawing_code_raw:
             continue
         drawing = build_drawing_code(row.drawing_code_raw, drawing_code_mode)
-        key = _business_key(row, drawing)
-        duplicate_of = seen_business.get(key)
-        is_duplicate = duplicate_of is not None
-        if not is_duplicate:
-            seen_business[key] = row.row_id
         group = (row.object_index_raw, drawing.group_key, decision.category)
         bucket = buckets.get(group)
         if bucket is None:
@@ -97,13 +81,6 @@ def aggregate_rows(
                 [],
             )
             buckets[group] = bucket
-        if is_duplicate:
-            bucket.warnings.append(f"{Status.POSSIBLE_DUPLICATE}:{duplicate_of}:{row.row_id}")
-            bucket.requires_review = True
-            if strict:
-                continue
-            # Non-strict still avoids double counting; provenance remains in warning/review.
-            continue
         if decision.quantity_decision == "include" and row.remaining_quantity is not None:
             unit = normalize_unit(row.unit_raw)
             if unit:

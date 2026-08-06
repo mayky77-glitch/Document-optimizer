@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -77,6 +78,9 @@ class DrawingCardJob:
     warning_counts: dict[str, int] = field(default_factory=dict)
     blockers: list[str] = field(default_factory=list)
     blocker_counts: dict[str, int] = field(default_factory=dict)
+    funnel: dict[str, object] = field(default_factory=dict)
+    schema_recognition: tuple[dict[str, object], ...] = ()
+    exclusion_audit: Path | None = field(default=None, repr=False)
     category_units: dict[str, tuple[str, ...]] = field(default_factory=dict)
     review_items: dict[str, dict[str, object]] = field(default_factory=dict)
     review_rows: dict[str, DrawingSourceRow] = field(default_factory=dict, repr=False)
@@ -202,6 +206,39 @@ class DrawingCardService:
         if job.status != "review_required" or job.review is None or not job.review.is_file():
             raise KeyError(job_id)
         return job.review, _REVIEW_NAME
+
+    def list_exclusion_audit(
+        self, *, job_id: str, page: int = 1, page_size: int = 100
+    ) -> dict[str, object]:
+        """Return a bounded, path-free page from the private row disposition ledger."""
+        job = self.get_job(job_id)
+        if page < 1 or not 1 <= page_size <= 200:
+            raise ValueError("invalid audit page")
+        path = job.exclusion_audit
+        if path is None or not path.is_file() or not _inside_job(path, job):
+            raise KeyError(job_id)
+        items: list[dict[str, object]] = []
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(raw, dict) or raw.get("disposition") not in {
+                    "HIERARCHY_AGGREGATE_EXCLUDED",
+                    "HIERARCHY_RESOURCE_DETAIL_EXCLUDED",
+                    "DUPLICATE_EXCLUDED",
+                    "UNCLASSIFIED",
+                }:
+                    continue
+                items.append(_controlled_exclusion_record(raw))
+        start = (page - 1) * page_size
+        return {
+            "items": items[start : start + page_size],
+            "page": page,
+            "page_size": page_size,
+            "total": len(items),
+        }
 
     def apply_review(
         self, *, job_id: str, review_name: str, review_content: bytes
@@ -421,6 +458,12 @@ class DrawingCardService:
             "manual_review": result.manual_review_count,
             "hierarchy_issues": len(result.hierarchy_issues),
         }
+        job.funnel = dict(result.funnel)
+        job.schema_recognition = tuple(dict(item) for item in result.schema_recognition)
+        audit_path = result.work_dir / "row_dispositions.jsonl"
+        job.exclusion_audit = (
+            audit_path if audit_path.is_file() and _inside_job(audit_path, job) else None
+        )
         job.warnings = _controlled_warnings(result.warnings)
         job.warning_counts = _controlled_warning_counts(result)
         job.blockers = _controlled_warnings(result.blockers)
@@ -437,6 +480,7 @@ class DrawingCardService:
         )
         job.review_rows = {row.row_id: row for row in result.source_rows}
         job.review_decisions = {decision.row_id: decision for decision in result.decisions}
+        job.funnel["manual_review_groups"] = len(self._current_clusters(job))
         job.cluster_actions.clear()
         if not _sources_unchanged(job):
             job.status = "failed"
@@ -627,6 +671,29 @@ def _controlled_warning_counts(result: WorkflowResult) -> dict[str, int]:
 def _controlled_warning_code(item: object) -> str | None:
     code = str(item).partition(":")[0]
     return code if re.fullmatch(r"[A-Z][A-Z0-9_]*", code) else None
+
+
+def _controlled_exclusion_record(raw: dict[str, object]) -> dict[str, object]:
+    """Whitelist the user-facing exclusion fields; never return paths or cell contents."""
+    hazards = raw.get("hazard_flags")
+    return {
+        "row_id": str(raw.get("row_id", ""))[:128],
+        "disposition": str(raw.get("disposition", ""))[:64],
+        "reason_code": str(raw.get("reason_code", ""))[:64],
+        "rule_id": str(raw["rule_id"])[:128] if raw.get("rule_id") is not None else None,
+        "filename": Path(str(raw.get("safe_basename", ""))).name[:255],
+        "sheet_name": str(raw.get("sheet_name", ""))[:255],
+        "row_number": int(raw.get("row_number", 0)),
+        "position_code": (
+            str(raw["position_code"])[:128] if raw.get("position_code") is not None else None
+        ),
+        "row_role": str(raw.get("row_role", "unknown"))[:64],
+        "hazard_flags": [
+            code for item in hazards if (code := _controlled_warning_code(item)) is not None
+        ][:20]
+        if isinstance(hazards, list)
+        else [],
+    }
 
 
 def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:

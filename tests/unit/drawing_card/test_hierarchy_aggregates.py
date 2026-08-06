@@ -278,8 +278,8 @@ def test_schema_recovers_one_strong_content_mask_but_tied_masks_fail_closed() ->
     strong_rows = tuple((*row[:6], None) for row in detail_rows) + padding
     strong = detect_sheet_schema(RowsReader((header, *strong_rows)), "Данные")
 
-    assert strong.columns["position_code"] == 1
-    assert "POSITION_COLUMN_FROM_CONTENT" in strong.warnings
+    assert "position_code" not in strong.columns
+    assert "POSITION_COLUMN_FROM_CONTENT_DIAGNOSTIC" in strong.warnings
 
 
 def test_schema_prefers_explicit_number_column_over_numeric_error_formula_values() -> None:

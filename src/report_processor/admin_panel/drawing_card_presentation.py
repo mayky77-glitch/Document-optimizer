@@ -49,9 +49,9 @@ _ISSUE_TEXT: dict[str, tuple[str, str | None]] = {
         "Найдены вероятные дубли; повторные суммы не добавлялись.",
         "Проверьте исключённые дубли в отчёте.",
     ),
-    "POSITION_COLUMN_FROM_CONTENT": (
-        "Колонка номера позиции определена по её содержимому.",
-        None,
+    "POSITION_COLUMN_FROM_CONTENT_DIAGNOSTIC": (
+        "Похоже, в файле есть колонка номера позиции, но её заголовок не распознан.",
+        "Уточните заголовок колонки. Строки не скрывались по этой предполагаемой иерархии.",
     ),
     "IGNORED_NON_DRAWING_CELL": (
         "Ячейки без признаков строки чертежа не включались в карточку.",
@@ -113,6 +113,18 @@ _ISSUE_TEXT: dict[str, tuple[str, str | None]] = {
         "Параметры запуска или выбранные файлы не прошли проверку.",
         "Проверьте формат файлов и выбранную операцию.",
     ),
+    "FUNNEL_CONSERVATION_FAILED": (
+        "Не удалось однозначно объяснить судьбу каждой извлечённой строки.",
+        "Выпуск остановлен: проверьте аудит исключений и повторите обработку.",
+    ),
+    "FUNNEL_UNKNOWN_ROLE_POLICY": (
+        "Обнаружена строка с ролью, для которой нет подтверждённого правила.",
+        "Уточните структуру исходного листа или заголовки колонок.",
+    ),
+    "FUNNEL_ANOMALOUS_EXCLUSION_SHARE": (
+        "Необычно большая доля строк была исключена по структуре документа.",
+        "Выпуск остановлен, чтобы неизвестный формат не скрыл данные.",
+    ),
 }
 
 
@@ -137,6 +149,13 @@ def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
             "card_rows": int(job.summary.get("card_rows", 0)),
             "manual_review": int(job.summary.get("manual_review", 0)),
         },
+        "funnel": dict(job.funnel),
+        "schema_recognition": [dict(item) for item in job.schema_recognition],
+        "exclusion_audit_url": (
+            f"/api/drawing-card/jobs/{job.job_id}/audit/exclusions"
+            if job.exclusion_audit is not None
+            else None
+        ),
         "warnings": list(job.warnings),
         "issues": issues,
         "blocking_reasons": [item for item in issues if item["blocking"]],

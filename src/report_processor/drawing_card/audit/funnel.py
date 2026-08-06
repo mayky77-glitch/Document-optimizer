@@ -97,7 +97,8 @@ def funnel_summary(
 ) -> dict[str, object]:
     """Return conserved counts and strict blocker codes for funnel anomalies."""
     counts = Counter(record.disposition for record in dispositions)
-    counts.setdefault(DISPOSITION_UNCLASSIFIED, 0)
+    for disposition in (*sorted(_TERMINAL_DISPOSITIONS), "DUPLICATE_EXCLUDED"):
+        counts.setdefault(disposition, 0)
     blockers: list[str] = []
     if len(dispositions) != extracted_row_count:
         blockers.append("FUNNEL_CONSERVATION_FAILED")

@@ -66,6 +66,7 @@ def test_schema_normalizes_multiline_aliases_and_derives_cumulative_contract() -
         ),
         (None, None, None, "Кол-во", "Стоимость", "Количество", "Сумма, руб."),
         ("Ч-1", "Работа", "м", 3, 30, 7, 70),
+        ("Ч-2", "Работа", "м", None, None, 7, 70),
     )
 
     schema = detect_sheet_schema(RowsReader(rows), "Данные")
@@ -78,6 +79,10 @@ def test_schema_normalizes_multiline_aliases_and_derives_cumulative_contract() -
     assert schema.columns["performed_total_cost"] == 7
     assert extracted[0].contract_quantity == Decimal("10")
     assert extracted[0].contract_total_cost == Decimal("100")
+    assert extracted[1].remaining_quantity is None
+    assert extracted[1].remaining_total_cost is None
+    assert extracted[1].contract_quantity == Decimal("7")
+    assert extracted[1].contract_total_cost == Decimal("70")
     assert "CONTRACT_TOTAL_COST_DERIVED_FROM_PERFORMED_AND_RESIDUAL" in extracted[0].warnings
 
 

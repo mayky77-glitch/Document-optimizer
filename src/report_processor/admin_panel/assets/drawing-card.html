@@ -84,6 +84,21 @@
         </form>
         <p id="status" class="status" role="status" aria-live="polite">Сначала выберите исходные документы.</p>
         <ul id="job-issues" class="warnings" aria-label="Причины и предупреждения" hidden></ul>
+        <section id="processing-audit" class="processing-audit" aria-labelledby="processing-audit-title" hidden>
+          <div class="section-heading">
+            <p class="step-label">Что произошло со строками</p>
+            <h3 id="processing-audit-title">Воронка обработки</h3>
+          </div>
+          <dl id="funnel-summary" class="funnel-summary"></dl>
+          <details id="schema-audit" class="audit-details">
+            <summary>Распознавание листов</summary>
+            <div id="schema-audit-items" class="audit-list"></div>
+          </details>
+          <details id="exclusion-audit" class="audit-details" hidden>
+            <summary>Почему строки исключены</summary>
+            <div id="exclusion-audit-items" class="audit-list"></div>
+          </details>
+        </section>
       </section>
 
       <section id="review-panel" class="review-card" aria-labelledby="review-title" tabindex="-1" hidden>

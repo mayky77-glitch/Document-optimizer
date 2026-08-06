@@ -54,6 +54,7 @@ def extract_rows(
     *,
     max_rows: int | None = None,
     empty_row_limit: int = 200,
+    stats: dict[str, int] | None = None,
 ) -> Iterator[DrawingSourceRow]:
     columns = schema.columns
     max_col = max(columns.values())
@@ -116,6 +117,8 @@ def extract_rows(
             if empty_streak >= empty_row_limit:
                 break
             continue
+        if empty_streak and stats is not None:
+            stats["skipped_empty_rows"] = stats.get("skipped_empty_rows", 0) + empty_streak
         empty_streak = 0
         if raw_drawing is None and formula_drawing and not _is_formula(formula_drawing):
             raw_drawing = formula_drawing
@@ -135,11 +138,15 @@ def extract_rows(
             raw_drawing = None
         if raw_drawing and not work_name:
             current_drawing = raw_drawing
+            if stats is not None:
+                stats["skipped_header_rows"] = stats.get("skipped_header_rows", 0) + 1
             continue
         if raw_drawing:
             current_drawing = raw_drawing
         drawing = raw_drawing or current_drawing
         if not work_name:
+            if stats is not None:
+                stats["skipped_header_rows"] = stats.get("skipped_header_rows", 0) + 1
             continue
         quantity, quantity_warnings = parse_decimal(quantity_cached)
         cost, cost_warnings = parse_decimal(cost_cached)
@@ -159,7 +166,7 @@ def extract_rows(
             "performed_quantity",
             "remaining_quantity",
         }.issubset(columns):
-            contract_quantity = performed_quantity + quantity
+            contract_quantity = performed_quantity + (quantity or Decimal(0))
             contract_quantity_warnings += ("CONTRACT_QUANTITY_DERIVED_FROM_PERFORMED_AND_RESIDUAL",)
         if (
             "contract_total_cost" not in columns
@@ -168,7 +175,7 @@ def extract_rows(
             "performed_total_cost",
             "remaining_total_cost",
         }.issubset(columns):
-            contract_cost = performed_cost + cost
+            contract_cost = performed_cost + (cost or Decimal(0))
             contract_cost_warnings += ("CONTRACT_TOTAL_COST_DERIVED_FROM_PERFORMED_AND_RESIDUAL",)
         warnings = extraction_warnings + list(
             quantity_warnings

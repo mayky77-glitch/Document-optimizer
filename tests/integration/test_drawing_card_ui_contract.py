@@ -93,3 +93,23 @@ def test_review_action_mapping_preserves_api_contract() -> None:
     assert 'this.save(article, state.id, state.version, "reject")' in script
     assert "const payload = { action, version };" in script
     assert "if (category) payload.category = category;" in script
+
+
+def test_processing_funnel_and_schema_audit_are_visible_and_path_free() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card.js").read_text()
+    styles = (ASSETS / "drawing-card.css").read_text()
+
+    for element_id in (
+        "processing-audit",
+        "funnel-summary",
+        "schema-audit-items",
+        "exclusion-audit-items",
+    ):
+        assert f'id="{element_id}"' in page
+    assert "renderProcessingAudit(payload)" in script
+    assert 'new Intl.NumberFormat("ru-RU")' in script
+    assert "schema?.filename" in script
+    assert "absolute" not in script.casefold()
+    assert ".funnel-summary" in styles
+    assert ".warnings li.is-blocking" in styles

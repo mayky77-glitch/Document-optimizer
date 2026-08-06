@@ -424,6 +424,19 @@ def create_app(
             return _error("Состояние задачи недоступно", 500)
         return _secure(JSONResponse(payload))
 
+    async def drawing_card_exclusion_audit(request):
+        try:
+            page = int(request.query_params.get("page", "1"))
+            page_size = int(request.query_params.get("page_size", "100"))
+            payload = drawing_panel.list_exclusion_audit(
+                job_id=request.path_params["job_id"], page=page, page_size=page_size
+            )
+        except KeyError:
+            return _error("Аудит исключений недоступен", 404)
+        except (TypeError, ValueError):
+            return _error("Проверьте номер страницы аудита", 400)
+        return _secure(JSONResponse(payload))
+
     async def drawing_card_result(request):
         return _drawing_card_download(
             drawing_panel,
@@ -622,6 +635,11 @@ def create_app(
             Route("/api/drawing-card/periods", drawing_card_periods, methods=["POST"]),
             Route("/api/drawing-card/jobs", drawing_card_upload, methods=["POST"]),
             Route("/api/drawing-card/jobs/{job_id}", drawing_card_get_job),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/audit/exclusions",
+                drawing_card_exclusion_audit,
+                methods=["GET"],
+            ),
             Route("/api/drawing-card/jobs/{job_id}/result", drawing_card_result),
             Route(
                 "/api/drawing-card/jobs/{job_id}/review",
