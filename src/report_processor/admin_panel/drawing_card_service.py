@@ -47,6 +47,7 @@ from report_processor.drawing_card.review.feedback import (
 )
 from report_processor.drawing_card.review.inline import feedback_entry_for_approval
 from report_processor.drawing_card.sources.normalization import normalize_text, normalize_unit
+from report_processor.drawing_card.sources.openxml_safety import validate_openxml_bytes
 from report_processor.drawing_card.statuses import Status
 from report_processor.drawing_card.workflow import (
     default_rules_path,
@@ -1569,6 +1570,7 @@ def _validate_workbook(name: object, content: object, *, allowed_suffixes: set[s
         raise ValueError("invalid workbook content")
     if not content.startswith(_ZIP_SIGNATURES):
         raise ValueError("invalid workbook content")
+    validate_openxml_bytes(content)
 
 
 def _validate_period(period: str | None) -> str | None:
