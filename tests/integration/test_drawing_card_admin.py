@@ -207,7 +207,9 @@ def test_cluster_api_accepts_the_asset_delete_payload_and_returns_ui_decision_na
         f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
         json={"version": cluster["version"], "action": "approve", "category": "low_current_cable"},
     )
-    refetched = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+    refetched = test_client.get(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters?only_unresolved=false"
+    )
     undone = test_client.request(
         "DELETE",
         f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
@@ -236,7 +238,7 @@ def test_cluster_api_fans_out_cost_only_with_category_and_rejects_changed_member
             "category": "power_cable",
         },
     )
-    refetched = test_client.get(url)
+    refetched = test_client.get(f"{url}?only_unresolved=false")
     from dataclasses import replace
 
     extra_row = replace(job.review_rows["review-row-1"], row_id="review-row-3")

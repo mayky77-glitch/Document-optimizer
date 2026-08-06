@@ -287,10 +287,11 @@ def test_review_state_is_rebuilt_after_background_restart(tmp_path: Path) -> Non
     restored = _wait_for(recovered, job.job_id, "review_required")
     assert set(restored.review_items) == {"stable-row"}
     assert set(restored.inline_approvals) == {"stable-row"}
-    assert recovered.list_review_clusters(job_id=job.job_id)["total_clusters"] == 1
-    assert observed_approvals == [
-        {"stable-row": review_approval("stable-row", "approve", "power_cable")}
-    ]
+    assert (
+        recovered.list_review_clusters(job_id=job.job_id, only_unresolved=False)["total_clusters"]
+        == 1
+    )
+    assert observed_approvals == []
 
 
 def test_review_mutation_rolls_back_if_manifest_write_fails(tmp_path: Path, monkeypatch) -> None:
