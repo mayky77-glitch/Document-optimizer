@@ -551,6 +551,34 @@ def test_machine_consensus_uses_only_the_canonical_regular_private_file(tmp_path
     assert service._machine_consensus_path() is None
 
 
+def test_feedback_scope_preserves_duplicate_source_hashes(tmp_path: Path) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    source_hash = "a" * 64
+
+    def job_with_hashes(job_id: str, hashes: tuple[str, ...]) -> DrawingCardJob:
+        directory = service.workspace_root / job_id
+        directory.mkdir()
+        return DrawingCardJob(
+            job_id=job_id,
+            directory=directory,
+            sources=(),
+            source_hashes=hashes,
+            mode="create",
+            period=None,
+            existing_card=None,
+        )
+
+    one_source = job_with_hashes("one-source", (source_hash,))
+    duplicate_sources = job_with_hashes("duplicate-sources", (source_hash, source_hash))
+
+    service._refresh_feedback_scope(one_source)
+    service._refresh_feedback_scope(duplicate_sources)
+
+    assert one_source.feedback_input_hashes == (source_hash,)
+    assert duplicate_sources.feedback_input_hashes == (source_hash, source_hash)
+    assert one_source.feedback_project_id != duplicate_sources.feedback_project_id
+
+
 def test_initial_run_and_approved_inline_review_rerun_are_both_strict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

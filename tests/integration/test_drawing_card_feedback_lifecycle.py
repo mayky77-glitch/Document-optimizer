@@ -138,6 +138,51 @@ def test_concurrent_page_apply_runs_the_review_only_once(
     ) == 1
 
 
+def test_workbook_and_inline_apply_share_one_review_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = DrawingCardService(tmp_path / "private")
+    job = _review_job(service)
+    entered = Event()
+    release = Event()
+    calls: list[Path | None] = []
+
+    def fake_run(
+        current: DrawingCardJob, *, review_decisions: Path | None = None, strict: bool = True
+    ) -> DrawingCardJob:
+        assert strict is True
+        calls.append(review_decisions)
+        entered.set()
+        assert release.wait(2)
+        current.status = "ready"
+        return current
+
+    monkeypatch.setattr(service, "_run", fake_run)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service._validate_review", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service.import_review_approvals",
+        lambda _path: (),
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        inline = executor.submit(service.apply_inline_review, job_id=job.job_id)
+        assert entered.wait(2)
+        workbook = executor.submit(
+            service.apply_review,
+            job_id=job.job_id,
+            review_name="completed_review.xlsx",
+            review_content=b"workbook review",
+        )
+        release.set()
+
+        assert inline.result(timeout=2).status == "ready"
+        with pytest.raises(ValueError, match="does not await manual review"):
+            workbook.result(timeout=2)
+
+    assert len(calls) == 1
+
+
 def test_confirmed_page_remains_saved_when_manifest_commit_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

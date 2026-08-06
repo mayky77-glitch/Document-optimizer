@@ -54,7 +54,7 @@ def _utc_timestamp(value: str | datetime) -> str:
 
 
 def _hashes(values: Iterable[str], name: str) -> tuple[str, ...]:
-    result = tuple(sorted(set(str(value) for value in values)))
+    result = tuple(sorted(str(value) for value in values))
     if not result or any(_SHA256_RE.fullmatch(value) is None for value in result):
         raise ValueError(f"{name} must contain SHA-256 hashes")
     return result

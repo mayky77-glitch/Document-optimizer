@@ -442,19 +442,20 @@ class DrawingCardService:
         self, *, job_id: str, review_name: str, review_content: bytes
     ) -> DrawingCardJob:
         job = self.get_job(job_id)
-        if job.status != "review_required":
-            raise ValueError("job does not await manual review")
-        _validate_review(review_name, review_content)
-        review_path = _write_private(job.directory / "completed_review.xlsx", review_content)
-        try:
-            import_review_approvals(review_path)
-        except (OSError, ValueError) as error:
-            review_path.unlink(missing_ok=True)
-            raise ValueError("invalid manual review workbook") from error
-        job.review = review_path
-        result = self._run(job, review_decisions=review_path)
-        self._prune_terminal_jobs()
-        return result
+        with job.review_lock:
+            if job.status != "review_required":
+                raise ValueError("job does not await manual review")
+            _validate_review(review_name, review_content)
+            review_path = _write_private(job.directory / "completed_review.xlsx", review_content)
+            try:
+                import_review_approvals(review_path)
+            except (OSError, ValueError) as error:
+                review_path.unlink(missing_ok=True)
+                raise ValueError("invalid manual review workbook") from error
+            job.review = review_path
+            result = self._run(job, review_decisions=review_path)
+            self._prune_terminal_jobs()
+            return result
 
     def list_review_items(
         self, *, job_id: str, page: int = 1, page_size: int = 50
@@ -1418,11 +1419,9 @@ class DrawingCardService:
         job.feedback_model_version = _FEEDBACK_MODEL_VERSION
         hashes = tuple(
             sorted(
-                set(
-                    (
-                        *job.source_hashes,
-                        *((job.existing_card_hash,) if job.existing_card_hash else ()),
-                    )
+                (
+                    *job.source_hashes,
+                    *((job.existing_card_hash,) if job.existing_card_hash else ()),
                 )
             )
         )

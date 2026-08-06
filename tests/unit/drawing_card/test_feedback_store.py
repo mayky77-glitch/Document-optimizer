@@ -74,6 +74,17 @@ def test_lookup_is_tenant_and_project_scoped(tmp_path: Path) -> None:
     assert store.lookup_exact(context) == entry
 
 
+def test_duplicate_input_hashes_are_a_distinct_exact_replay_scope(tmp_path: Path) -> None:
+    store = FeedbackStore(tmp_path / "feedback.jsonl")
+    source_hash = "a" * 64
+    one_source = _context(input_hashes=(source_hash,))
+    duplicate_sources = _context(input_hashes=(source_hash, source_hash))
+    store.append_page((_entry(one_source),))
+
+    assert duplicate_sources.input_hashes == (source_hash, source_hash)
+    assert store.lookup_exact(duplicate_sources) is None
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
