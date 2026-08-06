@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -109,3 +111,42 @@ def test_stale_membership_version_and_context_bounds_are_rejected(tmp_path: Path
         )
     with pytest.raises(ValueError, match="between 1 and 5"):
         service.get_review_context(job_id=job.job_id, review_id="review-row", radius=0)
+
+
+def test_restart_rebuilds_selected_packet_without_publishing_before_feedback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = DrawingCardService(tmp_path / "private", background=True)
+    job = _review_job(service)
+    row = replace(job.review_rows["review-row"], row_id="review-row-2")
+    decision = replace(job.review_decisions["review-row"], row_id=row.row_id)
+    job.review_rows[row.row_id] = row
+    job.review_decisions[row.row_id] = decision
+    job.review_items[row.row_id] = {"review_id": row.row_id}
+    job.inline_approvals[row.row_id] = review_approval(
+        row.row_id, "approve", TargetWorkCategory.POWER_CABLE.value
+    )
+    cluster = service._current_clusters(job)[0]
+    job.cluster_actions = {cluster.cluster_id: dict(job.inline_approvals)}
+    completed = Event()
+    seen: list[Path | None] = []
+
+    def fake_run(
+        current: DrawingCardJob, *, review_decisions: Path | None = None, strict: bool = True
+    ):
+        seen.append(review_decisions)
+        current.status = "review_required"
+        current.inline_approvals = {}
+        current.cluster_actions = {}
+        completed.set()
+        return current
+
+    monkeypatch.setattr(service, "_run", fake_run)
+    service._schedule_review_recovery(job)
+
+    assert completed.wait(2)
+    assert seen == [None]
+    assert job.status == "review_required"
+    assert set(job.inline_approvals) == {"review-row", "review-row-2"}
+    assert job.cluster_actions == {cluster.cluster_id: dict(job.inline_approvals)}
+    assert not (service.workspace_root / "review-feedback-v2.jsonl").exists()

@@ -995,12 +995,15 @@ class DrawingCardService:
         approvals = dict(job.inline_approvals)
         cluster_actions = dict(job.cluster_actions)
         job.status = "queued"
-        decisions_path = self._retry_decisions_path(job)
         self._persist_job(job)
 
         def worker() -> None:
             with self._worker_slots:
-                recovered = self._run(job, review_decisions=decisions_path)
+                # Saved UI choices are not workflow approvals. Rebuild the
+                # current review page first, then restore only still-current
+                # choices so apply_inline_review can durably append its one
+                # complete row+packet feedback page before any final rerun.
+                recovered = self._run(job, review_decisions=None)
                 if recovered.status == "review_required":
                     recovered.inline_approvals = {
                         row_id: approval
