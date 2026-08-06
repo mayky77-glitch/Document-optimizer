@@ -73,7 +73,7 @@ def test_restore_rejects_ready_manifest_that_points_to_source_or_old_attempt(
     job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
     candidate = job.directory / hostile_path
     if not candidate.exists():
-        candidate.parent.mkdir(parents=True)
+        candidate.parent.mkdir(parents=True, exist_ok=True)
         candidate.write_bytes(b"PK\x03\x04old-result")
     manifest = service._manifest_for(job)
     manifest["result_path"] = hostile_path
@@ -207,12 +207,37 @@ def test_injected_runner_preserves_source_basename_with_semantic_rag(
 
     assert len(seen) == 1
     assert seen[0].rag_mode == "semantic"
-    assert seen[0].inputs[0].name == "01-0906_demo_input.xlsx"
+    assert seen[0].inputs[0].name == "0906_demo_input.xlsx"
+    assert seen[0].inputs[0].relative_to(job.directory).as_posix() == (
+        "sources/01/0906_demo_input.xlsx"
+    )
     assert seen[0].inputs[0].read_bytes() == fixture.read_bytes()
     assert seen[0].inputs[0].resolve() != fixture.resolve()
     assert job.period == expected_period
     assert seen[0].period == expected_period
     assert str(tmp_path) not in str(drawing_card_job_payload(job))
+
+
+def test_restore_accepts_legacy_flat_source_manifest_path(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request) -> WorkflowResult:
+        run_dir = request.work_dir / "blocked"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("blocked", Status.BLOCKED, run_dir)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    legacy_source = job.directory / "sources" / "01-source.xlsx"
+    legacy_source.write_bytes(fixture.read_bytes())
+    manifest = service._manifest_for(job)
+    manifest["source_paths"] = ["sources/01-source.xlsx"]
+    service._store.save(job.job_id, manifest)
+
+    restored = DrawingCardService(workspace, runner=runner).get_job(job.job_id)
+
+    assert restored.sources == (legacy_source,)
 
 
 def test_category_change_updates_the_review_target_unit_from_the_selected_category(
@@ -577,6 +602,28 @@ def test_feedback_scope_preserves_duplicate_source_hashes(tmp_path: Path) -> Non
     assert one_source.feedback_input_hashes == (source_hash,)
     assert duplicate_sources.feedback_input_hashes == (source_hash, source_hash)
     assert one_source.feedback_project_id != duplicate_sources.feedback_project_id
+
+
+def test_restart_preserves_duplicate_feedback_hashes_and_project_scope(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request) -> WorkflowResult:
+        run_dir = request.work_dir / "blocked"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("blocked", Status.BLOCKED, run_dir)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(
+        sources=[("first.xlsx", fixture.read_bytes()), ("second.xlsx", fixture.read_bytes())]
+    )
+
+    restored = DrawingCardService(workspace, runner=runner).get_job(job.job_id)
+
+    assert restored.feedback_input_hashes == job.feedback_input_hashes
+    assert len(restored.feedback_input_hashes) == 2
+    assert restored.feedback_input_hashes[0] == restored.feedback_input_hashes[1]
+    assert restored.feedback_project_id == job.feedback_project_id
 
 
 def test_initial_run_and_approved_inline_review_rerun_are_both_strict(
