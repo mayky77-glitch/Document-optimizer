@@ -1818,18 +1818,18 @@ def _complete_review_contexts(job: DrawingCardJob) -> dict[str, ReviewPacketCont
         contexts[review_id] = ReviewPacketContext(
             tenant_id=job.feedback_tenant_id or "local",
             project_id=job.feedback_project_id or "legacy-local",
-            normalized_work=normalize_text(row.work_name_raw) or "__missing_work__",
-            source_type=normalize_text(row.source_document_type) or "__missing_source_type__",
+            normalized_work=normalize_text(row.work_name_raw) or None,
+            source_type=normalize_text(row.source_document_type) or None,
             review_reason=_review_reason(decision, row),
             proposed_category=decision.category.value if decision.category else "__none__",
-            match_mode=decision.matching_strategy or "__missing_match_mode__",
+            match_mode=decision.matching_strategy or None,
             unit_compatibility_class=(
                 "unit_mismatch"
                 if Status.UNIT_MISMATCH in decision.warnings
-                else normalize_unit(row.unit_raw) or "__missing_unit__"
+                else normalize_unit(row.unit_raw)
             ),
             transactional_row_role=_transactional_row_role(row),
-            rules_version=job.feedback_rules_version or "__missing_rules_version__",
+            rules_version=job.feedback_rules_version or None,
             quantity_resolution_mode=decision.quantity_decision,
             cost_resolution_mode=decision.cost_decision,
         )
@@ -1863,12 +1863,12 @@ def _review_hazards(row: DrawingSourceRow, decision: MatchDecision) -> tuple[str
     )
 
 
-def _transactional_row_role(row: DrawingSourceRow) -> str:
+def _transactional_row_role(row: DrawingSourceRow) -> str | None:
     if normalize_text(row.work_name_raw) and (
         row.remaining_quantity is not None or row.remaining_total_cost is not None
     ):
         return "work_item"
-    return "unknown"
+    return None
 
 
 def _safe_basename(value: str) -> str:
