@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 
 import report_processor.admin_panel.drawing_card_job_store as drawing_card_job_store
 import report_processor.admin_panel.drawing_card_service as drawing_card_service
+from report_processor.admin_panel.drawing_card_job_store import MANIFEST_FILENAME
 from report_processor.admin_panel.drawing_card_service import (
     DrawingCardJob,
     DrawingCardPersistenceError,
@@ -426,6 +428,47 @@ def test_bounded_terminal_retention_is_durable_and_keeps_active_review_jobs(
     assert recovered._store.load("terminal-000") is None
     assert len(recovered._store.load_all()) == 2
     assert "old-request-key-0001" not in recovered._idempotency
+
+
+def test_restart_prunes_terminal_manifests_beyond_loaded_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "private"
+    original = DrawingCardService(workspace)
+    monkeypatch.setattr(drawing_card_service, "MAX_RETAINED_TERMINAL_JOBS", 1)
+    monkeypatch.setattr(drawing_card_job_store, "MAX_LOADED_JOBS", 2)
+
+    def persisted(job_id: str, status: str, updated_at: str) -> None:
+        directory = workspace / job_id
+        source = directory / "sources" / "01-source.xlsx"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(_fixture())
+        job = DrawingCardJob(
+            job_id=job_id,
+            directory=directory,
+            sources=(source,),
+            source_hashes=(hashlib.sha256(source.read_bytes()).hexdigest(),),
+            mode="create",
+            period=None,
+            existing_card=None,
+            status=status,
+            updated_at=updated_at,
+        )
+        original._jobs[job_id] = job
+        original._persist_job(job)
+
+    for index in range(5):
+        persisted(f"terminal-{index}", "failed", f"2026-08-0{index}T00:00:00Z")
+    persisted("active-review", "review_required", "2026-08-09T00:00:00Z")
+
+    recovered = DrawingCardService(workspace)
+    persisted_statuses = [
+        json.loads(path.read_text(encoding="utf-8"))["status"]
+        for path in workspace.glob(f"*/{MANIFEST_FILENAME}")
+    ]
+
+    assert recovered.get_job("active-review").status == "review_required"
+    assert persisted_statuses.count("failed") <= 1
 
 
 def test_manifestless_artifacts_do_not_displace_active_recovery_capacity(
