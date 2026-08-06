@@ -4,7 +4,7 @@ status: frozen
 card_id: drawing-card-release-test-fixtures
 version: 1
 supersedes: null
-work_id: drawing-card-ux-release-test-fixtures-v1
+work_id: drawing-card-ux-release-test-fixtures-v3
 task_id: valid-openxml-test-fixtures
 purpose: Align test fixtures with strict OpenXML validation without weakening production safeguards.
 role: developer
