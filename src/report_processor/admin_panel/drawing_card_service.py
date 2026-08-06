@@ -961,7 +961,9 @@ class DrawingCardService:
         }
 
     def _restore_jobs(self) -> None:
-        for job_id, manifest in self._store.load_all().items():
+        for job_id, manifest in self._store.load_all(
+            terminal_retention=MAX_RETAINED_TERMINAL_JOBS
+        ).items():
             try:
                 job = self._job_from_manifest(job_id, manifest)
             except (OSError, TypeError, ValueError):
