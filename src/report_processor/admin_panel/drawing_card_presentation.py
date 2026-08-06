@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 from report_processor.drawing_card.models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER
@@ -352,13 +353,16 @@ def _review_categories(value: object) -> list[dict[str, object]]:
     ]
 
 
-def _primitive_mapping(value: object) -> dict[str, int | float | str | bool | None]:
+def _primitive_mapping(value: object) -> dict[str, int | float]:
     if not isinstance(value, Mapping):
         return {}
     return {
         str(key): item
         for key, item in value.items()
-        if isinstance(item, (str, int, float, bool)) or item is None
+        if isinstance(item, (int, float))
+        and not isinstance(item, bool)
+        and math.isfinite(item)
+        and item >= 0
     }
 
 

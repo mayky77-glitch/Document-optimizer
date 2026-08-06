@@ -56,7 +56,13 @@ class ReviewApiStub(DrawingCardService):
             "review_categories": [
                 {"id": "power_cable", "label": "Силовой кабель", "units": ("м",)}
             ],
-            "review_metrics": {"packets": 1, "private_path": {"not": "primitive"}},
+            "review_metrics": {
+                "packets": 1,
+                "private_path": "/private/workspace/metrics.json",
+                "negative": -1,
+                "nan": float("nan"),
+                "enabled": True,
+            },
         }
 
     def get_review_context(self, **kwargs: object) -> dict[str, object]:
