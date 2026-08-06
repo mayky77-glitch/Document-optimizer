@@ -11,13 +11,13 @@ import pytest
 
 import report_processor.admin_panel.drawing_card_job_store as drawing_card_job_store
 import report_processor.admin_panel.drawing_card_service as drawing_card_service
-from report_processor.admin_panel.drawing_card_job_store import MAX_SCANNED_MANIFESTS
 from report_processor.admin_panel.drawing_card_service import (
     DrawingCardJob,
     DrawingCardPersistenceError,
     DrawingCardService,
 )
 from report_processor.drawing_card.models import WorkflowResult
+from report_processor.drawing_card.review import import_review_approvals
 from report_processor.drawing_card.review.inline import review_approval
 from report_processor.drawing_card.statuses import Status
 
@@ -111,6 +111,38 @@ def test_cancelled_background_job_removes_current_partial_output(tmp_path: Path)
     assert not (cancelled.directory / "attempts" / "0001" / "drawing-card.xlsx").exists()
 
 
+def test_restart_finishes_persisted_processing_cancellation_without_rescheduling(
+    tmp_path: Path,
+) -> None:
+    began = threading.Event()
+    release = threading.Event()
+
+    def runner(request):
+        began.set()
+        release.wait(2)
+        from report_processor.drawing_card.lifecycle import DrawingCardWorkflowCancelled
+
+        raise DrawingCardWorkflowCancelled()
+
+    workspace = tmp_path / "private"
+    original = DrawingCardService(workspace, runner=runner, background=True)
+    job = original.create_job(sources=[("source.xlsx", _fixture())])
+    assert began.wait(1)
+    original.cancel_job(job.job_id)
+    calls = 0
+
+    def recovered_runner(_request):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("cancelled recovery must not run")
+
+    recovered = DrawingCardService(workspace, runner=recovered_runner, background=True)
+    restored = recovered.get_job(job.job_id)
+    assert restored.status == "cancelled"
+    assert calls == 0
+    release.set()
+
+
 def test_cancellation_after_runner_return_never_publishes_result_or_review(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
@@ -184,7 +216,11 @@ def test_restart_restores_accepted_inline_decisions_without_row_values(tmp_path:
 
 
 def test_review_state_is_rebuilt_after_background_restart(tmp_path: Path) -> None:
+    observed_approvals = []
+
     def runner(request):
+        if request.review_decisions is not None:
+            observed_approvals.append(import_review_approvals(request.review_decisions))
         run_dir = request.work_dir / "review"
         run_dir.mkdir(parents=True)
         (run_dir / "manual_review.xlsx").write_bytes(b"PK\x03\x04review")
@@ -250,6 +286,9 @@ def test_review_state_is_rebuilt_after_background_restart(tmp_path: Path) -> Non
     assert set(restored.review_items) == {"stable-row"}
     assert set(restored.inline_approvals) == {"stable-row"}
     assert recovered.list_review_clusters(job_id=job.job_id)["total_clusters"] == 1
+    assert observed_approvals == [
+        {"stable-row": review_approval("stable-row", "approve", "power_cable")}
+    ]
 
 
 def test_review_mutation_rolls_back_if_manifest_write_fails(tmp_path: Path, monkeypatch) -> None:
@@ -324,6 +363,7 @@ def test_retry_rolls_back_every_state_field_when_manifest_persistence_fails(
         summary={"card_rows": 4},
         warnings=["WARNING"],
         blocker_counts={"BLOCKED": 1},
+        inline_approvals={"stable-row": review_approval("stable-row", "reject", None)},
         terminal_cause="processing_failed",
     )
     service._jobs[job.job_id] = job
@@ -336,6 +376,7 @@ def test_retry_rolls_back_every_state_field_when_manifest_persistence_fails(
         service.retry_job(job.job_id)
 
     assert service._retry_snapshot(job) == before
+    assert not (directory / "attempts" / "0001").exists()
 
 
 def test_bounded_terminal_retention_is_durable_and_keeps_active_review_jobs(
@@ -393,7 +434,7 @@ def test_manifestless_artifacts_do_not_displace_active_recovery_capacity(
     workspace = tmp_path / "private"
     original = DrawingCardService(workspace)
     monkeypatch.setattr(drawing_card_job_store, "MAX_LOADED_JOBS", 1)
-    for index in range(MAX_SCANNED_MANIFESTS + 1):
+    for index in range(4_097):
         (workspace / f"artifact-{index:04d}").mkdir()
     directory = workspace / "active-review"
     source = directory / "sources" / "01-source.xlsx"

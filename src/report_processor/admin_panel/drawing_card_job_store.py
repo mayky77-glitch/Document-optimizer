@@ -14,6 +14,7 @@ import re
 import tempfile
 from collections.abc import Mapping
 from contextlib import suppress
+from heapq import heappush, heapreplace
 from pathlib import Path, PurePosixPath
 
 MANIFEST_CONTRACT = "DrawingCardPrivateManifest-1.0"
@@ -22,7 +23,6 @@ MAX_MANIFEST_BYTES = 1_048_576
 MAX_JOB_ID_LENGTH = 96
 MAX_MANIFEST_DEPTH = 16
 MAX_MANIFEST_ITEMS = 10_000
-MAX_SCANNED_MANIFESTS = 4_096
 MAX_LOADED_JOBS = 1_024
 _ACTIVE_STATUSES = frozenset({"queued", "processing", "review_required"})
 
@@ -74,16 +74,15 @@ class DrawingCardJobStore:
     def load_all(self) -> dict[str, dict[str, object]]:
         """Return bounded manifests, prioritising recoverable active work.
 
-        At most ``MAX_SCANNED_MANIFESTS`` valid manifests are read, so retained
-        artifacts without a manifest do not consume recovery capacity. Within
-        that bound, queued/processing/review jobs are selected before terminal
-        manifests so retention history cannot crowd out work that must resume.
+        Discovery streams all direct children without materialising a directory
+        listing.  The retained selection stays bounded, and queued/processing/
+        review jobs are selected before terminal manifests so retention history
+        cannot crowd out work that must resume.
         """
-        active: list[tuple[str, dict[str, object]]] = []
-        terminal: list[tuple[str, dict[str, object]]] = []
+        active: list[_ManifestHeapItem] = []
+        terminal: list[_ManifestHeapItem] = []
         try:
             children = self.workspace_root.iterdir()
-            scanned_manifests = 0
             for child in children:
                 if child.is_symlink() or not child.is_dir():
                     continue
@@ -94,17 +93,16 @@ class DrawingCardJobStore:
                 manifest = _read_manifest(child / MANIFEST_FILENAME)
                 if manifest is None:
                     continue
-                scanned_manifests += 1
+                item = _ManifestHeapItem(job_id, manifest)
                 target = active if manifest.get("status") in _ACTIVE_STATUSES else terminal
-                target.append((job_id, manifest))
-                if scanned_manifests >= MAX_SCANNED_MANIFESTS:
-                    break
+                _retain_manifest(target, item)
         except OSError:
             pass
-        active.sort(key=_manifest_recovery_key, reverse=True)
-        terminal.sort(key=_manifest_recovery_key, reverse=True)
-        selected = (*active, *terminal)[:MAX_LOADED_JOBS]
-        return dict(selected)
+        selected = sorted(active, reverse=True)[:MAX_LOADED_JOBS]
+        remaining = MAX_LOADED_JOBS - len(selected)
+        if remaining:
+            selected.extend(sorted(terminal, reverse=True)[:remaining])
+        return {item.job_id: item.manifest for item in selected}
 
     def delete(self, job_id: str) -> bool:
         """Remove only a single manifest, leaving private job artifacts intact."""
@@ -140,11 +138,27 @@ def _validate_job_id(value: object) -> str:
     return value
 
 
-def _manifest_recovery_key(item: tuple[str, dict[str, object]]) -> tuple[str, str]:
-    """Keep the bounded selection stable without retaining directory listings."""
-    job_id, manifest = item
-    updated_at = manifest.get("updated_at")
-    return (str(updated_at) if isinstance(updated_at, str) else "", job_id)
+class _ManifestHeapItem:
+    """Comparable bounded-recovery candidate, newest first at final selection."""
+
+    __slots__ = ("job_id", "manifest", "sort_key")
+
+    def __init__(self, job_id: str, manifest: dict[str, object]) -> None:
+        updated_at = manifest.get("updated_at")
+        self.job_id = job_id
+        self.manifest = manifest
+        self.sort_key = (str(updated_at) if isinstance(updated_at, str) else "", job_id)
+
+    def __lt__(self, other: object) -> bool:
+        return isinstance(other, _ManifestHeapItem) and self.sort_key < other.sort_key
+
+
+def _retain_manifest(items: list[_ManifestHeapItem], item: _ManifestHeapItem) -> None:
+    """Keep only the deterministic best candidates for one recovery class."""
+    if len(items) < MAX_LOADED_JOBS:
+        heappush(items, item)
+    elif items[0] < item:
+        heapreplace(items, item)
 
 
 def _validate_manifest(value: Mapping[str, object]) -> dict[str, object]:

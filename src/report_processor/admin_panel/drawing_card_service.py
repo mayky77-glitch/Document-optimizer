@@ -11,6 +11,7 @@ import shutil
 import threading
 from collections import Counter
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -587,11 +588,14 @@ class DrawingCardService:
         job.review_decisions = {}
         job.terminal_cause = None
         job.updated_at = _utc_now()
+        attempt_directory = self._attempt_directory(job, job.attempt + 1)
+        attempt_existed = attempt_directory.exists()
         decisions_path = self._retry_decisions_path(job)
         try:
             self._persist_job(job)
         except DrawingCardPersistenceError:
             self._restore_retry_snapshot(job, before)
+            self._cleanup_retry_artifact(decisions_path, attempt_directory, attempt_existed)
             raise
         if use_background:
             self._schedule(job, review_decisions=decisions_path)
@@ -801,11 +805,12 @@ class DrawingCardService:
         """Rebuild private review context from retained sources after restart."""
         approvals = dict(job.inline_approvals)
         job.status = "queued"
+        decisions_path = self._retry_decisions_path(job)
         self._persist_job(job)
 
         def worker() -> None:
             with self._worker_slots:
-                recovered = self._run(job)
+                recovered = self._run(job, review_decisions=decisions_path)
                 if recovered.status == "review_required":
                     recovered.inline_approvals = {
                         row_id: approval
@@ -828,6 +833,16 @@ class DrawingCardService:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         write_approvals(path, job.inline_approvals)
         return path
+
+    @staticmethod
+    def _cleanup_retry_artifact(
+        decisions_path: Path | None, attempt_directory: Path, attempt_existed: bool
+    ) -> None:
+        if decisions_path is not None:
+            decisions_path.unlink(missing_ok=True)
+        if not attempt_existed:
+            with suppress(OSError):
+                attempt_directory.rmdir()
 
     @staticmethod
     def _retry_snapshot(job: DrawingCardJob) -> dict[str, object]:
@@ -927,6 +942,7 @@ class DrawingCardService:
             "started_at": job.started_at,
             "updated_at": job.updated_at,
             "terminal_cause": job.terminal_cause,
+            "cancel_requested": job.cancel_event.is_set(),
             "idempotency_key": job.idempotency_key,
             "errors": list(job.errors),
             "summary": _safe_summary(job.summary),
@@ -958,7 +974,9 @@ class DrawingCardService:
             self._jobs[job_id] = job
             if job.idempotency_key:
                 self._idempotency[job.idempotency_key] = job_id
-            if self.background and job.status in {"queued", "processing"}:
+            if job.cancel_event.is_set():
+                self._finish_cancelled(job)
+            elif self.background and job.status in {"queued", "processing"}:
                 job.status = "queued"
                 self._schedule(job)
             elif self.background and job.status == "review_required":
@@ -1010,6 +1028,8 @@ class DrawingCardService:
             blocker_counts=_safe_int_map(manifest.get("blocker_counts")),
             funnel=_safe_funnel(manifest.get("funnel")),
         )
+        if _manifest_cancel_requested(manifest.get("cancel_requested")):
+            job.cancel_event.set()
         job.result = _optional_restored_path(directory, manifest.get("result_path"))
         job.result_hash = _optional_digest(manifest.get("result_hash"))
         if job.result is not None and (not job.result.is_file() or job.result.is_symlink()):
@@ -1178,6 +1198,14 @@ def _validate_idempotency_key(value: object) -> str | None:
         return None
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", value):
         raise ValueError("invalid idempotency key")
+    return value
+
+
+def _manifest_cancel_requested(value: object) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError("invalid persisted cancellation state")
     return value
 
 
