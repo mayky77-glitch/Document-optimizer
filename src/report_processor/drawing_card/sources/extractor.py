@@ -149,6 +149,27 @@ def extract_rows(
             performed_quantity_cached
         )
         performed_cost, performed_cost_warnings = _decimal_or_zero(performed_cost_cached)
+        # A cumulative contract value is comparable only when both semantic
+        # roles are explicit: whole-period performed plus residual.  Do not use
+        # a month/intermediate performed block as a substitute.
+        if (
+            "contract_quantity" not in columns
+            or "PERIOD_ROLES_AUTHORITATIVE:contract_quantity" in schema.warnings
+        ) and {
+            "performed_quantity",
+            "remaining_quantity",
+        }.issubset(columns):
+            contract_quantity = performed_quantity + quantity
+            contract_quantity_warnings += ("CONTRACT_QUANTITY_DERIVED_FROM_PERFORMED_AND_RESIDUAL",)
+        if (
+            "contract_total_cost" not in columns
+            or "PERIOD_ROLES_AUTHORITATIVE:contract_total_cost" in schema.warnings
+        ) and {
+            "performed_total_cost",
+            "remaining_total_cost",
+        }.issubset(columns):
+            contract_cost = performed_cost + cost
+            contract_cost_warnings += ("CONTRACT_TOTAL_COST_DERIVED_FROM_PERFORMED_AND_RESIDUAL",)
         warnings = extraction_warnings + list(
             quantity_warnings
             + cost_warnings
