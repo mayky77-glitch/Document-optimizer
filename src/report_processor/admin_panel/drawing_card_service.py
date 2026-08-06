@@ -456,14 +456,21 @@ class DrawingCardService:
                 self._claim_review_apply(job, expected_epoch)
                 claimed = True
                 _validate_review(review_name, review_content)
-                review_path = _write_private(
-                    job.directory / "completed_review.xlsx", review_content
+                attempt_directory = self._attempt_directory(job, job.attempt + 1)
+                review_path = attempt_directory / "completed_review.xlsx"
+                staged_path = _write_private(
+                    attempt_directory / f".completed_review-{secrets.token_hex(16)}.xlsx",
+                    review_content,
                 )
                 try:
-                    import_review_approvals(review_path)
-                except (OSError, ValueError) as error:
-                    review_path.unlink(missing_ok=True)
-                    raise ValueError("invalid manual review workbook") from error
+                    try:
+                        import_review_approvals(staged_path)
+                    except (OSError, ValueError) as error:
+                        raise ValueError("invalid manual review workbook") from error
+                    os.replace(staged_path, review_path)
+                    os.chmod(review_path, 0o600)
+                finally:
+                    staged_path.unlink(missing_ok=True)
                 job.review = review_path
                 result = self._run(job, review_decisions=review_path)
                 self._prune_terminal_jobs()
@@ -852,6 +859,7 @@ class DrawingCardService:
         job.errors = ()
         job.result = None
         job.result_hash = None
+        job.review = None
         job.run_count += 1
         job.attempt += 1
         attempt_directory = self._attempt_directory(job, job.attempt)
@@ -1163,6 +1171,7 @@ class DrawingCardService:
                 "errors",
                 "result",
                 "result_hash",
+                "review",
                 "run_count",
                 "attempt",
                 "phase",

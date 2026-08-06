@@ -246,6 +246,123 @@ def test_queued_apply_cannot_consume_the_next_review_generation(
     assert len(calls) == 1
 
 
+def test_sequential_workbook_applies_use_distinct_attempt_review_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = DrawingCardService(tmp_path / "private")
+    job = _review_job(service)
+    seen: list[Path] = []
+    validated: list[Path] = []
+
+    def fake_run(
+        current: DrawingCardJob, *, review_decisions: Path | None = None, strict: bool = True
+    ) -> DrawingCardJob:
+        assert strict is True
+        assert review_decisions is not None
+        seen.append(review_decisions)
+        current.review = None
+        current.attempt += 1
+        current.status = "review_required" if len(seen) == 1 else "ready"
+        return current
+
+    monkeypatch.setattr(service, "_run", fake_run)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service._validate_review", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service.import_review_approvals",
+        lambda path: validated.append(path),
+    )
+
+    assert (
+        service.apply_review(
+            job_id=job.job_id,
+            review_name="first.xlsx",
+            review_content=b"first workbook",
+        ).status
+        == "review_required"
+    )
+    assert (
+        service.apply_review(
+            job_id=job.job_id,
+            review_name="second.xlsx",
+            review_content=b"second workbook",
+        ).status
+        == "ready"
+    )
+
+    assert seen == [
+        job.directory / "attempts" / "0001" / "completed_review.xlsx",
+        job.directory / "attempts" / "0002" / "completed_review.xlsx",
+    ]
+    assert [path.name for path in validated] != ["completed_review.xlsx"] * 2
+    assert not list(job.directory.glob("attempts/*/.completed_review-*.xlsx"))
+
+
+def test_workbook_manifest_failure_restores_review_and_retry_replaces_orphan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Path | None] = []
+
+    def runner(request) -> WorkflowResult:
+        calls.append(request.review_decisions)
+        assert request.review_decisions is not None
+        assert request.review_decisions.read_bytes() == b"replacement workbook"
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "ready"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("ready", Status.OK, run_dir, output_path=request.output)
+
+    service = DrawingCardService(tmp_path / "private", runner=runner)
+    job = _review_job(service)
+    persist = service._persist_job
+    manifest_reviews: list[Path | None] = []
+
+    def fail_initial_processing_manifest(current: DrawingCardJob) -> None:
+        manifest_reviews.append(current.review)
+        raise DrawingCardPersistenceError("initial processing manifest unavailable")
+
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service._validate_review", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service.import_review_approvals",
+        lambda _path: (),
+    )
+    monkeypatch.setattr(service, "_persist_job", fail_initial_processing_manifest)
+
+    with pytest.raises(
+        DrawingCardPersistenceError, match="initial processing manifest unavailable"
+    ):
+        service.apply_review(
+            job_id=job.job_id,
+            review_name="orphan.xlsx",
+            review_content=b"orphan workbook",
+        )
+
+    orphan = job.directory / "attempts" / "0001" / "completed_review.xlsx"
+    assert calls == []
+    assert manifest_reviews == [None]
+    assert job.status == "review_required"
+    assert job.attempt == 0
+    assert job.review == orphan
+    assert orphan.read_bytes() == b"orphan workbook"
+
+    monkeypatch.setattr(service, "_persist_job", persist)
+    assert (
+        service.apply_review(
+            job_id=job.job_id,
+            review_name="replacement.xlsx",
+            review_content=b"replacement workbook",
+        ).status
+        == "ready"
+    )
+
+    assert calls == [orphan]
+    assert orphan.read_bytes() == b"replacement workbook"
+
+
 def test_failed_initial_rerun_manifest_save_restores_retryable_review_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
