@@ -171,6 +171,9 @@ class DrawingCardJob:
     feedback_rules_version: str = ""
     feedback_input_hashes: tuple[str, ...] = ()
     review_generation: str | None = None
+    # This is deliberately process-local.  It distinguishes callers that were
+    # already waiting to apply a page from a new request for the next page.
+    review_apply_epoch: int = field(default=0, repr=False, compare=False)
     opened_cluster_ids: tuple[str, ...] = ()
     review_metrics: dict[str, int] = field(default_factory=dict)
     review_lock: threading.RLock = field(
@@ -314,7 +317,7 @@ class DrawingCardService:
         directory.mkdir(mode=0o700, parents=False, exist_ok=False)
         try:
             source_paths = tuple(
-                _write_private(directory / "sources" / f"{index:02d}-{name}", content)
+                _write_private(directory / "sources" / f"{index:02d}" / name, content)
                 for index, (name, content) in enumerate(sources, 1)
             )
             existing = (
@@ -442,20 +445,30 @@ class DrawingCardService:
         self, *, job_id: str, review_name: str, review_content: bytes
     ) -> DrawingCardJob:
         job = self.get_job(job_id)
+        expected_epoch = job.review_apply_epoch
         with job.review_lock:
             if job.status != "review_required":
                 raise ValueError("job does not await manual review")
-            _validate_review(review_name, review_content)
-            review_path = _write_private(job.directory / "completed_review.xlsx", review_content)
+            claimed = False
             try:
-                import_review_approvals(review_path)
-            except (OSError, ValueError) as error:
-                review_path.unlink(missing_ok=True)
-                raise ValueError("invalid manual review workbook") from error
-            job.review = review_path
-            result = self._run(job, review_decisions=review_path)
-            self._prune_terminal_jobs()
-            return result
+                self._claim_review_apply(job, expected_epoch)
+                claimed = True
+                _validate_review(review_name, review_content)
+                review_path = _write_private(
+                    job.directory / "completed_review.xlsx", review_content
+                )
+                try:
+                    import_review_approvals(review_path)
+                except (OSError, ValueError) as error:
+                    review_path.unlink(missing_ok=True)
+                    raise ValueError("invalid manual review workbook") from error
+                job.review = review_path
+                result = self._run(job, review_decisions=review_path)
+                self._prune_terminal_jobs()
+                return result
+            finally:
+                if claimed:
+                    job.review_apply_epoch += 1
 
     def list_review_items(
         self, *, job_id: str, page: int = 1, page_size: int = 50
@@ -674,8 +687,25 @@ class DrawingCardService:
 
     def apply_inline_review(self, *, job_id: str) -> DrawingCardJob:
         job = self.get_job(job_id)
+        expected_epoch = job.review_apply_epoch
         with job.review_lock:
-            return self._apply_inline_review_locked(job)
+            if job.status != "review_required" or set(job.review_items) != set(
+                job.inline_approvals
+            ):
+                raise ValueError("unresolved review items remain")
+            claimed = False
+            try:
+                self._claim_review_apply(job, expected_epoch)
+                claimed = True
+                return self._apply_inline_review_locked(job)
+            finally:
+                if claimed:
+                    job.review_apply_epoch += 1
+
+    @staticmethod
+    def _claim_review_apply(job: DrawingCardJob, expected_epoch: int) -> None:
+        if expected_epoch != job.review_apply_epoch:
+            raise ValueError("review generation was already applied")
 
     def _apply_inline_review_locked(self, job: DrawingCardJob) -> DrawingCardJob:
         """Persist one complete page, then run it exactly once for this job."""
@@ -815,6 +845,7 @@ class DrawingCardService:
             return job
         if job.cancel_event.is_set():
             return self._finish_cancelled(job)
+        transition_before = self._run_transition_snapshot(job)
         job.status = "processing"
         job.errors = ()
         job.result = None
@@ -832,7 +863,11 @@ class DrawingCardService:
         job.total_rows = None
         job.terminal_cause = None
         job.updated_at = _utc_now()
-        self._persist_job(job)
+        try:
+            self._persist_job(job)
+        except DrawingCardPersistenceError:
+            self._restore_run_transition(job, transition_before)
+            raise
 
         def on_progress(progress: object) -> None:
             phase = getattr(progress, "phase", "upload")
@@ -1113,6 +1148,33 @@ class DrawingCardService:
 
     @staticmethod
     def _restore_retry_snapshot(job: DrawingCardJob, snapshot: dict[str, object]) -> None:
+        for field_name, value in snapshot.items():
+            setattr(job, field_name, value)
+
+    @staticmethod
+    def _run_transition_snapshot(job: DrawingCardJob) -> dict[str, object]:
+        """Preserve the retryable state until the initial run transition is durable."""
+        return {
+            field_name: getattr(job, field_name)
+            for field_name in (
+                "status",
+                "errors",
+                "result",
+                "result_hash",
+                "run_count",
+                "attempt",
+                "phase",
+                "processed_files",
+                "total_files",
+                "processed_rows",
+                "total_rows",
+                "terminal_cause",
+                "updated_at",
+            )
+        }
+
+    @staticmethod
+    def _restore_run_transition(job: DrawingCardJob, snapshot: dict[str, object]) -> None:
         for field_name, value in snapshot.items():
             setattr(job, field_name, value)
 
@@ -1939,7 +2001,7 @@ def _manifest_hashes(value: object) -> tuple[str, ...]:
         raise ValueError("invalid persisted feedback hashes")
     if not value:
         return ()
-    hashes = tuple(sorted(set(str(item) for item in value)))
+    hashes = tuple(sorted(str(item) for item in value))
     if any(re.fullmatch(r"[a-f0-9]{64}", item) is None for item in hashes):
         raise ValueError("invalid persisted feedback hashes")
     return hashes

@@ -18,6 +18,7 @@ from report_processor.drawing_card.models import (
     DrawingSourceRow,
     MatchDecision,
     TargetWorkCategory,
+    WorkflowResult,
 )
 from report_processor.drawing_card.review.inline import review_approval
 from report_processor.drawing_card.statuses import Status
@@ -180,6 +181,112 @@ def test_workbook_and_inline_apply_share_one_review_lock(
         with pytest.raises(ValueError, match="does not await manual review"):
             workbook.result(timeout=2)
 
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("first_apply", ("inline", "workbook"))
+def test_queued_apply_cannot_consume_the_next_review_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_apply: str
+) -> None:
+    service = DrawingCardService(tmp_path / "private")
+    job = _review_job(service)
+    entered = Event()
+    release = Event()
+    calls: list[Path | None] = []
+
+    def fake_run(
+        current: DrawingCardJob, *, review_decisions: Path | None = None, strict: bool = True
+    ) -> DrawingCardJob:
+        assert strict is True
+        calls.append(review_decisions)
+        entered.set()
+        assert release.wait(2)
+        # The first rerun produces a new review page.  Keep the old choices in
+        # memory to prove the queued caller is rejected by its old claim, not
+        # merely by unresolved-item validation.
+        current.status = "review_required"
+        current.review_generation = "next-generation"
+        return current
+
+    monkeypatch.setattr(service, "_run", fake_run)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service._validate_review", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.drawing_card_service.import_review_approvals",
+        lambda _path: (),
+    )
+
+    def apply_inline() -> DrawingCardJob:
+        return service.apply_inline_review(job_id=job.job_id)
+
+    def apply_workbook() -> DrawingCardJob:
+        return service.apply_review(
+            job_id=job.job_id,
+            review_name="completed_review.xlsx",
+            review_content=b"workbook review",
+        )
+
+    first, second = (
+        (apply_inline, apply_workbook)
+        if first_apply == "inline"
+        else (apply_workbook, apply_inline)
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(first)
+        assert entered.wait(2)
+        second_future = executor.submit(second)
+        release.set()
+
+        assert first_future.result(timeout=2).status == "review_required"
+        with pytest.raises(ValueError, match="review generation was already applied"):
+            second_future.result(timeout=2)
+
+    assert len(calls) == 1
+
+
+def test_failed_initial_rerun_manifest_save_restores_retryable_review_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[object] = []
+
+    def runner(request) -> WorkflowResult:
+        calls.append(request)
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "ready"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("ready", Status.OK, run_dir, output_path=request.output)
+
+    service = DrawingCardService(tmp_path / "private", runner=runner)
+    job = _review_job(service)
+    persist = service._persist_job
+    save_count = 0
+
+    def fail_second_save(current: DrawingCardJob) -> None:
+        nonlocal save_count
+        save_count += 1
+        if save_count == 2:
+            raise DrawingCardPersistenceError("initial rerun state unavailable")
+        persist(current)
+
+    monkeypatch.setattr(service, "_persist_job", fail_second_save)
+
+    with pytest.raises(DrawingCardPersistenceError, match="initial rerun state unavailable"):
+        service.apply_inline_review(job_id=job.job_id)
+
+    assert calls == []
+    assert job.status == "review_required"
+    assert job.run_count == 0
+    assert job.attempt == 0
+    assert set(job.inline_approvals) == {"review-row"}
+    assert (service.workspace_root / "review-feedback-v2.jsonl").read_text(encoding="utf-8").count(
+        "\n"
+    ) == 1
+
+    monkeypatch.setattr(service, "_persist_job", persist)
+    assert service.apply_inline_review(job_id=job.job_id).status == "ready"
     assert len(calls) == 1
 
 
