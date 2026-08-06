@@ -75,6 +75,7 @@ def replay_exact_feedback(
         input_hashes=input_hashes,
         model_version=model_version,
         rules_version=rules_version,
+        allow_review=True,
     )
     if context is None:
         return None

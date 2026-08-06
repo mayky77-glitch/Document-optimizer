@@ -7,10 +7,16 @@ import os
 import re
 import tempfile
 from collections.abc import Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - this private store fails closed off POSIX.
+    fcntl = None  # type: ignore[assignment]
 
 from ..sources.normalization import normalize_text, normalize_unit
 
@@ -326,21 +332,48 @@ class FeedbackStore:
             raise ValueError("feedback page must contain between 1 and 10000 entries")
         if any(not isinstance(entry, FeedbackEntry) for entry in page):
             raise ValueError("feedback page must contain FeedbackEntry values")
-        existing = self._read()
-        by_id = {entry.event_id: entry for entry in existing}
-        additions: list[FeedbackEntry] = []
-        for entry in page:
-            previous = by_id.get(entry.event_id)
-            if previous is not None:
-                if previous != entry:
-                    raise ValueError("conflicting duplicate event_id")
-                continue
-            by_id[entry.event_id] = entry
-            additions.append(entry)
-        if not additions:
-            return page
-        self._atomic_write((*existing, *additions))
+        with self._exclusive_lock():
+            existing = self._read()
+            by_id = {entry.event_id: entry for entry in existing}
+            additions: list[FeedbackEntry] = []
+            for entry in page:
+                previous = by_id.get(entry.event_id)
+                if previous is not None:
+                    if previous != entry:
+                        raise ValueError("conflicting duplicate event_id")
+                    continue
+                by_id[entry.event_id] = entry
+                additions.append(entry)
+            if not additions:
+                return page
+            self._atomic_write((*existing, *additions))
         return page
+
+    @contextmanager
+    def _exclusive_lock(self):
+        if fcntl is None or self.path.parent.is_symlink():
+            raise ValueError("feedback ledger lock is unavailable or unsafe")
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock_path = self.path.with_name(f".{self.path.name}.lock")
+        if lock_path.is_symlink():
+            raise ValueError("feedback ledger lock is unsafe")
+        flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(lock_path, flags, 0o600)
+        except OSError as error:
+            raise ValueError("feedback ledger lock is unavailable") from error
+        try:
+            if Path(lock_path).is_symlink():
+                raise ValueError("feedback ledger lock is unsafe")
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
     def lookup_exact(self, context: FeedbackContext) -> FeedbackEntry | None:
         if not isinstance(context, FeedbackContext):

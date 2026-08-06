@@ -677,6 +677,8 @@ class DrawingCardService:
         approvals_path = (
             self._attempt_directory(job, job.attempt + 1) / "inline_review_decisions.json"
         )
+        metrics_before = dict(job.review_metrics)
+        generation_before = job.review_generation
         try:
             approvals_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             write_approvals(approvals_path, initial_inline_approvals)
@@ -686,6 +688,8 @@ class DrawingCardService:
             self._persist_job(job)
         except (OSError, ValueError, DrawingCardPersistenceError):
             # No runner call follows a failed decision, feedback-page, or manifest commit.
+            job.review_metrics = metrics_before
+            job.review_generation = generation_before
             raise
         rerun = self._run(job, review_decisions=approvals_path, strict=True)
         if rerun.status != "ready":
@@ -888,7 +892,11 @@ class DrawingCardService:
             "review_candidates": result.review_candidates_before_replay,
             "queued_review_rows": result.queued_review_rows,
             "packets": sum(1 for cluster in clusters if cluster.packet_eligible),
-            "singleton_packets": sum(1 for cluster in clusters if len(cluster.member_ids) == 1),
+            "singleton_packets": sum(
+                1
+                for cluster in clusters
+                if cluster.packet_eligible and len(cluster.member_ids) == 1
+            ),
             "feedback_hits": result.exact_feedback_hits,
         }
         for metric in (
@@ -985,6 +993,7 @@ class DrawingCardService:
     def _schedule_review_recovery(self, job: DrawingCardJob) -> None:
         """Rebuild private review context from retained sources after restart."""
         approvals = dict(job.inline_approvals)
+        cluster_actions = dict(job.cluster_actions)
         job.status = "queued"
         decisions_path = self._retry_decisions_path(job)
         self._persist_job(job)
@@ -997,6 +1006,17 @@ class DrawingCardService:
                         row_id: approval
                         for row_id, approval in approvals.items()
                         if row_id in recovered.review_items
+                    }
+                    recovered.cluster_actions = {
+                        cluster.cluster_id: cluster_actions[cluster.cluster_id]
+                        for cluster in self._current_clusters(recovered)
+                        if cluster.cluster_id in cluster_actions
+                        and tuple(sorted(cluster_actions[cluster.cluster_id])) == cluster.member_ids
+                        and all(
+                            recovered.inline_approvals.get(row_id)
+                            == cluster_actions[cluster.cluster_id][row_id]
+                            for row_id in cluster.member_ids
+                        )
                     }
                     self._persist_job(recovered)
 
@@ -1147,6 +1167,16 @@ class DrawingCardService:
                 }
                 for review_id, approval in job.inline_approvals.items()
             },
+            "cluster_actions": {
+                cluster_id: {
+                    review_id: {
+                        "action": approval.action,
+                        "category": approval.category.value if approval.category else None,
+                    }
+                    for review_id, approval in approvals.items()
+                }
+                for cluster_id, approvals in job.cluster_actions.items()
+            },
         }
 
     def _restore_jobs(self) -> None:
@@ -1253,6 +1283,8 @@ class DrawingCardService:
             opened_cluster_ids=_manifest_member_ids(manifest.get("opened_cluster_ids")),
             review_metrics=_safe_review_metrics(manifest.get("review_metrics")),
         )
+        if job.feedback_tenant_id != self.tenant_id:
+            raise ValueError("persisted job belongs to another tenant")
         if _manifest_cancel_requested(manifest.get("cancel_requested")):
             job.cancel_event.set()
         job.result = _optional_restored_path(directory, manifest.get("result_path"))
@@ -1302,6 +1334,7 @@ class DrawingCardService:
             job.inline_approvals[review_id] = review_approval(
                 review_id, raw["action"], raw["category"]
             )
+        job.cluster_actions = _safe_cluster_action_map(manifest.get("cluster_actions"))
         if not _inputs_unchanged(job):
             raise ValueError("source hash changed")
         return job
@@ -1340,6 +1373,7 @@ class DrawingCardService:
 
     def _refresh_feedback_scope(self, job: DrawingCardJob) -> None:
         rules_version = load_rules(default_rules_path()).version
+        job.feedback_model_version = _FEEDBACK_MODEL_VERSION
         hashes = tuple(
             sorted(
                 set(
@@ -1422,7 +1456,11 @@ class DrawingCardService:
             ):
                 continue
             representative = packet_approvals[cluster.member_ids[0]]
-            if any(approval != representative for approval in packet_approvals.values()):
+            if any(
+                approval.action != representative.action
+                or approval.category != representative.category
+                for approval in packet_approvals.values()
+            ):
                 continue
             packet_context = _packet_feedback_context(
                 row_contexts,
@@ -1740,6 +1778,24 @@ def _safe_approval_map(value: object) -> dict[str, dict[str, str | None]]:
         action, category = raw.get("action"), raw.get("category")
         if isinstance(action, str) and (category is None or isinstance(category, str)):
             result[review_id] = {"action": action, "category": category}
+    return result
+
+
+def _safe_cluster_action_map(value: object) -> dict[str, dict[str, ReviewApproval]]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, dict[str, ReviewApproval]] = {}
+    for cluster_id, raw_approvals in value.items():
+        if not isinstance(cluster_id, str) or not re.fullmatch(r"cluster-[a-f0-9]{24}", cluster_id):
+            continue
+        approvals: dict[str, ReviewApproval] = {}
+        for review_id, raw in _safe_approval_map(raw_approvals).items():
+            try:
+                approvals[review_id] = review_approval(review_id, raw["action"], raw["category"])
+            except ValueError:
+                continue
+        if approvals:
+            result[cluster_id] = approvals
     return result
 
 

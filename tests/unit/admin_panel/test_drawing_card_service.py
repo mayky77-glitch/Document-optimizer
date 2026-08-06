@@ -320,6 +320,7 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
         status="review_required",
         feedback_project_id="legacy-local",
         feedback_rules_version="legacy",
+        feedback_input_hashes=("a" * 64,),
         category_units={"low_current_cable": ("м",)},
         review_items={row_id: {"review_id": row_id} for row_id in rows},
         review_rows=rows,
@@ -359,6 +360,17 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
         category="low_current_cable",
     )
     assert set(job.inline_approvals) == {"row-a", "row-b"}
+    entries = service._feedback_page(
+        job,
+        rows=job.review_rows,
+        decisions=job.review_decisions,
+        approvals=job.inline_approvals,
+        contexts=service._complete_review_contexts(job),
+        created_at="2026-08-06T01:02:03Z",
+    )
+    assert len(entries) == 3
+    packet = next(entry for entry in entries if entry.context.subject_type == "packet")
+    assert packet.context.member_ids == ("row-a", "row-b")
     with pytest.raises(ValueError, match="stale cluster identity"):
         service.put_review_cluster(
             job_id=job.job_id,

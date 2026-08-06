@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -171,3 +172,15 @@ def test_permissions_are_private(tmp_path: Path) -> None:
     path = tmp_path / "feedback.jsonl"
     FeedbackStore(path).append_page((_entry(),))
     assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+def test_concurrent_store_instances_do_not_lose_pages(tmp_path: Path) -> None:
+    path = tmp_path / "feedback.jsonl"
+    entries = tuple(_entry(created_at=f"2026-08-06T01:02:0{second}Z") for second in (3, 4))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(lambda entry: FeedbackStore(path).append_page((entry,)), entries))
+
+    assert {entry.event_id for entry in FeedbackStore(path)._read()} == {
+        entry.event_id for entry in entries
+    }
