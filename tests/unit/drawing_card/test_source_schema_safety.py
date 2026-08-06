@@ -5,13 +5,17 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import pytest
 
 from report_processor.drawing_card.models import ManifestEntry
 from report_processor.drawing_card.sources import detect_sheet_schema, extract_rows
-from report_processor.drawing_card.sources.openxml_safety import validate_openxml_bytes
+from report_processor.drawing_card.sources.openxml_safety import (
+    MAX_OPENXML_MEMBER_BYTES,
+    validate_openxml_archive,
+    validate_openxml_bytes,
+)
 from report_processor.drawing_card.sources.readers import OpenXmlWorkbookReader
 from report_processor.drawing_card.sources.schema import select_usable_schemas
 
@@ -69,6 +73,21 @@ def _openxml_container(members: dict[str, bytes]) -> bytes:
     return content.getvalue()
 
 
+class CentralDirectoryArchive:
+    def __init__(self, *infos: ZipInfo) -> None:
+        self.infos = infos
+
+    def infolist(self) -> tuple[ZipInfo, ...]:
+        return self.infos
+
+
+def _member_info(*, file_size: int) -> ZipInfo:
+    info = ZipInfo("xl/worksheets/sheet2.bin")
+    info.file_size = file_size
+    info.compress_size = file_size
+    return info
+
+
 @pytest.mark.parametrize(
     ("members", "error"),
     [
@@ -82,6 +101,19 @@ def test_openxml_preflight_rejects_unsafe_members_before_reads(
 ) -> None:
     with pytest.raises(ValueError, match=error):
         validate_openxml_bytes(_openxml_container(members))
+
+
+def test_openxml_preflight_accepts_member_at_256_mib_limit() -> None:
+    archive = CentralDirectoryArchive(_member_info(file_size=MAX_OPENXML_MEMBER_BYTES))
+
+    validate_openxml_archive(archive)  # type: ignore[arg-type]
+
+
+def test_openxml_preflight_rejects_member_above_256_mib_limit() -> None:
+    archive = CentralDirectoryArchive(_member_info(file_size=MAX_OPENXML_MEMBER_BYTES + 1))
+
+    with pytest.raises(ValueError, match="VERY_LARGE_ARCHIVE_ENTRY"):
+        validate_openxml_archive(archive)  # type: ignore[arg-type]
 
 
 def test_openxml_reader_preflights_container_before_opening_member(tmp_path: Path) -> None:
