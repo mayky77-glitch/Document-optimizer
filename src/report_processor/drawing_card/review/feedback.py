@@ -380,6 +380,8 @@ class FeedbackStore:
             hazards=target.hazards,
             supersedes_event_id=target.event_id,
             reason=reason,
+            selected_quantity_resolution=target.selected_quantity_resolution,
+            selected_cost_resolution=target.selected_cost_resolution,
         )
         self.append_page((clone,))
         return clone
