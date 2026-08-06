@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -7,7 +8,11 @@ from threading import Event
 
 import pytest
 
-from report_processor.admin_panel.drawing_card_service import DrawingCardJob, DrawingCardService
+from report_processor.admin_panel.drawing_card_service import (
+    DrawingCardJob,
+    DrawingCardPersistenceError,
+    DrawingCardService,
+)
 from report_processor.drawing_card.models import (
     DrawingSourceLocation,
     DrawingSourceRow,
@@ -95,6 +100,68 @@ def test_feedback_ledger_failure_does_not_schedule_rerun(tmp_path: Path) -> None
 
     assert calls == []
     assert job.inline_approvals
+
+
+def test_concurrent_page_apply_runs_the_review_only_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = DrawingCardService(tmp_path / "private")
+    job = _review_job(service)
+    entered = Event()
+    release = Event()
+    calls: list[Path | None] = []
+
+    def fake_run(
+        current: DrawingCardJob, *, review_decisions: Path | None = None, strict: bool = True
+    ) -> DrawingCardJob:
+        assert strict is True
+        calls.append(review_decisions)
+        entered.set()
+        assert release.wait(2)
+        current.status = "ready"
+        return current
+
+    monkeypatch.setattr(service, "_run", fake_run)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(service.apply_inline_review, job_id=job.job_id)
+        assert entered.wait(2)
+        second = executor.submit(service.apply_inline_review, job_id=job.job_id)
+        release.set()
+
+        assert first.result(timeout=2).status == "ready"
+        with pytest.raises(ValueError, match="unresolved review items"):
+            second.result(timeout=2)
+
+    assert len(calls) == 1
+    assert (service.workspace_root / "review-feedback-v2.jsonl").read_text(encoding="utf-8").count(
+        "\n"
+    ) == 1
+
+
+def test_confirmed_page_remains_saved_when_manifest_commit_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[object] = []
+
+    def runner(request: object) -> None:
+        calls.append(request)
+
+    service = DrawingCardService(tmp_path / "private", runner=runner)
+    job = _review_job(service)
+
+    def fail_manifest(_job: DrawingCardJob) -> None:
+        raise DrawingCardPersistenceError("manifest unavailable")
+
+    monkeypatch.setattr(service, "_persist_job", fail_manifest)
+
+    with pytest.raises(DrawingCardPersistenceError, match="manifest unavailable"):
+        service.apply_inline_review(job_id=job.job_id)
+
+    assert calls == []
+    assert set(job.inline_approvals) == {"review-row"}
+    assert (service.workspace_root / "review-feedback-v2.jsonl").read_text(encoding="utf-8").count(
+        "\n"
+    ) == 1
 
 
 def test_stale_membership_version_and_context_bounds_are_rejected(tmp_path: Path) -> None:

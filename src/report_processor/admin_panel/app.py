@@ -624,23 +624,6 @@ def create_app(
             return _error("Выберите допустимое решение и категорию", 400)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
 
-    async def drawing_card_review_bulk(request):
-        try:
-            payload = await request.json()
-            if not isinstance(payload, Mapping) or not isinstance(payload.get("action"), str):
-                raise ValueError("invalid bulk decision")
-            current = drawing_panel.bulk_review(
-                job_id=request.path_params["job_id"],
-                action=payload["action"],
-            )
-        except KeyError:
-            return _error("Задача не найдена", 404)
-        except DrawingCardPersistenceError:
-            return _error("Решения не сохранены. Повторите действие", 503)
-        except (TypeError, ValueError):
-            return _error("Выберите допустимое общее решение", 400)
-        return _secure(JSONResponse(drawing_card_job_payload(current)))
-
     async def drawing_card_review_context(request):
         try:
             radius = _review_context_radius(request.query_params.get("radius", "2"))
@@ -748,11 +731,6 @@ def create_app(
                 "/api/drawing-card/jobs/{job_id}/review/items/{review_id}/context",
                 drawing_card_review_context,
                 methods=["GET"],
-            ),
-            Route(
-                "/api/drawing-card/jobs/{job_id}/review/bulk",
-                drawing_card_review_bulk,
-                methods=["POST"],
             ),
             Route(
                 "/api/drawing-card/jobs/{job_id}/review/apply",

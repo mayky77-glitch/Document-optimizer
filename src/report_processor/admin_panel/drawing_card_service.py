@@ -150,6 +150,11 @@ class DrawingCardJob:
     review_generation: str | None = None
     opened_cluster_ids: tuple[str, ...] = ()
     review_metrics: dict[str, int] = field(default_factory=dict)
+    review_lock: threading.RLock = field(
+        default_factory=threading.RLock,
+        repr=False,
+        compare=False,
+    )
     cancel_event: threading.Event = field(
         default_factory=threading.Event, repr=False, compare=False
     )
@@ -491,47 +496,50 @@ class DrawingCardService:
             not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1
         ):
             raise ValueError("invalid confidence")
-        clusters = self._current_clusters(job)
-        clusters = tuple(
-            cluster
-            for cluster in clusters
-            if (reason is None or cluster.reason_code == reason)
-            and (category is None or (cluster.category and cluster.category.value == category))
-            and (confidence is None or cluster.confidence >= float(confidence))
-            and (not only_unresolved or not self._cluster_resolved(job, cluster))
-            and (
-                safe_filename is None
-                or any(
-                    safe_filename.casefold()
-                    in _safe_basename(job.review_rows[member_id].location.filename).casefold()
-                    for member_id in cluster.member_ids
-                    if member_id in job.review_rows
+        with job.review_lock:
+            clusters = self._current_clusters(job)
+            clusters = tuple(
+                cluster
+                for cluster in clusters
+                if (reason is None or cluster.reason_code == reason)
+                and (category is None or (cluster.category and cluster.category.value == category))
+                and (confidence is None or cluster.confidence >= float(confidence))
+                and (not only_unresolved or not self._cluster_resolved(job, cluster))
+                and (
+                    safe_filename is None
+                    or any(
+                        safe_filename.casefold()
+                        in _safe_basename(job.review_rows[member_id].location.filename).casefold()
+                        for member_id in cluster.member_ids
+                        if member_id in job.review_rows
+                    )
                 )
             )
-        )
-        start = (page - 1) * page_size
-        visible = clusters[start : start + page_size]
-        items = [self._cluster_payload(job, cluster) for cluster in visible]
-        unresolved = [cluster for cluster in clusters if not self._cluster_resolved(job, cluster)]
-        opened = tuple(
-            sorted(set(job.opened_cluster_ids).union(cluster.cluster_id for cluster in visible))
-        )
-        if opened != job.opened_cluster_ids:
-            job.opened_cluster_ids = opened
-            self._set_review_metric(job, "opened_cards", len(opened))
-            self._persist_job(job)
-        return {
-            "items": items,
-            "page": page,
-            "page_size": page_size,
-            "total_clusters": len(clusters),
-            "total_rows": sum(len(cluster.member_ids) for cluster in clusters),
-            "unresolved_clusters": len(unresolved),
-            "unresolved_rows": sum(len(cluster.member_ids) for cluster in unresolved),
-            "can_apply": bool(clusters) and set(job.review_items) <= set(job.inline_approvals),
-            "review_categories": _review_categories(job.category_units),
-            "review_metrics": dict(job.review_metrics),
-        }
+            start = (page - 1) * page_size
+            visible = clusters[start : start + page_size]
+            items = [self._cluster_payload(job, cluster) for cluster in visible]
+            unresolved = [
+                cluster for cluster in clusters if not self._cluster_resolved(job, cluster)
+            ]
+            opened = tuple(
+                sorted(set(job.opened_cluster_ids).union(cluster.cluster_id for cluster in visible))
+            )
+            if opened != job.opened_cluster_ids:
+                job.opened_cluster_ids = opened
+                self._set_review_metric(job, "opened_cards", len(opened))
+                self._persist_job(job)
+            return {
+                "items": items,
+                "page": page,
+                "page_size": page_size,
+                "total_clusters": len(clusters),
+                "total_rows": sum(len(cluster.member_ids) for cluster in clusters),
+                "unresolved_clusters": len(unresolved),
+                "unresolved_rows": sum(len(cluster.member_ids) for cluster in unresolved),
+                "can_apply": bool(clusters) and set(job.review_items) <= set(job.inline_approvals),
+                "review_categories": _review_categories(job.category_units),
+                "review_metrics": dict(job.review_metrics),
+            }
 
     def get_review_context(
         self, *, job_id: str, review_id: str, radius: int = 2
@@ -572,34 +580,38 @@ class DrawingCardService:
     ) -> DrawingCardJob:
         """Atomically fan out one choice only to the exact current cluster."""
         job = self.get_job(job_id)
-        cluster = self._require_current_cluster(job, cluster_id, version)
-        if job.status != "review_required":
-            raise ValueError("job does not await inline review")
-        approvals = cluster_approvals(cluster, action, category)
-        # ``cluster_approvals`` validates every member before this one mutation.
-        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
-        job.inline_approvals.update(approvals)
-        job.cluster_actions[cluster.cluster_id] = approvals
-        self._persist_review_mutation(job, before_approvals, before_actions)
-        return job
+        with job.review_lock:
+            cluster = self._require_current_cluster(job, cluster_id, version)
+            if job.status != "review_required":
+                raise ValueError("job does not await inline review")
+            approvals = cluster_approvals(cluster, action, category)
+            # ``cluster_approvals`` validates every member before this one mutation.
+            before_approvals = dict(job.inline_approvals)
+            before_actions = dict(job.cluster_actions)
+            job.inline_approvals.update(approvals)
+            job.cluster_actions[cluster.cluster_id] = approvals
+            self._persist_review_mutation(job, before_approvals, before_actions)
+            return job
 
     def undo_review_cluster(self, *, job_id: str, cluster_id: str, version: str) -> DrawingCardJob:
         """Undo only the still-current fanout; row edits make this safely stale."""
         job = self.get_job(job_id)
-        cluster = self._require_current_cluster(job, cluster_id, version)
-        applied = job.cluster_actions.get(cluster.cluster_id)
-        if applied is None or tuple(applied) != cluster.member_ids:
-            raise ValueError("stale cluster identity")
-        if any(
-            job.inline_approvals.get(row_id) != approval for row_id, approval in applied.items()
-        ):
-            raise ValueError("stale cluster identity")
-        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
-        for row_id in applied:
-            job.inline_approvals.pop(row_id, None)
-        job.cluster_actions.pop(cluster.cluster_id, None)
-        self._persist_review_mutation(job, before_approvals, before_actions)
-        return job
+        with job.review_lock:
+            cluster = self._require_current_cluster(job, cluster_id, version)
+            applied = job.cluster_actions.get(cluster.cluster_id)
+            if applied is None or tuple(applied) != cluster.member_ids:
+                raise ValueError("stale cluster identity")
+            if any(
+                job.inline_approvals.get(row_id) != approval for row_id, approval in applied.items()
+            ):
+                raise ValueError("stale cluster identity")
+            before_approvals = dict(job.inline_approvals)
+            before_actions = dict(job.cluster_actions)
+            for row_id in applied:
+                job.inline_approvals.pop(row_id, None)
+            job.cluster_actions.pop(cluster.cluster_id, None)
+            self._persist_review_mutation(job, before_approvals, before_actions)
+            return job
 
     def put_review_item(
         self,
@@ -612,50 +624,37 @@ class DrawingCardService:
     ) -> DrawingCardJob:
         """Create or replace one decision; replacement makes a choice reversible."""
         job = self.get_job(job_id)
-        if job.status != "review_required" or review_id not in job.review_items:
-            raise ValueError("unknown review item")
-        if version is not None and version != self._membership_version(job, review_id):
-            raise ValueError("stale membership version")
-        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
-        job.inline_approvals[review_id] = review_approval(review_id, action, category)
-        self._discard_cluster_actions_for(job, review_id)
-        self._persist_review_mutation(job, before_approvals, before_actions)
-        return job
+        with job.review_lock:
+            if job.status != "review_required" or review_id not in job.review_items:
+                raise ValueError("unknown review item")
+            if version is not None and version != self._membership_version(job, review_id):
+                raise ValueError("stale membership version")
+            before_approvals = dict(job.inline_approvals)
+            before_actions = dict(job.cluster_actions)
+            job.inline_approvals[review_id] = review_approval(review_id, action, category)
+            self._discard_cluster_actions_for(job, review_id)
+            self._persist_review_mutation(job, before_approvals, before_actions)
+            return job
 
     def delete_review_item(self, *, job_id: str, review_id: str) -> DrawingCardJob:
         job = self.get_job(job_id)
-        if review_id not in job.review_items:
-            raise ValueError("unknown review item")
-        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
-        job.inline_approvals.pop(review_id, None)
-        self._discard_cluster_actions_for(job, review_id)
-        self._persist_review_mutation(job, before_approvals, before_actions)
-        return job
-
-    def bulk_review(self, *, job_id: str, action: str) -> DrawingCardJob:
-        """Apply a reversible bulk decision only where a category was proposed."""
-        if action not in {"approve_all_proposed", "reject_all"}:
-            raise ValueError("unsupported bulk review action")
-        job = self.get_job(job_id)
-        if job.status != "review_required":
-            raise ValueError("job does not await inline review")
-        before_approvals, before_actions = dict(job.inline_approvals), dict(job.cluster_actions)
-        for review_id, item in job.review_items.items():
-            proposed = item.get("предлагаемая_категория")
-            if action == "approve_all_proposed" and proposed:
-                job.inline_approvals[review_id] = review_approval(
-                    review_id, "approve", str(proposed)
-                )
-                self._discard_cluster_actions_for(job, review_id)
-            elif action == "reject_all":
-                job.inline_approvals[review_id] = review_approval(review_id, "reject", None)
-                self._discard_cluster_actions_for(job, review_id)
-        self._persist_review_mutation(job, before_approvals, before_actions)
-        return job
+        with job.review_lock:
+            if review_id not in job.review_items:
+                raise ValueError("unknown review item")
+            before_approvals = dict(job.inline_approvals)
+            before_actions = dict(job.cluster_actions)
+            job.inline_approvals.pop(review_id, None)
+            self._discard_cluster_actions_for(job, review_id)
+            self._persist_review_mutation(job, before_approvals, before_actions)
+            return job
 
     def apply_inline_review(self, *, job_id: str) -> DrawingCardJob:
-        """Rerun only after every review row has an explicit decision."""
         job = self.get_job(job_id)
+        with job.review_lock:
+            return self._apply_inline_review_locked(job)
+
+    def _apply_inline_review_locked(self, job: DrawingCardJob) -> DrawingCardJob:
+        """Persist one complete page, then run it exactly once for this job."""
         if job.status != "review_required" or set(job.review_items) != set(job.inline_approvals):
             raise ValueError("unresolved review items remain")
         initial_review_rows = dict(job.review_rows)

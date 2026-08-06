@@ -209,3 +209,15 @@ def test_member_version_is_optional_and_stale_version_is_rejected(client) -> Non
         test_client.put(endpoint, json={"action": "exclude", "version": "stale"}).status_code == 400
     )
     assert service.member_versions == [None, "row-v1", "stale"]
+
+
+def test_global_cross_packet_bulk_review_route_is_not_exposed(client) -> None:
+    test_client, _service = client
+    job_id = _job_id(test_client)
+
+    response = test_client.post(
+        f"/api/drawing-card/jobs/{job_id}/review/bulk",
+        json={"action": "approve_all_proposed"},
+    )
+
+    assert response.status_code == 404
