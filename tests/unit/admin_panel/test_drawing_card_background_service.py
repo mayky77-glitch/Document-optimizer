@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from report_processor.admin_panel.drawing_card_service import DrawingCardJob, DrawingCardService
+import report_processor.admin_panel.drawing_card_service as drawing_card_service
+from report_processor.admin_panel.drawing_card_service import (
+    DrawingCardJob,
+    DrawingCardPersistenceError,
+    DrawingCardService,
+)
 from report_processor.drawing_card.models import WorkflowResult
 from report_processor.drawing_card.review.inline import review_approval
 from report_processor.drawing_card.statuses import Status
@@ -102,6 +107,39 @@ def test_cancelled_background_job_removes_current_partial_output(tmp_path: Path)
     cancelled = _wait_for(service, job.job_id, "cancelled")
     assert cancelled.terminal_cause == "cancelled"
     assert not (cancelled.directory / "attempts" / "0001" / "drawing-card.xlsx").exists()
+
+
+def test_cancellation_after_runner_return_never_publishes_result_or_review(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def runner(request):
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        (run_dir / "manual_review.xlsx").write_bytes(b"PK\x03\x04review")
+        started.set()
+        release.wait(2)
+        return WorkflowResult(
+            run_id="done",
+            status=Status.OK,
+            work_dir=run_dir,
+            output_path=request.output,
+            manual_review_count=1,
+        )
+
+    service = DrawingCardService(tmp_path / "private", runner=runner, background=True)
+    job = service.create_job(sources=[("source.xlsx", _fixture())])
+    assert started.wait(1)
+    service.cancel_job(job.job_id)
+    release.set()
+
+    cancelled = _wait_for(service, job.job_id, "cancelled")
+    assert cancelled.result is None
+    assert cancelled.review is None
+    assert not list((cancelled.directory / "attempts" / "0001").rglob("drawing-card.xlsx"))
+    assert not list((cancelled.directory / "attempts" / "0001").rglob("manual_review.xlsx"))
 
 
 def test_restart_restores_accepted_inline_decisions_without_row_values(tmp_path: Path) -> None:
@@ -261,6 +299,78 @@ def test_retry_uses_a_new_isolated_attempt_directory(tmp_path: Path) -> None:
     assert retried.status == "ready"
     assert [path.name for path in attempts] == ["0001", "0002"]
     assert all(path.is_dir() for path in attempts)
+
+
+def test_retry_rolls_back_every_state_field_when_manifest_persistence_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = DrawingCardService(tmp_path / "private")
+    directory = service.workspace_root / "retry-atomic"
+    directory.mkdir()
+    job = DrawingCardJob(
+        job_id="retry-atomic",
+        directory=directory,
+        sources=(),
+        source_hashes=(),
+        mode="create",
+        period=None,
+        existing_card=None,
+        status="failed",
+        result=directory / "old-result.xlsx",
+        result_hash="a" * 64,
+        errors=("PROCESSING_FAILED",),
+        summary={"card_rows": 4},
+        warnings=["WARNING"],
+        blocker_counts={"BLOCKED": 1},
+        terminal_cause="processing_failed",
+    )
+    service._jobs[job.job_id] = job
+    before = service._retry_snapshot(job)
+    monkeypatch.setattr(
+        service._store, "save", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())
+    )
+
+    with pytest.raises(DrawingCardPersistenceError):
+        service.retry_job(job.job_id)
+
+    assert service._retry_snapshot(job) == before
+
+
+def test_bounded_terminal_retention_is_durable_and_keeps_active_review_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = DrawingCardService(tmp_path / "private")
+    monkeypatch.setattr(drawing_card_service, "MAX_RETAINED_TERMINAL_JOBS", 1)
+
+    def job(job_id: str, status: str, updated_at: str, key: str | None = None) -> DrawingCardJob:
+        directory = service.workspace_root / job_id
+        directory.mkdir()
+        return DrawingCardJob(
+            job_id=job_id,
+            directory=directory,
+            sources=(),
+            source_hashes=(),
+            mode="create",
+            period=None,
+            existing_card=None,
+            status=status,
+            updated_at=updated_at,
+            idempotency_key=key,
+        )
+
+    old = job("old-terminal", "ready", "2026-08-06T00:00:00Z", "old-request-key-0001")
+    cancelled = job("cancelled-terminal", "cancelled", "2026-08-06T00:01:00Z")
+    review = job("active-review", "review_required", "2026-08-06T00:02:00Z")
+    service._jobs = {item.job_id: item for item in (old, cancelled, review)}
+    service._idempotency[old.idempotency_key or ""] = old.job_id
+    for item in service._jobs.values():
+        service._persist_job(item)
+
+    service._prune_terminal_jobs()
+
+    assert set(service._jobs) == {"cancelled-terminal", "active-review"}
+    assert service._store.load("old-terminal") is None
+    assert "old-request-key-0001" not in service._idempotency
 
 
 @pytest.mark.parametrize(("terminal", "expected"), [("BLOCKED", "blocked"), (Status.OK, "ok")])

@@ -73,9 +73,11 @@ class DrawingCardJob:
     mode: Literal["create", "update"]
     period: str | None
     existing_card: Path | None
+    existing_card_hash: str | None = None
     existing_name: str | None = None
     status: str = "processing"
     result: Path | None = None
+    result_hash: str | None = None
     review: Path | None = None
     errors: tuple[str, ...] = ()
     summary: dict[str, int] = field(default_factory=dict)
@@ -256,6 +258,9 @@ class DrawingCardService:
                 mode=mode,
                 period=clean_period,
                 existing_card=existing,
+                existing_card_hash=(
+                    _digest(existing_content) if existing_content is not None else None
+                ),
                 existing_name=existing_name,
                 rag_mode=rag_mode,
                 status="queued" if use_background else "processing",
@@ -301,15 +306,19 @@ class DrawingCardService:
         return discover_workbook_periods(sources, temporary_root=self.workspace_root)
 
     def _prune_terminal_jobs(self) -> None:
-        terminal = [
-            job_id
-            for job_id, job in self._jobs.items()
-            if job.status in {"ready", "failed", "blocked"}
-        ]
-        active_count = len(self._jobs) - len(terminal)
-        terminal_limit = max(0, MAX_RETAINED_TERMINAL_JOBS - active_count)
-        for job_id in terminal[:-terminal_limit] if terminal_limit else terminal:
-            self._jobs.pop(job_id, None)
+        terminal = sorted(
+            (
+                job
+                for job in self._jobs.values()
+                if job.status in {"ready", "failed", "blocked", "cancelled"}
+            ),
+            key=lambda job: (job.updated_at, job.job_id),
+        )
+        for job in terminal[:-MAX_RETAINED_TERMINAL_JOBS]:
+            self._jobs.pop(job.job_id, None)
+            if self._idempotency.get(job.idempotency_key) == job.job_id:
+                self._idempotency.pop(job.idempotency_key, None)
+            self._store.delete(job.job_id)
 
     def get_result(self, job_id: str) -> tuple[Path, str]:
         job = self.get_job(job_id)
@@ -557,10 +566,12 @@ class DrawingCardService:
         job = self.get_job(job_id)
         if job.status not in {"cancelled", "failed", "blocked"}:
             raise ValueError("job cannot be retried")
+        before = self._retry_snapshot(job)
         job.cancel_event = threading.Event()
         use_background = self.background if background is None else background
         job.status = "queued" if use_background else "processing"
         job.result = None
+        job.result_hash = None
         job.review = None
         job.errors = ()
         job.summary = {}
@@ -577,7 +588,11 @@ class DrawingCardService:
         job.terminal_cause = None
         job.updated_at = _utc_now()
         decisions_path = self._retry_decisions_path(job)
-        self._persist_job(job)
+        try:
+            self._persist_job(job)
+        except DrawingCardPersistenceError:
+            self._restore_retry_snapshot(job, before)
+            raise
         if use_background:
             self._schedule(job, review_decisions=decisions_path)
             return job
@@ -590,10 +605,10 @@ class DrawingCardService:
         review_decisions: Path | None = None,
         strict: bool = True,
     ) -> DrawingCardJob:
-        if not _sources_unchanged(job):
+        if not _inputs_unchanged(job):
             job.status = "failed"
-            job.errors = ("SOURCE_HASH_CHANGED",)
-            job.terminal_cause = "source_hash_changed"
+            job.errors = (_input_integrity_error(job),)
+            job.terminal_cause = _normalize_terminal_cause(job.errors[0])
             job.updated_at = _utc_now()
             self._persist_job(job)
             return job
@@ -602,6 +617,7 @@ class DrawingCardService:
         job.status = "processing"
         job.errors = ()
         job.result = None
+        job.result_hash = None
         job.run_count += 1
         job.attempt += 1
         attempt_directory = self._attempt_directory(job, job.attempt)
@@ -659,6 +675,8 @@ class DrawingCardService:
             job.updated_at = _utc_now()
             self._persist_job(job)
             return job
+        if job.cancel_event.is_set():
+            return self._finish_cancelled(job)
         if not _inside_job(result.work_dir, job):
             job.status = "failed"
             job.errors = ("UNSAFE_WORKSPACE",)
@@ -698,11 +716,11 @@ class DrawingCardService:
         job.review_decisions = {decision.row_id: decision for decision in result.decisions}
         job.funnel["manual_review_groups"] = len(self._current_clusters(job))
         job.cluster_actions.clear()
-        if not _sources_unchanged(job):
+        if not _inputs_unchanged(job):
             job.status = "failed"
-            job.errors = ("SOURCE_HASH_CHANGED",)
+            job.errors = (_input_integrity_error(job),)
             output.unlink(missing_ok=True)
-            job.terminal_cause = "source_hash_changed"
+            job.terminal_cause = _normalize_terminal_cause(job.errors[0])
             job.updated_at = _utc_now()
             self._persist_job(job)
             return job
@@ -726,8 +744,16 @@ class DrawingCardService:
                 job.updated_at = _utc_now()
                 self._persist_job(job)
                 return job
+            if not _is_canonical_attempt_result(result.output_path, job):
+                job.status = "failed"
+                job.errors = ("UNSAFE_OUTPUT",)
+                job.terminal_cause = "unsafe_output"
+                job.updated_at = _utc_now()
+                self._persist_job(job)
+                return job
             os.chmod(result.output_path, 0o600)
             job.result = result.output_path
+            job.result_hash = _digest(result.output_path.read_bytes())
             job.review = None
             job.status = "ready"
         elif result.status == "BLOCKED":
@@ -796,12 +822,44 @@ class DrawingCardService:
         write_approvals(path, job.inline_approvals)
         return path
 
+    @staticmethod
+    def _retry_snapshot(job: DrawingCardJob) -> dict[str, object]:
+        """Capture every retry-mutated field before its durable state transition."""
+        return {
+            "cancel_event": job.cancel_event,
+            "status": job.status,
+            "result": job.result,
+            "result_hash": job.result_hash,
+            "review": job.review,
+            "errors": job.errors,
+            "summary": job.summary,
+            "warnings": job.warnings,
+            "warning_counts": job.warning_counts,
+            "blockers": job.blockers,
+            "blocker_counts": job.blocker_counts,
+            "funnel": job.funnel,
+            "schema_recognition": job.schema_recognition,
+            "exclusion_audit": job.exclusion_audit,
+            "review_items": job.review_items,
+            "review_rows": job.review_rows,
+            "review_decisions": job.review_decisions,
+            "terminal_cause": job.terminal_cause,
+            "updated_at": job.updated_at,
+        }
+
+    @staticmethod
+    def _restore_retry_snapshot(job: DrawingCardJob, snapshot: dict[str, object]) -> None:
+        for field_name, value in snapshot.items():
+            setattr(job, field_name, value)
+
     def _finish_cancelled(self, job: DrawingCardJob) -> DrawingCardJob:
         attempt = self._attempt_directory(job, job.attempt) if job.attempt else None
         if attempt is not None:
-            for filename in (_RESULT_NAME, _REVIEW_NAME):
-                (attempt / filename).unlink(missing_ok=True)
+            for path in attempt.rglob("*"):
+                if path.is_file() and path.name in {_RESULT_NAME, _REVIEW_NAME}:
+                    path.unlink(missing_ok=True)
         job.result = None
+        job.result_hash = None
         job.review = None
         job.status = "cancelled"
         job.errors = ("CANCELLED",)
@@ -845,9 +903,11 @@ class DrawingCardService:
             "source_paths": [relative(path) for path in job.sources],
             "source_hashes": list(job.source_hashes),
             "existing_card_path": relative(job.existing_card),
+            "existing_card_hash": job.existing_card_hash,
             "existing_name": job.existing_name,
             "status": job.status,
             "result_path": relative(job.result),
+            "result_hash": job.result_hash,
             "review_path": relative(job.review),
             "exclusion_audit_path": relative(job.exclusion_audit),
             "attempt": job.attempt,
@@ -886,6 +946,7 @@ class DrawingCardService:
             # A hostile or stale duplicate manifest must not resurrect a second
             # active worker for the same client request.
             if job.idempotency_key and job.idempotency_key in self._idempotency:
+                self._store.delete(job_id)
                 continue
             self._jobs[job_id] = job
             if job.idempotency_key:
@@ -895,6 +956,7 @@ class DrawingCardService:
                 self._schedule(job)
             elif self.background and job.status == "review_required":
                 self._schedule_review_recovery(job)
+        self._prune_terminal_jobs()
 
     def _job_from_manifest(self, job_id: str, manifest: dict[str, object]) -> DrawingCardJob:
         directory = self.workspace_root / job_id
@@ -918,6 +980,7 @@ class DrawingCardService:
             mode=_manifest_mode(manifest.get("mode")),
             period=_validate_period(manifest.get("period")),
             existing_card=_optional_restored_path(directory, manifest.get("existing_card_path")),
+            existing_card_hash=_optional_digest(manifest.get("existing_card_hash")),
             existing_name=_safe_existing_name(manifest.get("existing_name")),
             status=_manifest_status(manifest.get("status")),
             rag_mode=_manifest_rag_mode(manifest.get("rag_mode")),
@@ -941,6 +1004,7 @@ class DrawingCardService:
             funnel=_safe_funnel(manifest.get("funnel")),
         )
         job.result = _optional_restored_path(directory, manifest.get("result_path"))
+        job.result_hash = _optional_digest(manifest.get("result_hash"))
         if job.result is not None and (not job.result.is_file() or job.result.is_symlink()):
             raise ValueError("unsafe result path")
         job.review = _optional_restored_path(directory, manifest.get("review_path"))
@@ -957,13 +1021,28 @@ class DrawingCardService:
             not job.existing_card.is_file() or job.existing_card.is_symlink()
         ):
             raise ValueError("unsafe existing card")
-        if job.status == "ready" and job.result is None:
-            raise ValueError("ready job has no result")
+        if job.mode == "update" and (
+            job.existing_card is None
+            or job.existing_card_hash is None
+            or not _existing_card_unchanged(job)
+        ):
+            raise ValueError("existing card hash changed")
+        if job.mode == "create" and (
+            job.existing_card is not None or job.existing_card_hash is not None
+        ):
+            raise ValueError("create job has an existing card")
+        if job.status == "ready" and (
+            job.result is None
+            or job.result_hash is None
+            or not _is_canonical_attempt_result(job.result, job)
+            or _digest(job.result.read_bytes()) != job.result_hash
+        ):
+            raise ValueError("ready job has an unsafe result")
         for review_id, raw in _safe_approval_map(manifest.get("inline_approvals")).items():
             job.inline_approvals[review_id] = review_approval(
                 review_id, raw["action"], raw["category"]
             )
-        if not _sources_unchanged(job):
+        if not _inputs_unchanged(job):
             raise ValueError("source hash changed")
         return job
 
@@ -1065,6 +1144,14 @@ def _write_private(path: Path, content: bytes) -> Path:
 
 def _digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def _optional_digest(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value):
+        raise ValueError("invalid persisted digest")
+    return value
 
 
 def _utc_now() -> str:
@@ -1262,6 +1349,42 @@ def _same_idempotent_request(
 def _sources_unchanged(job: DrawingCardJob) -> bool:
     try:
         return tuple(_digest(path.read_bytes()) for path in job.sources) == job.source_hashes
+    except OSError:
+        return False
+
+
+def _existing_card_unchanged(job: DrawingCardJob) -> bool:
+    if job.mode == "create":
+        return job.existing_card is None and job.existing_card_hash is None
+    try:
+        return (
+            job.existing_card is not None
+            and job.existing_card_hash is not None
+            and _digest(job.existing_card.read_bytes()) == job.existing_card_hash
+        )
+    except OSError:
+        return False
+
+
+def _inputs_unchanged(job: DrawingCardJob) -> bool:
+    return _sources_unchanged(job) and _existing_card_unchanged(job)
+
+
+def _input_integrity_error(job: DrawingCardJob) -> str:
+    return (
+        "EXISTING_CARD_HASH_CHANGED" if not _existing_card_unchanged(job) else "SOURCE_HASH_CHANGED"
+    )
+
+
+def _is_canonical_attempt_result(path: Path, job: DrawingCardJob) -> bool:
+    expected = job.directory / "attempts" / f"{job.attempt:04d}" / _RESULT_NAME
+    try:
+        return (
+            path == expected
+            and path.is_file()
+            and not path.is_symlink()
+            and path.resolve() == expected.resolve()
+        )
     except OSError:
         return False
 

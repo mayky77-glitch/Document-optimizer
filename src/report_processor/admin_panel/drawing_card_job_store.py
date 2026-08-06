@@ -22,7 +22,6 @@ MAX_MANIFEST_BYTES = 1_048_576
 MAX_JOB_ID_LENGTH = 96
 MAX_MANIFEST_DEPTH = 16
 MAX_MANIFEST_ITEMS = 10_000
-MAX_LOADED_JOBS = 256
 
 _JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}\Z")
 _WINDOWS_ABSOLUTE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)")
@@ -77,8 +76,6 @@ class DrawingCardJobStore:
         except OSError:
             return result
         for child in children:
-            if len(result) >= MAX_LOADED_JOBS:
-                break
             if child.is_symlink() or not child.is_dir():
                 continue
             try:
