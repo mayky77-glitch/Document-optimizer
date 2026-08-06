@@ -869,6 +869,9 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             )
             validation = validate_card(request.output, layouts)
             atomic_write_json(run_dir / "output_validation.json", validation)
+            # Validation can be the longest non-interruptible stage.  Check again
+            # before recording any publishable status or ready lifecycle event.
+            _check_cancelled(request, request.output)
             if validation["status"] != Status.OK:
                 result.status = Status.OUTPUT_VALIDATION_FAILED
             else:
