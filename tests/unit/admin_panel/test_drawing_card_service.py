@@ -759,6 +759,100 @@ def test_manual_review_blocker_count_uses_review_row_count(tmp_path: Path) -> No
     ]
 
 
+def test_restart_restores_bounded_schema_and_funnel_audit(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request) -> WorkflowResult:
+        run_dir = request.work_dir / "blocked"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult(
+            run_id="blocked",
+            status=Status.BLOCKED,
+            work_dir=run_dir,
+            funnel={
+                "extracted_rows": 3,
+                "terminal_dispositions": 3,
+                "disposition_counts": {"MATCHED": 2, "UNCLASSIFIED": 1},
+                "strict_blockers": ["FUNNEL_CONSERVATION_FAILED"],
+            },
+            schema_recognition=[
+                {
+                    "file_id": "01-source",
+                    "filename": "source.xlsx",
+                    "sheet_name": "Лист1",
+                    "recognition": "uncertain",
+                    "confidence": 0.75,
+                    "reason_codes": ["AMBIGUOUS_SCHEMA"],
+                }
+            ],
+        )
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+
+    restored = DrawingCardService(workspace, runner=runner).get_job(job.job_id)
+
+    assert restored.schema_recognition == (
+        {
+            "file_id": "01-source",
+            "filename": "source.xlsx",
+            "sheet_name": "Лист1",
+            "recognition": "uncertain",
+            "confidence": 0.75,
+            "reason_codes": ["AMBIGUOUS_SCHEMA"],
+        },
+    )
+    assert restored.funnel == {
+        "extracted_rows": 3,
+        "terminal_dispositions": 3,
+        "manual_review_groups": 0,
+        "disposition_counts": {"MATCHED": 2, "UNCLASSIFIED": 1},
+        "strict_blockers": ["FUNNEL_CONSERVATION_FAILED"],
+    }
+
+
+def test_restart_prunes_unbounded_or_nested_audit_manifest_content(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    manifest = service._manifest_for(job)
+    schema = {
+        "file_id": "01-source",
+        "filename": "source.xlsx",
+        "sheet_name": "Лист1",
+        "recognition": "recognized",
+        "confidence": 1.0,
+        "reason_codes": ["SCHEMA_OK"] * 40,
+        "raw_rows": [["workbook value"]],
+    }
+    manifest["schema_recognition"] = [schema] * 300
+    manifest["funnel"] = {
+        "extracted_rows": 4,
+        "disposition_counts": {"MATCHED": 3, "UNCLASSIFIED": 1, "TOO_LARGE": 10_000_001},
+        "strict_blockers": ["FUNNEL_CONSERVATION_FAILED"] * 60,
+        "raw_rows": [["workbook value"]],
+    }
+    service._store.save(job.job_id, manifest)
+
+    restored = DrawingCardService(service.workspace_root).get_job(job.job_id)
+
+    assert len(restored.schema_recognition) == 256
+    assert restored.schema_recognition[0] == {
+        "file_id": "01-source",
+        "filename": "source.xlsx",
+        "sheet_name": "Лист1",
+        "recognition": "recognized",
+        "confidence": 1.0,
+        "reason_codes": ["SCHEMA_OK"] * 20,
+    }
+    assert restored.funnel == {
+        "extracted_rows": 4,
+        "disposition_counts": {"MATCHED": 3, "UNCLASSIFIED": 1},
+        "strict_blockers": ["FUNNEL_CONSERVATION_FAILED"] * 50,
+    }
+
+
 @pytest.mark.parametrize("terminal_cause", ("NO_CARD_ROWS", "OUTPUT_BASE_MISSING"))
 def test_terminal_workflow_cause_is_exposed_as_a_blocking_reason(
     tmp_path: Path, terminal_cause: str

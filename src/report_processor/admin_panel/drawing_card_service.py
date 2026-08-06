@@ -84,6 +84,29 @@ _RUSSIAN_NOMINATIVE_MONTHS = (
 _MACHINE_CONSENSUS_NAME = "machine-consensus.jsonl"
 _FEEDBACK_STORE_NAME = "review-feedback-v2.jsonl"
 _FEEDBACK_MODEL_VERSION = "DrawingCardMatcher-1.0"
+_MAX_SCHEMA_RECOGNITION_ENTRIES = 256
+_MAX_SCHEMA_REASON_CODES = 20
+_FUNNEL_COUNT_KEYS = frozenset(
+    {
+        "source_files",
+        "source_sheets",
+        "skipped_empty_rows",
+        "skipped_header_rows",
+        "extracted_rows",
+        "terminal_dispositions",
+        "unclassified_count",
+        "excluded_count",
+        "automatically_accepted_rows",
+        "manual_review_rows",
+        "manual_review_groups",
+        "review_candidates_before_replay",
+        "exact_feedback_hits",
+        "queued_review_rows",
+        "output_rows",
+    }
+)
+_FUNNEL_DISPOSITIONS_KEY = "disposition_counts"
+_FUNNEL_STRICT_BLOCKERS_KEY = "strict_blockers"
 _PUBLISHABLE_WORKFLOW_STATUSES = {
     Status.OK,
     Status.COMPLETED_WITH_WARNINGS,
@@ -1177,6 +1200,7 @@ class DrawingCardService:
             "blockers": list(job.blockers),
             "blocker_counts": {key: int(value) for key, value in job.blocker_counts.items()},
             "funnel": _safe_funnel(job.funnel),
+            "schema_recognition": _safe_schema_recognition(job.schema_recognition),
             "inline_approvals": {
                 review_id: {
                     "action": approval.action,
@@ -1289,6 +1313,7 @@ class DrawingCardService:
             blockers=_safe_codes(manifest.get("blockers")),
             blocker_counts=_safe_int_map(manifest.get("blocker_counts")),
             funnel=_safe_funnel(manifest.get("funnel")),
+            schema_recognition=_safe_schema_recognition(manifest.get("schema_recognition")),
             feedback_tenant_id=_manifest_text(manifest.get("feedback_tenant_id"), "local"),
             feedback_project_id=_manifest_text(manifest.get("feedback_project_id"), ""),
             feedback_model_version=_manifest_text(
@@ -1781,17 +1806,87 @@ def _safe_existing_name(value: object) -> str | None:
 
 
 def _safe_funnel(value: object) -> dict[str, object]:
+    """Keep only the bounded aggregate audit shown by the simple log UI."""
     if not isinstance(value, dict):
         return {}
-    # Funnel is operational metadata only.  Keep string keys and scalar counts;
-    # no row payload, path or workbook value can survive a restart snapshot.
-    return {
-        key: item
-        for key, item in value.items()
-        if isinstance(key, str)
-        and len(key) <= 96
-        and isinstance(item, (str, int, float, bool, type(None)))
+    result: dict[str, object] = {
+        key: count
+        for key, raw in value.items()
+        if key in _FUNNEL_COUNT_KEYS
+        and isinstance(raw, int)
+        and not isinstance(raw, bool)
+        and 0 <= (count := raw) <= 10_000_000
     }
+    exclusion_share = value.get("exclusion_share")
+    if (
+        isinstance(exclusion_share, (int, float))
+        and not isinstance(exclusion_share, bool)
+        and exclusion_share == exclusion_share
+        and 0 <= exclusion_share <= 1
+    ):
+        result["exclusion_share"] = exclusion_share
+    raw_disposition_counts = value.get(_FUNNEL_DISPOSITIONS_KEY)
+    disposition_counts = (
+        _safe_int_map(raw_disposition_counts) if isinstance(raw_disposition_counts, dict) else {}
+    )
+    if disposition_counts:
+        result[_FUNNEL_DISPOSITIONS_KEY] = dict(sorted(disposition_counts.items()))
+    raw_strict_blockers = value.get(_FUNNEL_STRICT_BLOCKERS_KEY)
+    strict_blockers = (
+        _safe_codes(raw_strict_blockers) if isinstance(raw_strict_blockers, list) else []
+    )
+    if strict_blockers:
+        result[_FUNNEL_STRICT_BLOCKERS_KEY] = strict_blockers
+    return result
+
+
+def _safe_schema_recognition(value: object) -> tuple[dict[str, object], ...]:
+    """Restore only the path-free source context needed by the simple log list."""
+    if not isinstance(value, (list, tuple)):
+        return ()
+    entries: list[dict[str, object]] = []
+    for raw in value[:_MAX_SCHEMA_RECOGNITION_ENTRIES]:
+        if not isinstance(raw, dict):
+            continue
+        file_id = raw.get("file_id")
+        filename = raw.get("filename")
+        sheet_name = raw.get("sheet_name")
+        recognition = raw.get("recognition")
+        confidence = raw.get("confidence")
+        if (
+            not isinstance(file_id, str)
+            or not file_id
+            or len(file_id) > 128
+            or "/" in file_id
+            or "\\" in file_id
+            or not isinstance(filename, str)
+            or not filename
+            or len(filename) > 255
+            or Path(filename).name != filename
+            or "\x00" in filename
+            or not isinstance(sheet_name, str)
+            or not sheet_name
+            or len(sheet_name) > 255
+            or "\x00" in sheet_name
+            or recognition not in {"recognized", "uncertain", "unsupported"}
+            or not isinstance(confidence, (int, float))
+            or isinstance(confidence, bool)
+            or confidence != confidence
+            or not 0 <= confidence <= 1
+        ):
+            continue
+        reason_codes = _safe_codes(raw.get("reason_codes"))[:_MAX_SCHEMA_REASON_CODES]
+        entries.append(
+            {
+                "file_id": file_id,
+                "filename": filename,
+                "sheet_name": sheet_name,
+                "recognition": recognition,
+                "confidence": confidence,
+                "reason_codes": reason_codes,
+            }
+        )
+    return tuple(entries)
 
 
 def _safe_approval_map(value: object) -> dict[str, dict[str, str | None]]:
