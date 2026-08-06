@@ -13,6 +13,7 @@ from report_processor.drawing_card.models import ManifestEntry
 from report_processor.drawing_card.sources import detect_sheet_schema, extract_rows
 from report_processor.drawing_card.sources.openxml_safety import validate_openxml_bytes
 from report_processor.drawing_card.sources.readers import OpenXmlWorkbookReader
+from report_processor.drawing_card.sources.schema import select_usable_schemas
 
 
 class RowsReader:
@@ -258,7 +259,7 @@ def test_tied_and_conflicting_semantic_roles_fail_closed() -> None:
     assert any(item.startswith("CONFLICTING_PHYSICAL_ROLES") for item in conflict_schema.warnings)
 
 
-def test_content_only_position_evidence_remains_diagnostic() -> None:
+def test_content_only_position_evidence_remains_diagnostic_and_unusable() -> None:
     header = (
         "Нестандартный номер",
         "Шифр чертежа",
@@ -276,5 +277,28 @@ def test_content_only_position_evidence_remains_diagnostic() -> None:
 
     schema = detect_sheet_schema(RowsReader((header, *data)), "Данные")
 
+    assert schema.status == "AMBIGUOUS_SCHEMA"
     assert "position_code" not in schema.columns
     assert "POSITION_COLUMN_FROM_CONTENT_DIAGNOSTIC" in schema.warnings
+    assert select_usable_schemas([schema]) == ()
+
+
+def test_explicit_position_header_remains_recognized_and_usable() -> None:
+    header = (
+        "Номер позиции",
+        "Шифр чертежа",
+        "Наименование работ",
+        "Ед. изм.",
+        "Остаток количества",
+        "Остаток стоимости",
+    )
+    data = (
+        ("1", "Ч-1", "Работа", "м", 1, 10),
+        ("1.1", "Ч-1", "Работа", "м", 1, 10),
+    )
+
+    schema = detect_sheet_schema(RowsReader((header, *data)), "Данные")
+
+    assert schema.status == "OK"
+    assert schema.columns["position_code"] == 1
+    assert select_usable_schemas([schema]) == (schema,)

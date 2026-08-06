@@ -642,11 +642,12 @@ def detect_sheet_schema(
         warning.startswith(("AMBIGUOUS_COLUMN:", "CONFLICTING_PHYSICAL_ROLES:"))
         for warning in warnings
     )
+    content_only_position_evidence = position_warning is not None
     status = (
         Status.MISSING_REQUIRED_COLUMNS.value
         if missing
         else Status.AMBIGUOUS_SCHEMA.value
-        if unsafe_roles
+        if unsafe_roles or content_only_position_evidence
         else Status.OK.value
     )
     if missing:
