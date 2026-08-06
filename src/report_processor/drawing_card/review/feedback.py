@@ -346,7 +346,9 @@ class FeedbackStore:
                 additions.append(entry)
             if not additions:
                 return page
-            self._atomic_write((*existing, *additions))
+            prospective = (*existing, *additions)
+            self._validate_prospective_ledger(prospective)
+            self._atomic_write(prospective)
         return page
 
     @contextmanager
@@ -379,11 +381,6 @@ class FeedbackStore:
         if not isinstance(context, FeedbackContext):
             raise ValueError("context must be FeedbackContext")
         entries = self._read()
-        latest = next((entry for entry in reversed(entries) if entry.context == context), None)
-        # An explicit invalidation is a complete later decision, not a deletion.
-        # It must block replay of an older matching event from the same audit trail.
-        if latest is not None and not latest.valid and latest.supersedes_event_id:
-            return None
         superseded = {entry.supersedes_event_id for entry in entries if entry.supersedes_event_id}
         for entry in reversed(entries):
             if (
@@ -394,6 +391,16 @@ class FeedbackStore:
             ):
                 return entry
         return None
+
+    @staticmethod
+    def _validate_prospective_ledger(entries: tuple[FeedbackEntry, ...]) -> None:
+        if len(entries) > _MAX_ENTRIES:
+            raise ValueError("feedback ledger exceeds entry limit")
+        serialized = "".join(
+            _canonical_json(_entry_payload(entry)) + "\n" for entry in entries
+        ).encode("utf-8")
+        if len(serialized) > _MAX_LEDGER_BYTES:
+            raise ValueError("feedback ledger exceeds bounded read limit")
 
     def invalidate(
         self, event_id: str, author: str, created_at: str | datetime, reason: str

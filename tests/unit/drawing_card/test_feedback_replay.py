@@ -256,3 +256,37 @@ def test_similar_text_and_exclusion_replay_are_not_approximate(tmp_path: Path) -
     assert replayed is not None
     assert replayed.category is None
     assert replayed.quantity_decision == replayed.cost_decision == "exclude"
+
+
+def test_replay_uses_newer_decision_after_an_older_event_is_invalidated(tmp_path: Path) -> None:
+    row = _row()
+    decision = _decision()
+    context = _context(row, decision)
+    assert context is not None
+    store = FeedbackStore(tmp_path / "feedback.jsonl")
+    older = _entry(context, selected_category=TargetWorkCategory.POWER_CABLE.value)
+    newer = _entry(
+        context,
+        selected_category=TargetWorkCategory.LOW_CURRENT_CABLE.value,
+        created_at="2026-08-06T01:02:04Z",
+    )
+    store.append_page((older, newer))
+    store.invalidate(older.event_id, "auditor", "2026-08-06T01:03:00Z", "old source")
+
+    replayed = _replay(store, row, decision)
+
+    assert replayed is not None
+    assert replayed.category is TargetWorkCategory.LOW_CURRENT_CABLE
+
+
+def test_replay_misses_when_the_current_decision_is_invalidated(tmp_path: Path) -> None:
+    row = _row()
+    decision = _decision()
+    context = _context(row, decision)
+    assert context is not None
+    store = FeedbackStore(tmp_path / "feedback.jsonl")
+    entry = _entry(context)
+    store.append_page((entry,))
+    store.invalidate(entry.event_id, "auditor", "2026-08-06T01:03:00Z", "current source")
+
+    assert _replay(store, row, decision) is None
