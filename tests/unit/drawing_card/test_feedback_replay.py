@@ -18,7 +18,7 @@ from report_processor.drawing_card.review.context import (
     replay_exact_feedback,
 )
 from report_processor.drawing_card.review.feedback import FeedbackEntry, FeedbackStore
-from report_processor.drawing_card.sources.manifest import scan_directory
+from report_processor.drawing_card.sources.manifest import scan_directory, scan_file
 from report_processor.drawing_card.sources.normalization import stable_id
 from report_processor.drawing_card.workflow import _validate_request
 
@@ -163,6 +163,57 @@ def test_exact_replay_survives_independent_private_job_directories(tmp_path: Pat
 
     assert replayed is not None
     assert replayed.evidence_ids == (entry.event_id,)
+
+
+def test_exact_replay_survives_reversed_direct_file_upload_order(tmp_path: Path) -> None:
+    first_job = tmp_path / "private-job-a"
+    second_job = tmp_path / "private-job-b"
+    first_job.mkdir()
+    second_job.mkdir()
+    first_paths = (
+        first_job / "01-drawing-a.xlsx",
+        first_job / "02-drawing-b.xlsx",
+    )
+    second_paths = (
+        second_job / "01-drawing-b.xlsx",
+        second_job / "02-drawing-a.xlsx",
+    )
+    for path, content in zip(first_paths, (b"drawing a", b"drawing b"), strict=True):
+        path.write_bytes(content)
+    for path, content in zip(second_paths, (b"drawing b", b"drawing a"), strict=True):
+        path.write_bytes(content)
+
+    first_entries = [scan_file(path)[0] for path in first_paths]
+    second_entries = [scan_file(path)[0] for path in second_paths]
+    first_rows = [
+        _row(
+            row_id=stable_id(entry.file_id, "Sheet", 4),
+            location=DrawingSourceLocation(entry.file_id, entry.filename, "Sheet", 4, ("A4",)),
+        )
+        for entry in first_entries
+    ]
+    second_rows = [
+        _row(
+            row_id=stable_id(entry.file_id, "Sheet", 4),
+            location=DrawingSourceLocation(entry.file_id, entry.filename, "Sheet", 4, ("A4",)),
+        )
+        for entry in second_entries
+    ]
+    decision = _decision()
+    first_contexts = [_context(row, decision) for row in first_rows]
+    second_contexts = [_context(row, decision) for row in second_rows]
+
+    assert first_entries[0].file_id == second_entries[1].file_id
+    assert first_entries[1].file_id == second_entries[0].file_id
+    assert first_contexts[0] == second_contexts[1]
+    assert first_contexts[1] == second_contexts[0]
+    assert all(context is not None for context in first_contexts)
+    store = FeedbackStore(tmp_path / "feedback.jsonl")
+    store.append_page(tuple(_entry(context) for context in first_contexts if context is not None))
+
+    replayed = [_replay(store, row, decision) for row in second_rows]
+
+    assert all(item is not None for item in replayed)
 
 
 @pytest.mark.parametrize(
