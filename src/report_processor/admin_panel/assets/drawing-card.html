@@ -83,6 +83,24 @@
           <button id="create-job" class="primary-action" type="submit">Подготовить карточку</button>
         </form>
         <p id="status" class="status" role="status" aria-live="polite">Сначала выберите исходные документы.</p>
+        <section id="job-progress" class="job-progress" aria-labelledby="job-progress-title" hidden>
+          <div>
+            <p class="step-label">Фоновая обработка</p>
+            <h3 id="job-progress-title">Ход подготовки отчёта</h3>
+            <p id="job-phase">Файлы загружены, задача поставлена в очередь.</p>
+          </div>
+          <progress id="job-progress-bar" max="1" value="0">Обработка</progress>
+          <dl class="job-progress-details">
+            <div><dt>Файлы</dt><dd id="job-files-progress">0</dd></div>
+            <div><dt>Строки</dt><dd id="job-rows-progress">ещё не подсчитаны</dd></div>
+            <div><dt>Попытка</dt><dd id="job-attempt">1</dd></div>
+            <div><dt>Обновлено</dt><dd id="job-updated-at">—</dd></div>
+          </dl>
+          <div class="job-controls">
+            <button id="cancel-job" class="secondary-action danger-action" type="button" hidden>Отменить обработку</button>
+            <button id="retry-job" class="secondary-action" type="button" hidden>Запустить повторно</button>
+          </div>
+        </section>
         <ul id="job-issues" class="warnings" aria-label="Причины и предупреждения" hidden></ul>
         <section id="processing-audit" class="processing-audit" aria-labelledby="processing-audit-title" hidden>
           <div class="section-heading">

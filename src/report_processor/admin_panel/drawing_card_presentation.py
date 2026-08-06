@@ -105,6 +105,15 @@ _ISSUE_TEXT: dict[str, tuple[str, str | None]] = {
         "Обработка завершилась технической ошибкой.",
         "Повторите запуск; если ошибка повторится, сохраните время запуска для диагностики.",
     ),
+    "PERSISTENCE_FAILED": (
+        "Локальная панель не смогла надёжно сохранить состояние задачи.",
+        "Не закрывайте исходные файлы и повторите действие "
+        "после проверки свободного места на диске.",
+    ),
+    "CANCELLED": (
+        "Обработка отменена пользователем; частичный результат не опубликован.",
+        "При необходимости запустите эту задачу повторно.",
+    ),
     "WORKFLOW_BLOCKED": (
         "Карточка не прошла обязательные проверки безопасности.",
         "Исправьте указанные причины в исходных файлах и запустите обработку снова.",
@@ -131,6 +140,11 @@ _ISSUE_TEXT: dict[str, tuple[str, str | None]] = {
 def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
     """Return only values safe to serialize through an admin endpoint."""
     review_required = job.status == "review_required"
+    phase = str(getattr(job, "phase", "upload"))
+    processed_files = int(getattr(job, "processed_files", 0))
+    total_files = getattr(job, "total_files", None)
+    processed_rows = int(getattr(job, "processed_rows", 0))
+    total_rows = getattr(job, "total_rows", None)
     source_files = job.summary.get("source_files")
     if source_files is None:
         source_files = len(job.sources)
@@ -138,6 +152,19 @@ def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
     return {
         "job_id": job.job_id,
         "status": job.status,
+        "phase": phase,
+        "progress": {
+            "processed_files": processed_files,
+            "total_files": int(total_files) if total_files is not None else None,
+            "processed_rows": processed_rows,
+            "total_rows": int(total_rows) if total_rows is not None else None,
+        },
+        "started_at": getattr(job, "started_at", None),
+        "updated_at": getattr(job, "updated_at", None),
+        "terminal_cause": getattr(job, "terminal_cause", None),
+        "attempt": int(getattr(job, "attempt", getattr(job, "run_count", 0))),
+        "can_cancel": job.status in {"queued", "processing"},
+        "can_retry": job.status in {"cancelled", "failed", "blocked"},
         "mode": job.mode,
         "period": job.period,
         "active_step": (

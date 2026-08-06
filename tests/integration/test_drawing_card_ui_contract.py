@@ -113,3 +113,30 @@ def test_processing_funnel_and_schema_audit_are_visible_and_path_free() -> None:
     assert "absolute" not in script.casefold()
     assert ".funnel-summary" in styles
     assert ".warnings li.is-blocking" in styles
+
+
+def test_background_progress_is_recoverable_cancellable_and_polled_within_five_seconds() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card.js").read_text()
+    styles = (ASSETS / "drawing-card.css").read_text()
+
+    for element_id in (
+        "job-progress",
+        "job-phase",
+        "job-progress-bar",
+        "job-files-progress",
+        "job-rows-progress",
+        "cancel-job",
+        "retry-job",
+    ):
+        assert f'id="{element_id}"' in page
+    assert "JOB_POLL_INTERVAL_MS = 2000" in script
+    assert "sessionStorage" in script
+    assert "idempotencyKey" in script
+    assert 'headers: { "Idempotency-Key": idempotencyKey }' in script
+    assert "/cancel`" in script
+    assert "/retry`" in script
+    assert "schedulePolling(currentJobStatus)" in script
+    assert "partial" not in page.casefold()
+    assert ".job-progress" in styles
+    assert ".job-progress-details" in styles

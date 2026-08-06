@@ -19,6 +19,7 @@ from .drawing_card_service import (
     MAX_UPLOAD_BYTES as DRAWING_CARD_MAX_UPLOAD_BYTES,
 )
 from .drawing_card_service import (
+    DrawingCardPersistenceError,
     DrawingCardService,
 )
 from .package_reconciliation_service import (
@@ -63,6 +64,10 @@ _DRAWING_CARD_UPLOAD_ERRORS = {
     ),
     "invalid filename": "Недопустимое имя загружаемого файла",
     "invalid operation": "Выбран недопустимый режим операции",
+    "invalid idempotency key": "Повторите отправку формы из этой страницы",
+    "idempotency key conflicts with another request": (
+        "Повтор отправки относится к другому набору файлов. Выберите файлы заново"
+    ),
     "invalid period": "Некорректный период",
     "invalid source count": "Загрузите от 1 до 32 исходных Excel-файлов",
     "invalid workbook content": "Файл не является корректной Excel-книгой",
@@ -96,7 +101,9 @@ def create_app(
         Path(workspace_root) if workspace_root is not None else Path.cwd() / ".admin-panel-jobs"
     )
     panel = service or AdminPanelService(workspace)
-    drawing_panel = drawing_card_service or DrawingCardService(workspace / "drawing-card")
+    drawing_panel = drawing_card_service or DrawingCardService(
+        workspace / "drawing-card", background=True
+    )
     package_panel = package_reconciliation_service or PackageReconciliationService(
         workspace / "package-reconciliation"
     )
@@ -409,7 +416,10 @@ def create_app(
                     existing_name=existing_name,
                     existing_content=existing_content,
                     period=period,
+                    idempotency_key=request.headers.get("idempotency-key"),
                 )
+        except DrawingCardPersistenceError:
+            return _error("Не удалось надёжно сохранить новую задачу", 503)
         except (KeyError, OSError, TypeError, ValueError) as error:
             return _error(_drawing_card_upload_error(error), 400)
         return _secure(JSONResponse(drawing_card_job_payload(current), status_code=201))
@@ -423,6 +433,28 @@ def create_app(
         except (TypeError, ValueError):
             return _error("Состояние задачи недоступно", 500)
         return _secure(JSONResponse(payload))
+
+    async def drawing_card_cancel(request):
+        try:
+            current = drawing_panel.cancel_job(job_id=request.path_params["job_id"])
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Не удалось сохранить отмену задачи", 503)
+        except ValueError:
+            return _error("Эту задачу уже нельзя отменить", 409)
+        return _secure(JSONResponse(drawing_card_job_payload(current), status_code=202))
+
+    async def drawing_card_retry(request):
+        try:
+            current = drawing_panel.retry_job(job_id=request.path_params["job_id"])
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Не удалось сохранить повторный запуск", 503)
+        except ValueError:
+            return _error("Повторный запуск для этой задачи сейчас недоступен", 409)
+        return _secure(JSONResponse(drawing_card_job_payload(current), status_code=202))
 
     async def drawing_card_exclusion_audit(request):
         try:
@@ -470,6 +502,8 @@ def create_app(
                 )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Не удалось надёжно сохранить состояние задачи", 503)
         except (OSError, TypeError, ValueError):
             return _error("Проверьте заполненный файл проверки", 400)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
@@ -539,6 +573,8 @@ def create_app(
                 )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Решения не сохранены. Повторите действие", 503)
         except (TypeError, ValueError):
             return _error("Кластер изменился — обновите список и повторите действие", 409)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
@@ -570,6 +606,8 @@ def create_app(
                 )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Решения не сохранены. Повторите действие", 503)
         except (TypeError, ValueError):
             return _error("Выберите допустимое решение и категорию", 400)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
@@ -585,6 +623,8 @@ def create_app(
             )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Решения не сохранены. Повторите действие", 503)
         except (TypeError, ValueError):
             return _error("Выберите допустимое общее решение", 400)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
@@ -596,6 +636,8 @@ def create_app(
             )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Решения не сохранены. Повторите действие", 503)
         except (TypeError, ValueError):
             return _error("Сначала примите решение по каждой строке", 409)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
@@ -635,6 +677,16 @@ def create_app(
             Route("/api/drawing-card/periods", drawing_card_periods, methods=["POST"]),
             Route("/api/drawing-card/jobs", drawing_card_upload, methods=["POST"]),
             Route("/api/drawing-card/jobs/{job_id}", drawing_card_get_job),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/cancel",
+                drawing_card_cancel,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/retry",
+                drawing_card_retry,
+                methods=["POST"],
+            ),
             Route(
                 "/api/drawing-card/jobs/{job_id}/audit/exclusions",
                 drawing_card_exclusion_audit,
