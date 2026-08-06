@@ -12,7 +12,7 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import suppress
 from heapq import heappush, heapreplace
 from pathlib import Path, PurePosixPath
@@ -71,24 +71,8 @@ class DrawingCardJobStore:
         except ValueError:
             return None
 
-    def load_all(self, *, terminal_retention: int | None = None) -> dict[str, dict[str, object]]:
-        """Return bounded manifests, prioritising recoverable active work.
-
-        Discovery streams all direct children without materialising a directory
-        listing. The retained selection stays bounded, and queued/processing/
-        review jobs are selected before terminal manifests so retention history
-        cannot crowd out work that must resume. When ``terminal_retention`` is
-        supplied, discarded terminal manifests are durably removed as they are
-        evicted; active and review manifests are never removed here.
-        """
-        if terminal_retention is not None and (
-            not isinstance(terminal_retention, int)
-            or isinstance(terminal_retention, bool)
-            or not 0 <= terminal_retention <= MAX_LOADED_JOBS
-        ):
-            raise ValueError("terminal retention is outside the bounded load limit")
-        active: list[_ManifestHeapItem] = []
-        terminal: list[_ManifestHeapItem] = []
+    def iter_manifests(self) -> Iterator[tuple[str, dict[str, object]]]:
+        """Stream generic-valid direct job manifests without retaining state."""
         try:
             children = self.workspace_root.iterdir()
             for child in children:
@@ -99,29 +83,30 @@ class DrawingCardJobStore:
                 except ValueError:
                     continue
                 manifest = _read_manifest(child / MANIFEST_FILENAME)
-                if manifest is None:
-                    continue
-                item = _ManifestHeapItem(job_id, manifest)
-                if manifest.get("status") in _ACTIVE_STATUSES:
-                    _retain_manifest(active, item, MAX_LOADED_JOBS)
-                else:
-                    terminal_limit = (
-                        MAX_LOADED_JOBS if terminal_retention is None else terminal_retention
-                    )
-                    evicted = _retain_manifest(terminal, item, terminal_limit)
-                    if terminal_retention is not None and evicted is not None:
-                        self.delete(evicted.job_id)
+                if manifest is not None:
+                    yield job_id, manifest
         except OSError:
-            pass
+            return
+
+    def load_all(self) -> dict[str, dict[str, object]]:
+        """Return bounded manifests, prioritising recoverable active work.
+
+        Discovery streams all direct children without materialising a directory
+        listing. The retained selection stays bounded, and queued/processing/
+        review jobs are selected before terminal manifests so retention history
+        cannot crowd out work that must resume. This generic read never deletes
+        a manifest; product-specific validation owns destructive retention.
+        """
+        active: list[_ManifestHeapItem] = []
+        terminal: list[_ManifestHeapItem] = []
+        for job_id, manifest in self.iter_manifests():
+            item = _ManifestHeapItem(job_id, manifest)
+            target = active if manifest.get("status") in _ACTIVE_STATUSES else terminal
+            _retain_manifest(target, item, MAX_LOADED_JOBS)
         selected = sorted(active, reverse=True)[:MAX_LOADED_JOBS]
         remaining = MAX_LOADED_JOBS - len(selected)
         if remaining:
             selected.extend(sorted(terminal, reverse=True)[:remaining])
-        if terminal_retention is not None:
-            selected_ids = {item.job_id for item in selected}
-            for item in terminal:
-                if item.job_id not in selected_ids:
-                    self.delete(item.job_id)
         return {item.job_id: item.manifest for item in selected}
 
     def delete(self, job_id: str) -> bool:

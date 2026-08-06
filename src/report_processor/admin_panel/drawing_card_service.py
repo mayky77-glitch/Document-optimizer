@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import os
 import re
@@ -41,6 +42,7 @@ from report_processor.drawing_card.workflow import default_template_path, run_wo
 from report_processor.metadata.period_models import DocumentPeriod
 from report_processor.metadata.period_patterns import MONTHS
 
+from . import drawing_card_job_store
 from .drawing_card_job_store import MANIFEST_CONTRACT, DrawingCardJobStore
 from .drawing_card_review_payload import drawing_card_cluster_payload
 
@@ -961,13 +963,37 @@ class DrawingCardService:
         }
 
     def _restore_jobs(self) -> None:
-        for job_id, manifest in self._store.load_all(
-            terminal_retention=MAX_RETAINED_TERMINAL_JOBS
-        ).items():
+        active: list[tuple[str, str, DrawingCardJob]] = []
+        terminal: list[tuple[str, str, DrawingCardJob]] = []
+        for job_id, manifest in self._store.iter_manifests():
             try:
                 job = self._job_from_manifest(job_id, manifest)
             except (OSError, TypeError, ValueError):
                 continue
+            target = (
+                active if job.status in {"queued", "processing", "review_required"} else terminal
+            )
+            evicted = _retain_restored_job(
+                target,
+                job,
+                (
+                    drawing_card_job_store.MAX_LOADED_JOBS
+                    if target is active
+                    else MAX_RETAINED_TERMINAL_JOBS
+                ),
+            )
+            if target is terminal and evicted is not None:
+                self._store.delete(evicted.job_id)
+
+        selected = sorted(active, reverse=True)[: drawing_card_job_store.MAX_LOADED_JOBS]
+        remaining = drawing_card_job_store.MAX_LOADED_JOBS - len(selected)
+        selected.extend(sorted(terminal, reverse=True)[:remaining])
+        selected_ids = {job.job_id for _updated_at, _job_id, job in selected}
+        for _updated_at, _job_id, job in terminal:
+            if job.job_id not in selected_ids:
+                self._store.delete(job.job_id)
+
+        for _updated_at, job_id, job in selected:
             # A hostile or stale duplicate manifest must not resurrect a second
             # active worker for the same client request.
             if job.idempotency_key and job.idempotency_key in self._idempotency:
@@ -1209,6 +1235,23 @@ def _manifest_cancel_requested(value: object) -> bool:
     if not isinstance(value, bool):
         raise ValueError("invalid persisted cancellation state")
     return value
+
+
+def _retain_restored_job(
+    items: list[tuple[str, str, DrawingCardJob]],
+    job: DrawingCardJob,
+    limit: int,
+) -> DrawingCardJob | None:
+    """Keep the newest bounded fully validated jobs, returning an eviction."""
+    item = (job.updated_at, job.job_id, job)
+    if limit <= 0:
+        return job
+    if len(items) < limit:
+        heapq.heappush(items, item)
+        return None
+    if items[0][:2] < item[:2]:
+        return heapq.heapreplace(items, item)[2]
+    return job
 
 
 def _required_list(manifest: dict[str, object], key: str) -> list[object]:
