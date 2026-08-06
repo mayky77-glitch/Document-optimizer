@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import zipfile
 from collections.abc import Iterable
+from hashlib import sha256
 from pathlib import Path, PurePosixPath
 
 from ..models import ManifestEntry
@@ -24,6 +25,16 @@ _FULL_DATE2_RE = re.compile(
 )
 _YEAR_MONTH_RE = re.compile(r"(?<!\d)(20\d{2})[._/-](0?[1-9]|1[0-2])(?!\d)")
 _MONTH_YEAR_RE = re.compile(r"(?<!\d)(0?[1-9]|1[0-2])[._/-](20\d{2})(?!\d)")
+_DIGEST_BLOCK_SIZE = 1024 * 1024
+
+
+def _content_digest(path: Path) -> str:
+    """Return a bounded-memory digest without retaining private path data."""
+    digest = sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(_DIGEST_BLOCK_SIZE):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _ignored_name(name: str) -> bool:
@@ -110,6 +121,7 @@ def _entry(
     logical_path: str,
     size: int,
     compressed_size: int | None,
+    content_digest: str,
     analysis_path: str | None = None,
 ) -> ManifestEntry:
     path_text = (analysis_path or logical_path).replace("\\", "/")
@@ -131,7 +143,7 @@ def _entry(
     if is_outdated:
         warnings.append("OUTDATED_SOURCE")
     return ManifestEntry(
-        file_id=stable_id(source_kind, container_path.resolve(), logical_path, size),
+        file_id=stable_id(source_kind, content_digest, logical_path),
         source_kind=source_kind,
         container_path=str(container_path.resolve()),
         logical_path=logical_path,
@@ -164,6 +176,7 @@ def scan_file(path: Path) -> list[ManifestEntry]:
             logical_path=path.name,
             size=stat.st_size,
             compressed_size=None,
+            content_digest=_content_digest(path),
         )
     ]
 
@@ -183,6 +196,7 @@ def scan_directory(path: Path) -> list[ManifestEntry]:
                 logical_path=item.relative_to(path).as_posix(),
                 size=stat.st_size,
                 compressed_size=None,
+                content_digest=_content_digest(item),
             )
         )
     return entries
@@ -190,6 +204,7 @@ def scan_directory(path: Path) -> list[ManifestEntry]:
 
 def scan_archive(path: Path, max_entry_size: int = 2 * 1024**3) -> list[ManifestEntry]:
     entries: list[ManifestEntry] = []
+    archive_digest = _content_digest(path)
     with zipfile.ZipFile(path) as archive:
         for info in archive.infolist():
             decoded_name = _decode_zip_name(info.filename)
@@ -212,6 +227,7 @@ def scan_archive(path: Path, max_entry_size: int = 2 * 1024**3) -> list[Manifest
                 logical_path=decoded_name,
                 size=info.file_size,
                 compressed_size=info.compress_size,
+                content_digest=archive_digest,
                 analysis_path=decoded_name,
             )
             if warnings:

@@ -18,6 +18,8 @@ from report_processor.drawing_card.review.context import (
     replay_exact_feedback,
 )
 from report_processor.drawing_card.review.feedback import FeedbackEntry, FeedbackStore
+from report_processor.drawing_card.sources.manifest import scan_directory
+from report_processor.drawing_card.sources.normalization import stable_id
 from report_processor.drawing_card.workflow import _validate_request
 
 
@@ -125,6 +127,42 @@ def test_exact_replay_reclassifies_and_preserves_disposition_accounting(tmp_path
     summary = funnel_summary([disposition_for_decision(row, replayed)], extracted_row_count=1)
     assert summary["disposition_counts"]["MATCHED"] == 1
     assert summary["disposition_counts"]["MANUAL_REVIEW"] == 0
+
+
+def test_exact_replay_survives_independent_private_job_directories(tmp_path: Path) -> None:
+    first_job = tmp_path / "private-job-a" / "sources"
+    second_job = tmp_path / "private-job-b" / "sources"
+    first_job.mkdir(parents=True)
+    second_job.mkdir(parents=True)
+    for directory in (first_job, second_job):
+        (directory / "nested").mkdir()
+        (directory / "nested" / "book.xlsx").write_bytes(b"same workbook bytes")
+
+    [first_entry] = scan_directory(first_job)
+    [second_entry] = scan_directory(second_job)
+    first_row = _row(
+        row_id=stable_id(first_entry.file_id, "Sheet", 4),
+        location=DrawingSourceLocation(first_entry.file_id, "book.xlsx", "Sheet", 4, ("A4",)),
+    )
+    second_row = _row(
+        row_id=stable_id(second_entry.file_id, "Sheet", 4),
+        location=DrawingSourceLocation(second_entry.file_id, "book.xlsx", "Sheet", 4, ("A4",)),
+    )
+    decision = _decision()
+    first_context = _context(first_row, decision)
+    second_context = _context(second_row, decision)
+
+    assert first_entry.file_id == second_entry.file_id
+    assert first_context == second_context
+    assert first_context is not None
+    store = FeedbackStore(tmp_path / "feedback.jsonl")
+    entry = _entry(first_context)
+    store.append_page((entry,))
+
+    replayed = _replay(store, second_row, decision)
+
+    assert replayed is not None
+    assert replayed.evidence_ids == (entry.event_id,)
 
 
 @pytest.mark.parametrize(
