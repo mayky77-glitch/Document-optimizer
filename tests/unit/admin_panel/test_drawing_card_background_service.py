@@ -471,6 +471,45 @@ def test_restart_prunes_terminal_manifests_beyond_loaded_capacity(
     assert persisted_statuses.count("failed") <= 1
 
 
+def test_malformed_newer_terminal_cannot_evict_valid_retained_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "private"
+    service = DrawingCardService(workspace)
+    monkeypatch.setattr(drawing_card_service, "MAX_RETAINED_TERMINAL_JOBS", 1)
+
+    def persisted(job_id: str, updated_at: str) -> DrawingCardJob:
+        directory = workspace / job_id
+        source = directory / "sources" / "01-source.xlsx"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(_fixture())
+        job = DrawingCardJob(
+            job_id=job_id,
+            directory=directory,
+            sources=(source,),
+            source_hashes=(hashlib.sha256(source.read_bytes()).hexdigest(),),
+            mode="create",
+            period=None,
+            existing_card=None,
+            status="failed",
+            updated_at=updated_at,
+        )
+        service._jobs[job_id] = job
+        service._persist_job(job)
+        return job
+
+    valid = persisted("valid-terminal", "2026-08-01T00:00:00Z")
+    malformed = persisted("malformed-terminal", "2026-08-02T00:00:00Z")
+    malformed_manifest = service._manifest_for(malformed)
+    malformed_manifest.pop("mode")
+    service._store.save(malformed.job_id, malformed_manifest)
+
+    recovered = DrawingCardService(workspace)
+
+    assert recovered.get_job(valid.job_id).status == "failed"
+    assert recovered._store.load(valid.job_id) is not None
+
+
 def test_manifestless_artifacts_do_not_displace_active_recovery_capacity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
