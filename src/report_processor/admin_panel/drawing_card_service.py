@@ -119,6 +119,8 @@ _RUSSIAN_PERIOD_RE = re.compile(
     r"\s+(?P<year>\d{4})",
     re.IGNORECASE,
 )
+_SOURCE_ORDINAL_RE = re.compile(r"[0-9]+")
+_LEGACY_SOURCE_NAME_RE = re.compile(r"[0-9]+-(?P<name>.+)")
 
 
 @dataclass(slots=True, repr=False)
@@ -2234,10 +2236,10 @@ def _same_idempotent_request(
     existing_name: str | None,
     existing_content: bytes | None,
 ) -> bool:
+    stored_source_names = tuple(_idempotency_source_name(job, path) for path in job.sources)
     return (
         job.source_hashes == tuple(_digest(content) for _name, content in sources)
-        and tuple(path.name.partition("-")[2] for path in job.sources)
-        == tuple(name for name, _content in sources)
+        and stored_source_names == tuple(name for name, _content in sources)
         and job.mode == mode
         and job.period == period
         and job.rag_mode == rag_mode
@@ -2251,6 +2253,23 @@ def _same_idempotent_request(
             )
         )
     )
+
+
+def _idempotency_source_name(job: DrawingCardJob, path: Path) -> str | None:
+    """Return an uploaded source name only for recognized private layouts."""
+    try:
+        relative_path = path.resolve().relative_to(job.directory.resolve())
+    except (OSError, ValueError):
+        return None
+
+    parts = relative_path.parts
+    if len(parts) == 3 and parts[0] == "sources" and _SOURCE_ORDINAL_RE.fullmatch(parts[1]):
+        return parts[2]
+    if len(parts) == 2 and parts[0] == "sources":
+        match = _LEGACY_SOURCE_NAME_RE.fullmatch(parts[1])
+        if match is not None:
+            return match["name"]
+    return None
 
 
 def _sources_unchanged(job: DrawingCardJob) -> bool:

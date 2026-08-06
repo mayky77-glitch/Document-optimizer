@@ -218,6 +218,73 @@ def test_injected_runner_preserves_source_basename_with_semantic_rag(
     assert str(tmp_path) not in str(drawing_card_job_payload(job))
 
 
+@pytest.mark.parametrize(
+    ("stored_path", "uploaded_name"),
+    [
+        ("sources/01/0906-source.xlsx", "0906-source.xlsx"),
+        ("sources/01-0906-source.xlsx", "0906-source.xlsx"),
+    ],
+)
+def test_idempotency_source_name_supports_new_and_legacy_private_layouts(
+    tmp_path: Path, stored_path: str, uploaded_name: str
+) -> None:
+    job_directory = tmp_path / "job"
+    source_path = job_directory / stored_path
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b"source")
+    job = DrawingCardJob(
+        job_id="job",
+        directory=job_directory,
+        sources=(source_path,),
+        source_hashes=(hashlib.sha256(b"source").hexdigest(),),
+        mode="create",
+        period=None,
+        existing_card=None,
+    )
+
+    assert drawing_card_service._same_idempotent_request(
+        job,
+        sources=[(uploaded_name, b"source")],
+        mode="create",
+        period=None,
+        rag_mode="semantic",
+        existing_name=None,
+        existing_content=None,
+    )
+
+
+@pytest.mark.parametrize(
+    "stored_path",
+    ("sources/name.xlsx", "sources/not-an-ordinal/name.xlsx", "other/01-name.xlsx"),
+)
+def test_idempotency_rejects_unrecognized_private_source_layouts(
+    tmp_path: Path, stored_path: str
+) -> None:
+    job_directory = tmp_path / "job"
+    source_path = job_directory / stored_path
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b"source")
+    job = DrawingCardJob(
+        job_id="job",
+        directory=job_directory,
+        sources=(source_path,),
+        source_hashes=(hashlib.sha256(b"source").hexdigest(),),
+        mode="create",
+        period=None,
+        existing_card=None,
+    )
+
+    assert not drawing_card_service._same_idempotent_request(
+        job,
+        sources=[("name.xlsx", b"source")],
+        mode="create",
+        period=None,
+        rag_mode="semantic",
+        existing_name=None,
+        existing_content=None,
+    )
+
+
 def test_restore_accepts_legacy_flat_source_manifest_path(tmp_path: Path) -> None:
     fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
 
