@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 from report_processor.drawing_card.models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER
@@ -49,9 +50,9 @@ _ISSUE_TEXT: dict[str, tuple[str, str | None]] = {
         "Найдены вероятные дубли; повторные суммы не добавлялись.",
         "Проверьте исключённые дубли в отчёте.",
     ),
-    "POSITION_COLUMN_FROM_CONTENT": (
-        "Колонка номера позиции определена по её содержимому.",
-        None,
+    "POSITION_COLUMN_FROM_CONTENT_DIAGNOSTIC": (
+        "Похоже, в файле есть колонка номера позиции, но её заголовок не распознан.",
+        "Уточните заголовок колонки. Строки не скрывались по этой предполагаемой иерархии.",
     ),
     "IGNORED_NON_DRAWING_CELL": (
         "Ячейки без признаков строки чертежа не включались в карточку.",
@@ -105,6 +106,15 @@ _ISSUE_TEXT: dict[str, tuple[str, str | None]] = {
         "Обработка завершилась технической ошибкой.",
         "Повторите запуск; если ошибка повторится, сохраните время запуска для диагностики.",
     ),
+    "PERSISTENCE_FAILED": (
+        "Локальная панель не смогла надёжно сохранить состояние задачи.",
+        "Не закрывайте исходные файлы и повторите действие "
+        "после проверки свободного места на диске.",
+    ),
+    "CANCELLED": (
+        "Обработка отменена пользователем; частичный результат не опубликован.",
+        "При необходимости запустите эту задачу повторно.",
+    ),
     "WORKFLOW_BLOCKED": (
         "Карточка не прошла обязательные проверки безопасности.",
         "Исправьте указанные причины в исходных файлах и запустите обработку снова.",
@@ -113,12 +123,29 @@ _ISSUE_TEXT: dict[str, tuple[str, str | None]] = {
         "Параметры запуска или выбранные файлы не прошли проверку.",
         "Проверьте формат файлов и выбранную операцию.",
     ),
+    "FUNNEL_CONSERVATION_FAILED": (
+        "Не удалось однозначно объяснить судьбу каждой извлечённой строки.",
+        "Выпуск остановлен: проверьте аудит исключений и повторите обработку.",
+    ),
+    "FUNNEL_UNKNOWN_ROLE_POLICY": (
+        "Обнаружена строка с ролью, для которой нет подтверждённого правила.",
+        "Уточните структуру исходного листа или заголовки колонок.",
+    ),
+    "FUNNEL_ANOMALOUS_EXCLUSION_SHARE": (
+        "Необычно большая доля строк была исключена по структуре документа.",
+        "Выпуск остановлен, чтобы неизвестный формат не скрыл данные.",
+    ),
 }
 
 
 def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
     """Return only values safe to serialize through an admin endpoint."""
     review_required = job.status == "review_required"
+    phase = str(getattr(job, "phase", "upload"))
+    processed_files = int(getattr(job, "processed_files", 0))
+    total_files = getattr(job, "total_files", None)
+    processed_rows = int(getattr(job, "processed_rows", 0))
+    total_rows = getattr(job, "total_rows", None)
     source_files = job.summary.get("source_files")
     if source_files is None:
         source_files = len(job.sources)
@@ -126,6 +153,19 @@ def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
     return {
         "job_id": job.job_id,
         "status": job.status,
+        "phase": phase,
+        "progress": {
+            "processed_files": processed_files,
+            "total_files": int(total_files) if total_files is not None else None,
+            "processed_rows": processed_rows,
+            "total_rows": int(total_rows) if total_rows is not None else None,
+        },
+        "started_at": getattr(job, "started_at", None),
+        "updated_at": getattr(job, "updated_at", None),
+        "terminal_cause": getattr(job, "terminal_cause", None),
+        "attempt": int(getattr(job, "attempt", getattr(job, "run_count", 0))),
+        "can_cancel": job.status in {"queued", "processing"},
+        "can_retry": job.status in {"cancelled", "failed", "blocked"},
         "mode": job.mode,
         "period": job.period,
         "active_step": (
@@ -137,6 +177,13 @@ def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
             "card_rows": int(job.summary.get("card_rows", 0)),
             "manual_review": int(job.summary.get("manual_review", 0)),
         },
+        "funnel": dict(job.funnel),
+        "schema_recognition": [dict(item) for item in job.schema_recognition],
+        "exclusion_audit_url": (
+            f"/api/drawing-card/jobs/{job.job_id}/audit/exclusions"
+            if job.exclusion_audit is not None
+            else None
+        ),
         "warnings": list(job.warnings),
         "issues": issues,
         "blocking_reasons": [item for item in issues if item["blocking"]],
@@ -254,18 +301,131 @@ def drawing_card_inline_review_page(
 
 def drawing_card_cluster_review_page(payload: Mapping[str, object]) -> dict[str, object]:
     """Expose both names during the additive transition to the cluster UI."""
-    items = list(payload.get("items", ()))
+    items = [_safe_packet(item) for item in payload.get("items", ()) if isinstance(item, Mapping)]
+    categories = _review_categories(payload.get("review_categories"))
+    total_packets = int(payload.get("total_packets", payload.get("total_clusters", 0)))
+    unresolved_packets = int(
+        payload.get("unresolved_packets", payload.get("unresolved_clusters", 0))
+    )
     return {
         "items": items,
         "clusters": items,
+        "packets": items,
         "page": payload.get("page", 1),
         "page_size": payload.get("page_size", 50),
-        "total_clusters": payload.get("total_clusters", 0),
+        "total_clusters": total_packets,
+        "total_packets": total_packets,
         "total_rows": payload.get("total_rows", 0),
-        "unresolved_clusters": payload.get("unresolved_clusters", 0),
+        "unresolved_clusters": unresolved_packets,
+        "unresolved_packets": unresolved_packets,
         "unresolved_rows": payload.get("unresolved_rows", 0),
         "can_apply": bool(payload.get("can_apply", False)),
+        "review_categories": categories,
+        "review_metrics": _primitive_mapping(payload.get("review_metrics")),
     }
+
+
+def _review_categories(value: object) -> list[dict[str, object]]:
+    if isinstance(value, (list, tuple)):
+        result = []
+        for item in value:
+            if not isinstance(item, Mapping):
+                continue
+            category_id = item.get("id", item.get("value"))
+            label = item.get("label")
+            units = item.get("units", ())
+            if isinstance(category_id, str) and isinstance(label, str):
+                result.append(
+                    {
+                        "id": category_id,
+                        "label": label,
+                        "units": [unit for unit in units if isinstance(unit, str)],
+                    }
+                )
+        return result
+    return [
+        {
+            "id": category.value,
+            "label": CATEGORY_DISPLAY_NAMES[category],
+            "units": [],
+        }
+        for category in CATEGORY_ORDER
+    ]
+
+
+def _primitive_mapping(value: object) -> dict[str, int | float]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): item
+        for key, item in value.items()
+        if isinstance(item, (int, float))
+        and not isinstance(item, bool)
+        and math.isfinite(item)
+        and item >= 0
+    }
+
+
+def _safe_packet(value: Mapping[str, object]) -> dict[str, object]:
+    """Keep presentation additive while never forwarding private source metadata."""
+    allowed = {
+        "cluster_id",
+        "packet_id",
+        "version",
+        "work_name",
+        "source_unit",
+        "target_unit",
+        "member_count",
+        "aggregate_total_cost",
+        "proposed_category",
+        "proposed_category_label",
+        "selected_category",
+        "selected_category_label",
+        "confidence",
+        "reason",
+        "reason_label",
+        "confidence_explanation",
+        "packet_eligible",
+        "singleton",
+        "hazard",
+        "match_mode",
+        "unit_compatibility",
+        "rules_version",
+        "controlled_differences",
+        "decision",
+    }
+    packet = {key: value[key] for key in allowed if key in value}
+    members = value.get("members", ())
+    packet["members"] = [
+        _safe_packet_member(member) for member in members if isinstance(member, Mapping)
+    ]
+    return packet
+
+
+def _safe_packet_member(value: Mapping[str, object]) -> dict[str, object]:
+    allowed = (
+        "review_id",
+        "version",
+        "safe_filename",
+        "sheet_name",
+        "row_number",
+        "position",
+        "drawing_code",
+        "object_index",
+        "work_name",
+        "source_unit",
+        "quantity",
+        "total_cost",
+        "confidence",
+        "reason",
+        "reason_label",
+        "selected_category",
+    )
+    member = {key: value[key] for key in allowed if key in value}
+    filename = member.get("safe_filename")
+    if isinstance(filename, str):
+        member["safe_filename"] = filename.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+    return member
 
 
 def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:

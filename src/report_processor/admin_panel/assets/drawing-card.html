@@ -23,14 +23,14 @@
 
       <header class="page-heading">
         <p class="eyebrow">Отчёт с автоматической сверкой</p>
-        <h1>Составьте отчёт об остатках</h1>
-        <p>Панель сама сопоставит строки и сразу сформирует карточку, если всё однозначно. Спорные строки попросит подтвердить перед выпуском.</p>
+        <h1>Отчёт (карточка остатков)</h1>
+        <p>Панель сама сопоставит строки и сразу сформирует отчёт, если всё однозначно. Спорные строки попросит подтвердить перед выпуском.</p>
       </header>
 
-      <ol class="progress-rail" aria-label="Готовность карточки">
+      <ol class="progress-rail" aria-label="Готовность отчёта">
         <li class="is-active" data-progress="sources"><span>01</span><b>Источники</b><small>Выберите файлы</small></li>
         <li data-progress="review"><span>02</span><b>Проверка</b><small>Подтвердите строки</small></li>
-        <li data-progress="card"><span>03</span><b>Карточка</b><small>Скачайте файл</small></li>
+        <li data-progress="card"><span>03</span><b>Отчёт</b><small>Скачайте файл</small></li>
       </ol>
 
       <section class="ledger-card" aria-labelledby="source-title">
@@ -45,7 +45,7 @@
           <label class="file-field" for="sources">
             <span>Исходные документы <em>обязательно</em></span>
             <input id="sources" name="sources" type="file" accept=".xlsx,.xlsm,.xlsb" multiple required aria-describedby="sources-help source-count">
-            <small id="sources-help">КС-2, накопительные ведомости и другие источники .xlsx, .xlsm или .xlsb.</small>
+            <small id="sources-help">КС-2, накопительные ведомости и другие источники .xlsx, .xlsm или .xlsb. LibreOffice Calc .ods и PDF доступны только в отдельном процессе сравнения Excel с PDF-отчётами.</small>
             <strong id="source-count" class="file-count" aria-live="polite">Файлы пока не выбраны</strong>
           </label>
 
@@ -60,30 +60,63 @@
           </div>
 
           <fieldset class="operation-choice">
-            <legend>Что сделать с карточкой?</legend>
+            <legend>Что сделать с отчётом?</legend>
             <input id="operation" name="operation" type="hidden" value="create">
-            <div class="operation-buttons" role="group" aria-label="Операция с карточкой">
+            <div class="operation-buttons" role="group" aria-label="Операция с отчётом">
               <button class="operation-button is-selected" type="button" data-operation="create" aria-pressed="true">
                 <span>Создать новую</span>
-                <small>Начать карточку по выбранным источникам</small>
+                <small>Начать отчёт по выбранным источникам</small>
               </button>
               <button class="operation-button" type="button" data-operation="update" aria-pressed="false">
                 <span>Обновить существующую</span>
-                <small>Загрузить готовую карточку и пересчитать остатки</small>
+                <small>Загрузить готовый отчёт и пересчитать остатки</small>
               </button>
             </div>
           </fieldset>
 
           <label id="existing-card-field" class="file-field existing-card" for="existing-card" hidden>
-            <span>Существующая карточка <em>обязательно для обновления</em></span>
+            <span>Существующий отчёт <em>обязательно для обновления</em></span>
             <input id="existing-card" name="existing_card" type="file" accept=".xlsx" disabled>
-            <small>Загрузите карточку, которую нужно обновить.</small>
+            <small>Загрузите отчёт, который нужно обновить.</small>
           </label>
 
-          <button id="create-job" class="primary-action" type="submit">Подготовить карточку</button>
+          <button id="create-job" class="primary-action" type="submit">Подготовить отчёт</button>
         </form>
         <p id="status" class="status" role="status" aria-live="polite">Сначала выберите исходные документы.</p>
+        <section id="job-progress" class="job-progress" aria-labelledby="job-progress-title" hidden>
+          <div>
+            <p class="step-label">Фоновая обработка</p>
+            <h3 id="job-progress-title">Ход подготовки отчёта</h3>
+            <p id="job-phase">Файлы загружены, задача поставлена в очередь.</p>
+          </div>
+          <progress id="job-progress-bar" max="1" value="0">Обработка</progress>
+          <dl class="job-progress-details">
+            <div><dt>Файлы</dt><dd id="job-files-progress">0</dd></div>
+            <div><dt>Строки</dt><dd id="job-rows-progress">ещё не подсчитаны</dd></div>
+            <div><dt>Попытка</dt><dd id="job-attempt">1</dd></div>
+            <div><dt>Обновлено</dt><dd id="job-updated-at">—</dd></div>
+          </dl>
+          <div class="job-controls">
+            <button id="cancel-job" class="secondary-action danger-action" type="button" hidden>Отменить обработку</button>
+            <button id="retry-job" class="secondary-action" type="button" hidden>Запустить повторно</button>
+          </div>
+        </section>
         <ul id="job-issues" class="warnings" aria-label="Причины и предупреждения" hidden></ul>
+        <section id="processing-audit" class="processing-audit" aria-labelledby="processing-audit-title" hidden>
+          <div class="section-heading">
+            <p class="step-label">Что произошло со строками</p>
+            <h3 id="processing-audit-title">Воронка обработки</h3>
+          </div>
+          <dl id="funnel-summary" class="funnel-summary"></dl>
+          <details id="schema-audit" class="audit-details">
+            <summary>Распознавание листов</summary>
+            <div id="schema-audit-items" class="audit-list"></div>
+          </details>
+          <details id="exclusion-audit" class="audit-details" hidden>
+            <summary>Почему строки исключены</summary>
+            <div id="exclusion-audit-items" class="audit-list"></div>
+          </details>
+        </section>
       </section>
 
       <section id="review-panel" class="review-card" aria-labelledby="review-title" tabindex="-1" hidden>
@@ -94,8 +127,41 @@
             <p>Одно решение применяется к одинаковым строкам в группе. Состав группы защищён от устаревших изменений.</p>
           </div>
         </div>
+        <form id="review-filters" class="review-filters" aria-label="Фильтры пакетов проверки">
+          <label for="review-filter-reason">
+            <span>Причина</span>
+            <input id="review-filter-reason" name="reason" type="search" autocomplete="off" placeholder="Например, единицы измерения">
+          </label>
+          <label for="review-filter-category">
+            <span>Категория</span>
+            <select id="review-filter-category" name="category">
+              <option value="">Все категории</option>
+            </select>
+          </label>
+          <label for="review-filter-filename">
+            <span>Безопасное имя файла</span>
+            <input id="review-filter-filename" name="filename" type="search" autocomplete="off" placeholder="Имя исходного файла">
+          </label>
+          <label for="review-filter-confidence">
+            <span>Уверенность не ниже</span>
+            <select id="review-filter-confidence" name="confidence">
+              <option value="">Любая</option>
+              <option value="0.9">90%</option>
+              <option value="0.75">75%</option>
+              <option value="0.5">50%</option>
+            </select>
+          </label>
+          <label class="review-filter-checkbox" for="review-filter-only-unresolved">
+            <input id="review-filter-only-unresolved" name="only_unresolved" type="checkbox" checked>
+            <span>Только нерешённые</span>
+          </label>
+          <div class="review-filter-actions">
+            <button class="secondary-action" type="submit">Применить фильтры</button>
+            <button id="reset-review-filters" class="text-action" type="button">Сбросить</button>
+          </div>
+        </form>
         <div id="summary" class="summary" aria-label="Итог проверки"></div>
-        <p id="review-empty" class="empty-review" hidden>Групп для проверки нет.</p>
+        <p id="review-empty" class="empty-review" tabindex="-1" hidden>Пакетов для проверки по этим фильтрам нет.</p>
         <div id="review-items" class="review-items" aria-live="polite" tabindex="-1"></div>
         <nav id="review-pagination" class="pagination" aria-label="Страницы проверки" hidden>
           <button id="previous-page" class="page-button" type="button">Назад</button>
@@ -105,6 +171,10 @@
         <div class="review-footer">
           <button id="apply-review" class="primary-action" type="button">Применить решения</button>
           <p id="review-hint">Сначала примите решение по каждой группе.</p>
+        </div>
+        <div id="review-mobile-bar" class="review-mobile-bar" aria-label="Навигация по нерешённым пакетам" hidden>
+          <span id="review-mobile-count" aria-live="polite">Осталось: 0</span>
+          <button id="review-mobile-next" class="primary-action" type="button">Следующий нерешённый</button>
         </div>
 
         <div id="legacy-review" class="legacy-review" hidden>
@@ -122,11 +192,11 @@
 
       <section class="result-card" aria-labelledby="result-title">
         <div>
-          <p class="step-label">Шаг 3 · готовая карточка</p>
-          <h2 id="result-title">Файл карточки</h2>
+          <p class="step-label">Шаг 3 · готовый отчёт</p>
+          <h2 id="result-title">Файл отчёта</h2>
           <p id="result-hint">Станет доступен после подготовки.</p>
         </div>
-        <a id="result-download" class="download is-disabled" aria-disabled="true">Карточка ещё не готова</a>
+        <a id="result-download" class="download is-disabled" aria-disabled="true">Отчёт ещё не готов</a>
       </section>
     </main>
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
+from inspect import Parameter, signature
 from pathlib import Path
 from urllib.parse import quote
 
@@ -19,6 +21,7 @@ from .drawing_card_service import (
     MAX_UPLOAD_BYTES as DRAWING_CARD_MAX_UPLOAD_BYTES,
 )
 from .drawing_card_service import (
+    DrawingCardPersistenceError,
     DrawingCardService,
 )
 from .package_reconciliation_service import (
@@ -52,7 +55,7 @@ from .view import (
     static_asset,
 )
 
-_SAFE_DOWNLOAD_NAME = re.compile(r"[^\w.-]+", re.UNICODE)
+_SAFE_DOWNLOAD_NAME = re.compile(r"[^\w. -]+", re.UNICODE)
 _WORKBOOK_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12"
 _ZIP_MEDIA_TYPE = "application/zip"
@@ -63,6 +66,10 @@ _DRAWING_CARD_UPLOAD_ERRORS = {
     ),
     "invalid filename": "Недопустимое имя загружаемого файла",
     "invalid operation": "Выбран недопустимый режим операции",
+    "invalid idempotency key": "Повторите отправку формы из этой страницы",
+    "idempotency key conflicts with another request": (
+        "Повтор отправки относится к другому набору файлов. Выберите файлы заново"
+    ),
     "invalid period": "Некорректный период",
     "invalid source count": "Загрузите от 1 до 32 исходных Excel-файлов",
     "invalid workbook content": "Файл не является корректной Excel-книгой",
@@ -96,7 +103,9 @@ def create_app(
         Path(workspace_root) if workspace_root is not None else Path.cwd() / ".admin-panel-jobs"
     )
     panel = service or AdminPanelService(workspace)
-    drawing_panel = drawing_card_service or DrawingCardService(workspace / "drawing-card")
+    drawing_panel = drawing_card_service or DrawingCardService(
+        workspace / "drawing-card", background=True
+    )
     package_panel = package_reconciliation_service or PackageReconciliationService(
         workspace / "package-reconciliation"
     )
@@ -409,7 +418,10 @@ def create_app(
                     existing_name=existing_name,
                     existing_content=existing_content,
                     period=period,
+                    idempotency_key=request.headers.get("idempotency-key"),
                 )
+        except DrawingCardPersistenceError:
+            return _error("Не удалось надёжно сохранить новую задачу", 503)
         except (KeyError, OSError, TypeError, ValueError) as error:
             return _error(_drawing_card_upload_error(error), 400)
         return _secure(JSONResponse(drawing_card_job_payload(current), status_code=201))
@@ -422,6 +434,41 @@ def create_app(
             return _error("Задача не найдена", 404)
         except (TypeError, ValueError):
             return _error("Состояние задачи недоступно", 500)
+        return _secure(JSONResponse(payload))
+
+    async def drawing_card_cancel(request):
+        try:
+            current = drawing_panel.cancel_job(job_id=request.path_params["job_id"])
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Не удалось сохранить отмену задачи", 503)
+        except ValueError:
+            return _error("Эту задачу уже нельзя отменить", 409)
+        return _secure(JSONResponse(drawing_card_job_payload(current), status_code=202))
+
+    async def drawing_card_retry(request):
+        try:
+            current = drawing_panel.retry_job(job_id=request.path_params["job_id"])
+        except KeyError:
+            return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Не удалось сохранить повторный запуск", 503)
+        except ValueError:
+            return _error("Повторный запуск для этой задачи сейчас недоступен", 409)
+        return _secure(JSONResponse(drawing_card_job_payload(current), status_code=202))
+
+    async def drawing_card_exclusion_audit(request):
+        try:
+            page = int(request.query_params.get("page", "1"))
+            page_size = int(request.query_params.get("page_size", "100"))
+            payload = drawing_panel.list_exclusion_audit(
+                job_id=request.path_params["job_id"], page=page, page_size=page_size
+            )
+        except KeyError:
+            return _error("Аудит исключений недоступен", 404)
+        except (TypeError, ValueError):
+            return _error("Проверьте номер страницы аудита", 400)
         return _secure(JSONResponse(payload))
 
     async def drawing_card_result(request):
@@ -457,6 +504,8 @@ def create_app(
                 )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Не удалось надёжно сохранить состояние задачи", 503)
         except (OSError, TypeError, ValueError):
             return _error("Проверьте заполненный файл проверки", 400)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
@@ -481,8 +530,13 @@ def create_app(
         try:
             page = int(request.query_params.get("page", "1"))
             page_size = int(request.query_params.get("page_size", "50"))
-            payload = drawing_panel.list_review_clusters(
-                job_id=request.path_params["job_id"], page=page, page_size=page_size
+            filters = _drawing_card_review_filters(request.query_params)
+            payload = _call_review_clusters(
+                drawing_panel,
+                job_id=request.path_params["job_id"],
+                page=page,
+                page_size=page_size,
+                **filters,
             )
         except KeyError:
             return _error("Задача не найдена", 404)
@@ -526,6 +580,8 @@ def create_app(
                 )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Решения не сохранены. Повторите действие", 503)
         except (TypeError, ValueError):
             return _error("Кластер изменился — обновите список и повторите действие", 409)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
@@ -545,36 +601,42 @@ def create_app(
                     raise ValueError("invalid decision")
                 action = payload.get("action")
                 category = payload.get("category")
-                if not isinstance(action, str) or (
-                    category is not None and not isinstance(category, str)
+                version = payload.get("version")
+                if (
+                    not isinstance(action, str)
+                    or (category is not None and not isinstance(category, str))
+                    or (version is not None and not isinstance(version, str))
                 ):
                     raise ValueError("invalid decision")
-                current = drawing_panel.put_review_item(
+                current = _call_put_review_item(
+                    drawing_panel,
                     job_id=job_id,
                     review_id=review_id,
                     action=action,
                     category=category,
+                    version=version,
                 )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Решения не сохранены. Повторите действие", 503)
         except (TypeError, ValueError):
             return _error("Выберите допустимое решение и категорию", 400)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
 
-    async def drawing_card_review_bulk(request):
+    async def drawing_card_review_context(request):
         try:
-            payload = await request.json()
-            if not isinstance(payload, Mapping) or not isinstance(payload.get("action"), str):
-                raise ValueError("invalid bulk decision")
-            current = drawing_panel.bulk_review(
+            radius = _review_context_radius(request.query_params.get("radius", "2"))
+            payload = drawing_panel.get_review_context(
                 job_id=request.path_params["job_id"],
-                action=payload["action"],
+                review_id=request.path_params["review_id"],
+                radius=radius,
             )
         except KeyError:
-            return _error("Задача не найдена", 404)
+            return _error("Задача или строка не найдена", 404)
         except (TypeError, ValueError):
-            return _error("Выберите допустимое общее решение", 400)
-        return _secure(JSONResponse(drawing_card_job_payload(current)))
+            return _error("Радиус контекста должен быть числом от 1 до 5", 400)
+        return _secure(JSONResponse(_safe_review_context(payload)))
 
     async def drawing_card_review_apply(request):
         try:
@@ -583,6 +645,8 @@ def create_app(
             )
         except KeyError:
             return _error("Задача не найдена", 404)
+        except DrawingCardPersistenceError:
+            return _error("Решения не сохранены. Повторите действие", 503)
         except (TypeError, ValueError):
             return _error("Сначала примите решение по каждой строке", 409)
         return _secure(JSONResponse(drawing_card_job_payload(current)))
@@ -622,6 +686,21 @@ def create_app(
             Route("/api/drawing-card/periods", drawing_card_periods, methods=["POST"]),
             Route("/api/drawing-card/jobs", drawing_card_upload, methods=["POST"]),
             Route("/api/drawing-card/jobs/{job_id}", drawing_card_get_job),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/cancel",
+                drawing_card_cancel,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/retry",
+                drawing_card_retry,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/drawing-card/jobs/{job_id}/audit/exclusions",
+                drawing_card_exclusion_audit,
+                methods=["GET"],
+            ),
             Route("/api/drawing-card/jobs/{job_id}/result", drawing_card_result),
             Route(
                 "/api/drawing-card/jobs/{job_id}/review",
@@ -649,9 +728,9 @@ def create_app(
                 methods=["PUT", "DELETE"],
             ),
             Route(
-                "/api/drawing-card/jobs/{job_id}/review/bulk",
-                drawing_card_review_bulk,
-                methods=["POST"],
+                "/api/drawing-card/jobs/{job_id}/review/items/{review_id}/context",
+                drawing_card_review_context,
+                methods=["GET"],
             ),
             Route(
                 "/api/drawing-card/jobs/{job_id}/review/apply",
@@ -664,6 +743,130 @@ def create_app(
 
 def _upload_part(form: Mapping[str, object], key: str):
     return _upload_value(form[key])
+
+
+def _drawing_card_review_filters(query: Mapping[str, str]) -> dict[str, object]:
+    """Parse the small, public packet-filter contract without changing its meaning."""
+    reason = _optional_filter(query.get("reason"), "reason")
+    category = _optional_filter(query.get("category"), "category")
+    safe_filename = _safe_filename_filter(query.get("safe_filename"))
+    confidence = _confidence_filter(query.get("confidence"))
+    only_unresolved = _boolean_filter(query.get("only_unresolved", "true"))
+    return {
+        "reason": reason,
+        "category": category,
+        "safe_filename": safe_filename,
+        "confidence": confidence,
+        "only_unresolved": only_unresolved,
+    }
+
+
+def _optional_filter(value: str | None, name: str) -> str | None:
+    if value is None or not value.strip():
+        return None
+    cleaned = value.strip()
+    if len(cleaned) > 200 or any(character in cleaned for character in "\x00\r\n"):
+        raise ValueError(f"invalid {name}")
+    return cleaned
+
+
+def _safe_filename_filter(value: str | None) -> str | None:
+    cleaned = _optional_filter(value, "safe_filename")
+    if cleaned is None:
+        return None
+    if "/" in cleaned or "\\" in cleaned or cleaned in {".", ".."}:
+        raise ValueError("invalid safe_filename")
+    return cleaned
+
+
+def _confidence_filter(value: str | None) -> float | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        confidence = Decimal(value)
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("invalid confidence") from error
+    if not confidence.is_finite() or not Decimal("0") <= confidence <= Decimal("1"):
+        raise ValueError("invalid confidence")
+    return float(confidence)
+
+
+def _boolean_filter(value: str) -> bool:
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ValueError("invalid only_unresolved")
+
+
+def _review_context_radius(value: str) -> int:
+    radius = int(value)
+    if not 1 <= radius <= 5:
+        raise ValueError("invalid radius")
+    return radius
+
+
+def _call_review_clusters(service, **kwargs: object) -> dict[str, object]:
+    """Call the frozen v3 signature, retaining old local service compatibility."""
+    method = service.list_review_clusters
+    accepted = signature(method).parameters
+    if any(item.kind is Parameter.VAR_KEYWORD for item in accepted.values()):
+        return method(**kwargs)
+    return method(**{key: value for key, value in kwargs.items() if key in accepted})
+
+
+def _call_put_review_item(service, **kwargs: object):
+    """Pass member version to v3 services; pre-v3 services never see the new field."""
+    method = service.put_review_item
+    accepted = signature(method).parameters
+    if any(item.kind is Parameter.VAR_KEYWORD for item in accepted.values()):
+        return method(**kwargs)
+    return method(**{key: value for key, value in kwargs.items() if key in accepted})
+
+
+def _safe_review_context(payload: object) -> object:
+    """Defence in depth: context rows cannot disclose paths or raw source containers."""
+    if isinstance(payload, Mapping):
+        result = {
+            key: payload[key]
+            for key in ("review_id", "radius", "items", "rows", "context")
+            if key in payload
+        }
+        for key in ("items", "rows", "context"):
+            if isinstance(result.get(key), (list, tuple)):
+                result[key] = [_safe_review_context_row(item) for item in result[key]]
+        return result
+    if isinstance(payload, (list, tuple)):
+        return [_safe_review_context_row(item) for item in payload]
+    raise ValueError("invalid review context")
+
+
+def _safe_review_context_row(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("invalid review context row")
+    allowed = {
+        "review_id",
+        "version",
+        "safe_filename",
+        "sheet_name",
+        "row_number",
+        "position",
+        "drawing_code",
+        "object_index",
+        "work_name",
+        "source_unit",
+        "quantity",
+        "total_cost",
+        "confidence",
+        "reason",
+        "reason_label",
+        "selected_category",
+    }
+    result = {key: value[key] for key in allowed if key in value}
+    filename = result.get("safe_filename")
+    if isinstance(filename, str):
+        result["safe_filename"] = filename.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+    return result
 
 
 def _drawing_card_upload_error(error: Exception) -> str:
@@ -781,7 +984,7 @@ def _drawing_card_download(service, job_id: str, *, kind: str):
         Response(
             content,
             media_type=_WORKBOOK_MEDIA_TYPE,
-            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+            headers={"Content-Disposition": _content_disposition(safe_name)},
         )
     )
 

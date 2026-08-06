@@ -7,6 +7,7 @@ column cannot silently be used as a physical quantity column.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
@@ -56,9 +57,26 @@ _PERFORMED_BLOCK_ALIASES = (
     "выполнено за весь период",
 )
 
+_HEADER_PUNCTUATION_RE = re.compile(r"[^\w]+", re.UNICODE)
+
+
+def _semantic_header(value: str) -> str:
+    """Normalize a header into comparable words without losing parent context.
+
+    Excel headers vary more in punctuation and abbreviations than in meaning.
+    This deliberately only expands unambiguous, domain-specific abbreviations;
+    it must not turn a vague cost label into a recognized financial role.
+    """
+    text = normalize_text(value).replace("№", " номер ")
+    text = _HEADER_PUNCTUATION_RE.sub(" ", text)
+    text = re.sub(r"\bп\s+п\b", "по порядку", text)
+    text = re.sub(r"\bкол\s+во\b", "количество", text)
+    text = re.sub(r"\bед\s+изм\b", "единица измерения", text)
+    return " ".join(text.split())
+
 
 def _normalize_header(value: object) -> str:
-    return normalize_text(None if value is None else str(value))
+    return _semantic_header("" if value is None else str(value))
 
 
 def _forward_fill(values: list[str]) -> list[str]:
@@ -101,13 +119,13 @@ def _compose_headers(rows: list[tuple[object, ...]], start: int, end: int) -> di
 
 
 def _contains_alias(header: str, aliases: Iterable[str]) -> bool:
-    return any(alias in header for alias in aliases)
+    return any(_semantic_header(alias) in header for alias in aliases)
 
 
 def _remaining_quantity_score(header: str) -> int:
     if "остат" not in header and "осталось выполнить" not in header:
         return 0
-    if any(token in header for token in _QUANTITY_TOKENS):
+    if any(_semantic_header(token) in header for token in _QUANTITY_TOKENS):
         return 8
     return 0
 
@@ -115,34 +133,40 @@ def _remaining_quantity_score(header: str) -> int:
 def _remaining_cost_score(header: str) -> int:
     if "остат" not in header and "осталось выполнить" not in header:
         return 0
-    if any(token in header for token in _UNIT_PRICE_TOKENS):
+    if any(_semantic_header(token) in header for token in _UNIT_PRICE_TOKENS):
         return 0
-    if any(token in header for token in _TOTAL_COST_TOKENS) or "остаток стоимости" in header:
+    if (
+        any(_semantic_header(token) in header for token in _TOTAL_COST_TOKENS)
+        or "остаток стоимости" in header
+        or "стоим" in header
+        or "сумм" in header
+    ):
         return 9
-    if "стоимость по договору" in header:
-        return 7
     return 0
 
 
 def _block_metric_score(header: str, block_aliases: tuple[str, ...], *, quantity: bool) -> int:
     """Score an explicit leaf metric under one multi-row header block."""
-    block = next((alias for alias in block_aliases if alias in header), None)
+    block = next(
+        (_semantic_header(alias) for alias in block_aliases if _semantic_header(alias) in header),
+        None,
+    )
     if block is None:
         return 0
     leaf = header.replace(block, " ").strip()
     if quantity:
-        return 20 if any(token in leaf for token in _QUANTITY_TOKENS) else 0
+        return 20 if any(_semantic_header(token) in leaf for token in _QUANTITY_TOKENS) else 0
     if "единиц" in leaf or "цен" in leaf:
         return 0
     return 20 if "стоим" in leaf or "сумм" in leaf else 0
 
 
 def _is_unit_price_header(header: str) -> bool:
-    return any(token in header for token in _UNIT_PRICE_TOKENS) or "цен" in header
+    return any(_semantic_header(token) in header for token in _UNIT_PRICE_TOKENS) or "цен" in header
 
 
 def _is_exact_contract_cost_header(header: str) -> bool:
-    compact = header.replace(",", "").replace(".", "").strip()
+    compact = _semantic_header(header)
     return compact in {
         _CONTRACT_COST_BLOCK,
         f"{_CONTRACT_COST_BLOCK} руб",
@@ -176,11 +200,19 @@ def _resolve_contract_metrics(headers: dict[int, str]) -> tuple[dict[str, int], 
             candidates.append((max(quantities), cost_column))
     if not candidates:
         return {}, []
+    candidates = list(dict.fromkeys(candidates))
     quantity_column, cost_column = candidates[0]
     warnings: list[str] = []
     if len(candidates) > 1:
-        warnings.append(f"AMBIGUOUS_COLUMN:contract_total_cost:{cost_column},{candidates[1][1]}")
-        warnings.append(f"AMBIGUOUS_COLUMN:contract_quantity:{quantity_column},{candidates[1][0]}")
+        warnings.append(
+            f"AMBIGUOUS_OPTIONAL_CONTRACT_COLUMN:contract_total_cost:"
+            f"{cost_column},{candidates[1][1]}"
+        )
+        warnings.append(
+            f"AMBIGUOUS_OPTIONAL_CONTRACT_COLUMN:contract_quantity:"
+            f"{quantity_column},{candidates[1][0]}"
+        )
+        return {}, warnings
     return {
         "contract_quantity": quantity_column,
         "contract_total_cost": cost_column,
@@ -207,9 +239,10 @@ def _resolve_block_metrics(
         )
         if not ranked:
             continue
-        resolved[f"{prefix}_{field}"] = ranked[0][1]
         if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
             warnings.append(f"AMBIGUOUS_COLUMN:{prefix}_{field}:{ranked[0][1]},{ranked[1][1]}")
+            continue
+        resolved[f"{prefix}_{field}"] = ranked[0][1]
     return resolved, warnings
 
 
@@ -249,20 +282,37 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
         if not field_candidates:
             continue
         ranked = sorted(field_candidates, key=lambda item: (-item[0], item[1]))
-        resolved[field] = ranked[0][1]
         if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
             warnings.append(f"AMBIGUOUS_COLUMN:{field}:{ranked[0][1]},{ranked[1][1]}")
-    if resolved.get("remaining_quantity") == resolved.get("remaining_total_cost"):
-        column = resolved.pop("remaining_quantity", None)
-        warnings.append(f"SAME_COLUMN_FOR_QUANTITY_AND_COST:{column}")
+            continue
+        resolved[field] = ranked[0][1]
+    roles_by_column: dict[int, list[str]] = {}
+    for role, column in resolved.items():
+        roles_by_column.setdefault(column, []).append(role)
+    for column, roles in roles_by_column.items():
+        if len(roles) > 1:
+            for role in roles:
+                resolved.pop(role, None)
+            warnings.append(f"CONFLICTING_PHYSICAL_ROLES:{column}:{','.join(sorted(roles))}")
     contract_columns, contract_warnings = _resolve_contract_metrics(headers)
     performed_columns, performed_warnings = _resolve_block_metrics(
         headers,
         prefix="performed",
         block_aliases=_PERFORMED_BLOCK_ALIASES,
     )
-    resolved.update(contract_columns)
-    resolved.update(performed_columns)
+    for role, column in {**contract_columns, **performed_columns}.items():
+        existing = next((name for name, assigned in resolved.items() if assigned == column), None)
+        if existing is not None:
+            warnings.append(f"CONFLICTING_PHYSICAL_ROLES:{column}:{existing},{role}")
+            resolved.pop(existing, None)
+            continue
+        resolved[role] = column
+    # Explicit cumulative performed plus residual establishes a comparable
+    # contract basis. A neighbouring generic direct-contract triplet can be a
+    # partial slice, so it must never override those semantic period roles.
+    for metric in ("quantity", "total_cost"):
+        if {f"performed_{metric}", f"remaining_{metric}"}.issubset(resolved):
+            warnings.append(f"PERIOD_ROLES_AUTHORITATIVE:contract_{metric}")
     warnings.extend(contract_warnings)
     warnings.extend(performed_warnings)
     return resolved, warnings
@@ -275,7 +325,7 @@ def _content_position_column(
     *,
     start: int,
 ) -> tuple[int | None, str | None]:
-    """Recover a non-standard position column only on strong, unique hierarchy evidence."""
+    """Diagnose non-standard position evidence without authorizing hierarchy use."""
     if "position_code" in columns:
         return columns["position_code"], None
     excluded = (
@@ -305,7 +355,7 @@ def _content_position_column(
         return None, None
     if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
         return None, "AMBIGUOUS_POSITION_COLUMN_CONTENT"
-    return ranked[0][1], "POSITION_COLUMN_FROM_CONTENT"
+    return ranked[0][1], "POSITION_COLUMN_FROM_CONTENT_DIAGNOSTIC"
 
 
 def _schema_score(columns: dict[str, int]) -> int:
@@ -471,6 +521,13 @@ def _validate_metric_columns(
     cost_column = resolved.get("remaining_total_cost")
     if quantity_column is None or cost_column is None:
         return resolved, warnings
+    # An explicitly labelled residual pair is semantic evidence. Equality of
+    # sampled values is common in template rows and must not replace it with an
+    # earlier generic contract triplet.
+    if _remaining_quantity_score(headers.get(quantity_column, "")) and _remaining_cost_score(
+        headers.get(cost_column, "")
+    ):
+        return resolved, warnings
 
     current = _metric_pair_stats(
         formula_rows,
@@ -574,16 +631,25 @@ def detect_sheet_schema(
         data_start_index=end + 1,
     )
     warnings.extend(metric_warnings)
-    position_column, position_warning = _content_position_column(
+    _position_column, position_warning = _content_position_column(
         columns, headers, cached_rows, start=end + 1
     )
-    if position_column is not None:
-        columns["position_code"] = position_column
     if position_warning:
         warnings.append(position_warning)
     required = {"drawing_code", "work_name", "unit", "remaining_quantity", "remaining_total_cost"}
     missing = sorted(required - columns.keys())
-    status = Status.OK.value if not missing else Status.MISSING_REQUIRED_COLUMNS.value
+    unsafe_roles = any(
+        warning.startswith(("AMBIGUOUS_COLUMN:", "CONFLICTING_PHYSICAL_ROLES:"))
+        for warning in warnings
+    )
+    content_only_position_evidence = position_warning is not None
+    status = (
+        Status.MISSING_REQUIRED_COLUMNS.value
+        if missing
+        else Status.AMBIGUOUS_SCHEMA.value
+        if unsafe_roles or content_only_position_evidence
+        else Status.OK.value
+    )
     if missing:
         warnings.append("MISSING:" + ",".join(missing))
     confidence = min(1.0, _schema_score(columns) / 14)
@@ -617,6 +683,7 @@ def select_usable_schemas(schemas: list[SourceSchema]) -> tuple[SourceSchema, ..
     usable = [
         schema
         for schema in schemas
+        if schema.status == Status.OK
         if {"drawing_code", "work_name", "unit"}.issubset(schema.columns)
         and ("remaining_quantity" in schema.columns or "remaining_total_cost" in schema.columns)
     ]

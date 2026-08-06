@@ -28,7 +28,7 @@ def test_report_composition_keeps_route_and_explains_built_in_auto_reconciliatio
 
     assert 'href="/drawing-card" aria-current="page">Составление отчёта</a>' in page
     assert "Отчёт с автоматической сверкой" in page
-    assert "Составьте отчёт об остатках" in page
+    assert "Отчёт (карточка остатков)" in page
     assert "если всё однозначно" in page
     assert "Автосверка встроена" in help_page
 

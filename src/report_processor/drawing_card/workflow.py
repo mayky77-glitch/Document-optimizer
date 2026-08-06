@@ -3,18 +3,35 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections import Counter
 from dataclasses import replace
+from hashlib import sha256
 from importlib import resources
 from pathlib import Path
 
 from report_processor.hierarchy import HierarchyEntry, filter_aggregate_rows
 
 from .aggregation.aggregator import aggregate_rows, build_complete_card_rows
-from .audit import AtomicJsonlWriter, atomic_write_json, atomic_write_jsonl, source_hashes
+from .audit import (
+    DISPOSITION_HIERARCHY_AGGREGATE_EXCLUDED,
+    DISPOSITION_HIERARCHY_RESOURCE_DETAIL_EXCLUDED,
+    AtomicJsonlWriter,
+    atomic_write_json,
+    atomic_write_jsonl,
+    disposition_for_decision,
+    disposition_for_row,
+    funnel_summary,
+    source_hashes,
+)
 from .autopilot import load_machine_consensus
 from .config import load_model_config, load_rules
+from .lifecycle import (
+    DrawingCardLifecycle,
+    DrawingCardLifecyclePhase,
+    DrawingCardWorkflowCancelled,
+)
 from .matching.examples import load_confirmed_examples
 from .matching.matcher import DrawingRowMatcher
 from .models import (
@@ -33,7 +50,12 @@ from .output import (
     validate_card,
     write_card,
 )
-from .review import export_manual_review, import_review_approvals
+from .review import (
+    FeedbackStore,
+    export_manual_review,
+    import_review_approvals,
+    replay_exact_feedback,
+)
 from .sources import (
     build_manifest,
     extract_rows,
@@ -59,6 +81,10 @@ _GLOBAL_STRICT_BLOCKER_STATUSES = frozenset(
         Status.UNSAFE_ARCHIVE_PATH,
         Status.SUSPICIOUS_COMPRESSION_RATIO,
         Status.VERY_LARGE_ARCHIVE_ENTRY,
+        "FUNNEL_CONSERVATION_FAILED",
+        "FUNNEL_UNKNOWN_DISPOSITION",
+        "FUNNEL_UNKNOWN_ROLE_POLICY",
+        "FUNNEL_ANOMALOUS_EXCLUSION_SHARE",
     }
 )
 
@@ -74,6 +100,8 @@ _CONTRIBUTING_ROW_BLOCKER_STATUSES = frozenset(
 )
 
 _CONTRIBUTING_HIERARCHY_BLOCKER_STATUSES: frozenset[str] = frozenset()
+
+_CONTROLLED_CODE_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 
 
 def default_rules_path() -> Path:
@@ -106,6 +134,16 @@ def _validate_request(request: WorkflowRequest) -> None:
         raise FileNotFoundError(request.existing_card)
     if request.review_decisions is not None and not request.review_decisions.is_file():
         raise FileNotFoundError(request.review_decisions)
+    if request.feedback_examples is not None:
+        raise ValueError("feedback_examples is ineligible; use FeedbackStore replay")
+    if request.feedback_input_hashes is not None and (
+        not isinstance(request.feedback_input_hashes, tuple)
+        or not request.feedback_input_hashes
+        or any(
+            re.fullmatch(r"[0-9a-f]{64}", value) is None for value in request.feedback_input_hashes
+        )
+    ):
+        raise ValueError("feedback_input_hashes must be a non-empty tuple of SHA-256 hashes")
     if request.machine_consensus is not None and not request.machine_consensus.is_file():
         raise FileNotFoundError(request.machine_consensus)
     if request.remaining_strategy != "direct_remaining_columns":
@@ -247,6 +285,11 @@ def _processing_summary(
             row.remaining_total_cost is not None for row in result.card_rows
         ),
         "manual_review_decisions": result.manual_review_count,
+        "review_candidates_before_replay": result.review_candidates_before_replay,
+        "exact_feedback_hits": result.exact_feedback_hits,
+        "queued_review_rows": result.queued_review_rows,
+        "funnel": result.funnel,
+        "schema_recognition": result.schema_recognition,
         "model_calls": matcher_calls,
         "matching_strategies": sorted(
             {
@@ -260,6 +303,36 @@ def _processing_summary(
         "output": str(result.output_path) if result.output_path else None,
         "output_validation": validation,
     }
+
+
+def _schema_recognition_payload(inspections: list[object]) -> list[dict[str, object]]:
+    """Build a controlled, path-free sheet recognition audit."""
+    payload: list[dict[str, object]] = []
+    for inspection in inspections:
+        entry = inspection.entry
+        for schema in inspection.schemas:
+            if schema.status == Status.OK:
+                recognition = "recognized"
+            elif schema.status == Status.AMBIGUOUS_SCHEMA:
+                recognition = "uncertain"
+            else:
+                recognition = "unsupported"
+            reason_codes = []
+            for warning in schema.warnings:
+                code = str(warning).partition(":")[0]
+                if _CONTROLLED_CODE_RE.fullmatch(code):
+                    reason_codes.append(code)
+            payload.append(
+                {
+                    "file_id": entry.file_id,
+                    "filename": Path(entry.filename).name,
+                    "sheet_name": schema.sheet_name,
+                    "recognition": recognition,
+                    "confidence": round(float(schema.confidence), 4),
+                    "reason_codes": list(dict.fromkeys(reason_codes)),
+                }
+            )
+    return payload
 
 
 def _publication_blockers(result: WorkflowResult) -> list[str]:
@@ -354,11 +427,61 @@ def _save_summary(
     )
 
 
+def _check_cancelled(request: WorkflowRequest, output_path: Path | None = None) -> None:
+    """Fail closed and remove a just-written public workbook on cancellation."""
+    if request.cancel_requested is None or not request.cancel_requested():
+        return
+    if output_path is not None:
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError:
+            LOGGER.exception("Unable to remove cancelled drawing-card output: %s", output_path)
+    raise DrawingCardWorkflowCancelled("Drawing-card workflow was cancelled")
+
+
+def _finish_lifecycle(
+    lifecycle: DrawingCardLifecycle,
+    *,
+    terminal_cause: str,
+) -> None:
+    """Close a non-published attempt on its last honest phase, never ``ready``."""
+    last = lifecycle.last
+    if last is None:
+        return
+    lifecycle.emit(
+        last.phase,
+        processed_files=last.processed_files,
+        total_files=last.total_files,
+        processed_rows=last.processed_rows,
+        total_rows=last.total_rows,
+        terminal_cause=terminal_cause,
+    )
+
+
+def _is_publishable_result(
+    result: WorkflowResult,
+    validation: dict | None,
+    *,
+    inputs_unchanged: bool,
+) -> bool:
+    """Mirror the statuses for which the service may safely publish an XLSX."""
+    return (
+        result.output_path is not None
+        and validation is not None
+        and validation.get("status") == Status.OK
+        and inputs_unchanged
+        and result.status in {Status.OK, Status.COMPLETED_WITH_WARNINGS, Status.PARTIALLY_READY}
+    )
+
+
 def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     run_id = uuid.uuid4().hex
     run_dir = request.work_dir.expanduser().resolve() / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     result = WorkflowResult(run_id=run_id, status=Status.BLOCKED, work_dir=run_dir)
+    lifecycle = DrawingCardLifecycle(request.progress_callback)
+    lifecycle.emit(DrawingCardLifecyclePhase.UPLOAD)
+    _check_cancelled(request)
     try:
         _validate_request(request)
     except (FileNotFoundError, IsADirectoryError, NotADirectoryError, ValueError) as error:
@@ -367,6 +490,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             run_dir / "error.json", {"error": str(error), "stage": "request_validation"}
         )
         _save_summary(result)
+        _finish_lifecycle(lifecycle, terminal_cause="REQUEST_VALIDATION_FAILED")
         return result
     rules_path = (request.rules or default_rules_path()).expanduser().resolve()
     examples_path = (request.examples or default_examples_path()).expanduser().resolve()
@@ -379,6 +503,10 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     manifest = build_manifest(request.inputs, None, None)
     result.manifest = manifest
     atomic_write_json(run_dir / "input_manifest.json", manifest)
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.SCHEMA_DETECTION,
+        total_files=len(manifest),
+    )
     LOGGER.info("Discovered %s Excel entries", len(manifest))
 
     inspections = []
@@ -386,11 +514,17 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     # metadata pruning cannot hide the best actual source.
     inspection_candidates = manifest
     LOGGER.info("Inspecting %s candidate workbooks", len(inspection_candidates))
-    for entry in inspection_candidates:
+    for inspected_files, entry in enumerate(inspection_candidates, start=1):
+        _check_cancelled(request)
         try:
             inspections.append(inspect_source(entry, object_mapping=mapping))
         except (OSError, ValueError, KeyError) as error:
             result.warnings.append(f"SOURCE_INSPECTION_FAILED:{entry.logical_path}:{error}")
+        lifecycle.emit(
+            DrawingCardLifecyclePhase.SCHEMA_DETECTION,
+            processed_files=inspected_files,
+            total_files=len(manifest),
+        )
     atomic_write_json(run_dir / "source_inspections.json", inspections)
     selected, selections, selection_warnings = select_inspections(
         inspections,
@@ -398,6 +532,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         requested_period=request.period,
     )
     result.warnings.extend(selection_warnings)
+    result.schema_recognition = _schema_recognition_payload(inspections)
     atomic_write_json(run_dir / "source_selections.json", selections)
 
     try:
@@ -411,11 +546,15 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             run_dir / "source_hashes_after.json", source_hashes(_container_paths(request))
         )
         _save_summary(result)
+        _finish_lifecycle(lifecycle, terminal_cause="REVIEW_DECISIONS_INVALID")
         return result
     examples = load_confirmed_examples(examples_path)
-    if request.feedback_examples is not None:
-        feedback = load_confirmed_examples(request.feedback_examples)
-        examples = tuple({item.example_id: item for item in (*examples, *feedback)}.values())
+    feedback_store = FeedbackStore(request.feedback_store) if request.feedback_store else None
+    feedback_project_id = (
+        request.feedback_project_id
+        or sha256("".join(sorted(before_hashes.values())).encode("ascii")).hexdigest()
+    )
+    replay_input_hashes = request.feedback_input_hashes or tuple(sorted(before_hashes.values()))
     tiny_model = None
     if request.rag_mode != "off" and request.model_config is not None:
         from .matching.tiny_model import OpenAICompatibleTinyModel
@@ -434,14 +573,25 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     matched_decisions = []
     review_rows = []
     review_decisions = []
+    dispositions = []
+    extraction_stats: dict[str, int] = {
+        "skipped_empty_rows": 0,
+        "skipped_header_rows": 0,
+    }
     drawing_rows: dict[tuple[str, str], DrawingSourceRow] = {}
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.EXTRACTION,
+        total_files=len(selected),
+    )
     with (
         AtomicJsonlWriter(run_dir / "extracted_rows.jsonl") as extracted_writer,
         AtomicJsonlWriter(run_dir / "classification_decisions.jsonl") as classification_writer,
         AtomicJsonlWriter(run_dir / "matches.jsonl") as matches_writer,
         AtomicJsonlWriter(run_dir / "rejected_rows.jsonl") as rejected_writer,
+        AtomicJsonlWriter(run_dir / "row_dispositions.jsonl") as disposition_writer,
     ):
-        for inspection in selected:
+        for extracted_files, inspection in enumerate(selected, start=1):
+            _check_cancelled(request)
             schema = _top_schema(inspection, result.warnings)
             if schema is None:
                 continue
@@ -466,6 +616,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                         inspection.entry,
                         schema,
                         inspection.object_identity.value,
+                        stats=extraction_stats,
                     )
                 )
                 hierarchy = filter_aggregate_rows(
@@ -485,15 +636,32 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                 result.hierarchy_issues.extend(hierarchy.issues)
                 result.warnings.extend(hierarchy.warnings)
                 for row in extracted_rows:
+                    _check_cancelled(request)
                     result.extracted_row_count += 1
                     extracted_writer.write(row)
                     result.warnings.extend(row.warnings)
                     if row.row_id in parent_ids:
+                        disposition = disposition_for_row(
+                            row,
+                            disposition=DISPOSITION_HIERARCHY_AGGREGATE_EXCLUDED,
+                            reason_code="HIERARCHY_AGGREGATE_POLICY",
+                            row_role="aggregate",
+                        )
+                        dispositions.append(disposition)
+                        disposition_writer.write(disposition)
                         rejected_writer.write(
                             {"row_id": row.row_id, "status": Status.HIERARCHY_AGGREGATE_EXCLUDED}
                         )
                         continue
                     if row.row_id in resource_detail_ids:
+                        disposition = disposition_for_row(
+                            row,
+                            disposition=DISPOSITION_HIERARCHY_RESOURCE_DETAIL_EXCLUDED,
+                            reason_code="HIERARCHY_RESOURCE_DETAIL_POLICY",
+                            row_role="resource_detail",
+                        )
+                        dispositions.append(disposition)
+                        disposition_writer.write(disposition)
                         rejected_writer.write(
                             {
                                 "row_id": row.row_id,
@@ -502,6 +670,14 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                         )
                         continue
                     if _is_source_resource_detail(row):
+                        disposition = disposition_for_row(
+                            row,
+                            disposition=DISPOSITION_HIERARCHY_RESOURCE_DETAIL_EXCLUDED,
+                            reason_code="SOURCE_RESOURCE_DETAIL_POLICY",
+                            row_role="resource_detail",
+                        )
+                        dispositions.append(disposition)
+                        disposition_writer.write(disposition)
                         rejected_writer.write(
                             {
                                 "row_id": row.row_id,
@@ -512,6 +688,25 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                     if row.object_index_raw and row.drawing_code_raw:
                         drawing_rows.setdefault((row.object_index_raw, row.drawing_code_raw), row)
                     decision = matcher.match(row)
+                    if decision.requires_manual_review:
+                        result.review_candidates_before_replay += 1
+                        if feedback_store is not None:
+                            replayed = replay_exact_feedback(
+                                row,
+                                decision,
+                                store=feedback_store,
+                                tenant_id=request.feedback_tenant_id,
+                                project_id=feedback_project_id,
+                                input_hashes=replay_input_hashes,
+                                model_version=request.feedback_model_version,
+                                rules_version=rules.version,
+                            )
+                            if replayed is not None:
+                                decision = replayed
+                                result.exact_feedback_hits += 1
+                    disposition = disposition_for_decision(row, decision)
+                    dispositions.append(disposition)
+                    disposition_writer.write(disposition)
                     result.classification_decision_count += 1
                     classification_writer.write(decision)
                     if decision.category is not None:
@@ -537,8 +732,48 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                 if reader is not None:
                     reader.close()
                 materialized.close()
+            lifecycle.emit(
+                DrawingCardLifecyclePhase.EXTRACTION,
+                processed_files=extracted_files,
+                total_files=len(selected),
+                processed_rows=result.extracted_row_count,
+            )
 
+    _check_cancelled(request)
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.HIERARCHY_FILTERING,
+        processed_files=len(selected),
+        total_files=len(selected),
+        processed_rows=result.extracted_row_count,
+        total_rows=result.extracted_row_count,
+    )
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.MATCHING,
+        processed_files=len(selected),
+        total_files=len(selected),
+        processed_rows=result.extracted_row_count,
+        total_rows=result.extracted_row_count,
+    )
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.REVIEW_PREPARATION,
+        processed_files=len(selected),
+        total_files=len(selected),
+        processed_rows=result.extracted_row_count,
+        total_rows=result.extracted_row_count,
+    )
     atomic_write_jsonl(run_dir / "hierarchy_issues.jsonl", result.hierarchy_issues)
+    funnel = funnel_summary(dispositions, extracted_row_count=result.extracted_row_count)
+    funnel.update(
+        {
+            "source_files": len(result.manifest),
+            "source_sheets": len(result.schema_recognition),
+            **extraction_stats,
+        }
+    )
+    result.funnel = funnel
+    atomic_write_json(run_dir / "funnel_summary.json", result.funnel)
+    for blocker in funnel["strict_blockers"]:
+        result.warnings.append(str(blocker))
     aggregated = aggregate_rows(
         matched_rows,
         matched_decisions,
@@ -559,6 +794,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         {decision.row_id: decision for decision in aggregate_review_decisions}
     )
     result.manual_review_count = len(review_decisions_by_id)
+    result.queued_review_rows = result.manual_review_count
     if result.manual_review_count:
         result.warnings.append(f"MANUAL_REVIEW_REQUIRED:{result.manual_review_count}")
 
@@ -587,6 +823,20 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         card_rows, update_warnings = merge_update_rows(card_rows, existing, request.update_policy)
         result.warnings.extend(update_warnings)
     result.card_rows = card_rows
+    disposition_counts = result.funnel.get("disposition_counts", {})
+    result.funnel.update(
+        {
+            "automatically_accepted_rows": int(disposition_counts.get("MATCHED", 0))
+            if isinstance(disposition_counts, dict)
+            else 0,
+            "manual_review_rows": result.manual_review_count,
+            "review_candidates_before_replay": result.review_candidates_before_replay,
+            "exact_feedback_hits": result.exact_feedback_hits,
+            "queued_review_rows": result.queued_review_rows,
+            "output_rows": len(card_rows),
+        }
+    )
+    atomic_write_json(run_dir / "funnel_summary.json", result.funnel)
     layouts = plan_layout(card_rows, objects_per_sheet=request.objects_per_sheet)
     result.layouts = layouts
     atomic_write_json(run_dir / "layout_plan.json", layouts)
@@ -632,6 +882,14 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             result.status = Status.BLOCKED
         else:
             assert request.output is not None
+            _check_cancelled(request)
+            lifecycle.emit(
+                DrawingCardLifecyclePhase.OUTPUT_WRITING,
+                processed_files=len(selected),
+                total_files=len(selected),
+                processed_rows=result.extracted_row_count,
+                total_rows=result.extracted_row_count,
+            )
             operations = write_card(
                 base_path=base_path,
                 output_path=request.output,
@@ -643,8 +901,19 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             result.write_operations = operations
             result.output_path = request.output
             atomic_write_jsonl(run_dir / "write_operations.jsonl", operations)
+            _check_cancelled(request, request.output)
+            lifecycle.emit(
+                DrawingCardLifecyclePhase.VALIDATION,
+                processed_files=len(selected),
+                total_files=len(selected),
+                processed_rows=result.extracted_row_count,
+                total_rows=result.extracted_row_count,
+            )
             validation = validate_card(request.output, layouts)
             atomic_write_json(run_dir / "output_validation.json", validation)
+            # Validation can be the longest non-interruptible stage.  Check again
+            # before recording any publishable status or ready lifecycle event.
+            _check_cancelled(request, request.output)
             if validation["status"] != Status.OK:
                 result.status = Status.OUTPUT_VALIDATION_FAILED
             else:
@@ -665,6 +934,17 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     summary = _processing_summary(result, matcher.model_calls, validation)
     summary["source_hashes_unchanged"] = unchanged
     atomic_write_json(run_dir / "processing_summary.json", summary)
+    if _is_publishable_result(result, validation, inputs_unchanged=unchanged):
+        lifecycle.emit(
+            DrawingCardLifecyclePhase.READY,
+            processed_files=len(selected),
+            total_files=len(selected),
+            processed_rows=result.extracted_row_count,
+            total_rows=result.extracted_row_count,
+            terminal_cause=str(result.status),
+        )
+    else:
+        _finish_lifecycle(lifecycle, terminal_cause=str(result.status))
     return result
 
 

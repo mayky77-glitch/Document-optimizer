@@ -73,9 +73,7 @@ def test_cable_coupling_rule_never_overrides_unsafe_or_non_anchored_inputs(row) 
 def test_cable_coupling_without_positive_cost_stays_fail_closed(
     cost: Decimal | None,
 ) -> None:
-    decision = _matcher().match(
-        _row("Установка муфт соединительных кабельных 10 кВ", cost=cost)
-    )
+    decision = _matcher().match(_row("Установка муфт соединительных кабельных 10 кВ", cost=cost))
 
     assert decision.category is TargetWorkCategory.POWER_CABLE
     assert (decision.quantity_decision, decision.cost_decision) == ("review", "review")

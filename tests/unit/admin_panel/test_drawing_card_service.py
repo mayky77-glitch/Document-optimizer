@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+import report_processor.admin_panel.drawing_card_service as drawing_card_service
 from report_processor.admin_panel.drawing_card_presentation import drawing_card_job_payload
 from report_processor.admin_panel.drawing_card_service import DrawingCardJob, DrawingCardService
 from report_processor.drawing_card.models import (
@@ -22,8 +25,7 @@ from report_processor.drawing_card.workflow import run_workflow
 
 
 @pytest.mark.parametrize(
-    "workflow_status",
-    (Status.COMPLETED_WITH_WARNINGS, Status.PARTIALLY_READY),
+    "workflow_status", (Status.COMPLETED_WITH_WARNINGS, Status.PARTIALLY_READY)
 )
 def test_validated_warning_output_is_available_after_review(
     tmp_path: Path, workflow_status: Status
@@ -47,6 +49,130 @@ def test_validated_warning_output_is_available_after_review(
 
     assert job.status == "ready"
     assert job.result_available is True
+
+
+@pytest.mark.parametrize(
+    "hostile_path",
+    ("sources/01-source.xlsx", "attempts/0000/drawing-card.xlsx"),
+)
+def test_restore_rejects_ready_manifest_that_points_to_source_or_old_attempt(
+    tmp_path: Path,
+    hostile_path: str,
+) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request):
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("done", Status.OK, run_dir, output_path=request.output)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    candidate = job.directory / hostile_path
+    if not candidate.exists():
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_bytes(b"PK\x03\x04old-result")
+    manifest = service._manifest_for(job)
+    manifest["result_path"] = hostile_path
+    manifest["result_hash"] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    service._store.save(job.job_id, manifest)
+
+    restored = DrawingCardService(workspace, runner=runner)
+    with pytest.raises(KeyError):
+        restored.get_job(job.job_id)
+
+
+def test_restore_rejects_symlinked_attempt_component_for_ready_result(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request):
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("done", Status.OK, run_dir, output_path=request.output)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    attempts = job.directory / "attempts"
+    relocated = job.directory / "relocated-attempts"
+    attempts.rename(relocated)
+    attempts.symlink_to(relocated, target_is_directory=True)
+
+    restored = DrawingCardService(workspace, runner=runner)
+    with pytest.raises(KeyError):
+        restored.get_job(job.job_id)
+
+
+def test_canonical_result_accepts_macos_var_alias(tmp_path: Path) -> None:
+    if not str(tmp_path).startswith("/private/var/"):
+        pytest.skip("macOS /var alias is unavailable")
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request):
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("done", Status.OK, run_dir, output_path=request.output)
+
+    service = DrawingCardService(tmp_path / "private-workspaces", runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    assert job.result is not None
+    alias = Path(str(job.result).replace("/private/var/", "/var/", 1))
+
+    assert drawing_card_service._is_canonical_attempt_result(alias, job)
+
+
+def test_restore_rejects_review_manifest_that_points_to_a_source(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request):
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        (run_dir / "manual_review.xlsx").write_bytes(b"PK\x03\x04review")
+        return WorkflowResult("done", "BLOCKED", run_dir, manual_review_count=1)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    assert job.status == "review_required"
+    manifest = service._manifest_for(job)
+    manifest["review_path"] = "sources/01-source.xlsx"
+    service._store.save(job.job_id, manifest)
+
+    restored = DrawingCardService(workspace, runner=runner)
+    with pytest.raises(KeyError):
+        restored.get_job(job.job_id)
+
+
+def test_update_existing_card_tampering_fails_before_publication(tmp_path: Path) -> None:
+    fixture_dir = Path(__file__).parents[2] / "fixtures" / "drawing_card"
+
+    def runner(request):
+        assert request.existing_card is not None
+        request.existing_card.write_bytes(b"PK\x03\x04tampered")
+        assert request.output is not None
+        request.output.write_bytes(b"PK\x03\x04result")
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("done", Status.OK, run_dir, output_path=request.output)
+
+    service = DrawingCardService(tmp_path / "private-workspaces", runner=runner)
+    job = service.create_job(
+        sources=[("source.xlsx", (fixture_dir / "demo_source.xlsx").read_bytes())],
+        mode="update",
+        existing_name="existing.xlsx",
+        existing_content=(fixture_dir / "default_template.xlsx").read_bytes(),
+    )
+
+    assert job.status == "failed"
+    assert job.errors == ("EXISTING_CARD_HASH_CHANGED",)
+    assert job.result is None
 
 
 def test_unknown_drawing_card_job_is_not_resolved_as_a_workspace_path(tmp_path: Path) -> None:
@@ -81,12 +207,104 @@ def test_injected_runner_preserves_source_basename_with_semantic_rag(
 
     assert len(seen) == 1
     assert seen[0].rag_mode == "semantic"
-    assert seen[0].inputs[0].name == "01-0906_demo_input.xlsx"
+    assert seen[0].inputs[0].name == "0906_demo_input.xlsx"
+    assert seen[0].inputs[0].relative_to(job.directory).as_posix() == (
+        "sources/01/0906_demo_input.xlsx"
+    )
     assert seen[0].inputs[0].read_bytes() == fixture.read_bytes()
     assert seen[0].inputs[0].resolve() != fixture.resolve()
     assert job.period == expected_period
     assert seen[0].period == expected_period
     assert str(tmp_path) not in str(drawing_card_job_payload(job))
+
+
+@pytest.mark.parametrize(
+    ("stored_path", "uploaded_name"),
+    [
+        ("sources/01/0906-source.xlsx", "0906-source.xlsx"),
+        ("sources/01-0906-source.xlsx", "0906-source.xlsx"),
+    ],
+)
+def test_idempotency_source_name_supports_new_and_legacy_private_layouts(
+    tmp_path: Path, stored_path: str, uploaded_name: str
+) -> None:
+    job_directory = tmp_path / "job"
+    source_path = job_directory / stored_path
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b"source")
+    job = DrawingCardJob(
+        job_id="job",
+        directory=job_directory,
+        sources=(source_path,),
+        source_hashes=(hashlib.sha256(b"source").hexdigest(),),
+        mode="create",
+        period=None,
+        existing_card=None,
+    )
+
+    assert drawing_card_service._same_idempotent_request(
+        job,
+        sources=[(uploaded_name, b"source")],
+        mode="create",
+        period=None,
+        rag_mode="semantic",
+        existing_name=None,
+        existing_content=None,
+    )
+
+
+@pytest.mark.parametrize(
+    "stored_path",
+    ("sources/name.xlsx", "sources/not-an-ordinal/name.xlsx", "other/01-name.xlsx"),
+)
+def test_idempotency_rejects_unrecognized_private_source_layouts(
+    tmp_path: Path, stored_path: str
+) -> None:
+    job_directory = tmp_path / "job"
+    source_path = job_directory / stored_path
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b"source")
+    job = DrawingCardJob(
+        job_id="job",
+        directory=job_directory,
+        sources=(source_path,),
+        source_hashes=(hashlib.sha256(b"source").hexdigest(),),
+        mode="create",
+        period=None,
+        existing_card=None,
+    )
+
+    assert not drawing_card_service._same_idempotent_request(
+        job,
+        sources=[("name.xlsx", b"source")],
+        mode="create",
+        period=None,
+        rag_mode="semantic",
+        existing_name=None,
+        existing_content=None,
+    )
+
+
+def test_restore_accepts_legacy_flat_source_manifest_path(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request) -> WorkflowResult:
+        run_dir = request.work_dir / "blocked"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("blocked", Status.BLOCKED, run_dir)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    legacy_source = job.directory / "sources" / "01-source.xlsx"
+    legacy_source.write_bytes(fixture.read_bytes())
+    manifest = service._manifest_for(job)
+    manifest["source_paths"] = ["sources/01-source.xlsx"]
+    service._store.save(job.job_id, manifest)
+
+    restored = DrawingCardService(workspace, runner=runner).get_job(job.job_id)
+
+    assert restored.sources == (legacy_source,)
 
 
 def test_category_change_updates_the_review_target_unit_from_the_selected_category(
@@ -192,6 +410,9 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
         period=None,
         existing_card=None,
         status="review_required",
+        feedback_project_id="legacy-local",
+        feedback_rules_version="legacy",
+        feedback_input_hashes=("a" * 64,),
         category_units={"low_current_cable": ("м",)},
         review_items={row_id: {"review_id": row_id} for row_id in rows},
         review_rows=rows,
@@ -201,7 +422,13 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
     cluster = service.list_review_clusters(job_id=job.job_id)["items"][0]
 
     assert cluster["aggregate_total_cost"] == "4"
-    assert cluster["members"] == [
+    assert [
+        {
+            key: member[key]
+            for key in ("review_id", "work_name", "source_unit", "quantity", "total_cost")
+        }
+        for member in cluster["members"]
+    ] == [
         {
             "review_id": "row-a",
             "work_name": "Монтаж кабеля",
@@ -225,6 +452,17 @@ def test_cluster_fanout_undo_and_stale_identity_are_all_or_nothing(tmp_path: Pat
         category="low_current_cable",
     )
     assert set(job.inline_approvals) == {"row-a", "row-b"}
+    entries = service._feedback_page(
+        job,
+        rows=job.review_rows,
+        decisions=job.review_decisions,
+        approvals=job.inline_approvals,
+        contexts=service._complete_review_contexts(job),
+        created_at="2026-08-06T01:02:03Z",
+    )
+    assert len(entries) == 3
+    packet = next(entry for entry in entries if entry.context.subject_type == "packet")
+    assert packet.context.member_ids == ("row-a", "row-b")
     with pytest.raises(ValueError, match="stale cluster identity"):
         service.put_review_cluster(
             job_id=job.job_id,
@@ -294,6 +532,8 @@ def test_cluster_payload_uses_null_aggregate_when_every_member_cost_is_absent(
         period=None,
         existing_card=None,
         status="review_required",
+        feedback_project_id="legacy-local",
+        feedback_rules_version="legacy",
         category_units={"low_current_cable": ("м",)},
         review_items={row_id: {"review_id": row_id} for row_id in rows},
         review_rows=rows,
@@ -304,6 +544,88 @@ def test_cluster_payload_uses_null_aggregate_when_every_member_cost_is_absent(
     cluster = service.list_review_clusters(job_id=job.job_id)["items"][0]
 
     assert cluster["aggregate_total_cost"] is None
+
+
+@pytest.mark.parametrize(
+    "row_change,decision_change",
+    [
+        ({"work_name_raw": None}, {}),
+        ({"source_document_type": None}, {}),
+        ({"unit_raw": None}, {}),
+        ({"remaining_quantity": None, "remaining_total_cost": None}, {}),
+        ({}, {"matching_strategy": ""}),
+    ],
+)
+def test_missing_strict_packet_dimensions_stay_singleton(
+    tmp_path: Path, row_change: dict[str, object], decision_change: dict[str, object]
+) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    directory = service.workspace_root / "strict-context-job"
+    directory.mkdir()
+    rows = {
+        row_id: DrawingSourceRow(
+            row_id=row_id,
+            location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 10, ("A10",)),
+            object_index_raw="1006",
+            drawing_code_raw="А-001",
+            work_name_raw="Монтаж кабеля",
+            unit_raw="м",
+            remaining_quantity=Decimal("1"),
+            remaining_total_cost=Decimal("2"),
+            formula_values=(),
+            cached_values=(),
+            source_document_type="ks6a",
+            source_period=None,
+            source_revision=None,
+            status=Status.OK,
+            warnings=(),
+        )
+        for row_id in ("row-a", "row-b")
+    }
+    rows["row-b"] = replace(rows["row-b"], **row_change)
+    decisions = {
+        row_id: MatchDecision(
+            row_id,
+            TargetWorkCategory.LOW_CURRENT_CABLE,
+            "review",
+            "review",
+            None,
+            None,
+            0.7,
+            0.7,
+            "manual_review",
+            (),
+            "review",
+            True,
+            Status.OK,
+            (),
+        )
+        for row_id in rows
+    }
+    decisions["row-b"] = replace(decisions["row-b"], **decision_change)
+    job = DrawingCardJob(
+        job_id="strict-context-job",
+        directory=directory,
+        sources=(),
+        source_hashes=(),
+        mode="create",
+        period=None,
+        existing_card=None,
+        status="review_required",
+        feedback_project_id="strict-project",
+        feedback_rules_version="strict-rules",
+        category_units={"low_current_cable": ("м",)},
+        review_items={row_id: {"review_id": row_id} for row_id in rows},
+        review_rows=rows,
+        review_decisions=decisions,
+    )
+    service._jobs[job.job_id] = job
+
+    clusters = service._current_clusters(job)
+
+    assert [len(item.member_ids) for item in clusters] == [1, 1]
+    missing = next(item for item in clusters if item.member_ids == ("row-b",))
+    assert not missing.packet_eligible
 
 
 def test_machine_consensus_uses_only_the_canonical_regular_private_file(tmp_path: Path) -> None:
@@ -319,6 +641,56 @@ def test_machine_consensus_uses_only_the_canonical_regular_private_file(tmp_path
     canonical.symlink_to(outside)
 
     assert service._machine_consensus_path() is None
+
+
+def test_feedback_scope_preserves_duplicate_source_hashes(tmp_path: Path) -> None:
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    source_hash = "a" * 64
+
+    def job_with_hashes(job_id: str, hashes: tuple[str, ...]) -> DrawingCardJob:
+        directory = service.workspace_root / job_id
+        directory.mkdir()
+        return DrawingCardJob(
+            job_id=job_id,
+            directory=directory,
+            sources=(),
+            source_hashes=hashes,
+            mode="create",
+            period=None,
+            existing_card=None,
+        )
+
+    one_source = job_with_hashes("one-source", (source_hash,))
+    duplicate_sources = job_with_hashes("duplicate-sources", (source_hash, source_hash))
+
+    service._refresh_feedback_scope(one_source)
+    service._refresh_feedback_scope(duplicate_sources)
+
+    assert one_source.feedback_input_hashes == (source_hash,)
+    assert duplicate_sources.feedback_input_hashes == (source_hash, source_hash)
+    assert one_source.feedback_project_id != duplicate_sources.feedback_project_id
+
+
+def test_restart_preserves_duplicate_feedback_hashes_and_project_scope(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request) -> WorkflowResult:
+        run_dir = request.work_dir / "blocked"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult("blocked", Status.BLOCKED, run_dir)
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(
+        sources=[("first.xlsx", fixture.read_bytes()), ("second.xlsx", fixture.read_bytes())]
+    )
+
+    restored = DrawingCardService(workspace, runner=runner).get_job(job.job_id)
+
+    assert restored.feedback_input_hashes == job.feedback_input_hashes
+    assert len(restored.feedback_input_hashes) == 2
+    assert restored.feedback_input_hashes[0] == restored.feedback_input_hashes[1]
+    assert restored.feedback_project_id == job.feedback_project_id
 
 
 def test_initial_run_and_approved_inline_review_rerun_are_both_strict(
@@ -346,7 +718,7 @@ def test_initial_run_and_approved_inline_review_rerun_are_both_strict(
     service.apply_inline_review(job_id=job.job_id)
 
     assert calls[0] == (None, True)
-    assert calls[1][0] == job.directory / "inline_review_decisions.json"
+    assert calls[1][0] == job.directory / "attempts" / "0001" / "inline_review_decisions.json"
     assert calls[1][1] is True
 
 
@@ -529,6 +901,100 @@ def test_manual_review_blocker_count_uses_review_row_count(tmp_path: Path) -> No
     ]
 
 
+def test_restart_restores_bounded_schema_and_funnel_audit(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request) -> WorkflowResult:
+        run_dir = request.work_dir / "blocked"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult(
+            run_id="blocked",
+            status=Status.BLOCKED,
+            work_dir=run_dir,
+            funnel={
+                "extracted_rows": 3,
+                "terminal_dispositions": 3,
+                "disposition_counts": {"MATCHED": 2, "UNCLASSIFIED": 1},
+                "strict_blockers": ["FUNNEL_CONSERVATION_FAILED"],
+            },
+            schema_recognition=[
+                {
+                    "file_id": "01-source",
+                    "filename": "source.xlsx",
+                    "sheet_name": "Лист1",
+                    "recognition": "uncertain",
+                    "confidence": 0.75,
+                    "reason_codes": ["AMBIGUOUS_SCHEMA"],
+                }
+            ],
+        )
+
+    workspace = tmp_path / "private-workspaces"
+    service = DrawingCardService(workspace, runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+
+    restored = DrawingCardService(workspace, runner=runner).get_job(job.job_id)
+
+    assert restored.schema_recognition == (
+        {
+            "file_id": "01-source",
+            "filename": "source.xlsx",
+            "sheet_name": "Лист1",
+            "recognition": "uncertain",
+            "confidence": 0.75,
+            "reason_codes": ["AMBIGUOUS_SCHEMA"],
+        },
+    )
+    assert restored.funnel == {
+        "extracted_rows": 3,
+        "terminal_dispositions": 3,
+        "manual_review_groups": 0,
+        "disposition_counts": {"MATCHED": 2, "UNCLASSIFIED": 1},
+        "strict_blockers": ["FUNNEL_CONSERVATION_FAILED"],
+    }
+
+
+def test_restart_prunes_unbounded_or_nested_audit_manifest_content(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+    service = DrawingCardService(tmp_path / "private-workspaces")
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    manifest = service._manifest_for(job)
+    schema = {
+        "file_id": "01-source",
+        "filename": "source.xlsx",
+        "sheet_name": "Лист1",
+        "recognition": "recognized",
+        "confidence": 1.0,
+        "reason_codes": ["SCHEMA_OK"] * 40,
+        "raw_rows": [["workbook value"]],
+    }
+    manifest["schema_recognition"] = [schema] * 300
+    manifest["funnel"] = {
+        "extracted_rows": 4,
+        "disposition_counts": {"MATCHED": 3, "UNCLASSIFIED": 1, "TOO_LARGE": 10_000_001},
+        "strict_blockers": ["FUNNEL_CONSERVATION_FAILED"] * 60,
+        "raw_rows": [["workbook value"]],
+    }
+    service._store.save(job.job_id, manifest)
+
+    restored = DrawingCardService(service.workspace_root).get_job(job.job_id)
+
+    assert len(restored.schema_recognition) == 256
+    assert restored.schema_recognition[0] == {
+        "file_id": "01-source",
+        "filename": "source.xlsx",
+        "sheet_name": "Лист1",
+        "recognition": "recognized",
+        "confidence": 1.0,
+        "reason_codes": ["SCHEMA_OK"] * 20,
+    }
+    assert restored.funnel == {
+        "extracted_rows": 4,
+        "disposition_counts": {"MATCHED": 3, "UNCLASSIFIED": 1},
+        "strict_blockers": ["FUNNEL_CONSERVATION_FAILED"] * 50,
+    }
+
+
 @pytest.mark.parametrize("terminal_cause", ("NO_CARD_ROWS", "OUTPUT_BASE_MISSING"))
 def test_terminal_workflow_cause_is_exposed_as_a_blocking_reason(
     tmp_path: Path, terminal_cause: str
@@ -550,4 +1016,5 @@ def test_terminal_workflow_cause_is_exposed_as_a_blocking_reason(
     reasons = drawing_card_job_payload(job)["blocking_reasons"]
 
     assert job.errors == (terminal_cause, "WORKFLOW_BLOCKED")
+    assert job.terminal_cause == "workflow_blocked"
     assert [reason["code"] for reason in reasons] == [terminal_cause, "WORKFLOW_BLOCKED"]

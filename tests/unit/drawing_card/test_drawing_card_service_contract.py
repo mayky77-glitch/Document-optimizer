@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from report_processor.admin_panel.drawing_card_presentation import drawing_card_job_payload
-from report_processor.admin_panel.drawing_card_service import DrawingCardService
+from report_processor.admin_panel.drawing_card_service import _RESULT_NAME, DrawingCardService
 from report_processor.drawing_card.output.contract import (
     CARD_HEADERS,
     COST_FORMAT,
@@ -19,8 +19,6 @@ FIXTURES = Path(__file__).parents[2] / "fixtures" / "drawing_card"
 
 
 def _source(name: str = "source.xlsx") -> tuple[str, bytes]:
-    if Path(name).suffix.casefold() == ".xlsb":
-        return name, b"PK\x03\x04binary-workbook"
     return name, (FIXTURES / "demo_source.xlsx").read_bytes()
 
 
@@ -75,6 +73,34 @@ def test_create_rejects_legacy_ole_payload_for_xlsb(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize("suffix", (".ods", ".pdf"))
+def test_create_rejects_ods_and_pdf_sources(tmp_path: Path, suffix: str) -> None:
+    with pytest.raises(ValueError, match="unsupported workbook type"):
+        _service(tmp_path).create_job(sources=[_source(f"source{suffix}")])
+
+
+@pytest.mark.parametrize(
+    ("period", "expected_name"),
+    (
+        ("2026-07", "Отчёт по остаткам за июль 2026.xlsx"),
+        (None, "Отчёт по остаткам.xlsx"),
+    ),
+)
+def test_result_keeps_private_name_and_uses_localized_public_name(
+    tmp_path: Path, period: str | None, expected_name: str
+) -> None:
+    service = _service(tmp_path)
+    job = service.create_job(sources=[_source()], period=period)
+    job.result = job.directory / _RESULT_NAME
+    job.result.write_bytes(b"PK\x03\x04result")
+    job.status = "ready"
+
+    result, name = service.get_result(job.job_id)
+
+    assert result.name == _RESULT_NAME
+    assert name == expected_name
+
+
 def test_update_requires_an_existing_xlsx_card_and_period_is_optional(tmp_path: Path) -> None:
     service = _service(tmp_path)
     source = [_source()]
@@ -116,33 +142,71 @@ def test_jobs_keep_workspace_private_and_disable_rag_network(tmp_path: Path, mon
     assert "rag" not in serialized.casefold() or "off" in serialized.casefold()
 
 
+def test_manifest_paths_survive_an_aliased_workspace_parent(tmp_path: Path) -> None:
+    actual_parent = tmp_path / "actual"
+    actual_parent.mkdir()
+    aliased_parent = tmp_path / "alias"
+    aliased_parent.symlink_to(actual_parent, target_is_directory=True)
+
+    job = DrawingCardService(aliased_parent / "private-workspaces").create_job(sources=[_source()])
+
+    assert job.job_id
+
+
 def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
     job = _service(tmp_path).create_job(sources=[_source()])
     payload = drawing_card_job_payload(job)
 
     assert set(payload) == {
         "active_step",
+        "attempt",
+        "can_cancel",
+        "can_retry",
         "job_id",
         "mode",
         "period",
+        "phase",
+        "progress",
+        "started_at",
         "status",
         "summary",
+        "terminal_cause",
+        "updated_at",
         "warnings",
         "issues",
         "blocking_reasons",
         "result_url",
         "review_url",
         "can_upload_review",
+        "funnel",
+        "schema_recognition",
+        "exclusion_audit_url",
     }
     assert payload["mode"] == "create"
     assert payload["period"] is None
     assert payload["active_step"] == "sources"
+    assert payload["phase"] == job.phase
+    assert set(payload["progress"]) == {
+        "processed_files",
+        "total_files",
+        "processed_rows",
+        "total_rows",
+    }
+    assert payload["attempt"] == job.attempt
+    assert payload["can_cancel"] is (job.status in {"queued", "processing"})
+    assert payload["can_retry"] is (job.status in {"cancelled", "failed", "blocked"})
     assert set(payload["summary"]) == {
         "source_files",
         "extracted_rows",
         "card_rows",
         "manual_review",
     }
+    assert payload["funnel"]["terminal_dispositions"] == payload["funnel"]["extracted_rows"]
+    assert all(
+        item["recognition"] in {"recognized", "uncertain", "unsupported"}
+        for item in payload["schema_recognition"]
+    )
+    assert payload["exclusion_audit_url"].endswith("/audit/exclusions")
     assert str(tmp_path) not in str(payload)
 
 

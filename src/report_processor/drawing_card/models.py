@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .lifecycle import CancellationProbe, ProgressCallback
 
 
 class TargetWorkCategory(StrEnum):
@@ -249,6 +252,11 @@ class WorkflowRequest:
     model_config: Path | None = None
     review_decisions: Path | None = None
     feedback_examples: Path | None = None
+    feedback_store: Path | None = None
+    feedback_tenant_id: str = "local"
+    feedback_project_id: str | None = None
+    feedback_model_version: str = "DrawingCardMatcher-1.0"
+    feedback_input_hashes: tuple[str, ...] | None = None
     machine_consensus: Path | None = None
     objects_per_sheet: int = 4
     drawing_code_mode: str = "preserve_group"
@@ -258,6 +266,8 @@ class WorkflowRequest:
     dry_run: bool = False
     work_dir: Path = Path("work")
     log_level: str = "INFO"
+    progress_callback: ProgressCallback | None = field(default=None, repr=False, compare=False)
+    cancel_requested: CancellationProbe | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -274,6 +284,9 @@ class WorkflowResult:
     extracted_row_count: int = 0
     classification_decision_count: int = 0
     manual_review_count: int = 0
+    review_candidates_before_replay: int = 0
+    exact_feedback_hits: int = 0
+    queued_review_rows: int = 0
     aggregated: list[AggregatedDrawingResult] = field(default_factory=list)
     card_rows: list[DrawingCardResultRow] = field(default_factory=list)
     layouts: list[ObjectBlockLayout] = field(default_factory=list)
@@ -281,4 +294,23 @@ class WorkflowResult:
     warnings: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
     blocker_counts: dict[str, int] = field(default_factory=dict)
+    funnel: dict[str, object] = field(default_factory=dict)
+    schema_recognition: list[dict[str, object]] = field(default_factory=list)
     output_path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingCardRowDisposition:
+    """Private, privacy-safe terminal accounting record for an extracted row."""
+
+    row_id: str
+    disposition: str
+    reason_code: str
+    rule_id: str | None
+    file_id: str
+    safe_basename: str
+    sheet_name: str
+    row_number: int
+    position_code: str | None
+    row_role: str
+    hazard_flags: tuple[str, ...]

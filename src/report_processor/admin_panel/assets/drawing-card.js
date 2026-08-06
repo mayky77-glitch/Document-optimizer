@@ -13,6 +13,20 @@
   const resultDownload = document.querySelector("#result-download");
   const resultHint = document.querySelector("#result-hint");
   const jobIssues = document.querySelector("#job-issues");
+  const jobProgress = document.querySelector("#job-progress");
+  const jobPhase = document.querySelector("#job-phase");
+  const jobProgressBar = document.querySelector("#job-progress-bar");
+  const jobFilesProgress = document.querySelector("#job-files-progress");
+  const jobRowsProgress = document.querySelector("#job-rows-progress");
+  const jobAttempt = document.querySelector("#job-attempt");
+  const jobUpdatedAt = document.querySelector("#job-updated-at");
+  const cancelJob = document.querySelector("#cancel-job");
+  const retryJob = document.querySelector("#retry-job");
+  const processingAudit = document.querySelector("#processing-audit");
+  const funnelSummary = document.querySelector("#funnel-summary");
+  const schemaAuditItems = document.querySelector("#schema-audit-items");
+  const exclusionAudit = document.querySelector("#exclusion-audit");
+  const exclusionAuditItems = document.querySelector("#exclusion-audit-items");
 
   const SOURCE_WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xlsb"]);
   const SESSION_STORAGE_KEY = "report-processor.drawing-card.state.v2";
@@ -29,10 +43,28 @@
     "u",
   );
   const ZIP_SIGNATURES = [[0x50, 0x4b, 0x03, 0x04], [0x50, 0x4b, 0x05, 0x06], [0x50, 0x4b, 0x07, 0x08]];
+  const ACTIVE_JOB_STATUSES = new Set(["queued", "processing"]);
+  const TERMINAL_JOB_STATUSES = new Set(["ready", "blocked", "failed", "cancelled"]);
+  const JOB_POLL_INTERVAL_MS = 2000;
+  const PHASE_LABELS = {
+    upload: "Файлы сохранены в приватной задаче",
+    schema_detection: "Распознаём структуру таблиц",
+    extraction: "Извлекаем строки и значения",
+    hierarchy_filtering: "Проверяем структуру и служебные строки",
+    matching: "Сопоставляем работы с категориями отчёта",
+    review_preparation: "Готовим спорные строки к ручной проверке",
+    output_writing: "Формируем итоговый файл",
+    validation: "Проверяем итоговый файл перед публикацией",
+    ready: "Отчёт проверен и готов к скачиванию",
+  };
   let currentJobId = null;
+  let currentJobStatus = null;
   let currentReviewPage = 1;
   let periodScanRevision = 0;
   let uploadedSourceCount = 0;
+  let currentExclusionAuditUrl = null;
+  let idempotencyKey = null;
+  let pollTimer = null;
 
   const sessionState = () => {
     try {
@@ -52,6 +84,7 @@
         mode: operation.value,
         period: period.value,
         sourceCount: uploadedSourceCount,
+        idempotencyKey,
         step: step || prior.step || "sources",
       }));
     } catch {
@@ -72,6 +105,80 @@
     status.classList.toggle("is-error", isError);
   };
 
+  const newIdempotencyKey = () => {
+    if (typeof crypto?.randomUUID === "function") return crypto.randomUUID();
+    const random = crypto?.getRandomValues?.(new Uint32Array(4));
+    return random ? [...random].map((value) => value.toString(16).padStart(8, "0")).join("") : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+
+  const progressText = (processed, total, unknown) => Number.isInteger(total)
+    ? `${new Intl.NumberFormat("ru-RU").format(processed)} из ${new Intl.NumberFormat("ru-RU").format(total)}`
+    : processed > 0
+      ? new Intl.NumberFormat("ru-RU").format(processed)
+      : unknown;
+
+  const renderJobProgress = (payload) => {
+    if (!currentJobId) {
+      jobProgress.hidden = true;
+      return;
+    }
+    jobProgress.hidden = false;
+    const progress = payload?.progress && typeof payload.progress === "object" ? payload.progress : {};
+    const processedFiles = Number.isInteger(progress.processed_files) ? progress.processed_files : 0;
+    const totalFiles = Number.isInteger(progress.total_files) ? progress.total_files : null;
+    const processedRows = Number.isInteger(progress.processed_rows) ? progress.processed_rows : 0;
+    const totalRows = Number.isInteger(progress.total_rows) ? progress.total_rows : null;
+    jobPhase.textContent = PHASE_LABELS[payload.phase] || "Уточняем состояние задачи";
+    jobFilesProgress.textContent = progressText(processedFiles, totalFiles, "ещё не подсчитаны");
+    jobRowsProgress.textContent = progressText(processedRows, totalRows, "ещё не подсчитаны");
+    jobAttempt.textContent = new Intl.NumberFormat("ru-RU").format(Math.max(1, Number(payload.attempt) || 1));
+    const updated = typeof payload.updated_at === "string" ? new Date(payload.updated_at) : null;
+    jobUpdatedAt.textContent = updated && !Number.isNaN(updated.valueOf())
+      ? new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(updated)
+      : "—";
+    const progressValue = totalRows && totalRows > 0
+      ? [processedRows, totalRows]
+      : totalFiles && totalFiles > 0
+        ? [processedFiles, totalFiles]
+        : null;
+    if (progressValue) {
+      jobProgressBar.max = progressValue[1];
+      jobProgressBar.value = Math.min(progressValue[0], progressValue[1]);
+    } else {
+      jobProgressBar.removeAttribute("value");
+    }
+    cancelJob.hidden = payload.can_cancel !== true;
+    retryJob.hidden = payload.can_retry !== true;
+  };
+
+  const stopPolling = () => {
+    if (pollTimer !== null) window.clearTimeout(pollTimer);
+    pollTimer = null;
+  };
+
+  const schedulePolling = (statusValue) => {
+    stopPolling();
+    if (!currentJobId || !ACTIVE_JOB_STATUSES.has(statusValue)) return;
+    pollTimer = window.setTimeout(async () => {
+      pollTimer = null;
+      try {
+        const payload = await requestJson(`/api/drawing-card/jobs/${encodeURIComponent(currentJobId)}`, { method: "GET" });
+        await renderJob(payload, currentReviewPage);
+      } catch (error) {
+        if (error.status === 404) {
+          currentJobId = null;
+          currentJobStatus = null;
+          clearSession();
+          jobProgress.hidden = true;
+          setStatus("Задача больше недоступна. Выберите исходные файлы снова.", true);
+          return;
+        }
+        setStatus("Связь с локальной панелью временно прервана. Повторяем проверку статуса…", true);
+        schedulePolling(currentJobStatus);
+      }
+    }, JOB_POLL_INTERVAL_MS);
+  };
+
   const hideIssues = () => {
     jobIssues.replaceChildren();
     jobIssues.hidden = true;
@@ -86,10 +193,12 @@
     }
     jobIssues.replaceChildren(...issues.map((issue) => {
       const item = document.createElement("li");
+      item.classList.toggle("is-blocking", issue?.blocking === true);
       const count = Number(issue?.count);
       const suffix = Number.isInteger(count) && count > 1 ? ` (случаев: ${count})` : "";
       const action = typeof issue?.action === "string" && issue.action ? ` ${issue.action}` : "";
-      item.textContent = `${issue?.message || "Обнаружено отклонение."}${suffix}.${action}`.replace("..", ".");
+      const prefix = issue?.blocking === true ? "Блокирует выпуск: " : "Предупреждение: ";
+      item.textContent = `${prefix}${issue?.message || "Обнаружено отклонение."}${suffix}.${action}`.replace("..", ".");
       return item;
     }));
     jobIssues.hidden = false;
@@ -115,7 +224,7 @@
     sourceCount.textContent = count
       ? `Выбрано исходных файлов: ${count}`
       : uploadedSourceCount
-        ? `Уже загружено для текущей карточки: ${uploadedSourceCount}. Чтобы создать новую, выберите файлы снова.`
+        ? `Уже загружено для текущего отчёта: ${uploadedSourceCount}. Чтобы создать новый, выберите файлы снова.`
         : "Файлы пока не выбраны";
     persistSession();
   };
@@ -199,9 +308,9 @@
     const files = [...sourceFiles.files];
     if (!files.length) return "Добавьте хотя бы один исходный документ.";
     if (files.length > 32) return "Можно выбрать не больше 32 исходных документов. Уберите лишние файлы.";
-    if (files.some((file) => !SOURCE_WORKBOOK_EXTENSIONS.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx, .xlsm или .xlsb.";
-    if (operation.value === "update" && !existingCard.files.length) return "Для обновления загрузите существующую карточку.";
-    if (operation.value === "update" && fileExtension(existingCard.files[0]) !== ".xlsx") return "Существующая карточка должна быть файлом .xlsx.";
+    if (files.some((file) => !SOURCE_WORKBOOK_EXTENSIONS.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx, .xlsm или .xlsb. LibreOffice Calc .ods и PDF доступны только в отдельном сравнении Excel с PDF-отчётами.";
+    if (operation.value === "update" && !existingCard.files.length) return "Для обновления загрузите существующий отчёт.";
+    if (operation.value === "update" && fileExtension(existingCard.files[0]) !== ".xlsx") return "Существующий отчёт должен быть файлом .xlsx.";
     return "";
   };
 
@@ -229,16 +338,16 @@
   const renderResult = (payload) => {
     if (typeof payload.result_url !== "string" || !payload.result_url) return;
     resultDownload.href = payload.result_url;
-    resultDownload.textContent = "Скачать карточку";
+    resultDownload.textContent = "Скачать отчёт";
     resultDownload.classList.remove("is-disabled");
     resultDownload.removeAttribute("aria-disabled");
-    resultHint.textContent = "Карточка готова. Скачайте файл и сохраните его в папке объекта.";
+    resultHint.textContent = "Отчёт готов. Скачайте файл и сохраните его в папке объекта.";
     setProgress("card");
   };
 
   const resetResult = () => {
     resultDownload.removeAttribute("href");
-    resultDownload.textContent = "Скачать карточку";
+    resultDownload.textContent = "Скачать отчёт";
     resultDownload.classList.add("is-disabled");
     resultDownload.setAttribute("aria-disabled", "true");
     resultHint.textContent = "Здесь появится готовый .xlsx после завершения проверки.";
@@ -253,7 +362,8 @@
     renderJob: (payload, reviewPage) => renderJob(payload, reviewPage),
   });
 
-  const setOperation = (value) => {
+  const setOperation = (value, resetIdempotency = false) => {
+    const changed = operation.value !== value;
     const isUpdate = value === "update";
     operation.value = value;
     existingCardField.hidden = !isUpdate;
@@ -264,11 +374,16 @@
       button.classList.toggle("is-selected", selected);
       button.setAttribute("aria-pressed", String(selected));
     });
+    if (resetIdempotency && changed) idempotencyKey = null;
     persistSession();
   };
 
   const renderJob = async (payload, reviewPage = 1) => {
     currentJobId = typeof payload.job_id === "string" ? payload.job_id : currentJobId;
+    currentJobStatus = typeof payload.status === "string" ? payload.status : currentJobStatus;
+    createJob.disabled = ACTIVE_JOB_STATUSES.has(currentJobStatus);
+    renderJobProgress(payload);
+    schedulePolling(currentJobStatus);
     if (payload.mode === "create" || payload.mode === "update") setOperation(payload.mode);
     selectPeriod(payload.period);
     const count = Number(payload?.summary?.source_files);
@@ -276,6 +391,7 @@
       uploadedSourceCount = count;
       updateSourceCount();
     }
+    renderProcessingAudit(payload);
     resetResult();
     renderResult(payload);
     const needsReview = payload.status === "review_required" || payload.status === "awaiting_review" || payload.can_upload_review || payload.review_url;
@@ -288,26 +404,127 @@
     review.hide();
     if (payload.status === "blocked") {
       renderIssues(payload, true);
-      setStatus("Карточка не сформирована: обнаружены блокирующие ошибки. Причины указаны ниже.", true);
+      setStatus("Отчёт не сформирован: обнаружены блокирующие ошибки. Причины указаны ниже.", true);
     } else if (payload.status === "failed") {
       renderIssues(payload, true);
       setStatus("Обработка завершилась ошибкой. Причина и действие указаны ниже.", true);
     } else if (payload.result_url || payload.status === "ready") {
       renderIssues(payload);
-      setStatus("Карточка готова. Скачайте файл.");
-    } else if (payload.status === "processing") {
+      setStatus("Отчёт готов. Скачайте файл.");
+    } else if (ACTIVE_JOB_STATUSES.has(payload.status)) {
       hideIssues();
-      setStatus("Идёт проверка исходных файлов и формирование карточки…");
+      setStatus(PHASE_LABELS[payload.phase] || "Идёт проверка исходных файлов и формирование отчёта…");
+    } else if (payload.status === "cancelled") {
+      renderIssues(payload);
+      setStatus("Обработка отменена. Частичный файл не опубликован; задачу можно запустить повторно.");
     } else {
       renderIssues(payload);
-      setStatus("Статус обработки изменился. Обновите страницу или запустите карточку снова.", true);
+      setStatus("Статус обработки изменился. Обновите страницу или запустите отчёт снова.", true);
     }
+    if (TERMINAL_JOB_STATUSES.has(payload.status)) idempotencyKey = null;
     persistSession();
   };
 
-  document.querySelectorAll("[data-operation]").forEach((button) => button.addEventListener("click", () => setOperation(button.dataset.operation)));
-  sourceFiles.addEventListener("change", () => { updateSourceCount(); updatePeriodOptions(); });
-  period.addEventListener("change", () => persistSession());
+  const appendAuditLine = (root, title, detail, state = "") => {
+    const item = document.createElement("p");
+    if (state) item.className = `audit-${state}`;
+    const strong = document.createElement("strong");
+    strong.textContent = title;
+    item.append(strong, document.createTextNode(detail ? ` — ${detail}` : ""));
+    root.append(item);
+  };
+
+  function renderProcessingAudit(payload) {
+    const funnel = payload?.funnel;
+    const schemas = Array.isArray(payload?.schema_recognition) ? payload.schema_recognition : [];
+    if ((!funnel || typeof funnel !== "object") && !schemas.length) {
+      processingAudit.hidden = true;
+      return;
+    }
+    processingAudit.hidden = false;
+    const labels = [
+      ["source_files", "Исходных файлов"],
+      ["source_sheets", "Проверено листов"],
+      ["extracted_rows", "Извлечено строк"],
+      ["skipped_header_rows", "Пропущено заголовков"],
+      ["skipped_empty_rows", "Пропущено пустых строк между данными"],
+      ["excluded_count", "Исключено структурных строк"],
+      ["automatically_accepted_rows", "Принято автоматически"],
+      ["manual_review_rows", "Передано на ручную проверку"],
+      ["manual_review_groups", "Групп ручной проверки"],
+      ["unclassified_count", "Не классифицировано"],
+      ["output_rows", "Строк в итоговом отчёте"],
+    ];
+    funnelSummary.replaceChildren(...labels.flatMap(([key, label]) => {
+      const value = Number(funnel?.[key]);
+      if (!Number.isFinite(value)) return [];
+      const wrapper = document.createElement("div");
+      const term = document.createElement("dt");
+      const description = document.createElement("dd");
+      term.textContent = label;
+      description.textContent = new Intl.NumberFormat("ru-RU").format(value);
+      wrapper.append(term, description);
+      return [wrapper];
+    }));
+    schemaAuditItems.replaceChildren();
+    schemas.forEach((schema) => {
+      const state = ["recognized", "uncertain", "unsupported"].includes(schema?.recognition)
+        ? schema.recognition
+        : "unsupported";
+      const label = { recognized: "распознано", uncertain: "нужна проверка", unsupported: "не поддерживается" }[state];
+      const reasons = Array.isArray(schema?.reason_codes) && schema.reason_codes.length
+        ? `; причины: ${schema.reason_codes.join(", ")}`
+        : "";
+      appendAuditLine(
+        schemaAuditItems,
+        `${schema?.filename || "Файл"} · ${schema?.sheet_name || "лист"}`,
+        `${label}${reasons}`,
+        state,
+      );
+    });
+    currentExclusionAuditUrl = typeof payload?.exclusion_audit_url === "string"
+      ? payload.exclusion_audit_url
+      : null;
+    exclusionAudit.hidden = !currentExclusionAuditUrl;
+    exclusionAuditItems.replaceChildren();
+  }
+
+  exclusionAudit.addEventListener("toggle", async () => {
+    if (!exclusionAudit.open || !currentExclusionAuditUrl || exclusionAuditItems.childElementCount) return;
+    appendAuditLine(exclusionAuditItems, "Загрузка", "получаем безопасный аудит исключений");
+    try {
+      const payload = await requestJson(`${currentExclusionAuditUrl}?page=1&page_size=100`);
+      exclusionAuditItems.replaceChildren();
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      items.forEach((item) => appendAuditLine(
+        exclusionAuditItems,
+        `${item.filename || "Файл"} · ${item.sheet_name || "лист"} · строка ${item.row_number || "—"}`,
+        `${item.reason_code || item.disposition || "Исключено"}; позиция: ${item.position_code || "—"}; роль: ${item.row_role || "—"}`,
+      ));
+      if (!items.length) appendAuditLine(exclusionAuditItems, "Исключений нет", "все извлечённые строки прошли дальше");
+      if (Number(payload?.total) > items.length) {
+        appendAuditLine(exclusionAuditItems, "Показаны первые 100 строк", `всего: ${payload.total}`);
+      }
+    } catch (error) {
+      exclusionAuditItems.replaceChildren();
+      appendAuditLine(exclusionAuditItems, "Аудит недоступен", error.message);
+    }
+  });
+
+  document.querySelectorAll("[data-operation]").forEach((button) => button.addEventListener("click", () => setOperation(button.dataset.operation, true)));
+  sourceFiles.addEventListener("change", () => {
+    idempotencyKey = null;
+    updateSourceCount();
+    updatePeriodOptions();
+  });
+  existingCard.addEventListener("change", () => {
+    idempotencyKey = null;
+    persistSession();
+  });
+  period.addEventListener("change", () => {
+    idempotencyKey = null;
+    persistSession();
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const error = formError() || await selectedWorkbooksPreflightError();
@@ -319,13 +536,43 @@
     review.hide();
     hideIssues();
     resetResult();
-    setStatus("Проверяем источники и готовим карточку…");
+    setStatus("Проверяем источники и готовим отчёт…");
     try {
-      await renderJob(await requestJson("/api/drawing-card/jobs", { method: "POST", body: new FormData(form) }));
+      idempotencyKey ||= newIdempotencyKey();
+      persistSession();
+      await renderJob(await requestJson("/api/drawing-card/jobs", {
+        method: "POST",
+        body: new FormData(form),
+        headers: { "Idempotency-Key": idempotencyKey },
+      }));
     } catch (requestError) {
       setStatus(requestError.message, true);
     } finally {
-      createJob.disabled = false;
+      createJob.disabled = ACTIVE_JOB_STATUSES.has(currentJobStatus);
+    }
+  });
+
+  cancelJob.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    cancelJob.disabled = true;
+    try {
+      await renderJob(await requestJson(`/api/drawing-card/jobs/${encodeURIComponent(currentJobId)}/cancel`, { method: "POST" }));
+    } catch (error) {
+      setStatus(error.message, true);
+    } finally {
+      cancelJob.disabled = false;
+    }
+  });
+
+  retryJob.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    retryJob.disabled = true;
+    try {
+      await renderJob(await requestJson(`/api/drawing-card/jobs/${encodeURIComponent(currentJobId)}/retry`, { method: "POST" }));
+    } catch (error) {
+      setStatus(error.message, true);
+    } finally {
+      retryJob.disabled = false;
     }
   });
 
@@ -334,6 +581,7 @@
     if (saved.mode === "create" || saved.mode === "update") setOperation(saved.mode);
     selectPeriod(saved.period);
     uploadedSourceCount = Number.isInteger(saved.sourceCount) && saved.sourceCount > 0 ? saved.sourceCount : 0;
+    idempotencyKey = typeof saved.idempotencyKey === "string" && saved.idempotencyKey ? saved.idempotencyKey : null;
     updateSourceCount();
     if (typeof saved.jobId !== "string" || !saved.jobId) {
       if (saved.step === "review" || saved.step === "card") setProgress(saved.step);
@@ -346,14 +594,16 @@
     } catch (error) {
       if (error.status === 404) {
         currentJobId = null;
+        currentJobStatus = null;
+        idempotencyKey = null;
         uploadedSourceCount = 0;
         clearSession();
         updateSourceCount();
         setProgress("sources");
-        setStatus("Предыдущая карточка больше недоступна. Выберите исходные файлы снова.", true);
+        setStatus("Предыдущий отчёт больше недоступен. Выберите исходные файлы снова.", true);
         return;
       }
-      setStatus("Не удалось восстановить карточку. Повторите действие или выберите файлы снова.", true);
+      setStatus("Не удалось восстановить отчёт. Повторите действие или выберите файлы снова.", true);
     }
   };
 

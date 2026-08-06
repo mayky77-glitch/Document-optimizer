@@ -93,3 +93,124 @@ def test_review_action_mapping_preserves_api_contract() -> None:
     assert 'this.save(article, state.id, state.version, "reject")' in script
     assert "const payload = { action, version };" in script
     assert "if (category) payload.category = category;" in script
+
+
+def test_processing_funnel_and_schema_audit_are_visible_and_path_free() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card.js").read_text()
+    styles = (ASSETS / "drawing-card.css").read_text()
+
+    for element_id in (
+        "processing-audit",
+        "funnel-summary",
+        "schema-audit-items",
+        "exclusion-audit-items",
+    ):
+        assert f'id="{element_id}"' in page
+    assert "renderProcessingAudit(payload)" in script
+    assert 'new Intl.NumberFormat("ru-RU")' in script
+    assert "schema?.filename" in script
+    assert "absolute" not in script.casefold()
+    assert ".funnel-summary" in styles
+    assert ".warnings li.is-blocking" in styles
+
+
+def test_drawing_card_formats_and_russian_report_terms_are_explicit() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card.js").read_text()
+    help_page = (ASSETS / "help.html").read_text()
+
+    assert "Отчёт (карточка остатков)" in page
+    assert 'accept=".xlsx,.xlsm,.xlsb"' in page
+    assert "LibreOffice Calc .ods и PDF доступны только в отдельном процессе" in page
+    assert "Excel-файлы .xlsx, .xlsm или .xlsb" in script
+    assert "LibreOffice Calc .ods и PDF доступны только в отдельном сравнении" in script
+    assert "Отчёт (карточка остатков)" in help_page
+    assert "LibreOffice Calc <code>.ods</code> и PDF в этом процессе не поддерживаются" in help_page
+
+
+def test_background_progress_is_recoverable_cancellable_and_polled_within_five_seconds() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card.js").read_text()
+    styles = (ASSETS / "drawing-card.css").read_text()
+
+    for element_id in (
+        "job-progress",
+        "job-phase",
+        "job-progress-bar",
+        "job-files-progress",
+        "job-rows-progress",
+        "cancel-job",
+        "retry-job",
+    ):
+        assert f'id="{element_id}"' in page
+    assert "JOB_POLL_INTERVAL_MS = 2000" in script
+    assert "sessionStorage" in script
+    assert "idempotencyKey" in script
+    assert 'headers: { "Idempotency-Key": idempotencyKey }' in script
+    assert "/cancel`" in script
+    assert "/retry`" in script
+    assert "schedulePolling(currentJobStatus)" in script
+    assert "partial" not in page.casefold()
+    assert ".job-progress" in styles
+    assert ".job-progress-details" in styles
+
+
+def test_idempotency_key_resets_for_request_changes_and_terminal_jobs() -> None:
+    script = (ASSETS / "drawing-card.js").read_text()
+
+    assert 'TERMINAL_JOB_STATUSES = new Set(["ready", "blocked", "failed", "cancelled"])' in script
+    assert "if (resetIdempotency && changed) idempotencyKey = null;" in script
+    assert "setOperation(button.dataset.operation, true)" in script
+    assert 'sourceFiles.addEventListener("change", () => {\n    idempotencyKey = null;' in script
+    assert 'existingCard.addEventListener("change", () => {\n    idempotencyKey = null;' in script
+    assert 'period.addEventListener("change", () => {\n    idempotencyKey = null;' in script
+    assert "if (TERMINAL_JOB_STATUSES.has(payload.status)) idempotencyKey = null;" in script
+    assert "idempotencyKey ||= newIdempotencyKey();" in script
+
+
+def test_packet_review_uses_server_categories_filters_and_per_job_session_state() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card-review.js").read_text()
+
+    for element_id in (
+        "review-filters",
+        "review-filter-reason",
+        "review-filter-category",
+        "review-filter-filename",
+        "review-filter-confidence",
+        "review-filter-only-unresolved",
+    ):
+        assert f'id="{element_id}"' in page
+    assert "const categoriesFrom = (payload) => Array.isArray(payload?.review_categories)" in script
+    assert "const CATEGORIES" not in script
+    assert 'query.set("only_unresolved", String(this.filters.onlyUnresolved));' in script
+    assert '["reason", this.filters.reason]' in script
+    assert '["category", this.filters.category]' in script
+    assert '["safe_filename", this.filters.filename]' in script
+    assert '["confidence", this.filters.confidence]' in script
+    assert 'SESSION_KEY_PREFIX = "report-processor.drawing-card.review.v2"' in script
+    assert "expandedMembers" in script
+
+
+def test_packet_members_show_safe_context_override_warning_and_mobile_next_action() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card-review.js").read_text()
+    styles = (ASSETS / "drawing-card.css").read_text()
+
+    assert 'id="review-mobile-bar"' in page
+    assert 'id="review-mobile-next"' in page
+    for label in ("Файл", "Лист", "Строка", "Позиция", "Шифр", "Наименование"):
+        assert f'"{label}"' in script
+    assert "confidence_explanation" in script
+    assert "reason_label" in script
+    assert "member-override-warning" in script
+    assert "Исключить из пакета" in script
+    assert 'reviewId, member.version, "exclude"' in script
+    assert "this.itemEndpoint(reviewId)" in script
+    assert "await this.loadNextUnresolved();" in script
+    assert "@media (max-width: 390px)" in styles
+    assert ".review-mobile-bar { position: sticky;" in styles
+    assert ".cluster-members-table-wrap { overflow-x: auto;" in styles
+    assert "summary:focus-visible" in styles
+    assert "approve-all" not in script.casefold()

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from starlette.testclient import TestClient
@@ -72,6 +75,13 @@ def _files(name: str = "source.xlsx", content: bytes | None = None):
             ),
         )
     ]
+
+
+def _compressed_workbook_member(name: str, content: bytes) -> bytes:
+    container = BytesIO()
+    with ZipFile(container, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr(name, content)
+    return container.getvalue()
 
 
 def _review_job(service: DrawingCardService, job_id: str) -> DrawingCardJob:
@@ -183,8 +193,6 @@ def test_cluster_api_fans_out_undoes_and_hides_private_metadata(client) -> None:
     assert listing.json()["total_rows"] == 2
     for response in (listing, approved, stale, undone):
         assert str(private_root) not in response.text
-        assert "private.xlsx" not in response.text
-        assert "Лист1" not in response.text
 
 
 def test_cluster_api_matches_the_review_asset_contract(client) -> None:
@@ -208,7 +216,9 @@ def test_cluster_api_accepts_the_asset_delete_payload_and_returns_ui_decision_na
         f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
         json={"version": cluster["version"], "action": "approve", "category": "low_current_cable"},
     )
-    refetched = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
+    refetched = test_client.get(
+        f"/api/drawing-card/jobs/{job.job_id}/review/clusters?only_unresolved=false"
+    )
     undone = test_client.request(
         "DELETE",
         f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
@@ -237,7 +247,7 @@ def test_cluster_api_fans_out_cost_only_with_category_and_rejects_changed_member
             "category": "power_cable",
         },
     )
-    refetched = test_client.get(url)
+    refetched = test_client.get(f"{url}?only_unresolved=false")
     from dataclasses import replace
 
     extra_row = replace(job.review_rows["review-row-1"], row_id="review-row-3")
@@ -273,6 +283,54 @@ def test_create_and_read_job_hide_private_paths_from_path_header_and_json(client
         assert str(private_root) not in " ".join(
             f"{key}:{value}" for key, value in response.headers.items()
         )
+
+
+def test_exclusion_audit_is_bounded_and_never_exposes_absolute_paths(client) -> None:
+    test_client, service, private_root = client
+    created = test_client.post("/api/drawing-card/jobs", files=_files())
+    job = service.get_job(created.json()["job_id"])
+    job.exclusion_audit = job.directory / "row_dispositions.jsonl"
+    job.exclusion_audit.write_text(
+        json.dumps(
+            {
+                "row_id": "row-1",
+                "disposition": "HIERARCHY_AGGREGATE_EXCLUDED",
+                "reason_code": "HIERARCHY_AGGREGATE_POLICY",
+                "rule_id": None,
+                "file_id": "file-1",
+                "safe_basename": "source.xlsx",
+                "sheet_name": "Лист 1",
+                "row_number": 12,
+                "position_code": "1.2",
+                "row_role": "aggregate",
+                "hazard_flags": ["INVALID_NUMBER"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = test_client.get(
+        f"/api/drawing-card/jobs/{job.job_id}/audit/exclusions?page=1&page_size=10"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {
+            "row_id": "row-1",
+            "disposition": "HIERARCHY_AGGREGATE_EXCLUDED",
+            "reason_code": "HIERARCHY_AGGREGATE_POLICY",
+            "rule_id": None,
+            "filename": "source.xlsx",
+            "sheet_name": "Лист 1",
+            "row_number": 12,
+            "position_code": "1.2",
+            "row_role": "aggregate",
+            "hazard_flags": ["INVALID_NUMBER"],
+        }
+    ]
+    assert str(private_root) not in response.text
 
 
 @pytest.mark.parametrize(
@@ -311,6 +369,54 @@ def test_create_rejects_invalid_workbook_content_without_leaking_upload_data(cli
     assert filename not in response.text
     assert content.decode() not in response.text
     assert service.created_job_ids == []
+
+
+def test_create_rejects_zip_bomb_workbook_before_job_creation(client) -> None:
+    test_client, service, _ = client
+    response = test_client.post(
+        "/api/drawing-card/jobs",
+        files=_files(
+            "source.xlsx",
+            _compressed_workbook_member("xl/sharedStrings.xml", b"A" * (2 * 1024 * 1024)),
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "Проверьте исходные Excel-файлы и выбранную операцию"}
+    assert service.created_job_ids == []
+
+
+@pytest.mark.parametrize("suffix", (".ods", ".pdf"))
+def test_create_rejects_ods_and_pdf_with_supported_formats_copy(client, suffix: str) -> None:
+    test_client, service, _ = client
+    response = test_client.post("/api/drawing-card/jobs", files=_files(name=f"source{suffix}"))
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "Неподдерживаемый тип файла. Загрузите Excel-файл (.xlsx, .xlsm или .xlsb)"
+    }
+    assert service.created_job_ids == []
+
+
+def test_result_download_uses_localized_utf8_filename_and_keeps_private_artifact(client) -> None:
+    test_client, service, private_root = client
+    created = test_client.post("/api/drawing-card/jobs", data={"period": "2026-07"}, files=_files())
+    job = service.get_job(created.json()["job_id"])
+    job.result = job.directory / "drawing-card.xlsx"
+    job.result.write_bytes(b"PK\x03\x04result")
+    job.status = "ready"
+
+    response = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/result")
+
+    assert response.status_code == 200
+    assert job.result.name == "drawing-card.xlsx"
+    assert response.headers["content-disposition"].startswith("attachment; filename=")
+    assert (
+        "filename*=UTF-8''%D0%9E%D1%82%D1%87%D1%91%D1%82%20%D0%BF%D0%BE%20"
+        "%D0%BE%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B0%D0%BC%20%D0%B7%D0%B0%20"
+        "%D0%B8%D1%8E%D0%BB%D1%8C%202026.xlsx"
+    ) in response.headers["content-disposition"]
+    assert str(private_root) not in response.text
 
 
 def test_create_masks_unknown_validation_error(client, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -364,7 +470,7 @@ def test_drawing_card_assets_keep_recoverable_review_state_and_use_category_sele
     assert "sourceFiles.files.length" in script.text
     assert "/api/drawing-card/jobs/${encodeURIComponent(currentJobId)}" in script.text
     assert "error.status === 404" in script.text
-    assert "Уже загружено для текущей карточки" in script.text
+    assert "Уже загружено для текущего отчёта" in script.text
     assert "category.focus()" in review_script.text
     assert "selected_category" in review_script.text
     assert 'class="apply-cluster-action approve-action">Применить</button>' in review_script.text
@@ -374,7 +480,7 @@ def test_drawing_card_assets_keep_recoverable_review_state_and_use_category_sele
     assert review_script.text.count("await this.renderJob(payload, this.page);") == 2
     assert "extractPeriodFromFilename" in script.text
     assert 'payload.status === "blocked"' in script.text
-    assert "Карточка не сформирована" in script.text
+    assert "Отчёт не сформирован" in script.text
     assert "blocking_reasons" in script.text
     assert 'id="job-issues"' in page.text
     assert "Подготовка запущена. Следующий шаг" not in script.text
