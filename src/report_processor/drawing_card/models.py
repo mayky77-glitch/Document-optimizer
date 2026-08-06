@@ -282,3 +282,20 @@ class WorkflowResult:
     blockers: list[str] = field(default_factory=list)
     blocker_counts: dict[str, int] = field(default_factory=dict)
     output_path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingCardRowDisposition:
+    """Private, privacy-safe terminal accounting record for an extracted row."""
+
+    row_id: str
+    disposition: str
+    reason_code: str
+    rule_id: str | None
+    file_id: str
+    safe_basename: str
+    sheet_name: str
+    row_number: int
+    position_code: str | None
+    row_role: str
+    hazard_flags: tuple[str, ...]
