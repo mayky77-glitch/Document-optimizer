@@ -1,0 +1,119 @@
+{
+  "title": "Как безопасно определять родительские и ресурсные строки в КС-6а",
+  "as_of": "2026-08-06T09:30:00+08:00",
+  "scope_and_decision": [
+    {
+      "text": "Решение: иерархический фильтр нужен, но не в виде «всякая строка с дочерней — итог». Нужен role-aware frontier на основе явной колонки позиции и исходного «кода вида затрат».",
+      "label": "Inference",
+      "evidence_ids": ["synthesis-001", "synthesis-002", "synthesis-003"]
+    },
+    "Вне объёма: Qdrant, RAG, DBSCAN, embedding-склейка и автоматическое финансовое подтверждение."
+  ],
+  "search_space_map_and_methods": [
+    "Три выбранные книги текущего периода и одна книга другого периода как контроль выбора.",
+    "Двухпроходное чтение XLSX формул/кэшированных значений; XLSB читался без изменений.",
+    "Статический разбор parser/filter/workflow/matcher и две независимые внутренние research-lane.",
+    "Диспрув: проверены альтернативы leaf-only, полное отключение иерархии, unit+quantity и cost-reconciliation-only."
+  ],
+  "executive_findings": [
+    {
+      "text": "Основной блокер был ошибкой schema detection, а не реальной проблемой 3 263 родительских итогов.",
+      "label": "Inference",
+      "evidence_ids": ["synthesis-001"]
+    },
+    {
+      "text": "Синтаксического parent-child недостаточно: некоторые non-leaf строки — реальные измеряемые работы, а их дочерние строки — материалы.",
+      "label": "Inference",
+      "evidence_ids": ["synthesis-003", "search-space-scout-003"]
+    },
+    {
+      "text": "Сверка сумм полезна как диагностика, но не должна ни определять role, ни блокировать карточку.",
+      "label": "Inference",
+      "evidence_ids": ["academic-research-005", "synthesis-004"]
+    },
+    {
+      "text": "После исправлений очередь состоит из 6 реальных review-строк; ложные карточки оборудования и «шт/шт не совпадает» удалены.",
+      "label": "Inference",
+      "evidence_ids": ["synthesis-004", "synthesis-005"]
+    }
+  ],
+  "findings_by_lane": {
+    "search-space-scout": [
+      {
+        "text": "Листы имеют разные архетипы; безусловное исключение всех structural parent небезопасно.",
+        "label": "Inference",
+        "evidence_ids": ["search-space-scout-002", "search-space-scout-004"]
+      }
+    ],
+    "academic-research": [
+      {
+        "text": "Текущий filter применялся до matcher и безвозвратно удалял parent из review/aggregation.",
+        "label": "Inference",
+        "evidence_ids": ["academic-research-001", "academic-research-002"]
+      }
+    ],
+    "synthesis": [
+      {
+        "text": "Явные заголовки и source-native row role разрешают противоречие между агентами.",
+        "label": "Inference",
+        "evidence_ids": ["synthesis-001", "synthesis-003"]
+      }
+    ]
+  },
+  "contradictions_and_alternative_explanations": [
+    {
+      "text": "Гипотеза leaf-only защищает от double count, но теряет работы, которые имеют material children.",
+      "label": "Inference",
+      "evidence_ids": ["academic-research-001", "synthesis-003"]
+    },
+    {
+      "text": "Гипотеза «unit+quantity доказывают work» ложна без проверки источной колонки; после её исправления cost-type code лучше разделяет work/resource.",
+      "label": "Inference",
+      "evidence_ids": ["academic-research-004", "synthesis-001", "synthesis-003"]
+    },
+    {
+      "text": "Полное отключение hierarchy устранило бы false exclusions, но вернуло бы section totals и resource descriptions в matcher.",
+      "label": "Inference",
+      "evidence_ids": ["search-space-scout-003", "synthesis-004"]
+    }
+  ],
+  "cross_lane_synthesis": [
+    {
+      "text": "Агенты расходились между «исключать всех синтаксических parent» и «лишь помечать candidate». Разбор исходных колонок дал третий, более сильный вариант: точная структура + source-native role + audit.",
+      "label": "Inference",
+      "evidence_ids": ["search-space-scout-005", "academic-research-005", "synthesis-003"]
+    }
+  ],
+  "decision_implications": [
+    "Распознавать «№ п/п» явно; content fallback не рассматривает fractional numerics, error/check, quantity и cost columns.",
+    "Исключать section aggregate; кодированную work-строку с дочерними resources оставлять, resources исключать до matcher.",
+    "Duplicate positions не скрывать молча: сохранять и отражать в аудите/отчёте.",
+    "Cost reconciliation считать по measured descendants и показывать как non-blocking diagnostic, не как финансовое автоподтверждение.",
+    "Exact feedback quantity повторно валидировать по текущей category-unit policy."
+  ],
+  "gaps_assumptions_and_limitations": [
+    {
+      "text": "Нет ручной ground-truth разметки всех типов строк; вывод о cost-type code подтверждён на четырёх загруженных книгах, но другие форматы могут потребовать отдельной policy.",
+      "label": "Assumption",
+      "evidence_ids": ["synthesis-003"]
+    },
+    {
+      "text": "Число 6 относится к текущим source files, rules, feedback и machine-consensus на 2026-08-06.",
+      "label": "Assumption",
+      "evidence_ids": ["synthesis-004"]
+    },
+    "Внутренние файлы частные; публичные URL намеренно не использовались."
+  ],
+  "evidence_table_and_bibliography": [
+    "search-space-scout-001..005 — структурный пересчёт текущего run и кода.",
+    "academic-research-001..006 — call-path, альтернативные гипотезы и focused tests.",
+    "synthesis-001..005 — исходные workbook columns, исправленный dry run и feedback-policy.",
+    "Сырые значения строк не выносятся за пределы локального research workspace."
+  ],
+  "final_step": [
+    "Принять role-aware hierarchy как текущую policy drawing-card.",
+    "Сохранить 6 оставшихся строк в ручной очереди.",
+    "Собрать ground-truth метки для новых форматов книг перед расширением policy.",
+    "Не внедрять финансовое автоподтверждение по cost reconciliation."
+  ]
+}

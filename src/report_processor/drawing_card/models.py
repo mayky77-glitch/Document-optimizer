@@ -110,6 +110,7 @@ class DrawingSourceRow:
     performed_quantity: Decimal = Decimal(0)
     performed_total_cost: Decimal = Decimal(0)
     position_code_raw: str | None = None
+    cost_type_code_raw: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,4 +279,6 @@ class WorkflowResult:
     layouts: list[ObjectBlockLayout] = field(default_factory=list)
     write_operations: list[WriteOperation] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    blocker_counts: dict[str, int] = field(default_factory=dict)
     output_path: Path | None = None

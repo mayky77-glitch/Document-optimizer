@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import shutil
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +74,9 @@ class DrawingCardJob:
     errors: tuple[str, ...] = ()
     summary: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    warning_counts: dict[str, int] = field(default_factory=dict)
+    blockers: list[str] = field(default_factory=list)
+    blocker_counts: dict[str, int] = field(default_factory=dict)
     category_units: dict[str, tuple[str, ...]] = field(default_factory=dict)
     review_items: dict[str, dict[str, object]] = field(default_factory=dict)
     review_rows: dict[str, DrawingSourceRow] = field(default_factory=dict, repr=False)
@@ -358,7 +362,7 @@ class DrawingCardService:
         initial_inline_approvals = dict(job.inline_approvals)
         approvals_path = job.directory / "inline_review_decisions.json"
         write_approvals(approvals_path, job.inline_approvals)
-        rerun = self._run(job, review_decisions=approvals_path, strict=False)
+        rerun = self._run(job, review_decisions=approvals_path, strict=True)
         if rerun.status == "ready":
             append_feedback(
                 self.workspace_root / "review-feedback.jsonl",
@@ -418,6 +422,15 @@ class DrawingCardService:
             "hierarchy_issues": len(result.hierarchy_issues),
         }
         job.warnings = _controlled_warnings(result.warnings)
+        job.warning_counts = _controlled_warning_counts(result)
+        job.blockers = _controlled_warnings(result.blockers)
+        job.blocker_counts = {
+            code: int(count)
+            for code, count in result.blocker_counts.items()
+            if code in job.blockers and int(count) > 0
+        }
+        if "MANUAL_REVIEW_REQUIRED" in job.blockers and result.manual_review_count:
+            job.blocker_counts["MANUAL_REVIEW_REQUIRED"] = result.manual_review_count
         job.category_units = result.category_units
         job.review_items = inline_review_rows(
             result.source_rows, result.decisions, result.category_units
@@ -434,6 +447,9 @@ class DrawingCardService:
         if result.manual_review_count and review.is_file() and _inside_job(review, job):
             os.chmod(review, 0o600)
             job.review = review
+            # A rerun can produce a different review set.  Its approvals must never
+            # be inferred from decisions for the preceding set of rows.
+            job.inline_approvals.clear()
             job.status = "review_required"
         elif (
             result.output_path is not None
@@ -450,7 +466,10 @@ class DrawingCardService:
             job.status = "ready"
         elif result.status == "BLOCKED":
             job.status = "blocked"
-            job.errors = ("WORKFLOW_BLOCKED",)
+            terminal_causes = tuple(
+                code for code in ("NO_CARD_ROWS", "OUTPUT_BASE_MISSING") if code in job.warnings
+            )
+            job.errors = (*terminal_causes, "WORKFLOW_BLOCKED")
         else:
             job.status = "failed"
             job.errors = ("PROCESSING_FAILED",)
@@ -585,7 +604,29 @@ def _inside_job(path: Path, job: DrawingCardJob) -> bool:
 
 
 def _controlled_warnings(warnings: list[str]) -> list[str]:
-    return list(dict.fromkeys(str(item).partition(":")[0] for item in warnings if item))[:50]
+    codes = (_controlled_warning_code(item) for item in warnings)
+    return list(dict.fromkeys(code for code in codes if code))[:50]
+
+
+def _controlled_warning_counts(result: WorkflowResult) -> dict[str, int]:
+    codes = (_controlled_warning_code(item) for item in result.warnings)
+    counts = Counter(code for code in codes if code)
+    hierarchy_counts = Counter(
+        str(getattr(issue, "code", ""))
+        for issue in result.hierarchy_issues
+        if getattr(issue, "code", None)
+    )
+    counts.update({code: 0 for code in hierarchy_counts})
+    for code, count in hierarchy_counts.items():
+        counts[code] = count
+    if result.manual_review_count:
+        counts["MANUAL_REVIEW_REQUIRED"] = result.manual_review_count
+    return {code: int(count) for code, count in counts.most_common(50)}
+
+
+def _controlled_warning_code(item: object) -> str | None:
+    code = str(item).partition(":")[0]
+    return code if re.fullmatch(r"[A-Z][A-Z0-9_]*", code) else None
 
 
 def _first_category_unit(category_units: dict[str, tuple[str, ...]], category: str) -> str | None:

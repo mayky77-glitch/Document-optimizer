@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 
 from .models import PositionCode
 
@@ -11,6 +12,12 @@ _SEGMENT = re.compile(r"^\d+[a-zа-яё]*$", re.IGNORECASE)
 
 def parse_position_code(value: object) -> PositionCode | None:
     if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    if isinstance(value, Decimal) and value != value.to_integral_value():
         return None
     raw = str(value).strip().replace(" ", "")
     if not raw or raw.endswith("."):

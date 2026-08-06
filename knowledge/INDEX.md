@@ -34,3 +34,7 @@ Use this index as the entry point. Read only the relevant map, component card, a
 ## Freshness
 
 Source code and tests override this vault. Mark a component card stale after its `source_paths` change.
+
+<!-- deep-research:research-index:start -->
+- [[research/INDEX|Research index]] — validated deep-research summaries.
+<!-- deep-research:research-index:end -->

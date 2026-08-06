@@ -16,6 +16,7 @@ from report_processor.drawing_card.models import (
     TargetWorkCategory,
     WorkflowResult,
 )
+from report_processor.drawing_card.review.inline import review_approval
 from report_processor.drawing_card.statuses import Status
 from report_processor.drawing_card.workflow import run_workflow
 
@@ -320,7 +321,7 @@ def test_machine_consensus_uses_only_the_canonical_regular_private_file(tmp_path
     assert service._machine_consensus_path() is None
 
 
-def test_initial_run_is_strict_but_approved_inline_review_rerun_is_not(
+def test_initial_run_and_approved_inline_review_rerun_are_both_strict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = DrawingCardService(tmp_path / "private-workspaces")
@@ -346,7 +347,7 @@ def test_initial_run_is_strict_but_approved_inline_review_rerun_is_not(
 
     assert calls[0] == (None, True)
     assert calls[1][0] == job.directory / "inline_review_decisions.json"
-    assert calls[1][1] is False
+    assert calls[1][1] is True
 
 
 @pytest.mark.parametrize("rerun_status", ("ready", "failed", "blocked"))
@@ -397,7 +398,7 @@ def test_inline_review_feedback_uses_initial_snapshot_only_after_ready_rerun(
         if review_decisions is None:
             job.status = "review_required"
             return job
-        assert strict is False
+        assert strict is True
         job.review_rows = {replacement_row.row_id: replacement_row}
         job.inline_approvals = {}
         job.status = rerun_status
@@ -427,3 +428,126 @@ def test_inline_review_feedback_uses_initial_snapshot_only_after_ready_rerun(
         assert set(feedback_calls[0][1]) == {original_row.row_id}
     else:
         assert feedback_calls == []
+
+
+def test_rerun_clears_inline_approvals_for_a_new_review_state(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+    row = DrawingSourceRow(
+        row_id="same-row-id",
+        location=DrawingSourceLocation("source", "private.xlsx", "Лист1", 10, ("A10",)),
+        object_index_raw="1006",
+        drawing_code_raw="А-001",
+        work_name_raw="Повторная проверка",
+        unit_raw="м",
+        remaining_quantity=Decimal("1"),
+        remaining_total_cost=Decimal("2"),
+        formula_values=(),
+        cached_values=(),
+        source_document_type="ks6a",
+        source_period=None,
+        source_revision=None,
+        status=Status.OK,
+        warnings=(),
+    )
+    decision = MatchDecision(
+        row.row_id,
+        TargetWorkCategory.LOW_CURRENT_CABLE,
+        "review",
+        "review",
+        None,
+        None,
+        0.7,
+        0.7,
+        "manual_review",
+        (),
+        "review",
+        True,
+        Status.OK,
+        (),
+    )
+    run_number = 0
+
+    def runner(request) -> WorkflowResult:
+        nonlocal run_number
+        run_number += 1
+        run_dir = request.work_dir / f"review-{run_number}"
+        run_dir.mkdir(parents=True)
+        (run_dir / "manual_review.xlsx").write_bytes(b"PK\x03\x04review")
+        return WorkflowResult(
+            run_id=f"review-{run_number}",
+            status=Status.BLOCKED,
+            work_dir=run_dir,
+            source_rows=[row],
+            decisions=[decision],
+            category_units={"low_current_cable": ("м",)},
+            manual_review_count=1,
+            warnings=["MANUAL_REVIEW_REQUIRED:1"],
+            blockers=["MANUAL_REVIEW_REQUIRED"],
+            blocker_counts={"MANUAL_REVIEW_REQUIRED": 1},
+        )
+
+    service = DrawingCardService(tmp_path / "private-workspaces", runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    job.inline_approvals[row.row_id] = review_approval(row.row_id, "approve", "low_current_cable")
+
+    service._run(job, review_decisions=job.directory / "decisions.json", strict=True)
+
+    assert job.status == "review_required"
+    assert job.inline_approvals == {}
+
+
+def test_manual_review_blocker_count_uses_review_row_count(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request) -> WorkflowResult:
+        run_dir = request.work_dir / "review"
+        run_dir.mkdir(parents=True)
+        (run_dir / "manual_review.xlsx").write_bytes(b"PK\x03\x04review")
+        return WorkflowResult(
+            run_id="review",
+            status=Status.BLOCKED,
+            work_dir=run_dir,
+            manual_review_count=7,
+            warnings=["MANUAL_REVIEW_REQUIRED:7"],
+            blockers=["MANUAL_REVIEW_REQUIRED"],
+            blocker_counts={"MANUAL_REVIEW_REQUIRED": 1},
+        )
+
+    service = DrawingCardService(tmp_path / "private-workspaces", runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    payload = drawing_card_job_payload(job)
+
+    assert job.blocker_counts["MANUAL_REVIEW_REQUIRED"] == 7
+    assert payload["issues"] == [
+        {
+            "code": "MANUAL_REVIEW_REQUIRED",
+            "message": "Есть строки, для которых нужно решение пользователя.",
+            "action": "Откройте шаг проверки и примените решение к каждой группе.",
+            "count": 7,
+            "blocking": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize("terminal_cause", ("NO_CARD_ROWS", "OUTPUT_BASE_MISSING"))
+def test_terminal_workflow_cause_is_exposed_as_a_blocking_reason(
+    tmp_path: Path, terminal_cause: str
+) -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "drawing_card" / "demo_source.xlsx"
+
+    def runner(request) -> WorkflowResult:
+        run_dir = request.work_dir / "blocked"
+        run_dir.mkdir(parents=True)
+        return WorkflowResult(
+            run_id="blocked",
+            status=Status.BLOCKED,
+            work_dir=run_dir,
+            warnings=[terminal_cause],
+        )
+
+    service = DrawingCardService(tmp_path / "private-workspaces", runner=runner)
+    job = service.create_job(sources=[("source.xlsx", fixture.read_bytes())])
+    reasons = drawing_card_job_payload(job)["blocking_reasons"]
+
+    assert job.errors == (terminal_cause, "WORKFLOW_BLOCKED")
+    assert [reason["code"] for reason in reasons] == [terminal_cause, "WORKFLOW_BLOCKED"]

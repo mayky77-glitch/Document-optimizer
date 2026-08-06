@@ -370,9 +370,14 @@ def test_drawing_card_assets_keep_recoverable_review_state_and_use_category_sele
     assert 'class="apply-cluster-action approve-action">Применить</button>' in review_script.text
     assert 'class="reject-cluster-action danger-action">Отклонить</button>' in review_script.text
     assert 'category.value === state.proposed ? "approve" : "change_category"' in review_script.text
-    assert 'status === "blocked" || status === "failed"' in review_script.text
-    assert 'payload.result_url || status === "ready"' in review_script.text
+    assert "renderJob: (payload, reviewPage) => renderJob(payload, reviewPage)" in script.text
+    assert review_script.text.count("await this.renderJob(payload, this.page);") == 2
     assert "extractPeriodFromFilename" in script.text
+    assert 'payload.status === "blocked"' in script.text
+    assert "Карточка не сформирована" in script.text
+    assert "blocking_reasons" in script.text
+    assert 'id="job-issues"' in page.text
+    assert "Подготовка запущена. Следующий шаг" not in script.text
 
 
 def test_drawing_card_page_offers_only_detected_periods(client) -> None:

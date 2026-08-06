@@ -131,6 +131,7 @@ input[type="file"]:focus-visible { border-color: var(--gazprom); }
 .summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .summary span { padding: 6px 10px; border-left: 3px solid var(--gazprom); background: var(--soft-blue); font-size: .88rem; }
 .warnings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.warnings[hidden] { display: none; }
 .warnings li { padding: 11px 13px; border-left: 4px solid var(--warning); background: var(--surface-warning); color: var(--ink); }
 .review-actions { display: grid; gap: 16px; margin-top: 20px; }
 .secondary-action { width: fit-content; border-color: var(--input-border); background: var(--white); color: var(--gazprom-dark); }

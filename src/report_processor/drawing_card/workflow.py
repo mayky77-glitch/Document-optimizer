@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import Counter
+from dataclasses import replace
 from importlib import resources
 from pathlib import Path
 
@@ -15,7 +17,14 @@ from .autopilot import load_machine_consensus
 from .config import load_model_config, load_rules
 from .matching.examples import load_confirmed_examples
 from .matching.matcher import DrawingRowMatcher
-from .models import DrawingSourceRow, SourceSchema, WorkflowRequest, WorkflowResult
+from .models import (
+    AggregatedDrawingResult,
+    DrawingSourceRow,
+    MatchDecision,
+    SourceSchema,
+    WorkflowRequest,
+    WorkflowResult,
+)
 from .output import (
     load_existing_values,
     merge_update_rows,
@@ -38,7 +47,7 @@ from .statuses import Status
 
 LOGGER = logging.getLogger(__name__)
 
-_STRICT_BLOCKER_STATUSES = frozenset(
+_GLOBAL_STRICT_BLOCKER_STATUSES = frozenset(
     {
         "MANUAL_REVIEW_REQUIRED",
         "SOURCE_INSPECTION_FAILED",
@@ -47,25 +56,24 @@ _STRICT_BLOCKER_STATUSES = frozenset(
         Status.MISSING_REQUIRED_COLUMNS,
         Status.OBJECT_NOT_FOUND,
         Status.OBJECT_CONFLICT,
-        Status.DRAWING_CODE_NOT_FOUND,
-        Status.DRAWING_CODE_AMBIGUOUS,
-        Status.MULTIPLE_TOP_CANDIDATES,
-        Status.POSSIBLE_DUPLICATE,
-        Status.UNIT_MISMATCH,
-        Status.INVALID_NUMBER,
-        Status.EXCEL_ERROR,
-        Status.CONFLICT_REQUIRES_REVIEW,
-        Status.UNCONFIRMED_CLASSIFICATION,
-        Status.MODEL_DECISION_INVALID,
         Status.UNSAFE_ARCHIVE_PATH,
         Status.SUSPICIOUS_COMPRESSION_RATIO,
         Status.VERY_LARGE_ARCHIVE_ENTRY,
-        Status.HIERARCHY_COST_MISMATCH,
-        Status.HIERARCHY_MISSING_DIRECT_CHILD_COST,
-        Status.HIERARCHY_DUPLICATE_POSITION,
-        Status.HIERARCHY_POSITION_GAP,
     }
 )
+
+_CONTRIBUTING_ROW_BLOCKER_STATUSES = frozenset(
+    {
+        Status.DRAWING_CODE_AMBIGUOUS,
+        Status.INVALID_NUMBER,
+        Status.EXCEL_ERROR,
+        Status.FORMULA_WITHOUT_CACHED_VALUE,
+        Status.CONFLICT_REQUIRES_REVIEW,
+        Status.MODEL_DECISION_INVALID,
+    }
+)
+
+_CONTRIBUTING_HIERARCHY_BLOCKER_STATUSES: frozenset[str] = frozenset()
 
 
 def default_rules_path() -> Path:
@@ -256,16 +264,82 @@ def _processing_summary(
 
 def _publication_blockers(result: WorkflowResult) -> list[str]:
     """Return issues that must prevent strict publication of a card."""
-    candidates = [*result.warnings]
-    candidates.extend(warning for row in result.card_rows for warning in row.warnings)
-    return list(
-        dict.fromkeys(
-            warning
-            for warning in candidates
-            if warning.partition(":")[0] in _STRICT_BLOCKER_STATUSES
-            or warning.startswith("FORMULA_")
+    return list(_publication_blocker_counts(result))
+
+
+def _publication_blocker_counts(result: WorkflowResult) -> dict[str, int]:
+    """Count only unsafe issues that can affect the values being published."""
+    counts: Counter[str] = Counter()
+    for warning in result.warnings:
+        code = str(warning).partition(":")[0]
+        if code in _GLOBAL_STRICT_BLOCKER_STATUSES:
+            if code == "MANUAL_REVIEW_REQUIRED" and result.manual_review_count:
+                counts[code] = result.manual_review_count
+            else:
+                counts[code] += 1
+
+    contributing_ids = {
+        row_id
+        for row in result.card_rows
+        for row_id in (*row.quantity_source_rows, *row.cost_source_rows)
+    }
+    for row in result.source_rows:
+        if row.row_id not in contributing_ids:
+            continue
+        for warning in row.warnings:
+            code = str(warning).partition(":")[0]
+            if code in _CONTRIBUTING_ROW_BLOCKER_STATUSES:
+                counts[code] += 1
+
+    for issue in result.hierarchy_issues:
+        code = str(getattr(issue, "code", ""))
+        if code not in _CONTRIBUTING_HIERARCHY_BLOCKER_STATUSES:
+            continue
+        issue_row_ids = set(getattr(issue, "related_row_ids", ()))
+        row_id = getattr(issue, "row_id", None)
+        if row_id:
+            issue_row_ids.add(row_id)
+        if issue_row_ids.intersection(contributing_ids):
+            counts[code] += 1
+    return dict(counts)
+
+
+def _aggregate_unit_mismatch_reviews(
+    rows: list[DrawingSourceRow],
+    decisions: list[MatchDecision],
+    aggregated: list[AggregatedDrawingResult],
+) -> tuple[list[DrawingSourceRow], list[MatchDecision]]:
+    """Turn late aggregate unit conflicts into actionable source-row review."""
+    row_by_id = {row.row_id: row for row in rows}
+    decision_by_id = {decision.row_id: decision for decision in decisions}
+    review_row_ids = {
+        row_id
+        for item in aggregated
+        if item.status == Status.UNIT_MISMATCH
+        for row_id in item.quantity_rows
+    }
+    review_rows: list[DrawingSourceRow] = []
+    review_decisions: list[MatchDecision] = []
+    for row_id in sorted(review_row_ids):
+        row = row_by_id.get(row_id)
+        decision = decision_by_id.get(row_id)
+        if row is None or decision is None:
+            continue
+        review_rows.append(row)
+        review_decisions.append(
+            replace(
+                decision,
+                quantity_decision="review",
+                reason=(
+                    "В одну договорную позицию попали строки с несовместимыми "
+                    "единицами. Проверьте единицу или оставьте только стоимость."
+                ),
+                requires_manual_review=True,
+                status=Status.UNIT_MISMATCH,
+                warnings=tuple(dict.fromkeys((*decision.warnings, Status.UNIT_MISMATCH))),
+            )
         )
-    )
+    return review_rows, review_decisions
 
 
 def _save_summary(
@@ -373,6 +447,10 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                 continue
             result.schemas.append(schema)
             result.warnings.extend(schema.warnings)
+            if inspection.entry.extension.lower() == ".xlsb":
+                # The XLSB reader exposes cached Excel values, but not formula text.
+                # This is a source capability notice, not a per-row data failure.
+                result.warnings.append(Status.FORMULA_NOT_AVAILABLE_FOR_BACKEND)
             materialized = materialize_entry(inspection.entry)
             reader = None
             try:
@@ -397,11 +475,13 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                             position_code=row.position_code_raw,
                             amount=row.remaining_total_cost,
                             context=(row.location.file_id, row.location.sheet_name),
+                            is_transactional=_is_transactional_hierarchy_row(row),
                         )
                         for row in extracted_rows
                     ]
                 )
                 parent_ids = set(hierarchy.parent_row_ids)
+                resource_detail_ids = set(hierarchy.resource_detail_row_ids)
                 result.hierarchy_issues.extend(hierarchy.issues)
                 result.warnings.extend(hierarchy.warnings)
                 for row in extracted_rows:
@@ -411,6 +491,22 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                     if row.row_id in parent_ids:
                         rejected_writer.write(
                             {"row_id": row.row_id, "status": Status.HIERARCHY_AGGREGATE_EXCLUDED}
+                        )
+                        continue
+                    if row.row_id in resource_detail_ids:
+                        rejected_writer.write(
+                            {
+                                "row_id": row.row_id,
+                                "status": Status.HIERARCHY_RESOURCE_DETAIL_EXCLUDED,
+                            }
+                        )
+                        continue
+                    if _is_source_resource_detail(row):
+                        rejected_writer.write(
+                            {
+                                "row_id": row.row_id,
+                                "status": Status.HIERARCHY_RESOURCE_DETAIL_EXCLUDED,
+                            }
                         )
                         continue
                     if row.object_index_raw and row.drawing_code_raw:
@@ -443,19 +539,6 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                 materialized.close()
 
     atomic_write_jsonl(run_dir / "hierarchy_issues.jsonl", result.hierarchy_issues)
-    result.manual_review_count = len(review_decisions)
-    if result.manual_review_count:
-        result.warnings.append(f"MANUAL_REVIEW_REQUIRED:{result.manual_review_count}")
-    retained_rows = {row.row_id: row for row in drawing_rows.values()}
-    retained_rows.update({row.row_id: row for row in matched_rows})
-    retained_rows.update({row.row_id: row for row in review_rows})
-    retained_decisions = {decision.row_id: decision for decision in matched_decisions}
-    retained_decisions.update({decision.row_id: decision for decision in review_decisions})
-    result.source_rows = list(retained_rows.values())
-    result.decisions = list(retained_decisions.values())
-
-    export_manual_review(run_dir / "manual_review.xlsx", review_rows, review_decisions)
-
     aggregated = aggregate_rows(
         matched_rows,
         matched_decisions,
@@ -465,6 +548,34 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     result.aggregated = aggregated
     result.warnings.extend(warning for item in aggregated for warning in item.warnings)
     atomic_write_jsonl(run_dir / "aggregated_results.jsonl", aggregated)
+
+    aggregate_review_rows, aggregate_review_decisions = _aggregate_unit_mismatch_reviews(
+        matched_rows, matched_decisions, aggregated
+    )
+    review_rows_by_id = {row.row_id: row for row in review_rows}
+    review_rows_by_id.update({row.row_id: row for row in aggregate_review_rows})
+    review_decisions_by_id = {decision.row_id: decision for decision in review_decisions}
+    review_decisions_by_id.update(
+        {decision.row_id: decision for decision in aggregate_review_decisions}
+    )
+    result.manual_review_count = len(review_decisions_by_id)
+    if result.manual_review_count:
+        result.warnings.append(f"MANUAL_REVIEW_REQUIRED:{result.manual_review_count}")
+
+    retained_rows = {row.row_id: row for row in drawing_rows.values()}
+    retained_rows.update({row.row_id: row for row in matched_rows})
+    retained_rows.update(review_rows_by_id)
+    retained_decisions = {decision.row_id: decision for decision in matched_decisions}
+    retained_decisions.update(review_decisions_by_id)
+    result.source_rows = list(retained_rows.values())
+    result.decisions = list(retained_decisions.values())
+    atomic_write_jsonl(run_dir / "aggregate_review_decisions.jsonl", aggregate_review_decisions)
+    export_manual_review(
+        run_dir / "manual_review.xlsx",
+        list(review_rows_by_id.values()),
+        list(review_decisions_by_id.values()),
+    )
+
     card_rows = build_complete_card_rows(
         list(drawing_rows.values()),
         aggregated,
@@ -489,7 +600,9 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     result.write_operations = planned_ops
     atomic_write_json(run_dir / "planned_write_operations.json", planned_ops)
 
-    blockers = _publication_blockers(result)
+    result.blocker_counts = _publication_blocker_counts(result)
+    result.blockers = list(result.blocker_counts)
+    blockers = result.blockers
     validation = None
     if request.strict and blockers:
         result.status = Status.BLOCKED
@@ -553,3 +666,18 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     summary["source_hashes_unchanged"] = unchanged
     atomic_write_json(run_dir / "processing_summary.json", summary)
     return result
+
+
+def _is_transactional_hierarchy_row(row: DrawingSourceRow) -> bool:
+    """Return whether a row is a measured work/resource line, not a section label."""
+    name = row.work_name_raw or ""
+    has_business_name = any(character.isalpha() for character in name)
+    return has_business_name and bool(row.cost_type_code_raw)
+
+
+def _is_source_resource_detail(row: DrawingSourceRow) -> bool:
+    """Identify source-native resource/equipment rows before category matching."""
+    name = row.work_name_raw or ""
+    has_business_name = any(character.isalpha() for character in name)
+    has_line_values = bool(row.unit_raw) or row.remaining_quantity is not None
+    return has_business_name and has_line_values and not row.cost_type_code_raw

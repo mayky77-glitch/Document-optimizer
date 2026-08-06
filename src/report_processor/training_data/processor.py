@@ -123,8 +123,8 @@ def prepare_training_data(
             for row in rows
         ]
     )
-    parent_ids = set(hierarchy.parent_row_ids)
-    rows = tuple(row for row in rows if row.row_id not in parent_ids)
+    excluded_hierarchy_ids = set(hierarchy.parent_row_ids) | set(hierarchy.resource_detail_row_ids)
+    rows = tuple(row for row in rows if row.row_id not in excluded_hierarchy_ids)
     output: list[TrainingDataRow] = []
     skipped_non_detail = 0
     skipped_outdated = 0

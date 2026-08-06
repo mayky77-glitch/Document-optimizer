@@ -9,6 +9,7 @@ from openpyxl.utils import get_column_letter
 
 from ..contract_check import ContractCostViolation
 from ..models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER, ObjectBlockLayout, TargetWorkCategory
+from ..statuses import Status
 from .contract import COST_FORMAT, FRACTIONAL_QUANTITY_FORMAT, cost_to_million_rubles
 
 DISCREPANCY_SHEET_NAME = "Расхождения и ошибки"
@@ -31,9 +32,46 @@ _HEADERS = (
     "По договору — стоимость, млн руб.",
     "Выполнено за весь период — объём",
     "Выполнено за весь период — стоимость, млн руб.",
+    "Причина ошибки",
     "Разница стоимости, млн руб.",
     "Ссылка на договорную стоимость",
 )
+
+CONTRACT_COST_ERROR_REASON = (
+    "Стоимость выполненных работ превышает договорную стоимость более чем на допустимые 1 000 руб."
+)
+
+_ISSUE_LABELS = {
+    Status.POSSIBLE_DUPLICATE.value: "В исходных данных найдены возможные дубли этой работы.",
+    Status.UNIT_MISMATCH.value: "Для объединяемых строк обнаружены разные единицы измерения.",
+    Status.INVALID_NUMBER.value: "Числовое значение заполнено некорректно.",
+    Status.EXCEL_ERROR.value: "В исходной ячейке содержится ошибка Excel.",
+    Status.FORMULA_WITHOUT_CACHED_VALUE.value: (
+        "Формула не содержит сохранённого результата. Пересчитайте и сохраните исходный файл."
+    ),
+    Status.FORMULA_NOT_AVAILABLE_FOR_BACKEND.value: (
+        "Формулу не удалось безопасно прочитать используемым модулем."
+    ),
+    Status.VALUE_NOT_FOUND.value: "Не найдено значение для заполнения показателя.",
+    Status.CONFLICT_REQUIRES_REVIEW.value: "Новое значение расходится с существующей карточкой.",
+    Status.UNCONFIRMED_CLASSIFICATION.value: "Категория работы не подтверждена.",
+}
+
+
+def report_issue_text(warnings: tuple[str, ...], status: str) -> str:
+    """Return readable report text without leaking row IDs or internal evidence hashes."""
+
+    values = warnings or (status,)
+    reasons: list[str] = []
+    for value in values:
+        code = str(value).partition(":")[0]
+        reason = _ISSUE_LABELS.get(
+            code,
+            f"Обнаружено предупреждение обработки ({code.replace('_', ' ').lower()}).",
+        )
+        if reason not in reasons:
+            reasons.append(reason)
+    return "\n".join(reasons)
 
 
 def contract_cost_coordinate(
@@ -130,6 +168,7 @@ def add_discrepancy_sheet(
             cost_to_million_rubles(row.contract_total_cost, cost_scale),
             row.performed_quantity,
             cost_to_million_rubles(row.performed_total_cost, cost_scale),
+            CONTRACT_COST_ERROR_REASON,
             cost_to_million_rubles(violation.difference_rub, cost_scale),
         )
         for column, value in enumerate(values, start=1):
@@ -138,20 +177,20 @@ def add_discrepancy_sheet(
             cell.alignment = Alignment(vertical="top", wrap_text=True)
             if column in {5, 7}:
                 cell.number_format = FRACTIONAL_QUANTITY_FORMAT
-            elif column in {6, 8, 9}:
+            elif column in {6, 8, 10}:
                 cell.number_format = COST_FORMAT
-            if column in {5, 6, 7, 8, 9} and isinstance(value, Decimal):
+            if column in {5, 6, 7, 8, 10} and isinstance(value, Decimal):
                 exact_numeric_cells[(sheet.title, cell.coordinate)] = value
         target_sheet, target_coordinate = locations[
             (row.object_index, row.drawing_code.raw, row.category)
         ]
-        link = sheet.cell(row_number, 10, "Перейти к ячейке")
+        link = sheet.cell(row_number, 11, "Перейти к ячейке")
         link.hyperlink = excel_internal_location(target_sheet, target_coordinate)
         link.style = "Hyperlink"
         link.border = _BORDER
-    widths = (16, 24, 42, 12, 20, 24, 28, 32, 24, 28)
+    widths = (16, 24, 42, 12, 20, 24, 28, 32, 52, 24, 28)
     for column, width in enumerate(widths, start=1):
         sheet.column_dimensions[get_column_letter(column)].width = width
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:J{sheet.max_row}"
+    sheet.auto_filter.ref = f"A1:K{sheet.max_row}"
     return exact_numeric_cells

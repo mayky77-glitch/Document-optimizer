@@ -24,7 +24,10 @@ from report_processor.drawing_card.output.contract import (
     SUMMARY_HEADERS,
     SUMMARY_SHEET_NAME,
 )
-from report_processor.drawing_card.output.discrepancies import DISCREPANCY_SHEET_NAME
+from report_processor.drawing_card.output.discrepancies import (
+    CONTRACT_COST_ERROR_REASON,
+    DISCREPANCY_SHEET_NAME,
+)
 from report_processor.drawing_card.output.layout import plan_layout
 from report_processor.drawing_card.output.summary import summary_block_position, summary_row_count
 from report_processor.drawing_card.output.validator import validate_card
@@ -304,11 +307,13 @@ def test_contract_cost_violation_uses_strict_ruble_tolerance_and_links_to_only_r
             CARD_HEADERS[6],
             CARD_HEADERS[7],
             CARD_HEADERS[8],
+            "Причина ошибки",
             "Разница стоимости, млн руб.",
             "Ссылка на договорную стоимость",
         )
         expected_target = f"#'{MAIN_CARD_SHEET_NAME}'!{contract_cost_cell.coordinate}"
-        assert discrepancy.cell(2, 10).hyperlink.target == expected_target
+        assert discrepancy.cell(2, 9).value == CONTRACT_COST_ERROR_REASON
+        assert discrepancy.cell(2, 11).hyperlink.target == expected_target
         red_coordinates = {
             cell.coordinate
             for cell in card[row_number]
@@ -319,7 +324,38 @@ def test_contract_cost_violation_uses_strict_ruble_tolerance_and_links_to_only_r
         assert discrepancy.cell(2, 6).value == 2
         assert Decimal(str(discrepancy.cell(2, 7).value)) == Decimal("12.9876543210987")
         assert Decimal(str(discrepancy.cell(2, 8).value)) == Decimal("2.00100001")
-        assert Decimal(str(discrepancy.cell(2, 9).value)) == Decimal("0.00100001")
+        assert Decimal(str(discrepancy.cell(2, 10).value)) == Decimal("0.00100001")
+    finally:
+        workbook.close()
+
+
+def test_report_comments_explain_warnings_without_internal_row_hashes(tmp_path: Path) -> None:
+    rows = _rows(indices=("1001",))
+    rows[0] = replace(
+        rows[0],
+        status=Status.WARNING,
+        warnings=("POSSIBLE_DUPLICATE:private-row-hash-1:private-row-hash-2",),
+    )
+    layouts = plan_layout(rows)
+    output = tmp_path / "readable-warning.xlsx"
+    write_card(
+        base_path=FIXTURES / "default_template.xlsx",
+        output_path=output,
+        rows=rows,
+        layouts=layouts,
+        run_id="readable-warning",
+        cost_scale=1,
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    try:
+        card = workbook[MAIN_CARD_SHEET_NAME]
+        row_number = layouts[0].drawing_code_blocks[0].start_row
+        comment = card.cell(row_number, layouts[0].start_column + 1).comment
+        assert comment is not None
+        assert comment.text == "В исходных данных найдены возможные дубли этой работы."
+        assert "private-row-hash" not in comment.text
+        assert "POSSIBLE_DUPLICATE" not in comment.text
     finally:
         workbook.close()
 

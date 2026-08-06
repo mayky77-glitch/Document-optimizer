@@ -19,12 +19,14 @@ def entry(
     amount: str | None,
     *,
     context: tuple[str, ...] = (),
+    transactional: bool = False,
 ) -> HierarchyEntry:
     return HierarchyEntry(
         row_id=row_id,
         position_code=position,
         amount=None if amount is None else Decimal(amount),
         context=context,
+        is_transactional=transactional,
     )
 
 
@@ -34,6 +36,12 @@ def test_exact_dot_segments_do_not_make_610_a_child_of_61() -> None:
     assert parent is not None
     assert is_ancestor_position(parent, parse_position_code("6.1.3"))
     assert not is_ancestor_position(parent, parse_position_code("6.10"))
+
+
+def test_numeric_fraction_is_not_an_automatic_hierarchy_code() -> None:
+    assert parse_position_code(0.10829999949783087) is None
+    assert parse_position_code(Decimal("0.25")) is None
+    assert parse_position_code("2.7.1") is not None
 
 
 @pytest.mark.parametrize("depth", (3, 4, 5))
@@ -76,6 +84,21 @@ def test_cost_match_keeps_only_direct_children_in_parent_comparison() -> None:
 
     assert result.parent_row_ids == ("root", "first-child")
     assert result.leaf_row_ids == ("nested", "second-child")
+    assert not any(issue.code == "HIERARCHY_COST_MISMATCH" for issue in result.issues)
+
+
+def test_transactional_parent_is_retained_and_nested_resources_are_excluded() -> None:
+    result = filter_aggregate_rows(
+        (
+            entry("section", "2.7.1.3.10", "13728"),
+            entry("work", "2.7.1.3.10.7", "11770", transactional=True),
+            entry("material", "2.7.1.3.10.7.1", "1958", transactional=True),
+        )
+    )
+
+    assert result.parent_row_ids == ("section",)
+    assert result.resource_detail_row_ids == ("material",)
+    assert result.leaf_row_ids == ("work",)
     assert not any(issue.code == "HIERARCHY_COST_MISMATCH" for issue in result.issues)
 
 
@@ -132,6 +155,20 @@ def test_same_position_in_separate_contexts_does_not_create_parent_or_duplicate(
     assert result.parent_row_ids == ()
     assert result.leaf_row_ids == ("object-a", "object-b")
     assert not any(issue.code == "HIERARCHY_DUPLICATE_POSITION" for issue in result.issues)
+
+
+def test_duplicate_parent_positions_are_reported_but_not_silently_excluded() -> None:
+    result = filter_aggregate_rows(
+        (
+            entry("duplicate-a", "2", "11"),
+            entry("duplicate-b", "2", "12"),
+            entry("child", "2.1", "11"),
+        )
+    )
+
+    assert result.parent_row_ids == ()
+    assert result.leaf_row_ids == ("duplicate-a", "duplicate-b", "child")
+    assert any(issue.code == "HIERARCHY_DUPLICATE_POSITION" for issue in result.issues)
 
 
 def test_large_mostly_leaf_input_does_not_use_quadratic_parent_scanning() -> None:

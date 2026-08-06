@@ -26,6 +26,7 @@ from report_processor.drawing_card.models import (
 )
 from report_processor.drawing_card.review.inline import append_feedback
 from report_processor.drawing_card.statuses import Status
+from report_processor.drawing_card.workflow import _aggregate_unit_mismatch_reviews
 
 RULES = load_rules(
     Path(__file__).parents[3]
@@ -104,6 +105,29 @@ def test_approve_includes_both_quantity_and_cost() -> None:
     assert decision.cost_decision == "include"
     assert aggregated[0].quantity == Decimal("12")
     assert aggregated[0].total_cost == Decimal("3500")
+
+
+def test_late_aggregate_unit_mismatch_becomes_actionable_row_review() -> None:
+    metre_row = _row()
+    item_row = replace(_row(), row_id="review-row-2", unit_raw="шт")
+    metre_decision = _manual_decision("approve")
+    item_decision = replace(metre_decision, row_id=item_row.row_id)
+    rows = [metre_row, item_row]
+    decisions = [metre_decision, item_decision]
+    aggregated = aggregate_rows(rows, decisions, drawing_code_mode="strict", strict=True)
+
+    review_rows, review_decisions = _aggregate_unit_mismatch_reviews(rows, decisions, aggregated)
+
+    assert aggregated[0].status == Status.UNIT_MISMATCH
+    assert {row.row_id for row in review_rows} == {"review-row-1", "review-row-2"}
+    assert {decision.row_id for decision in review_decisions} == {
+        "review-row-1",
+        "review-row-2",
+    }
+    assert all(decision.quantity_decision == "review" for decision in review_decisions)
+    assert all(decision.cost_decision == "include" for decision in review_decisions)
+    assert all(decision.requires_manual_review for decision in review_decisions)
+    assert all(Status.UNIT_MISMATCH in decision.warnings for decision in review_decisions)
 
 
 def test_contract_and_performed_values_follow_the_same_included_source_sets() -> None:
@@ -267,13 +291,13 @@ def test_latest_local_feedback_overrides_an_older_local_decision_and_bundled_exa
 
 
 @pytest.mark.parametrize(
-    ("action", "category", "quantity", "cost"),
+    ("action", "category", "quantity", "cost", "requires_manual_review"),
     (
-        ("approve", TargetWorkCategory.LOW_CURRENT_CABLE, "include", "include"),
-        ("change_category", TargetWorkCategory.CONCRETE_WORKS, "include", "include"),
-        ("cost_only", TargetWorkCategory.LOW_CURRENT_CABLE, "exclude", "include"),
-        ("reject", None, "exclude", "exclude"),
-        ("skip", None, "exclude", "exclude"),
+        ("approve", TargetWorkCategory.LOW_CURRENT_CABLE, "include", "include", False),
+        ("change_category", TargetWorkCategory.CONCRETE_WORKS, "review", "include", True),
+        ("cost_only", TargetWorkCategory.LOW_CURRENT_CABLE, "exclude", "include", False),
+        ("reject", None, "exclude", "exclude", False),
+        ("skip", None, "exclude", "exclude", False),
     ),
 )
 def test_inline_feedback_replays_every_explicit_action_without_manual_review(
@@ -282,6 +306,7 @@ def test_inline_feedback_replays_every_explicit_action_without_manual_review(
     category: TargetWorkCategory | None,
     quantity: str,
     cost: str,
+    requires_manual_review: bool,
 ) -> None:
     feedback = tmp_path / "review-feedback.jsonl"
     append_feedback(
@@ -297,5 +322,64 @@ def test_inline_feedback_replays_every_explicit_action_without_manual_review(
 
     assert decision.category is category
     assert (decision.quantity_decision, decision.cost_decision) == (quantity, cost)
+    assert decision.requires_manual_review is requires_manual_review
+    if requires_manual_review:
+        assert decision.matching_strategy == "review"
+        assert Status.UNIT_MISMATCH in decision.warnings
+    else:
+        assert decision.matching_strategy == "confirmed_dictionary"
+
+
+def test_exact_feedback_cannot_replay_quantity_against_current_category_unit_policy() -> None:
+    row = replace(
+        _row(),
+        unit_raw="компл",
+        work_name_raw="Монтаж технологической ЗРА",
+    )
+    example = ConfirmedExample(
+        example_id="feedback-incompatible-category-unit",
+        source_text=row.work_name_raw or "",
+        normalized_text="монтаж технологической зра",
+        category=TargetWorkCategory.TT_VALVES_INSTALLATION,
+        quantity_decision="include",
+        cost_decision="include",
+        unit="компл",
+        source_type="ks6a",
+        confirmed_by="inline-review",
+        rule_version="ReviewFeedbackStore-1.0",
+    )
+
+    decision = DrawingRowMatcher(RULES, (example,), rag_mode="off").match(row)
+
+    assert decision.category is TargetWorkCategory.TT_VALVES_INSTALLATION
+    assert (decision.quantity_decision, decision.cost_decision) == ("review", "include")
+    assert decision.matching_strategy == "review"
+    assert decision.requires_manual_review is True
+    assert Status.UNIT_MISMATCH in decision.warnings
+
+
+def test_exact_cost_only_feedback_remains_replayable_across_category_unit_mismatch() -> None:
+    row = replace(
+        _row(),
+        unit_raw="компл",
+        work_name_raw="Монтаж технологической ЗРА",
+    )
+    example = ConfirmedExample(
+        example_id="feedback-cost-only-incompatible-category-unit",
+        source_text=row.work_name_raw or "",
+        normalized_text="монтаж технологической зра",
+        category=TargetWorkCategory.TT_VALVES_INSTALLATION,
+        quantity_decision="exclude",
+        cost_decision="include",
+        unit="компл",
+        source_type="ks6a",
+        confirmed_by="inline-review",
+        rule_version="ReviewFeedbackStore-1.0",
+    )
+
+    decision = DrawingRowMatcher(RULES, (example,), rag_mode="off").match(row)
+
+    assert decision.category is TargetWorkCategory.TT_VALVES_INSTALLATION
+    assert (decision.quantity_decision, decision.cost_decision) == ("exclude", "include")
     assert decision.matching_strategy == "confirmed_dictionary"
     assert decision.requires_manual_review is False

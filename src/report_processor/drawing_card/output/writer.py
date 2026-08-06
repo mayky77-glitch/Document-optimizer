@@ -39,6 +39,7 @@ from .discrepancies import (
     add_discrepancy_sheet,
     apply_contract_cost_highlights,
     clear_contract_cost_highlights,
+    report_issue_text,
 )
 from .planner import plan_write_operations
 from .styles import clone_block_columns, clone_row_style
@@ -366,7 +367,7 @@ def write_card(
                             Status.UNIT_FROM_TEMPLATE,
                         }:
                             cell.comment = Comment(
-                                "; ".join(result.warnings) or result.status,
+                                report_issue_text(result.warnings, result.status),
                                 "report_processor",
                             )
                         metric = (

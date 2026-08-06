@@ -28,7 +28,10 @@ _DRAWING_ALIASES = (
     "чертеж",
 )
 _DOCUMENT_INDEX_ALIASES = ("индекс документа", "шифр документа", "номер документа")
+_COST_TYPE_ALIASES = ("код вида затрат", "вид затрат")
 _POSITION_ALIASES = (
+    "№ п/п",
+    "номер п/п",
     "номер позиции",
     "позиция",
     "номер п п",
@@ -216,6 +219,7 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
     candidates: dict[str, list[tuple[int, int]]] = {
         "drawing_code": [],
         "document_index": [],
+        "cost_type_code": [],
         "position_code": [],
         "work_name": [],
         "unit": [],
@@ -227,6 +231,8 @@ def _resolve_columns(headers: dict[int, str]) -> tuple[dict[str, int], list[str]
             candidates["drawing_code"].append((10, column))
         if _contains_alias(header, _DOCUMENT_INDEX_ALIASES):
             candidates["document_index"].append((9, column))
+        if _contains_alias(header, _COST_TYPE_ALIASES):
+            candidates["cost_type_code"].append((10, column))
         if _contains_alias(header, _POSITION_ALIASES):
             candidates["position_code"].append((10, column))
         if _contains_alias(header, _WORK_ALIASES):
@@ -272,7 +278,17 @@ def _content_position_column(
     """Recover a non-standard position column only on strong, unique hierarchy evidence."""
     if "position_code" in columns:
         return columns["position_code"], None
-    excluded = ("единиц", "колич", "объем", "стоим", "цен", "работ", "чертеж")
+    excluded = (
+        "единиц",
+        "колич",
+        "объем",
+        "стоим",
+        "цен",
+        "работ",
+        "чертеж",
+        "ошиб",
+        "проверк",
+    )
     ranked: list[tuple[int, int]] = []
     for column, header in headers.items():
         if any(token in header for token in excluded):

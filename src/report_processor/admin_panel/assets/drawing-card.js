@@ -12,6 +12,7 @@
   const createJob = document.querySelector("#create-job");
   const resultDownload = document.querySelector("#result-download");
   const resultHint = document.querySelector("#result-hint");
+  const jobIssues = document.querySelector("#job-issues");
 
   const SOURCE_WORKBOOK_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xlsb"]);
   const SESSION_STORAGE_KEY = "report-processor.drawing-card.state.v2";
@@ -69,6 +70,29 @@
   const setStatus = (message, isError = false) => {
     status.textContent = message;
     status.classList.toggle("is-error", isError);
+  };
+
+  const hideIssues = () => {
+    jobIssues.replaceChildren();
+    jobIssues.hidden = true;
+  };
+
+  const renderIssues = (payload, blockingOnly = false) => {
+    const source = blockingOnly ? payload?.blocking_reasons : payload?.issues;
+    const issues = Array.isArray(source) ? source.slice(0, 8) : [];
+    if (!issues.length) {
+      hideIssues();
+      return;
+    }
+    jobIssues.replaceChildren(...issues.map((issue) => {
+      const item = document.createElement("li");
+      const count = Number(issue?.count);
+      const suffix = Number.isInteger(count) && count > 1 ? ` (случаев: ${count})` : "";
+      const action = typeof issue?.action === "string" && issue.action ? ` ${issue.action}` : "";
+      item.textContent = `${issue?.message || "Обнаружено отклонение."}${suffix}.${action}`.replace("..", ".");
+      return item;
+    }));
+    jobIssues.hidden = false;
   };
 
   const setProgress = (step) => {
@@ -212,7 +236,22 @@
     setProgress("card");
   };
 
-  const review = new window.DrawingCardReviewPanel({ requestJson, setStatus, setProgress, renderResult, persistSession });
+  const resetResult = () => {
+    resultDownload.removeAttribute("href");
+    resultDownload.textContent = "Скачать карточку";
+    resultDownload.classList.add("is-disabled");
+    resultDownload.setAttribute("aria-disabled", "true");
+    resultHint.textContent = "Здесь появится готовый .xlsx после завершения проверки.";
+  };
+
+  const review = new window.DrawingCardReviewPanel({
+    requestJson,
+    setStatus,
+    setProgress,
+    renderResult,
+    persistSession,
+    renderJob: (payload, reviewPage) => renderJob(payload, reviewPage),
+  });
 
   const setOperation = (value) => {
     const isUpdate = value === "update";
@@ -237,15 +276,32 @@
       uploadedSourceCount = count;
       updateSourceCount();
     }
+    resetResult();
     renderResult(payload);
     const needsReview = payload.status === "review_required" || payload.status === "awaiting_review" || payload.can_upload_review || payload.review_url;
     if (needsReview && currentJobId) {
+      renderIssues(payload);
       await review.show(payload, currentJobId, reviewPage);
       setStatus("Проверьте группы строк и примените решения.");
       return;
     }
     review.hide();
-    setStatus(payload.result_url ? "Карточка готова. Скачайте файл." : "Подготовка запущена. Следующий шаг появится в локальной панели.");
+    if (payload.status === "blocked") {
+      renderIssues(payload, true);
+      setStatus("Карточка не сформирована: обнаружены блокирующие ошибки. Причины указаны ниже.", true);
+    } else if (payload.status === "failed") {
+      renderIssues(payload, true);
+      setStatus("Обработка завершилась ошибкой. Причина и действие указаны ниже.", true);
+    } else if (payload.result_url || payload.status === "ready") {
+      renderIssues(payload);
+      setStatus("Карточка готова. Скачайте файл.");
+    } else if (payload.status === "processing") {
+      hideIssues();
+      setStatus("Идёт проверка исходных файлов и формирование карточки…");
+    } else {
+      renderIssues(payload);
+      setStatus("Статус обработки изменился. Обновите страницу или запустите карточку снова.", true);
+    }
     persistSession();
   };
 
@@ -261,6 +317,8 @@
     }
     createJob.disabled = true;
     review.hide();
+    hideIssues();
+    resetResult();
     setStatus("Проверяем источники и готовим карточку…");
     try {
       await renderJob(await requestJson("/api/drawing-card/jobs", { method: "POST", body: new FormData(form) }));

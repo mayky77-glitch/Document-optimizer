@@ -128,6 +128,8 @@ def test_presenter_exposes_only_controlled_job_fields(tmp_path: Path) -> None:
         "status",
         "summary",
         "warnings",
+        "issues",
+        "blocking_reasons",
         "result_url",
         "review_url",
         "can_upload_review",

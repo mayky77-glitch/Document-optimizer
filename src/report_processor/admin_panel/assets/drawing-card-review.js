@@ -50,12 +50,13 @@
   };
 
   class DrawingCardReviewPanel {
-    constructor({ requestJson, setStatus, setProgress, renderResult, persistSession }) {
+    constructor({ requestJson, setStatus, setProgress, renderResult, persistSession, renderJob }) {
       this.requestJson = requestJson;
       this.setStatus = setStatus;
       this.setProgress = setProgress;
       this.renderResult = renderResult;
       this.persistSession = persistSession;
+      this.renderJob = renderJob;
       this.panel = document.querySelector("#review-panel");
       this.summary = document.querySelector("#summary");
       this.items = document.querySelector("#review-items");
@@ -369,26 +370,7 @@
       this.applyButton.disabled = true;
       try {
         const payload = await this.requestJson(`/api/drawing-card/jobs/${encodeURIComponent(this.jobId)}/review/apply`, { method: "POST" });
-        this.renderResult(payload);
-        const status = text(payload.status, "").toLowerCase();
-        if (payload.result_url || status === "ready") {
-          this.applyButton.hidden = true;
-          this.setStatus("Решения применены. Карточка готова.");
-        } else if (status === "processing") {
-          this.applyButton.hidden = true;
-          this.setStatus("Решения применены. Карточка готовится — дождитесь обновления статуса.");
-        } else if (status === "blocked" || status === "failed") {
-          this.applyButton.hidden = true;
-          this.setStatus(
-            status === "blocked"
-              ? "Карточка не сформирована: обработка заблокирована."
-              : "Карточка не сформирована: обработка завершилась с ошибкой.",
-            true,
-          );
-        } else {
-          this.applyButton.disabled = false;
-          this.setStatus("Решения приняты, но локальная панель не вернула понятный статус.", true);
-        }
+        await this.renderJob(payload, this.page);
       } catch (error) {
         this.setStatus(error.message, true);
       } finally {
@@ -417,8 +399,7 @@
       this.submitReview.disabled = true;
       try {
         const payload = await this.requestJson(`/api/drawing-card/jobs/${encodeURIComponent(this.jobId)}/review`, { method: "POST", body: new FormData(this.reviewForm) });
-        this.renderResult(payload);
-        this.setStatus(payload.result_url ? "Проверка загружена. Карточка готова." : "Проверка загружена.");
+        await this.renderJob(payload, this.page);
       } catch (error) {
         this.setStatus(error.message, true);
       } finally {

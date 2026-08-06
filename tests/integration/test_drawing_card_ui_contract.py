@@ -77,10 +77,7 @@ def test_review_decision_layout_wraps_long_modes_and_moves_actions_to_a_second_r
     assert ".segmented-control button { min-width: 0;" in styles
     assert "overflow-wrap: anywhere; white-space: normal;" in styles
     assert "@container (max-width: 860px)" in styles
-    assert (
-        ".review-decision-actions { grid-column: 1 / -1; "
-        "}" in styles
-    )
+    assert ".review-decision-actions { grid-column: 1 / -1; }" in styles
     assert "@container (max-width: 620px)" in styles
     assert (
         ".review-decision-actions { grid-column: auto; "

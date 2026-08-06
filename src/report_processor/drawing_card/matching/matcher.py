@@ -273,6 +273,34 @@ class DrawingRowMatcher:
             source_type=row.source_document_type,
         )
         if exact is not None:
+            rule = next(
+                (item for item in self.rules.categories if item.category == exact.category), None
+            )
+            if (
+                exact.category is not None
+                and exact.quantity_decision == "include"
+                and rule is not None
+                and not _unit_is_compatible(row.unit_raw, rule)
+            ):
+                return MatchDecision(
+                    row_id=row.row_id,
+                    category=exact.category,
+                    quantity_decision="review",
+                    cost_decision=exact.cost_decision,
+                    quantity_rule_id=None,
+                    cost_rule_id=f"example:{exact.example_id}",
+                    quantity_confidence=None,
+                    cost_confidence=1.0,
+                    matching_strategy="review",
+                    evidence_ids=(exact.example_id,),
+                    reason=(
+                        "Exact confirmed feedback cannot include quantity across "
+                        "a current category-unit mismatch"
+                    ),
+                    requires_manual_review=True,
+                    status=Status.UNCONFIRMED_CLASSIFICATION,
+                    warnings=(Status.UNIT_MISMATCH,),
+                )
             if (
                 exact.category is None
                 or exact.unit is None

@@ -18,6 +18,11 @@ class HierarchyEntry:
     position_code: str | None
     amount: Decimal | None
     context: tuple[str, ...] = ()
+    # A transactional row represents an independently measured work/material
+    # line.  Some source books nest resource-detail lines below a work line;
+    # such a work line must not be mistaken for a section total merely because
+    # it has children.
+    is_transactional: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,3 +45,4 @@ class HierarchyFilterResult:
     issues: tuple[HierarchyIssue, ...]
     status: str
     warnings: tuple[str, ...]
+    resource_detail_row_ids: tuple[str, ...] = ()

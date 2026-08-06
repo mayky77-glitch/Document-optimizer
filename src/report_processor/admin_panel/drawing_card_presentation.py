@@ -8,6 +8,113 @@ from report_processor.drawing_card.models import CATEGORY_DISPLAY_NAMES, CATEGOR
 
 from .drawing_card_service import DrawingCardJob
 
+_ISSUE_TEXT: dict[str, tuple[str, str | None]] = {
+    "MANUAL_REVIEW_REQUIRED": (
+        "Есть строки, для которых нужно решение пользователя.",
+        "Откройте шаг проверки и примените решение к каждой группе.",
+    ),
+    "UNIT_MISMATCH": (
+        "В одну итоговую позицию попали разные единицы измерения.",
+        "В ручной проверке оставьте количество только для совместимой единицы.",
+    ),
+    "FORMULA_NOT_AVAILABLE_FOR_BACKEND": (
+        "В XLSB недоступен текст формул, но сохранённые Excel-значения прочитаны.",
+        None,
+    ),
+    "FORMULA_WITHOUT_CACHED_VALUE": (
+        "Формула не содержит сохранённого результа, поэтому число нельзя безопасно использовать.",
+        "Откройте исходный файл в Excel, пересчитайте и сохраните его.",
+    ),
+    "HIERARCHY_COST_MISMATCH": (
+        "Контрольная сумма секции не совпадает с суммой её измеряемых строк. "
+        "Это диагностика и сама по себе не блокирует карточку.",
+        "Проверьте суммы, если они используются для финансовой сверки.",
+    ),
+    "HIERARCHY_MISSING_DIRECT_CHILD_COST": (
+        "У секции или одной из её измеряемых строк нет стоимости для контрольной сверки. "
+        "Это не блокирует карточку.",
+        "Заполните стоимость или исправьте иерархию в исходном документе.",
+    ),
+    "HIERARCHY_DUPLICATE_POSITION": (
+        "Один и тот же номер позиции встречается несколько раз. "
+        "Эти строки не скрываются по иерархии "
+        "и обрабатываются как отдельные.",
+        "Уточните нумерацию, если повторы не задуманы в исходном документе.",
+    ),
+    "HIERARCHY_POSITION_GAP": (
+        "В нумерации позиций есть пропуск; это диагностика и сама по себе не блокирует карточку.",
+        None,
+    ),
+    "POSSIBLE_DUPLICATE": (
+        "Найдены вероятные дубли; повторные суммы не добавлялись.",
+        "Проверьте исключённые дубли в отчёте.",
+    ),
+    "POSITION_COLUMN_FROM_CONTENT": (
+        "Колонка номера позиции определена по её содержимому.",
+        None,
+    ),
+    "IGNORED_NON_DRAWING_CELL": (
+        "Ячейки без признаков строки чертежа не включались в карточку.",
+        None,
+    ),
+    "BINARY_FLOAT_ARTIFACT_NORMALIZED": (
+        "Технические хвосты двоичных чисел нормализованы без изменения сумм.",
+        None,
+    ),
+    "AMBIGUOUS_COLUMN": (
+        "Для одного из полей найдено несколько похожих колонок.",
+        "Проверьте заголовки колонок в исходном файле.",
+    ),
+    "SUSPICIOUS_QUANTITY_COST_PAIR": (
+        "Найдено нетипичное сочетание количества и стоимости.",
+        "Проверьте эту строку в отчёте.",
+    ),
+    "METRIC_COLUMNS_REPLACED": (
+        "Колонки количества и стоимости уточнены по структуре данных.",
+        None,
+    ),
+    "DRAWING_CODE_NOT_FOUND": (
+        "Для части строк не найден шифр чертежа; эти строки не попали в карточку.",
+        "Проверьте шифры чертежей в исходных строках.",
+    ),
+    "NO_CARD_ROWS": (
+        "Не найдено строк, которые можно безопасно включить в карточку.",
+        "Проверьте шифры чертежей, категории работ и обязательные поля в исходных файлах.",
+    ),
+    "OUTPUT_BASE_MISSING": (
+        "Не найден шаблон или существующая карточка для записи результата.",
+        "Проверьте комплект установки или загрузите существующую карточку повторно.",
+    ),
+    "INVALID_NUMBER": (
+        "Часть числовых ячеек не удалось распознать.",
+        "Проверьте формат количеств и стоимостей в исходном Excel-файле.",
+    ),
+    "SOURCE_INSPECTION_FAILED": (
+        "Один из исходных файлов не удалось проверить.",
+        "Откройте файл в Excel, пересохраните и загрузите его снова.",
+    ),
+    "SOURCE_EXTRACTION_FAILED": (
+        "Из одного из исходных файлов не удалось извлечь строки.",
+        "Проверьте целостность книги и её листов, затем загрузите снова.",
+    ),
+    "SOURCE_HASH_CHANGED": (
+        "Исходный файл изменился во время обработки.",
+        "Загрузите актуальные файлы ещё раз.",
+    ),
+    "PROCESSING_FAILED": (
+        "Обработка завершилась технической ошибкой.",
+        "Повторите запуск; если ошибка повторится, сохраните время запуска для диагностики.",
+    ),
+    "WORKFLOW_BLOCKED": (
+        "Карточка не прошла обязательные проверки безопасности.",
+        "Исправьте указанные причины в исходных файлах и запустите обработку снова.",
+    ),
+    "REQUEST_VALIDATION_FAILED": (
+        "Параметры запуска или выбранные файлы не прошли проверку.",
+        "Проверьте формат файлов и выбранную операцию.",
+    ),
+}
+
 
 def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
     """Return only values safe to serialize through an admin endpoint."""
@@ -15,6 +122,7 @@ def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
     source_files = job.summary.get("source_files")
     if source_files is None:
         source_files = len(job.sources)
+    issues = _job_issues(job)
     return {
         "job_id": job.job_id,
         "status": job.status,
@@ -30,12 +138,36 @@ def drawing_card_job_payload(job: DrawingCardJob) -> dict[str, object]:
             "manual_review": int(job.summary.get("manual_review", 0)),
         },
         "warnings": list(job.warnings),
+        "issues": issues,
+        "blocking_reasons": [item for item in issues if item["blocking"]],
         "result_url": (
             f"/api/drawing-card/jobs/{job.job_id}/result" if job.result_available else None
         ),
         "review_url": f"/api/drawing-card/jobs/{job.job_id}/review" if review_required else None,
         "can_upload_review": review_required,
     }
+
+
+def _job_issues(job: DrawingCardJob) -> list[dict[str, object]]:
+    codes = list(dict.fromkeys((*job.blockers, *job.warnings, *job.errors)))
+    if job.blockers:
+        codes = [code for code in codes if code != "WORKFLOW_BLOCKED"]
+    issues = []
+    for code in codes[:50]:
+        message, action = _ISSUE_TEXT.get(
+            code,
+            (f"Диагностика обработки: {code}.", None),
+        )
+        issues.append(
+            {
+                "code": code,
+                "message": message,
+                "action": action,
+                "count": int(job.blocker_counts.get(code, job.warning_counts.get(code, 1))),
+                "blocking": code in job.blockers or code in job.errors,
+            }
+        )
+    return issues
 
 
 def drawing_card_inline_review_payload(job: DrawingCardJob) -> dict[str, object]:

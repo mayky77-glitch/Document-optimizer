@@ -91,6 +91,7 @@ def test_schema_uses_position_alias_and_extractor_preserves_parent_code() -> Non
             "unit": 4,
             "remaining_quantity": 5,
             "remaining_total_cost": 6,
+            "cost_type_code": 7,
         },
         logical_headers={},
         confidence=1,
@@ -98,7 +99,7 @@ def test_schema_uses_position_alias_and_extractor_preserves_parent_code() -> Non
     )
     rows = tuple(
         extract_rows(
-            RowsReader((("6.1", "Ч-1", "Итого", "м", 2, 10),)),
+            RowsReader((("6.1", "Ч-1", "Итого", "м", 2, 10, 30454),)),
             manifest_entry(),
             schema,
             object_index="object",
@@ -108,6 +109,7 @@ def test_schema_uses_position_alias_and_extractor_preserves_parent_code() -> Non
     assert len(rows) == 1
     assert rows[0].position_code_raw == "6.1"
     assert rows[0].remaining_total_cost == Decimal("10")
+    assert rows[0].cost_type_code_raw == "30454"
 
 
 def test_extractor_normalizes_numeric_integer_position_from_xlsb_reader() -> None:
@@ -139,6 +141,31 @@ def test_extractor_normalizes_numeric_integer_position_from_xlsb_reader() -> Non
     )
 
     assert rows[0].position_code_raw == "1"
+
+
+def test_extractor_rejects_numeric_fraction_as_ambiguous_position() -> None:
+    schema = SourceSchema(
+        sheet_name="Данные",
+        header_start_row=1,
+        header_end_row=1,
+        data_start_row=2,
+        columns={
+            "position_code": 1,
+            "drawing_code": 2,
+            "work_name": 3,
+            "unit": 4,
+            "remaining_quantity": 5,
+            "remaining_total_cost": 6,
+        },
+        logical_headers={},
+        confidence=1,
+        status="OK",
+    )
+    reader = RowsReader(((None,) * 6, (0.10829999949783087, "Ч-1", "Работа", "м", 1, 10)))
+
+    rows = list(extract_rows(reader, manifest_entry(), schema, "0907"))
+
+    assert rows[0].position_code_raw is None
 
 
 def test_contract_and_performed_values_use_cached_cells_and_empty_values_are_zero() -> None:
@@ -253,3 +280,29 @@ def test_schema_recovers_one_strong_content_mask_but_tied_masks_fail_closed() ->
 
     assert strong.columns["position_code"] == 1
     assert "POSITION_COLUMN_FROM_CONTENT" in strong.warnings
+
+
+def test_schema_prefers_explicit_number_column_over_numeric_error_formula_values() -> None:
+    header = (
+        "№ п/п",
+        "Код вида затрат",
+        "Шифр чертежа",
+        "Наименование работ",
+        "Ед. изм.",
+        "Остаток количества",
+        "Остаток стоимости",
+        "ВНР проверка ошибок",
+    )
+    rows = (
+        ("1", 30454, "Ч-1", "Работа", "м", 1, 10, 0),
+        ("1.1", 30454, "Ч-1", "Работа", "м", 1, 10, 0.25),
+        ("1.1.1", 30454, "Ч-1", "Работа", "м", 1, 10, 0.125),
+        ("2", 30454, "Ч-1", "Работа", "м", 1, 10, 0.5),
+    )
+    padding = tuple((None,) * len(header) for _ in range(28))
+
+    schema = detect_sheet_schema(RowsReader((header, *rows, *padding)), "Данные")
+
+    assert schema.columns["position_code"] == 1
+    assert schema.columns["cost_type_code"] == 2
+    assert "POSITION_COLUMN_FROM_CONTENT" not in schema.warnings

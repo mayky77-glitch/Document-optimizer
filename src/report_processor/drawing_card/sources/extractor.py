@@ -26,7 +26,13 @@ def _text(value: object) -> str | None:
 def _position_text(value: object) -> str | None:
     # XLSB readers commonly expose an integer position such as 1 as 1.0.
     # Keep true dotted string codes unchanged, but normalize numeric integer cells.
-    if isinstance(value, float) and value.is_integer():
+    if isinstance(value, float):
+        if not value.is_integer():
+            # A numeric fraction cannot be distinguished from a calculated
+            # metric (for example 0.108299999...).  It is therefore unsafe as
+            # an automatic hierarchy key; real multi-segment positions should
+            # be stored as text in the source workbook.
+            return None
         value = int(value)
     return _text(value)
 
@@ -71,6 +77,7 @@ def extract_rows(
         raw_drawing = _text(value_at(cached_row, columns.get("drawing_code")))
         position_code = _position_text(value_at(cached_row, columns.get("position_code")))
         raw_document_index = _text(value_at(cached_row, columns.get("document_index")))
+        cost_type_code = _text(value_at(cached_row, columns.get("cost_type_code")))
         work_name = _text(value_at(cached_row, columns.get("work_name")))
         unit = _text(value_at(cached_row, columns.get("unit")))
         formula_drawing = _text(value_at(formula_row, columns.get("drawing_code")))
@@ -160,8 +167,6 @@ def extract_rows(
         )
         if any(_is_formula(formula) and cached is None for formula, cached in metric_values):
             warnings.append(Status.FORMULA_WITHOUT_CACHED_VALUE)
-        if entry.extension == ".xlsb":
-            warnings.append(Status.FORMULA_NOT_AVAILABLE_FOR_BACKEND)
         if not drawing:
             warnings.append(Status.DRAWING_CODE_NOT_FOUND)
         coordinate_columns = tuple(sorted(set(columns.values())))
@@ -182,6 +187,7 @@ def extract_rows(
             ),
             object_index_raw=object_index,
             position_code_raw=position_code,
+            cost_type_code_raw=cost_type_code,
             drawing_code_raw=drawing,
             work_name_raw=work_name,
             unit_raw=unit,
