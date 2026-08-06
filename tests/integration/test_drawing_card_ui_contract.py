@@ -115,6 +115,20 @@ def test_processing_funnel_and_schema_audit_are_visible_and_path_free() -> None:
     assert ".warnings li.is-blocking" in styles
 
 
+def test_drawing_card_formats_and_russian_report_terms_are_explicit() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card.js").read_text()
+    help_page = (ASSETS / "help.html").read_text()
+
+    assert "Отчёт (карточка остатков)" in page
+    assert 'accept=".xlsx,.xlsm,.xlsb"' in page
+    assert "LibreOffice Calc .ods и PDF доступны только в отдельном процессе" in page
+    assert "Excel-файлы .xlsx, .xlsm или .xlsb" in script
+    assert "LibreOffice Calc .ods и PDF доступны только в отдельном сравнении" in script
+    assert "Отчёт (карточка остатков)" in help_page
+    assert "LibreOffice Calc <code>.ods</code> и PDF в этом процессе не поддерживаются" in help_page
+
+
 def test_background_progress_is_recoverable_cancellable_and_polled_within_five_seconds() -> None:
     page = (ASSETS / "drawing-card.html").read_text()
     script = (ASSETS / "drawing-card.js").read_text()

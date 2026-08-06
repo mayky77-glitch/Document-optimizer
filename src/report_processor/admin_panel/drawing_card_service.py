@@ -66,6 +66,20 @@ MAX_RETAINED_TERMINAL_JOBS = 64
 _SOURCE_SUFFIXES = {".xlsx", ".xlsm", ".xlsb"}
 _RESULT_NAME = "drawing-card.xlsx"
 _REVIEW_NAME = "manual_review.xlsx"
+_RUSSIAN_NOMINATIVE_MONTHS = (
+    "январь",
+    "февраль",
+    "март",
+    "апрель",
+    "май",
+    "июнь",
+    "июль",
+    "август",
+    "сентябрь",
+    "октябрь",
+    "ноябрь",
+    "декабрь",
+)
 _MACHINE_CONSENSUS_NAME = "machine-consensus.jsonl"
 _FEEDBACK_STORE_NAME = "review-feedback-v2.jsonl"
 _FEEDBACK_MODEL_VERSION = "DrawingCardMatcher-1.0"
@@ -354,7 +368,7 @@ class DrawingCardService:
         job = self.get_job(job_id)
         if not job.result_available or job.result is None:
             raise KeyError(job_id)
-        return job.result, _RESULT_NAME
+        return job.result, _result_download_name(job.period)
 
     def get_review(self, job_id: str) -> tuple[Path, str]:
         job = self.get_job(job_id)
@@ -1573,6 +1587,14 @@ def _validate_period(period: str | None) -> str | None:
         return DocumentPeriod(year=int(year), month=int(month)).normalized
     except ValueError as error:
         raise ValueError("invalid period") from error
+
+
+def _result_download_name(period: str | None) -> str:
+    """Return the public report name without changing the private artifact name."""
+    if not isinstance(period, str) or not _CANONICAL_PERIOD_RE.fullmatch(period):
+        return "Отчёт по остаткам.xlsx"
+    year, month = period.split("-", 1)
+    return f"Отчёт по остаткам за {_RUSSIAN_NOMINATIVE_MONTHS[int(month) - 1]} {year}.xlsx"
 
 
 def _write_private(path: Path, content: bytes) -> Path:

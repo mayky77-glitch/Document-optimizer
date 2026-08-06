@@ -241,7 +241,7 @@
       this.applyButton.disabled = pending > 0 || payload.can_apply === false;
       this.hint.textContent = this.applyButton.disabled
         ? `Осталось решить: пакетов — ${new Intl.NumberFormat("ru-RU").format(pending)}, строк — ${Number.isFinite(unresolvedRows) ? new Intl.NumberFormat("ru-RU").format(unresolvedRows) : "не указано"}.`
-        : "Все пакеты обработаны. Примените решения, чтобы собрать карточку.";
+        : "Все пакеты обработаны. Примените решения, чтобы собрать отчёт.";
       this.mobileBar.hidden = false;
       this.mobileCount.textContent = `Осталось: ${new Intl.NumberFormat("ru-RU").format(pending)}`;
       this.mobileNext.disabled = pending === 0;
@@ -612,7 +612,7 @@
     async uploadLegacy(event) {
       event.preventDefault();
       if (!this.jobId || !this.reviewForm.reportValidity()) {
-        this.setStatus("Сначала подготовьте карточку, затем выберите исправленный файл проверки.", true);
+        this.setStatus("Сначала подготовьте отчёт, затем выберите исправленный файл проверки.", true);
         return;
       }
       this.submitReview.disabled = true;
