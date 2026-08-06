@@ -26,6 +26,11 @@ from .audit import (
 )
 from .autopilot import load_machine_consensus
 from .config import load_model_config, load_rules
+from .lifecycle import (
+    DrawingCardLifecycle,
+    DrawingCardLifecyclePhase,
+    DrawingCardWorkflowCancelled,
+)
 from .matching.examples import load_confirmed_examples
 from .matching.matcher import DrawingRowMatcher
 from .models import (
@@ -403,11 +408,61 @@ def _save_summary(
     )
 
 
+def _check_cancelled(request: WorkflowRequest, output_path: Path | None = None) -> None:
+    """Fail closed and remove a just-written public workbook on cancellation."""
+    if request.cancel_requested is None or not request.cancel_requested():
+        return
+    if output_path is not None:
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError:
+            LOGGER.exception("Unable to remove cancelled drawing-card output: %s", output_path)
+    raise DrawingCardWorkflowCancelled("Drawing-card workflow was cancelled")
+
+
+def _finish_lifecycle(
+    lifecycle: DrawingCardLifecycle,
+    *,
+    terminal_cause: str,
+) -> None:
+    """Close a non-published attempt on its last honest phase, never ``ready``."""
+    last = lifecycle.last
+    if last is None:
+        return
+    lifecycle.emit(
+        last.phase,
+        processed_files=last.processed_files,
+        total_files=last.total_files,
+        processed_rows=last.processed_rows,
+        total_rows=last.total_rows,
+        terminal_cause=terminal_cause,
+    )
+
+
+def _is_publishable_result(
+    result: WorkflowResult,
+    validation: dict | None,
+    *,
+    inputs_unchanged: bool,
+) -> bool:
+    """Mirror the statuses for which the service may safely publish an XLSX."""
+    return (
+        result.output_path is not None
+        and validation is not None
+        and validation.get("status") == Status.OK
+        and inputs_unchanged
+        and result.status in {Status.OK, Status.COMPLETED_WITH_WARNINGS, Status.PARTIALLY_READY}
+    )
+
+
 def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     run_id = uuid.uuid4().hex
     run_dir = request.work_dir.expanduser().resolve() / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     result = WorkflowResult(run_id=run_id, status=Status.BLOCKED, work_dir=run_dir)
+    lifecycle = DrawingCardLifecycle(request.progress_callback)
+    lifecycle.emit(DrawingCardLifecyclePhase.UPLOAD)
+    _check_cancelled(request)
     try:
         _validate_request(request)
     except (FileNotFoundError, IsADirectoryError, NotADirectoryError, ValueError) as error:
@@ -416,6 +471,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             run_dir / "error.json", {"error": str(error), "stage": "request_validation"}
         )
         _save_summary(result)
+        _finish_lifecycle(lifecycle, terminal_cause="REQUEST_VALIDATION_FAILED")
         return result
     rules_path = (request.rules or default_rules_path()).expanduser().resolve()
     examples_path = (request.examples or default_examples_path()).expanduser().resolve()
@@ -428,6 +484,10 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     manifest = build_manifest(request.inputs, None, None)
     result.manifest = manifest
     atomic_write_json(run_dir / "input_manifest.json", manifest)
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.SCHEMA_DETECTION,
+        total_files=len(manifest),
+    )
     LOGGER.info("Discovered %s Excel entries", len(manifest))
 
     inspections = []
@@ -435,11 +495,17 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     # metadata pruning cannot hide the best actual source.
     inspection_candidates = manifest
     LOGGER.info("Inspecting %s candidate workbooks", len(inspection_candidates))
-    for entry in inspection_candidates:
+    for inspected_files, entry in enumerate(inspection_candidates, start=1):
+        _check_cancelled(request)
         try:
             inspections.append(inspect_source(entry, object_mapping=mapping))
         except (OSError, ValueError, KeyError) as error:
             result.warnings.append(f"SOURCE_INSPECTION_FAILED:{entry.logical_path}:{error}")
+        lifecycle.emit(
+            DrawingCardLifecyclePhase.SCHEMA_DETECTION,
+            processed_files=inspected_files,
+            total_files=len(manifest),
+        )
     atomic_write_json(run_dir / "source_inspections.json", inspections)
     selected, selections, selection_warnings = select_inspections(
         inspections,
@@ -461,6 +527,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             run_dir / "source_hashes_after.json", source_hashes(_container_paths(request))
         )
         _save_summary(result)
+        _finish_lifecycle(lifecycle, terminal_cause="REVIEW_DECISIONS_INVALID")
         return result
     examples = load_confirmed_examples(examples_path)
     if request.feedback_examples is not None:
@@ -490,6 +557,10 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         "skipped_header_rows": 0,
     }
     drawing_rows: dict[tuple[str, str], DrawingSourceRow] = {}
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.EXTRACTION,
+        total_files=len(selected),
+    )
     with (
         AtomicJsonlWriter(run_dir / "extracted_rows.jsonl") as extracted_writer,
         AtomicJsonlWriter(run_dir / "classification_decisions.jsonl") as classification_writer,
@@ -497,7 +568,8 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         AtomicJsonlWriter(run_dir / "rejected_rows.jsonl") as rejected_writer,
         AtomicJsonlWriter(run_dir / "row_dispositions.jsonl") as disposition_writer,
     ):
-        for inspection in selected:
+        for extracted_files, inspection in enumerate(selected, start=1):
+            _check_cancelled(request)
             schema = _top_schema(inspection, result.warnings)
             if schema is None:
                 continue
@@ -542,6 +614,7 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                 result.hierarchy_issues.extend(hierarchy.issues)
                 result.warnings.extend(hierarchy.warnings)
                 for row in extracted_rows:
+                    _check_cancelled(request)
                     result.extracted_row_count += 1
                     extracted_writer.write(row)
                     result.warnings.extend(row.warnings)
@@ -621,7 +694,35 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                 if reader is not None:
                     reader.close()
                 materialized.close()
+            lifecycle.emit(
+                DrawingCardLifecyclePhase.EXTRACTION,
+                processed_files=extracted_files,
+                total_files=len(selected),
+                processed_rows=result.extracted_row_count,
+            )
 
+    _check_cancelled(request)
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.HIERARCHY_FILTERING,
+        processed_files=len(selected),
+        total_files=len(selected),
+        processed_rows=result.extracted_row_count,
+        total_rows=result.extracted_row_count,
+    )
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.MATCHING,
+        processed_files=len(selected),
+        total_files=len(selected),
+        processed_rows=result.extracted_row_count,
+        total_rows=result.extracted_row_count,
+    )
+    lifecycle.emit(
+        DrawingCardLifecyclePhase.REVIEW_PREPARATION,
+        processed_files=len(selected),
+        total_files=len(selected),
+        processed_rows=result.extracted_row_count,
+        total_rows=result.extracted_row_count,
+    )
     atomic_write_jsonl(run_dir / "hierarchy_issues.jsonl", result.hierarchy_issues)
     funnel = funnel_summary(dispositions, extracted_row_count=result.extracted_row_count)
     funnel.update(
@@ -739,6 +840,14 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             result.status = Status.BLOCKED
         else:
             assert request.output is not None
+            _check_cancelled(request)
+            lifecycle.emit(
+                DrawingCardLifecyclePhase.OUTPUT_WRITING,
+                processed_files=len(selected),
+                total_files=len(selected),
+                processed_rows=result.extracted_row_count,
+                total_rows=result.extracted_row_count,
+            )
             operations = write_card(
                 base_path=base_path,
                 output_path=request.output,
@@ -750,6 +859,14 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             result.write_operations = operations
             result.output_path = request.output
             atomic_write_jsonl(run_dir / "write_operations.jsonl", operations)
+            _check_cancelled(request, request.output)
+            lifecycle.emit(
+                DrawingCardLifecyclePhase.VALIDATION,
+                processed_files=len(selected),
+                total_files=len(selected),
+                processed_rows=result.extracted_row_count,
+                total_rows=result.extracted_row_count,
+            )
             validation = validate_card(request.output, layouts)
             atomic_write_json(run_dir / "output_validation.json", validation)
             if validation["status"] != Status.OK:
@@ -772,6 +889,17 @@ def run_workflow(request: WorkflowRequest) -> WorkflowResult:
     summary = _processing_summary(result, matcher.model_calls, validation)
     summary["source_hashes_unchanged"] = unchanged
     atomic_write_json(run_dir / "processing_summary.json", summary)
+    if _is_publishable_result(result, validation, inputs_unchanged=unchanged):
+        lifecycle.emit(
+            DrawingCardLifecyclePhase.READY,
+            processed_files=len(selected),
+            total_files=len(selected),
+            processed_rows=result.extracted_row_count,
+            total_rows=result.extracted_row_count,
+            terminal_cause=str(result.status),
+        )
+    else:
+        _finish_lifecycle(lifecycle, terminal_cause=str(result.status))
     return result
 
 
