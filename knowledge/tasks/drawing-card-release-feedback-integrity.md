@@ -4,7 +4,7 @@ status: frozen
 card_id: drawing-card-release-feedback-integrity
 version: 1
 supersedes: null
-work_id: drawing-card-ux-release-remediation-v1
+work_id: drawing-card-ux-release-remediation-v2
 task_id: feedback-ledger-integrity
 purpose: Keep the durable feedback ledger readable at its bounds and invalidate only the intended event.
 role: developer

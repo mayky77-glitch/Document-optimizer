@@ -4,7 +4,7 @@ status: frozen
 card_id: drawing-card-release-lifecycle-safety
 version: 1
 supersedes: null
-work_id: drawing-card-ux-release-remediation-v1
+work_id: drawing-card-ux-release-remediation-v2
 task_id: lifecycle-atomicity-openxml
 purpose: Close release-blocking review concurrency, unsafe bulk-action, and OpenXML decompression hazards.
 role: developer
