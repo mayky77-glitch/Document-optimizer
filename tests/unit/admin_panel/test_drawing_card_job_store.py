@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import report_processor.admin_panel.drawing_card_job_store as drawing_card_job_store
 from report_processor.admin_panel.drawing_card_job_store import (
     MANIFEST_CONTRACT,
     MANIFEST_FILENAME,
@@ -94,6 +95,22 @@ def test_load_all_skips_corrupt_oversized_and_hostile_manifests(tmp_path: Path) 
     assert store.load_all() == {"good": _manifest()}
     assert store.load("hostile") is None
     assert store.load("linked") is None
+
+
+def test_active_manifest_survives_valid_terminal_overflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = DrawingCardJobStore(tmp_path / "private")
+    monkeypatch.setattr(drawing_card_job_store, "MAX_LOADED_JOBS", 2)
+    for index in range(5):
+        store.save(f"terminal-{index}", _manifest(status="failed", updated_at=f"2026-08-0{index}"))
+    active = _manifest(status="review_required", updated_at="2026-08-09")
+    store.save("active-review", active)
+
+    restored = store.load_all()
+
+    assert "active-review" in restored
+    assert len(restored) <= drawing_card_job_store.MAX_LOADED_JOBS
 
 
 def test_atomic_replace_keeps_previous_manifest_if_write_fails(
