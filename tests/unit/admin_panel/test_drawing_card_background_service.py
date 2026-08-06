@@ -477,6 +477,7 @@ def test_manifestless_artifacts_do_not_displace_active_recovery_capacity(
     workspace = tmp_path / "private"
     original = DrawingCardService(workspace)
     monkeypatch.setattr(drawing_card_job_store, "MAX_LOADED_JOBS", 1)
+    monkeypatch.setattr(drawing_card_service, "MAX_RETAINED_TERMINAL_JOBS", 1)
     for index in range(4_097):
         (workspace / f"artifact-{index:04d}").mkdir()
     directory = workspace / "active-review"

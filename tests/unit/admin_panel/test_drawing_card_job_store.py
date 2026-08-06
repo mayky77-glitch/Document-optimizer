@@ -113,6 +113,19 @@ def test_active_manifest_survives_valid_terminal_overflow(
     assert len(restored) <= drawing_card_job_store.MAX_LOADED_JOBS
 
 
+@pytest.mark.parametrize(
+    "terminal_retention",
+    (-1, True, drawing_card_job_store.MAX_LOADED_JOBS + 1),
+)
+def test_load_all_rejects_unbounded_terminal_retention(
+    tmp_path: Path, terminal_retention: object
+) -> None:
+    store = DrawingCardJobStore(tmp_path / "private")
+
+    with pytest.raises(ValueError, match="bounded load limit"):
+        store.load_all(terminal_retention=terminal_retention)  # type: ignore[arg-type]
+
+
 def test_atomic_replace_keeps_previous_manifest_if_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

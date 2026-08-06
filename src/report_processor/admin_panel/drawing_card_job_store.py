@@ -82,9 +82,11 @@ class DrawingCardJobStore:
         evicted; active and review manifests are never removed here.
         """
         if terminal_retention is not None and (
-            not isinstance(terminal_retention, int) or terminal_retention < 0
+            not isinstance(terminal_retention, int)
+            or isinstance(terminal_retention, bool)
+            or not 0 <= terminal_retention <= MAX_LOADED_JOBS
         ):
-            raise ValueError("terminal retention must be a non-negative integer")
+            raise ValueError("terminal retention is outside the bounded load limit")
         active: list[_ManifestHeapItem] = []
         terminal: list[_ManifestHeapItem] = []
         try:
