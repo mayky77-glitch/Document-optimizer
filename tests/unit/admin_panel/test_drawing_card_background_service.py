@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
+import report_processor.admin_panel.drawing_card_job_store as drawing_card_job_store
 import report_processor.admin_panel.drawing_card_service as drawing_card_service
+from report_processor.admin_panel.drawing_card_job_store import MAX_SCANNED_MANIFESTS
 from report_processor.admin_panel.drawing_card_service import (
     DrawingCardJob,
     DrawingCardPersistenceError,
@@ -383,6 +385,55 @@ def test_bounded_terminal_retention_is_durable_and_keeps_active_review_jobs(
     assert recovered._store.load("terminal-000") is None
     assert len(recovered._store.load_all()) == 2
     assert "old-request-key-0001" not in recovered._idempotency
+
+
+def test_manifestless_artifacts_do_not_displace_active_recovery_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "private"
+    original = DrawingCardService(workspace)
+    monkeypatch.setattr(drawing_card_job_store, "MAX_LOADED_JOBS", 1)
+    for index in range(MAX_SCANNED_MANIFESTS + 1):
+        (workspace / f"artifact-{index:04d}").mkdir()
+    directory = workspace / "active-review"
+    source = directory / "sources" / "01-source.xlsx"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(_fixture())
+    job = DrawingCardJob(
+        job_id="active-review",
+        directory=directory,
+        sources=(source,),
+        source_hashes=(hashlib.sha256(source.read_bytes()).hexdigest(),),
+        mode="create",
+        period=None,
+        existing_card=None,
+        status="review_required",
+        updated_at="2026-08-06T00:00:00Z",
+    )
+    original._jobs[job.job_id] = job
+    original._persist_job(job)
+    terminal_directory = workspace / "terminal"
+    terminal_source = terminal_directory / "sources" / "01-source.xlsx"
+    terminal_source.parent.mkdir(parents=True)
+    terminal_source.write_bytes(_fixture())
+    terminal = DrawingCardJob(
+        job_id="terminal",
+        directory=terminal_directory,
+        sources=(terminal_source,),
+        source_hashes=(hashlib.sha256(terminal_source.read_bytes()).hexdigest(),),
+        mode="create",
+        period=None,
+        existing_card=None,
+        status="failed",
+        updated_at="2026-08-06T00:00:01Z",
+    )
+    original._jobs[terminal.job_id] = terminal
+    original._persist_job(terminal)
+
+    recovered = DrawingCardService(workspace)
+
+    assert recovered.get_job("active-review").status == "review_required"
+    assert len(recovered._store.load_all()) <= drawing_card_job_store.MAX_LOADED_JOBS
 
 
 @pytest.mark.parametrize(("terminal", "expected"), [("BLOCKED", "blocked"), (Status.OK, "ok")])

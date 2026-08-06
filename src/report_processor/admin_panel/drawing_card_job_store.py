@@ -22,7 +22,7 @@ MAX_MANIFEST_BYTES = 1_048_576
 MAX_JOB_ID_LENGTH = 96
 MAX_MANIFEST_DEPTH = 16
 MAX_MANIFEST_ITEMS = 10_000
-MAX_SCANNED_JOBS = 4_096
+MAX_SCANNED_MANIFESTS = 4_096
 MAX_LOADED_JOBS = 1_024
 _ACTIVE_STATUSES = frozenset({"queued", "processing", "review_required"})
 
@@ -74,28 +74,35 @@ class DrawingCardJobStore:
     def load_all(self) -> dict[str, dict[str, object]]:
         """Return bounded manifests, prioritising recoverable active work.
 
-        A bounded scan prevents an untrusted workspace from creating unbounded
-        restart work.  Within that scan, queued/processing/review jobs are
-        selected before terminal manifests so retention history cannot crowd
-        out work that must resume.
+        At most ``MAX_SCANNED_MANIFESTS`` valid manifests are read, so retained
+        artifacts without a manifest do not consume recovery capacity. Within
+        that bound, queued/processing/review jobs are selected before terminal
+        manifests so retention history cannot crowd out work that must resume.
         """
         active: list[tuple[str, dict[str, object]]] = []
         terminal: list[tuple[str, dict[str, object]]] = []
         try:
-            children = sorted(self.workspace_root.iterdir(), key=lambda item: item.name)
-        except OSError:
-            return {}
-        for child in children[:MAX_SCANNED_JOBS]:
-            if child.is_symlink() or not child.is_dir():
-                continue
-            try:
-                job_id = _validate_job_id(child.name)
-            except ValueError:
-                continue
-            manifest = _read_manifest(child / MANIFEST_FILENAME)
-            if manifest is not None:
+            children = self.workspace_root.iterdir()
+            scanned_manifests = 0
+            for child in children:
+                if child.is_symlink() or not child.is_dir():
+                    continue
+                try:
+                    job_id = _validate_job_id(child.name)
+                except ValueError:
+                    continue
+                manifest = _read_manifest(child / MANIFEST_FILENAME)
+                if manifest is None:
+                    continue
+                scanned_manifests += 1
                 target = active if manifest.get("status") in _ACTIVE_STATUSES else terminal
                 target.append((job_id, manifest))
+                if scanned_manifests >= MAX_SCANNED_MANIFESTS:
+                    break
+        except OSError:
+            pass
+        active.sort(key=_manifest_recovery_key, reverse=True)
+        terminal.sort(key=_manifest_recovery_key, reverse=True)
         selected = (*active, *terminal)[:MAX_LOADED_JOBS]
         return dict(selected)
 
@@ -131,6 +138,13 @@ def _validate_job_id(value: object) -> str:
     if not isinstance(value, str) or not _JOB_ID.fullmatch(value):
         raise ValueError("invalid job identifier")
     return value
+
+
+def _manifest_recovery_key(item: tuple[str, dict[str, object]]) -> tuple[str, str]:
+    """Keep the bounded selection stable without retaining directory listings."""
+    job_id, manifest = item
+    updated_at = manifest.get("updated_at")
+    return (str(updated_at) if isinstance(updated_at, str) else "", job_id)
 
 
 def _validate_manifest(value: Mapping[str, object]) -> dict[str, object]:
