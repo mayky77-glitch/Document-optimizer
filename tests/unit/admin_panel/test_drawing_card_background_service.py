@@ -345,6 +345,53 @@ def test_retry_uses_a_new_isolated_attempt_directory(tmp_path: Path) -> None:
     assert all(path.is_dir() for path in attempts)
 
 
+def test_ready_job_can_be_regenerated_in_a_new_attempt(tmp_path: Path) -> None:
+    def runner(request):
+        assert request.review_decisions is not None
+        assert request.review_decisions.is_file()
+        assert request.output is not None
+        run_dir = request.work_dir / "done"
+        run_dir.mkdir(parents=True)
+        request.output.write_bytes(b"PK\x03\x04new-result")
+        return WorkflowResult(
+            run_id="regenerated",
+            status=Status.OK,
+            work_dir=run_dir,
+            output_path=request.output,
+        )
+
+    service = DrawingCardService(tmp_path / "private", runner=runner)
+    directory = service.workspace_root / "ready-job"
+    source = directory / "sources" / "01" / "source.xlsx"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(_fixture())
+    old_result = directory / "attempts" / "0001" / "drawing-card.xlsx"
+    old_result.parent.mkdir(parents=True)
+    old_result.write_bytes(b"PK\x03\x04old-result")
+    job = DrawingCardJob(
+        job_id="ready-job",
+        directory=directory,
+        sources=(source,),
+        source_hashes=(hashlib.sha256(source.read_bytes()).hexdigest(),),
+        mode="create",
+        period=None,
+        existing_card=None,
+        status="ready",
+        result=old_result,
+        result_hash=hashlib.sha256(old_result.read_bytes()).hexdigest(),
+        attempt=1,
+        inline_approvals={"stable-row": review_approval("stable-row", "reject", None)},
+    )
+    service._jobs[job.job_id] = job
+
+    regenerated = service.retry_job(job.job_id)
+
+    assert regenerated.status == "ready"
+    assert regenerated.attempt == 2
+    assert regenerated.result != old_result
+    assert old_result.is_file()
+
+
 def test_retry_rolls_back_every_state_field_when_manifest_persistence_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

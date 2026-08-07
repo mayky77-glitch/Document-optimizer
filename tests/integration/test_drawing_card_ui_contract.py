@@ -193,6 +193,20 @@ def test_packet_review_uses_server_categories_filters_and_per_job_session_state(
     assert "expandedMembers" in script
 
 
+def test_final_review_confirmation_explicitly_forms_the_report() -> None:
+    page = (ASSETS / "drawing-card.html").read_text()
+    script = (ASSETS / "drawing-card-review.js").read_text()
+    main_script = (ASSETS / "drawing-card.js").read_text()
+
+    label = "Подтвердить решения и сформировать отчёт"
+    assert label in page
+    assert f'APPLY_REVIEW_LABEL = "{label}"' in script
+    assert 'APPLY_REVIEW_BUSY_LABEL = "Формируем отчёт…"' in script
+    assert 'this.setStatus("Решения подтверждены. Формируем итоговый отчёт…")' in script
+    assert "Скачивание станет доступно после подтверждения всех решений" in page
+    assert "Скачивание станет доступно после подтверждения всех решений" in main_script
+
+
 def test_packet_members_show_safe_context_override_warning_and_mobile_next_action() -> None:
     page = (ASSETS / "drawing-card.html").read_text()
     script = (ASSETS / "drawing-card-review.js").read_text()

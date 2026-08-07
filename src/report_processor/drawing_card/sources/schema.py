@@ -174,8 +174,8 @@ def _is_exact_contract_cost_header(header: str) -> bool:
     }
 
 
-def _resolve_contract_metrics(headers: dict[int, str]) -> tuple[dict[str, int], list[str]]:
-    """Resolve contract triplets where volume sits left of the cost block."""
+def _contract_metric_candidates(headers: dict[int, str]) -> list[tuple[int, int]]:
+    """Return quantity/total-cost pairs from explicit contract triplets."""
     cost_columns = sorted(
         column
         for column, header in headers.items()
@@ -198,9 +198,14 @@ def _resolve_contract_metrics(headers: dict[int, str]) -> tuple[dict[str, int], 
         ]
         if quantities:
             candidates.append((max(quantities), cost_column))
+    return list(dict.fromkeys(candidates))
+
+
+def _resolve_contract_metrics(headers: dict[int, str]) -> tuple[dict[str, int], list[str]]:
+    """Resolve contract triplets where volume sits left of the cost block."""
+    candidates = _contract_metric_candidates(headers)
     if not candidates:
         return {}, []
-    candidates = list(dict.fromkeys(candidates))
     quantity_column, cost_column = candidates[0]
     warnings: list[str] = []
     if len(candidates) > 1:
@@ -217,6 +222,79 @@ def _resolve_contract_metrics(headers: dict[int, str]) -> tuple[dict[str, int], 
         "contract_quantity": quantity_column,
         "contract_total_cost": cost_column,
     }, warnings
+
+
+_SIMPLE_SUBTRACTION_FORMULA_RE = re.compile(r"^=\$?[A-Z]{1,3}\$?\d+(?:-\$?[A-Z]{1,3}\$?\d+)+$")
+_FORMULA_REFERENCE_RE = re.compile(r"\$?([A-Z]{1,3})\$?(\d+)")
+
+
+def _column_index(column_name: str) -> int:
+    value = 0
+    for character in column_name:
+        value = value * 26 + ord(character) - 64
+    return value
+
+
+def _repair_dimensionally_invalid_quantity_formula(
+    resolved: dict[str, int],
+    headers: dict[int, str],
+    formula_rows: Sequence[tuple[object, ...]],
+    *,
+    data_start_index: int,
+) -> tuple[dict[str, int], list[str]]:
+    """Describe a safe row-level repair when a quantity formula starts from cost.
+
+    Some KС-6 books contain a copied formula such as ``=AP172-FK172-AH172``
+    in the residual quantity column. ``AP`` is the paired contract *cost* while
+    ``AN`` is the paired contract quantity. The cached result is therefore a
+    ruble amount disguised as tonnes/metres. We only authorize a repair when
+    the formula is a plain subtraction chain and every sampled formula has the
+    same physical-column signature.
+    """
+
+    quantity_column = resolved.get("remaining_quantity")
+    if quantity_column is None:
+        return resolved, []
+    contract_pairs = _contract_metric_candidates(headers)
+    if not contract_pairs:
+        return resolved, []
+    pair_by_cost = {cost: quantity for quantity, cost in contract_pairs}
+    signatures: set[tuple[int, ...]] = set()
+    for formula_row_number, formula_row in enumerate(
+        formula_rows[data_start_index:], start=data_start_index + 1
+    ):
+        formula = _formula(value_at(formula_row, quantity_column)).replace(" ", "").upper()
+        if not formula or not _SIMPLE_SUBTRACTION_FORMULA_RE.fullmatch(formula):
+            continue
+        parsed_references = _FORMULA_REFERENCE_RE.findall(formula)
+        if any(int(row_number) != formula_row_number for _column, row_number in parsed_references):
+            continue
+        references = tuple(_column_index(column) for column, _row in parsed_references)
+        if references and references[0] in pair_by_cost:
+            signatures.add(references)
+    if not signatures:
+        return resolved, []
+    repaired = dict(resolved)
+    if len(signatures) != 1:
+        repaired.pop("remaining_quantity", None)
+        details = ";".join(
+            ",".join(str(item) for item in signature) for signature in sorted(signatures)
+        )
+        return repaired, [f"AMBIGUOUS_DIMENSIONAL_QUANTITY_FORMULA:{quantity_column}:{details}"]
+    signature = next(iter(signatures))
+    invalid_cost_column, *subtrahends = signature
+    contract_quantity_column = pair_by_cost[invalid_cost_column]
+    repaired["contract_quantity"] = contract_quantity_column
+    repaired["contract_total_cost"] = invalid_cost_column
+    repaired["remaining_quantity_base"] = contract_quantity_column
+    repaired["remaining_quantity_invalid_base"] = invalid_cost_column
+    for number, column in enumerate(subtrahends, start=1):
+        repaired[f"remaining_quantity_subtrahend_{number}"] = column
+    return repaired, [
+        "DIMENSIONALLY_INVALID_REMAINING_QUANTITY_FORMULA:"
+        f"{quantity_column}:{invalid_cost_column}->{contract_quantity_column};"
+        f"subtract={','.join(str(item) for item in subtrahends)}"
+    ]
 
 
 def _resolve_block_metrics(
@@ -515,8 +593,12 @@ def _validate_metric_columns(
     *,
     data_start_index: int,
 ) -> tuple[dict[str, int], list[str]]:
-    resolved = dict(columns)
-    warnings: list[str] = []
+    resolved, warnings = _repair_dimensionally_invalid_quantity_formula(
+        dict(columns),
+        headers,
+        formula_rows,
+        data_start_index=data_start_index,
+    )
     quantity_column = resolved.get("remaining_quantity")
     cost_column = resolved.get("remaining_total_cost")
     if quantity_column is None or cost_column is None:

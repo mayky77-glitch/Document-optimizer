@@ -27,6 +27,7 @@ from report_processor.drawing_card.output.contract import (
 from report_processor.drawing_card.output.discrepancies import (
     CONTRACT_COST_ERROR_REASON,
     DISCREPANCY_SHEET_NAME,
+    report_issue_text,
 )
 from report_processor.drawing_card.output.layout import plan_layout
 from report_processor.drawing_card.output.summary import summary_block_position, summary_row_count
@@ -104,10 +105,14 @@ def test_summary_uses_two_column_index_cards_with_literal_million_ruble_values(
         assert summary.max_row == summary_row_count(layouts)
 
         expected_cards = (
-            ("1001", (1, 1), "A1:D1"),
-            ("1002", (1, 1 + SUMMARY_BLOCK_COLUMN_SPAN), "G1:J1"),
-            ("1003", (1 + SUMMARY_BLOCK_ROW_SPAN, 1), "A12:D12"),
-            ("Все индексы", (1 + SUMMARY_BLOCK_ROW_SPAN, 1 + SUMMARY_BLOCK_COLUMN_SPAN), "G12:J12"),
+            ("1001", (1, 1), "A1:H1"),
+            ("1002", (1, 1 + SUMMARY_BLOCK_COLUMN_SPAN), "K1:R1"),
+            ("1003", (1 + SUMMARY_BLOCK_ROW_SPAN, 1), "A12:H12"),
+            (
+                "Все индексы",
+                (1 + SUMMARY_BLOCK_ROW_SPAN, 1 + SUMMARY_BLOCK_COLUMN_SPAN),
+                "K12:R12",
+            ),
         )
         merged = {str(cell_range) for cell_range in summary.merged_cells.ranges}
         for title, (start_row, start_column), merge in expected_cards:
@@ -124,7 +129,8 @@ def test_summary_uses_two_column_index_cards_with_literal_million_ruble_values(
             )
             assert summary.cell(start_row, start_column).font.name == "Arial"
             assert summary.cell(start_row, start_column).font.bold is True
-            assert summary.cell(start_row, start_column).fill.fgColor.rgb.endswith("C6E0B4")
+            assert summary.cell(start_row, start_column).fill.fgColor.rgb.endswith("548235")
+            assert summary.cell(start_row, start_column).font.color.rgb.endswith("FFFFFF")
             assert summary.cell(start_row + 1, start_column).fill.fgColor.rgb.endswith("E2F0D9")
             assert tuple(
                 summary.cell(start_row + 2 + offset, start_column).value
@@ -142,19 +148,26 @@ def test_summary_uses_two_column_index_cards_with_literal_million_ruble_values(
         assert all(cell.data_type != "f" for row in summary.iter_rows() for cell in row)
         assert all(
             isinstance(summary.cell(first_row + 2, first_column + offset).value, (int, float))
-            for offset in (2, 3)
+            for offset in range(2, len(SUMMARY_HEADERS))
         )
         assert summary.cell(first_row + 2, first_column + 3).value == 1
         assert summary.cell(second_row + 2, second_column + 3).value == 2
         assert summary.cell(third_row + 2, third_column + 3).value == 3
         assert summary.cell(total_row + 2, total_column + 3).value == 6
-        for offset in range(len(CATEGORY_ORDER)):
-            total_cost = summary.cell(total_row + 2 + offset, total_column + 3).value
+        for category_offset in range(len(CATEGORY_ORDER)):
             positions = [summary_block_position(number) for number in range(len(layouts))]
-            index_costs = [
-                summary.cell(row + 2 + offset, column + 3).value for row, column in positions
-            ]
-            assert Decimal(str(total_cost)) == sum(Decimal(str(value)) for value in index_costs)
+            for metric_offset in range(2, len(SUMMARY_HEADERS)):
+                total = summary.cell(
+                    total_row + 2 + category_offset, total_column + metric_offset
+                ).value
+                index_values = [
+                    summary.cell(
+                        row + 2 + category_offset,
+                        column + metric_offset,
+                    ).value
+                    for row, column in positions
+                ]
+                assert Decimal(str(total)) == sum(Decimal(str(value)) for value in index_values)
         assert (
             summary.cell(first_row + 2, first_column + 2).number_format
             == FRACTIONAL_QUANTITY_FORMAT
@@ -165,6 +178,12 @@ def test_summary_uses_two_column_index_cards_with_literal_million_ruble_values(
             == FRACTIONAL_QUANTITY_FORMAT
         )
         assert summary.cell(total_row + 2, total_column + 3).number_format == COST_FORMAT
+        assert summary.sheet_view.showGridLines is False
+        assert workbook[MAIN_CARD_SHEET_NAME].sheet_view.showGridLines is False
+        assert workbook[MAIN_CARD_SHEET_NAME]["B2"].fill.fgColor.rgb.endswith("548235")
+        assert workbook[MAIN_CARD_SHEET_NAME]["B2"].font.color.rgb.endswith("FFFFFF")
+        assert workbook[MAIN_CARD_SHEET_NAME]["B4"].font.name == "Arial"
+        assert workbook[MAIN_CARD_SHEET_NAME].freeze_panes == "B4"
         assert COST_FORMAT == "#,##0.00"
         assert "млн руб." in SUMMARY_HEADERS[-1]
         assert "млн руб." in workbook[MAIN_CARD_SHEET_NAME]["F3"].value
@@ -248,6 +267,19 @@ def test_main_card_publishes_contract_and_performed_values_without_scaling_quant
         assert published[CARD_HEADERS[6]] == 2.5
         assert published[CARD_HEADERS[7]] == 9.5
         assert published[CARD_HEADERS[8]] == 1.75
+        summary = workbook[SUMMARY_SHEET_NAME]
+        summary_row, summary_column = summary_block_position(0)
+        assert (
+            tuple(
+                summary.cell(summary_row + 1, summary_column + offset).value
+                for offset in range(len(SUMMARY_HEADERS))
+            )
+            == SUMMARY_HEADERS
+        )
+        assert summary.cell(summary_row + 2, summary_column + 4).value == 11.25
+        assert summary.cell(summary_row + 2, summary_column + 5).value == 2.5
+        assert summary.cell(summary_row + 2, summary_column + 6).value == 9.5
+        assert summary.cell(summary_row + 2, summary_column + 7).value == 1.75
         assert DISCREPANCY_SHEET_NAME not in workbook.sheetnames
     finally:
         workbook.close()
@@ -360,6 +392,16 @@ def test_report_comments_explain_warnings_without_internal_row_hashes(tmp_path: 
         workbook.close()
 
 
+def test_dimensional_formula_repair_has_a_plain_russian_reason() -> None:
+    assert report_issue_text(
+        ("REMAINING_QUANTITY_REPAIRED_FROM_DIMENSIONAL_FORMULA",),
+        Status.WARNING,
+    ) == (
+        "В исходной книге формула остаточного объёма ссылалась на стоимость. "
+        "Объём пересчитан по договорному количеству и вычитаемым объёмам."
+    )
+
+
 def test_update_clears_resolved_contract_cost_highlight(tmp_path: Path) -> None:
     rows = _rows(indices=("1001",))
     layouts = plan_layout(rows)
@@ -413,6 +455,8 @@ def test_update_reads_million_ruble_card_back_as_internal_rubles_without_double_
     source_key = ("1001", "А-001", CATEGORY_DISPLAY_NAMES[CATEGORY_ORDER[0]].casefold())
 
     assert existing[source_key][2] == Decimal("100000000")
+    assert ("1002", "А-002", CATEGORY_DISPLAY_NAMES[CATEGORY_ORDER[0]].casefold()) in existing
+    assert ("1003", "А-003", CATEGORY_DISPLAY_NAMES[CATEGORY_ORDER[0]].casefold()) in existing
 
     preserved, warnings = merge_update_rows([], existing, policy="keep_existing")
     updated = tmp_path / "updated-card.xlsx"

@@ -3,6 +3,8 @@
 
   const PAGE_SIZE = 20;
   const SESSION_KEY_PREFIX = "report-processor.drawing-card.review.v2";
+  const APPLY_REVIEW_LABEL = "Подтвердить решения и сформировать отчёт";
+  const APPLY_REVIEW_BUSY_LABEL = "Формируем отчёт…";
   const quantityFormat = new Intl.NumberFormat("ru-RU", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -239,9 +241,10 @@
       const unresolvedRows = Number(payload.unresolved_rows);
       const pending = Number.isFinite(unresolvedPackets) ? unresolvedPackets : total;
       this.applyButton.disabled = pending > 0 || payload.can_apply === false;
+      this.applyButton.textContent = APPLY_REVIEW_LABEL;
       this.hint.textContent = this.applyButton.disabled
         ? `Осталось решить: пакетов — ${new Intl.NumberFormat("ru-RU").format(pending)}, строк — ${Number.isFinite(unresolvedRows) ? new Intl.NumberFormat("ru-RU").format(unresolvedRows) : "не указано"}.`
-        : "Все пакеты обработаны. Примените решения, чтобы собрать отчёт.";
+        : "Все пакеты обработаны. Подтвердите решения — после этого панель сформирует итоговый отчёт.";
       this.mobileBar.hidden = false;
       this.mobileCount.textContent = `Осталось: ${new Intl.NumberFormat("ru-RU").format(pending)}`;
       this.mobileNext.disabled = pending === 0;
@@ -585,13 +588,18 @@
 
     async apply() {
       this.applyButton.disabled = true;
+      this.applyButton.textContent = APPLY_REVIEW_BUSY_LABEL;
+      this.setStatus("Решения подтверждены. Формируем итоговый отчёт…");
       try {
         const payload = await this.requestJson(`/api/drawing-card/jobs/${encodeURIComponent(this.jobId)}/review/apply`, { method: "POST" });
         await this.renderJob(payload, this.page);
       } catch (error) {
         this.setStatus(error.message, true);
       } finally {
-        if (!this.applyButton.hidden) this.applyButton.disabled = false;
+        if (!this.applyButton.hidden) {
+          this.applyButton.disabled = false;
+          this.applyButton.textContent = APPLY_REVIEW_LABEL;
+        }
       }
     }
 

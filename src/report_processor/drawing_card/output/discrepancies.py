@@ -42,6 +42,10 @@ CONTRACT_COST_ERROR_REASON = (
 )
 
 _ISSUE_LABELS = {
+    "REMAINING_QUANTITY_REPAIRED_FROM_DIMENSIONAL_FORMULA": (
+        "В исходной книге формула остаточного объёма ссылалась на стоимость. "
+        "Объём пересчитан по договорному количеству и вычитаемым объёмам."
+    ),
     Status.POSSIBLE_DUPLICATE.value: "В исходных данных найдены возможные дубли этой работы.",
     Status.UNIT_MISMATCH.value: "Для объединяемых строк обнаружены разные единицы измерения.",
     Status.INVALID_NUMBER.value: "Числовое значение заполнено некорректно.",
