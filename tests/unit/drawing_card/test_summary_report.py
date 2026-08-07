@@ -26,6 +26,7 @@ from report_processor.drawing_card.output.contract import (
 )
 from report_processor.drawing_card.output.discrepancies import (
     CONTRACT_COST_ERROR_REASON,
+    CONTRACT_QUANTITY_WITHOUT_COST_REASON,
     DISCREPANCY_SHEET_NAME,
     report_issue_text,
 )
@@ -357,6 +358,49 @@ def test_contract_cost_violation_uses_strict_ruble_tolerance_and_links_to_only_r
         assert Decimal(str(discrepancy.cell(2, 7).value)) == Decimal("12.9876543210987")
         assert Decimal(str(discrepancy.cell(2, 8).value)) == Decimal("2.00100001")
         assert Decimal(str(discrepancy.cell(2, 10).value)) == Decimal("0.00100001")
+    finally:
+        workbook.close()
+
+
+def test_contract_quantity_without_cost_is_written_to_discrepancy_log(tmp_path: Path) -> None:
+    rows = _rows(indices=("0907",))
+    rows[0] = replace(
+        rows[0],
+        contract_quantity=Decimal("935"),
+        contract_total_cost=Decimal(0),
+        performed_quantity=Decimal(0),
+        performed_total_cost=Decimal(0),
+    )
+    layouts = plan_layout(rows)
+    output = tmp_path / "missing-contract-cost.xlsx"
+    write_card(
+        base_path=FIXTURES / "default_template.xlsx",
+        output_path=output,
+        rows=rows,
+        layouts=layouts,
+        run_id="missing-contract-cost",
+        cost_scale=1,
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    try:
+        card = workbook[MAIN_CARD_SHEET_NAME]
+        row_number = layouts[0].drawing_code_blocks[0].start_row
+        contract_cost_cell = card.cell(
+            row_number,
+            layouts[0].start_column + CARD_HEADERS.index("По договору — стоимость, млн руб."),
+        )
+        discrepancy = workbook[DISCREPANCY_SHEET_NAME]
+
+        assert contract_cost_cell.fill.fgColor.rgb.endswith("FFC7CE")
+        assert discrepancy.max_row == 2
+        assert discrepancy.cell(2, 5).value == 935
+        assert discrepancy.cell(2, 6).value == 0
+        assert discrepancy.cell(2, 9).value == CONTRACT_QUANTITY_WITHOUT_COST_REASON
+        assert discrepancy.cell(2, 10).value is None
+        assert discrepancy.cell(2, 11).hyperlink.target == (
+            f"#'{MAIN_CARD_SHEET_NAME}'!{contract_cost_cell.coordinate}"
+        )
     finally:
         workbook.close()
 

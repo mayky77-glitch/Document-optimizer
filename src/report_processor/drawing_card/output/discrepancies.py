@@ -7,7 +7,11 @@ from decimal import Decimal
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from ..contract_check import ContractCostViolation
+from ..contract_check import (
+    CONTRACT_COST_EXCEEDED,
+    CONTRACT_QUANTITY_WITHOUT_COST,
+    ContractCostViolation,
+)
 from ..models import CATEGORY_DISPLAY_NAMES, CATEGORY_ORDER, ObjectBlockLayout, TargetWorkCategory
 from ..statuses import Status
 from .contract import COST_FORMAT, FRACTIONAL_QUANTITY_FORMAT, cost_to_million_rubles
@@ -40,6 +44,15 @@ _HEADERS = (
 CONTRACT_COST_ERROR_REASON = (
     "Стоимость выполненных работ превышает договорную стоимость более чем на допустимые 1 000 руб."
 )
+CONTRACT_QUANTITY_WITHOUT_COST_REASON = (
+    "В исходных данных указан договорный объём, но договорная стоимость равна нулю. "
+    "Проверьте цену или общую стоимость этой работы в исходной книге."
+)
+
+_CONTRACT_COST_REASONS = {
+    CONTRACT_COST_EXCEEDED: CONTRACT_COST_ERROR_REASON,
+    CONTRACT_QUANTITY_WITHOUT_COST: CONTRACT_QUANTITY_WITHOUT_COST_REASON,
+}
 
 _ISSUE_LABELS = {
     "REMAINING_QUANTITY_REPAIRED_FROM_DIMENSIONAL_FORMULA": (
@@ -172,8 +185,12 @@ def add_discrepancy_sheet(
             cost_to_million_rubles(row.contract_total_cost, cost_scale),
             row.performed_quantity,
             cost_to_million_rubles(row.performed_total_cost, cost_scale),
-            CONTRACT_COST_ERROR_REASON,
-            cost_to_million_rubles(violation.difference_rub, cost_scale),
+            _CONTRACT_COST_REASONS[violation.issue_code],
+            (
+                cost_to_million_rubles(violation.difference_rub, cost_scale)
+                if violation.difference_rub is not None
+                else None
+            ),
         )
         for column, value in enumerate(values, start=1):
             cell = sheet.cell(row_number, column, value)
