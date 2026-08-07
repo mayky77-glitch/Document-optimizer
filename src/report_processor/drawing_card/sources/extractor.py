@@ -47,6 +47,7 @@ def _decimal_or_zero(value: object) -> tuple[Decimal, tuple[str, ...]]:
     return (parsed if parsed is not None else Decimal(0)), warnings
 
 
+_SIMPLE_SUBTRACTION_FORMULA_RE = re.compile(r"^=\$?[A-Z]{1,3}\$?\d+(?:-\$?[A-Z]{1,3}\$?\d+)+$")
 _FORMULA_REFERENCE_RE = re.compile(r"\$?([A-Z]{1,3})\$?(\d+)")
 
 
@@ -63,13 +64,20 @@ def _correct_dimensionally_invalid_quantity(
     invalid_base_column = columns.get("remaining_quantity_invalid_base")
     if base_column is None or invalid_base_column is None or not _is_formula(formula):
         return None
-    parsed_references = _FORMULA_REFERENCE_RE.findall(str(formula).upper())
+    normalized_formula = str(formula).replace(" ", "").upper()
+    if not _SIMPLE_SUBTRACTION_FORMULA_RE.fullmatch(normalized_formula):
+        return None, ("DIMENSIONAL_QUANTITY_REPAIR_SIGNATURE_MISMATCH",)
+    parsed_references = _FORMULA_REFERENCE_RE.findall(normalized_formula)
     references = [column for column, _row in parsed_references]
-    if (
-        not references
-        or references[0] != get_column_letter(invalid_base_column)
-        or any(int(reference_row) != row_number for _column, reference_row in parsed_references)
+    if not references or any(
+        int(reference_row) != row_number for _column, reference_row in parsed_references
     ):
+        return None, ("DIMENSIONAL_QUANTITY_REPAIR_SIGNATURE_MISMATCH",)
+    if references[0] == get_column_letter(base_column):
+        # This row already uses the dimensionally correct quantity base. Keep
+        # its cached Excel result instead of applying the workbook-level repair.
+        return None
+    if references[0] != get_column_letter(invalid_base_column):
         return None, ("DIMENSIONAL_QUANTITY_REPAIR_SIGNATURE_MISMATCH",)
     subtrahend_keys = sorted(
         (key for key in columns if key.startswith("remaining_quantity_subtrahend_")),
