@@ -324,6 +324,87 @@ def test_cost_based_residual_quantity_formula_is_repaired_from_quantity_operands
     assert "REMAINING_QUANTITY_REPAIRED_FROM_DIMENSIONAL_FORMULA" in extracted[0].warnings
 
 
+def test_dimensional_repair_preserves_upstream_total_contract_metrics() -> None:
+    formula_rows = (
+        (
+            "Шифр чертежа",
+            "Наименование работ",
+            "Ед. изм.",
+            "Количество",
+            "Цена за единицу",
+            "Стоимость по договору",
+            "Выполнено ранее",
+            "Выполнено ранее",
+            "Количество",
+            "Цена за единицу",
+            "Стоимость по договору",
+            "Выполнено в текущем периоде",
+            "Выполнено в текущем периоде",
+            "Выполнено за весь период строительства",
+            "Выполнено за весь период строительства",
+            "Остаток работ по договору",
+            "Остаток работ по договору",
+        ),
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            "Общая стоимость",
+            "Количество",
+            "Стоимость",
+            None,
+            None,
+            "Общая стоимость",
+            "Количество",
+            "Стоимость",
+            "Количество",
+            "Общая стоимость",
+            "Количество",
+            "Общая стоимость",
+        ),
+        (
+            "Ч-1",
+            "Монтаж",
+            "т",
+            14,
+            100,
+            1400,
+            2,
+            200,
+            "=D3-G3",
+            100,
+            "=F3-H3",
+            3,
+            300,
+            5,
+            500,
+            "=K3-L3",
+            "=K3-M3",
+        ),
+    )
+    cached_rows = (
+        formula_rows[0],
+        formula_rows[1],
+        ("Ч-1", "Монтаж", "т", 14, 100, 1400, 2, 200, 12, 100, 1200, 3, 300, 5, 500, 1197, 900),
+    )
+    reader = RowsReader(formula_rows, cached_rows)
+
+    schema = detect_sheet_schema(reader, "Данные")
+    extracted = tuple(extract_rows(reader, _entry(), schema, object_index="0907"))
+
+    assert schema.status == "OK"
+    assert schema.columns["remaining_quantity_base"] == 9
+    assert schema.columns["contract_quantity"] == 4
+    assert schema.columns["contract_total_cost"] == 6
+    assert "TOTAL_CONTRACT_METRICS_RESTORED_FROM_UPSTREAM_BASE:9->4;11->6" in schema.warnings
+    assert extracted[0].remaining_quantity == Decimal("9")
+    assert extracted[0].contract_quantity == Decimal("14")
+    assert extracted[0].contract_total_cost == Decimal("1400")
+    assert extracted[0].performed_quantity == Decimal("5")
+
+
 def test_cost_based_residual_repair_fails_closed_for_cross_row_formula() -> None:
     formula_rows = (
         (
