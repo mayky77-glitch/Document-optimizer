@@ -543,7 +543,8 @@ class DrawingCardService:
         ):
             raise ValueError("invalid confidence")
         with job.review_lock:
-            clusters = self._current_clusters(job)
+            all_clusters = self._current_clusters(job)
+            clusters = all_clusters
             clusters = tuple(
                 cluster
                 for cluster in clusters
@@ -582,7 +583,10 @@ class DrawingCardService:
                 "total_rows": sum(len(cluster.member_ids) for cluster in clusters),
                 "unresolved_clusters": len(unresolved),
                 "unresolved_rows": sum(len(cluster.member_ids) for cluster in unresolved),
-                "can_apply": bool(clusters) and set(job.review_items) <= set(job.inline_approvals),
+                # Report readiness is global. The visible cluster collection may be empty
+                # simply because the default filter hides already resolved packets.
+                "can_apply": bool(all_clusters)
+                and set(job.review_items) <= set(job.inline_approvals),
                 "review_categories": _review_categories(job.category_units),
                 "review_metrics": dict(job.review_metrics),
             }
