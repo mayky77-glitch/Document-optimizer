@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
@@ -481,6 +482,9 @@ def test_restart_rebuilds_selected_packet_without_publishing_before_feedback(
     service._schedule_review_recovery(job)
 
     assert completed.wait(2)
+    deadline = time.monotonic() + 2
+    while not job.inline_approvals and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert seen == [None]
     assert job.status == "review_required"
     assert set(job.inline_approvals) == {"review-row", "review-row-2"}

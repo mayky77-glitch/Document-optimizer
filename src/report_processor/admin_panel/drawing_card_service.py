@@ -227,6 +227,7 @@ class DrawingCardService:
         self._store = DrawingCardJobStore(self.workspace_root)
         self._lock = threading.RLock()
         self._worker_slots = threading.BoundedSemaphore(max(1, max_background_workers))
+        self._deferred_review_publication: set[str] = set()
         self._idempotency: dict[str, str] = {}
         self._pending_idempotency: dict[str, threading.Event] = {}
         self._restore_jobs()
@@ -1018,7 +1019,14 @@ class DrawingCardService:
             # A rerun can produce a different review set.  Its approvals must never
             # be inferred from decisions for the preceding set of rows.
             job.inline_approvals.clear()
-            job.status = "review_required"
+            # Restart recovery must restore still-current saved choices before
+            # publishing review_required. Otherwise polling clients can observe
+            # a complete review page with an empty approval map for one tick.
+            job.status = (
+                "processing"
+                if job.job_id in self._deferred_review_publication
+                else "review_required"
+            )
         elif (
             result.output_path is not None
             and result.output_path.is_file()
@@ -1090,8 +1098,12 @@ class DrawingCardService:
                 # current review page first, then restore only still-current
                 # choices so apply_inline_review can durably append its one
                 # complete row+packet feedback page before any final rerun.
-                recovered = self._run(job, review_decisions=None)
-                if recovered.status == "review_required":
+                self._deferred_review_publication.add(job.job_id)
+                try:
+                    recovered = self._run(job, review_decisions=None)
+                finally:
+                    self._deferred_review_publication.discard(job.job_id)
+                if recovered.status in {"processing", "review_required"}:
                     recovered.inline_approvals = {
                         row_id: approval
                         for row_id, approval in approvals.items()
@@ -1108,6 +1120,8 @@ class DrawingCardService:
                             for row_id in cluster.member_ids
                         )
                     }
+                    recovered.status = "review_required"
+                    recovered.updated_at = _utc_now()
                     self._persist_job(recovered)
 
         threading.Thread(
