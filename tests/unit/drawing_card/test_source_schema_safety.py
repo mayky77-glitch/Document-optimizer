@@ -354,12 +354,14 @@ def test_cost_based_residual_repair_fails_closed_for_cross_row_formula() -> None
         ),
         ("Ч-1", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, "=G3-H3-D3", "=G3-I3"),
         ("Ч-2", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, "=G3-H4-D4", "=G4-I4"),
+        ("Ч-3", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, "=E5-H5-D5", "=G5-I5"),
     )
     cached_rows = (
         formula_rows[0],
         formula_rows[1],
         ("Ч-1", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, 1395, 1100),
         ("Ч-2", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, 1395, 1100),
+        ("Ч-3", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, 9, 1100),
     )
     reader = RowsReader(formula_rows, cached_rows)
 
@@ -370,6 +372,8 @@ def test_cost_based_residual_repair_fails_closed_for_cross_row_formula() -> None
     assert extracted[0].remaining_quantity == Decimal("9")
     assert extracted[1].remaining_quantity is None
     assert "DIMENSIONAL_QUANTITY_REPAIR_SIGNATURE_MISMATCH" in extracted[1].warnings
+    assert extracted[2].remaining_quantity == Decimal("9")
+    assert "DIMENSIONAL_QUANTITY_REPAIR_SIGNATURE_MISMATCH" not in extracted[2].warnings
 
 
 def test_ambiguous_optional_contract_triplets_do_not_block_explicit_period_roles() -> None:
