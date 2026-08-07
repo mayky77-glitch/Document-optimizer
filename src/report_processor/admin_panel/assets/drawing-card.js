@@ -350,7 +350,7 @@
     resultDownload.textContent = "Скачать отчёт";
     resultDownload.classList.add("is-disabled");
     resultDownload.setAttribute("aria-disabled", "true");
-    resultHint.textContent = "Здесь появится готовый .xlsx после завершения проверки.";
+    resultHint.textContent = "Скачивание станет доступно после подтверждения всех решений и формирования отчёта.";
   };
 
   const review = new window.DrawingCardReviewPanel({
