@@ -235,6 +235,40 @@ def _column_index(column_name: str) -> int:
     return value
 
 
+def _upstream_contract_pair(
+    formula_rows: Sequence[tuple[object, ...]],
+    contract_pairs: Sequence[tuple[int, int]],
+    *,
+    quantity_column: int,
+    data_start_index: int,
+) -> tuple[int, int] | None:
+    """Find a unique total-contract pair feeding a reduced contract slice.
+
+    In some KS-6 workbooks the quantity paired with the broken residual formula
+    is itself a residual slice (for example ``AN = K - P - S - Y``).  ``K`` is
+    the real contract quantity, while ``AN`` is only the base for the next
+    subtraction.  Promote the upstream pair only when same-row subtraction
+    formulas consistently point to one other explicit contract triplet.
+    """
+
+    pair_by_quantity = {quantity: (quantity, cost) for quantity, cost in contract_pairs}
+    candidates: set[tuple[int, int]] = set()
+    for row_number, formula_row in enumerate(
+        formula_rows[data_start_index:], start=data_start_index + 1
+    ):
+        formula = _formula(value_at(formula_row, quantity_column)).replace(" ", "").upper()
+        if not formula or not _SIMPLE_SUBTRACTION_FORMULA_RE.fullmatch(formula):
+            continue
+        references = _FORMULA_REFERENCE_RE.findall(formula)
+        if any(int(reference_row) != row_number for _column, reference_row in references):
+            continue
+        upstream_column = _column_index(references[0][0])
+        upstream_pair = pair_by_quantity.get(upstream_column)
+        if upstream_pair is not None and upstream_column != quantity_column:
+            candidates.add(upstream_pair)
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
 def _repair_dimensionally_invalid_quantity_formula(
     resolved: dict[str, int],
     headers: dict[int, str],
@@ -284,17 +318,34 @@ def _repair_dimensionally_invalid_quantity_formula(
     signature = next(iter(signatures))
     invalid_cost_column, *subtrahends = signature
     contract_quantity_column = pair_by_cost[invalid_cost_column]
-    repaired["contract_quantity"] = contract_quantity_column
-    repaired["contract_total_cost"] = invalid_cost_column
+    upstream_pair = _upstream_contract_pair(
+        formula_rows,
+        contract_pairs,
+        quantity_column=contract_quantity_column,
+        data_start_index=data_start_index,
+    )
+    total_contract_quantity, total_contract_cost = upstream_pair or (
+        contract_quantity_column,
+        invalid_cost_column,
+    )
+    repaired["contract_quantity"] = total_contract_quantity
+    repaired["contract_total_cost"] = total_contract_cost
     repaired["remaining_quantity_base"] = contract_quantity_column
     repaired["remaining_quantity_invalid_base"] = invalid_cost_column
     for number, column in enumerate(subtrahends, start=1):
         repaired[f"remaining_quantity_subtrahend_{number}"] = column
-    return repaired, [
+    warnings = [
         "DIMENSIONALLY_INVALID_REMAINING_QUANTITY_FORMULA:"
         f"{quantity_column}:{invalid_cost_column}->{contract_quantity_column};"
         f"subtract={','.join(str(item) for item in subtrahends)}"
     ]
+    if upstream_pair is not None:
+        warnings.append(
+            "TOTAL_CONTRACT_METRICS_RESTORED_FROM_UPSTREAM_BASE:"
+            f"{contract_quantity_column}->{total_contract_quantity};"
+            f"{invalid_cost_column}->{total_contract_cost}"
+        )
+    return repaired, warnings
 
 
 def _resolve_block_metrics(
