@@ -182,12 +182,16 @@ def test_cluster_api_fans_out_undoes_and_hides_private_metadata(client) -> None:
         f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}",
         json={"version": "obsolete", "action": "reject"},
     )
+    completed = test_client.get(f"/api/drawing-card/jobs/{job.job_id}/review/clusters")
     undone = test_client.delete(
         f"/api/drawing-card/jobs/{job.job_id}/review/clusters/{cluster['cluster_id']}?version={cluster['version']}"
     )
 
     assert listing.status_code == approved.status_code == undone.status_code == 200
     assert stale.status_code == 409
+    assert completed.status_code == 200
+    assert completed.json()["items"] == []
+    assert completed.json()["can_apply"] is True
     assert set(service.get_job(job.job_id).inline_approvals) == set()
     assert listing.json()["total_clusters"] == 1
     assert listing.json()["total_rows"] == 2
