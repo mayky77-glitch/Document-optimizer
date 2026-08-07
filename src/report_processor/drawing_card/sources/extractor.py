@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from decimal import Decimal
 from itertools import islice
@@ -44,6 +45,53 @@ def _is_formula(value: object) -> bool:
 def _decimal_or_zero(value: object) -> tuple[Decimal, tuple[str, ...]]:
     parsed, warnings = parse_decimal(value)
     return (parsed if parsed is not None else Decimal(0)), warnings
+
+
+_FORMULA_REFERENCE_RE = re.compile(r"\$?([A-Z]{1,3})\$?(\d+)")
+
+
+def _correct_dimensionally_invalid_quantity(
+    formula: object,
+    cached_row: tuple[object, ...],
+    columns: dict[str, int],
+    *,
+    row_number: int,
+) -> tuple[Decimal | None, tuple[str, ...]] | None:
+    """Evaluate the schema-approved quantity subtraction with quantity operands."""
+
+    base_column = columns.get("remaining_quantity_base")
+    invalid_base_column = columns.get("remaining_quantity_invalid_base")
+    if base_column is None or invalid_base_column is None or not _is_formula(formula):
+        return None
+    parsed_references = _FORMULA_REFERENCE_RE.findall(str(formula).upper())
+    references = [column for column, _row in parsed_references]
+    if (
+        not references
+        or references[0] != get_column_letter(invalid_base_column)
+        or any(int(reference_row) != row_number for _column, reference_row in parsed_references)
+    ):
+        return None, ("DIMENSIONAL_QUANTITY_REPAIR_SIGNATURE_MISMATCH",)
+    subtrahend_keys = sorted(
+        (key for key in columns if key.startswith("remaining_quantity_subtrahend_")),
+        key=lambda key: int(key.rsplit("_", 1)[-1]),
+    )
+    expected_references = [
+        get_column_letter(invalid_base_column),
+        *(get_column_letter(columns[key]) for key in subtrahend_keys),
+    ]
+    if references != expected_references:
+        return None, ("DIMENSIONAL_QUANTITY_REPAIR_SIGNATURE_MISMATCH",)
+    base, warnings = parse_decimal(value_at(cached_row, base_column))
+    if base is None:
+        return None, (*warnings, "DIMENSIONAL_QUANTITY_REPAIR_BASE_MISSING")
+    result = base
+    collected_warnings = list(warnings)
+    for key in subtrahend_keys:
+        value, value_warnings = _decimal_or_zero(value_at(cached_row, columns[key]))
+        result -= value
+        collected_warnings.extend(value_warnings)
+    collected_warnings.append("REMAINING_QUANTITY_REPAIRED_FROM_DIMENSIONAL_FORMULA")
+    return result, tuple(collected_warnings)
 
 
 def extract_rows(
@@ -149,6 +197,14 @@ def extract_rows(
                 stats["skipped_header_rows"] = stats.get("skipped_header_rows", 0) + 1
             continue
         quantity, quantity_warnings = parse_decimal(quantity_cached)
+        corrected_quantity = _correct_dimensionally_invalid_quantity(
+            quantity_formula,
+            cached_row,
+            columns,
+            row_number=row_number,
+        )
+        if corrected_quantity is not None:
+            quantity, quantity_warnings = corrected_quantity
         cost, cost_warnings = parse_decimal(cost_cached)
         contract_quantity, contract_quantity_warnings = _decimal_or_zero(contract_quantity_cached)
         contract_cost, contract_cost_warnings = _decimal_or_zero(contract_cost_cached)
@@ -161,7 +217,10 @@ def extract_rows(
         # a month/intermediate performed block as a substitute.
         if (
             "contract_quantity" not in columns
-            or "PERIOD_ROLES_AUTHORITATIVE:contract_quantity" in schema.warnings
+            or (
+                "PERIOD_ROLES_AUTHORITATIVE:contract_quantity" in schema.warnings
+                and "remaining_quantity_base" not in columns
+            )
         ) and {
             "performed_quantity",
             "remaining_quantity",
@@ -170,7 +229,10 @@ def extract_rows(
             contract_quantity_warnings += ("CONTRACT_QUANTITY_DERIVED_FROM_PERFORMED_AND_RESIDUAL",)
         if (
             "contract_total_cost" not in columns
-            or "PERIOD_ROLES_AUTHORITATIVE:contract_total_cost" in schema.warnings
+            or (
+                "PERIOD_ROLES_AUTHORITATIVE:contract_total_cost" in schema.warnings
+                and "remaining_quantity_base" not in columns
+            )
         ) and {
             "performed_total_cost",
             "remaining_total_cost",

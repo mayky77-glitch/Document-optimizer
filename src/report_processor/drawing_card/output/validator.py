@@ -30,6 +30,14 @@ _EXPECTED_CATEGORIES = tuple(
     normalize_text(CATEGORY_DISPLAY_NAMES[category]) for category in CATEGORY_ORDER
 )
 _FORMULA_ERRORS = {"#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#REF!", "#VALUE!"}
+_SUMMARY_METRICS = (
+    (2, 3, False),
+    (3, 4, True),
+    (4, 5, False),
+    (5, 6, True),
+    (6, 7, False),
+    (7, 8, True),
+)
 
 
 def _decimal(value: object) -> Decimal | None:
@@ -210,8 +218,6 @@ def _validate_summary_contract(
             expected_name = CATEGORY_DISPLAY_NAMES[category]
             if sheet.cell(row_number, start_column).value != expected_name:
                 errors.append(f"SUMMARY_CATEGORY:{row_number}:{start_column}")
-            quantity = sheet.cell(row_number, start_column + 2)
-            cost = sheet.cell(row_number, start_column + 3)
             source_units = [
                 value.strip() if isinstance(value, str) else None
                 for value in _summary_source_values(workbook, layout, category, 2)
@@ -222,23 +228,26 @@ def _validate_summary_contract(
                 category_unit_status[(layout.object_index, category)] = "mixed"
             else:
                 category_unit_status[(layout.object_index, category)] = "valid"
-            expected_cost = _sum_literal_values(
-                _summary_source_values(workbook, layout, category, 4)
-            )
-            if not _equal_values(cost.value, expected_cost):
-                errors.append(f"SUMMARY_COST_VALUE:{cost.coordinate}")
-            if category_unit_status[(layout.object_index, category)] == "valid":
-                expected_quantity = _sum_literal_values(
-                    _summary_source_values(workbook, layout, category, 3)
-                )
-                if not _equal_values(quantity.value, expected_quantity):
-                    errors.append(f"SUMMARY_QUANTITY_VALUE:{quantity.coordinate}")
-            elif quantity.value is not None:
-                errors.append(f"SUMMARY_INVALID_UNIT_QUANTITY:{quantity.coordinate}")
-            if quantity.number_format != FRACTIONAL_QUANTITY_FORMAT:
-                errors.append(f"SUMMARY_QUANTITY_FORMAT:{quantity.coordinate}")
-            if cost.number_format != COST_FORMAT:
-                errors.append(f"SUMMARY_COST_FORMAT:{cost.coordinate}")
+            for summary_offset, main_offset, is_cost in _SUMMARY_METRICS:
+                cell = sheet.cell(row_number, start_column + summary_offset)
+                if is_cost:
+                    expected = _sum_literal_values(
+                        _summary_source_values(workbook, layout, category, main_offset)
+                    )
+                    if not _equal_values(cell.value, expected):
+                        errors.append(f"SUMMARY_COST_VALUE:{cell.coordinate}")
+                    if cell.number_format != COST_FORMAT:
+                        errors.append(f"SUMMARY_COST_FORMAT:{cell.coordinate}")
+                elif category_unit_status[(layout.object_index, category)] == "valid":
+                    expected = _sum_literal_values(
+                        _summary_source_values(workbook, layout, category, main_offset)
+                    )
+                    if not _equal_values(cell.value, expected):
+                        errors.append(f"SUMMARY_QUANTITY_VALUE:{cell.coordinate}")
+                    if cell.number_format != FRACTIONAL_QUANTITY_FORMAT:
+                        errors.append(f"SUMMARY_QUANTITY_FORMAT:{cell.coordinate}")
+                elif cell.value is not None:
+                    errors.append(f"SUMMARY_INVALID_UNIT_QUANTITY:{cell.coordinate}")
     total_start_row, total_start_column = summary_block_position(len(layouts))
     if sheet.cell(total_start_row, total_start_column).value != "Все индексы":
         errors.append(f"SUMMARY_ALL_INDICES_TITLE:{total_start_row}:{total_start_column}")
@@ -266,35 +275,38 @@ def _validate_summary_contract(
             ).value
             if isinstance(unit_value, str) and unit_value.strip():
                 category_units.add(normalize_text(unit_value))
-        quantity = sheet.cell(row_number, total_start_column + 2)
+        quantity_cells = [
+            sheet.cell(row_number, total_start_column + summary_offset)
+            for summary_offset, _main_offset, is_cost in _SUMMARY_METRICS
+            if not is_cost
+        ]
         if "missing" in unit_statuses:
-            if quantity.value is not None:
+            if any(cell.value is not None for cell in quantity_cells):
                 errors.append(f"SUMMARY_MISSING_UNIT_QUANTITY:{expected_name}")
             errors.append(f"SUMMARY_MISSING_UNIT:{category.value}")
         elif "mixed" in unit_statuses or len(category_units) != 1:
-            if quantity.value is not None:
+            if any(cell.value is not None for cell in quantity_cells):
                 errors.append(f"SUMMARY_MIXED_UNIT_QUANTITY:{expected_name}")
             errors.append(f"SUMMARY_MIXED_UNIT:{category.value}")
-        else:
-            expected_quantity = sum(
-                (
-                    _sum_literal_values(_summary_source_values(workbook, layout, category, 3))
-                    for layout in layouts
-                ),
-                Decimal(0),
-            )
-            if not _equal_values(quantity.value, expected_quantity):
-                errors.append(f"SUMMARY_ALL_INDICES_QUANTITY_VALUE:{quantity.coordinate}")
-        cost = sheet.cell(row_number, total_start_column + 3)
-        expected_cost = sum(
-            (
-                _sum_literal_values(_summary_source_values(workbook, layout, category, 4))
-                for layout in layouts
-            ),
-            Decimal(0),
-        )
-        if not _equal_values(cost.value, expected_cost):
-            errors.append(f"SUMMARY_ALL_INDICES_COST_VALUE:{cost.coordinate}")
+        for summary_offset, main_offset, is_cost in _SUMMARY_METRICS:
+            cell = sheet.cell(row_number, total_start_column + summary_offset)
+            if is_cost or (
+                "missing" not in unit_statuses
+                and "mixed" not in unit_statuses
+                and len(category_units) == 1
+            ):
+                expected = sum(
+                    (
+                        _sum_literal_values(
+                            _summary_source_values(workbook, layout, category, main_offset)
+                        )
+                        for layout in layouts
+                    ),
+                    Decimal(0),
+                )
+                if not _equal_values(cell.value, expected):
+                    label = "COST" if is_cost else "QUANTITY"
+                    errors.append(f"SUMMARY_ALL_INDICES_{label}_VALUE:{cell.coordinate}")
 
 
 def _validate_sheet_data(

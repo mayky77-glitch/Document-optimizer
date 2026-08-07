@@ -21,8 +21,13 @@ from report_processor.drawing_card.sources.schema import select_usable_schemas
 
 
 class RowsReader:
-    def __init__(self, rows: Sequence[tuple[Any, ...]]) -> None:
+    def __init__(
+        self,
+        rows: Sequence[tuple[Any, ...]],
+        cached_rows: Sequence[tuple[Any, ...]] | None = None,
+    ) -> None:
         self.rows = tuple(rows)
+        self.cached_rows = tuple(cached_rows) if cached_rows is not None else self.rows
 
     def list_sheets(self) -> tuple[str, ...]:
         return ("Данные",)
@@ -37,8 +42,9 @@ class RowsReader:
         selected_columns: Sequence[int] | None = None,
     ) -> Iterator[tuple[tuple[Any, ...], tuple[Any, ...]]]:
         del sheet_name, max_col, selected_columns
-        for row in self.rows[min_row - 1 : max_row]:
-            yield row, row
+        formula_rows = self.rows[min_row - 1 : max_row]
+        cached_rows = self.cached_rows[min_row - 1 : max_row]
+        yield from zip(formula_rows, cached_rows, strict=True)
 
     def close(self) -> None:
         pass
@@ -157,6 +163,48 @@ def test_schema_normalizes_multiline_aliases_and_derives_cumulative_contract() -
     assert "CONTRACT_TOTAL_COST_DERIVED_FROM_PERFORMED_AND_RESIDUAL" in extracted[0].warnings
 
 
+@pytest.mark.parametrize(
+    ("work_header", "unit_header", "remaining_header", "quantity_header", "cost_header"),
+    [
+        (
+            "Наименование работ и затрат",
+            "Единица\nизмерения",
+            "Осталось выполнить по договору",
+            "Объём",
+            "Сумма, руб.",
+        ),
+        (
+            "Вид работ",
+            "Ед. изм",
+            "ОСТАТОК ПО ДОГОВОРУ",
+            "Кол-во",
+            "Общая стоимость, руб.",
+        ),
+    ],
+)
+def test_schema_accepts_safe_header_aliases(
+    work_header: str,
+    unit_header: str,
+    remaining_header: str,
+    quantity_header: str,
+    cost_header: str,
+) -> None:
+    rows = (
+        ("Шифр рабочей документации", work_header, unit_header, remaining_header, None),
+        (None, None, None, quantity_header, cost_header),
+        ("Ч-1", "Монтаж", "т", 1.21, 10_512_982),
+    )
+
+    schema = detect_sheet_schema(RowsReader(rows), "Данные")
+
+    assert schema.status == "OK"
+    assert schema.columns["drawing_code"] == 1
+    assert schema.columns["work_name"] == 2
+    assert schema.columns["unit"] == 3
+    assert schema.columns["remaining_quantity"] == 4
+    assert schema.columns["remaining_total_cost"] == 5
+
+
 def test_intermediate_performed_block_cannot_authorize_contract_derivation() -> None:
     rows = (
         (
@@ -218,6 +266,110 @@ def test_explicit_period_roles_override_generic_direct_contract_triplet() -> Non
     assert "PERIOD_ROLES_AUTHORITATIVE:contract_total_cost" in schema.warnings
     assert extracted[0].contract_quantity == Decimal("10")
     assert extracted[0].contract_total_cost == Decimal("100")
+
+
+def test_cost_based_residual_quantity_formula_is_repaired_from_quantity_operands() -> None:
+    formula_rows = (
+        (
+            "Шифр чертежа",
+            "Наименование работ",
+            "Ед. изм.",
+            "ДРДЦ январь",
+            "Количество",
+            "Стоимость по договору",
+            None,
+            "Выполнено за весь период строительства",
+            None,
+            "Остаток работ по договору",
+            None,
+        ),
+        (
+            None,
+            None,
+            None,
+            "Количество",
+            None,
+            "Стоимость за единицу",
+            "Общая стоимость",
+            "Количество",
+            "Общая стоимость",
+            "Количество",
+            "Общая стоимость",
+        ),
+        ("Ч-1", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, "=G3-H3-D3", "=G3-I3"),
+    )
+    cached_rows = (
+        formula_rows[0],
+        formula_rows[1],
+        ("Ч-1", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, 1395, 1100),
+    )
+    reader = RowsReader(formula_rows, cached_rows)
+
+    schema = detect_sheet_schema(reader, "Данные")
+    extracted = tuple(extract_rows(reader, _entry(), schema, object_index="0907"))
+
+    assert schema.status == "OK"
+    assert schema.columns["contract_quantity"] == 5
+    assert schema.columns["contract_total_cost"] == 7
+    assert schema.columns["remaining_quantity_base"] == 5
+    assert any(
+        warning.startswith("DIMENSIONALLY_INVALID_REMAINING_QUANTITY_FORMULA")
+        for warning in schema.warnings
+    )
+    assert extracted[0].remaining_quantity == Decimal("9")
+    assert extracted[0].remaining_total_cost == Decimal("1100")
+    assert extracted[0].contract_quantity == Decimal("14")
+    assert extracted[0].contract_total_cost == Decimal("1400")
+    assert extracted[0].performed_quantity == Decimal("3")
+    assert "REMAINING_QUANTITY_REPAIRED_FROM_DIMENSIONAL_FORMULA" in extracted[0].warnings
+
+
+def test_cost_based_residual_repair_fails_closed_for_cross_row_formula() -> None:
+    formula_rows = (
+        (
+            "Шифр чертежа",
+            "Наименование работ",
+            "Ед. изм.",
+            "ДРДЦ январь",
+            "Количество",
+            "Стоимость по договору",
+            None,
+            "Выполнено за весь период строительства",
+            None,
+            "Остаток работ по договору",
+            None,
+        ),
+        (
+            None,
+            None,
+            None,
+            "Количество",
+            None,
+            "Стоимость за единицу",
+            "Общая стоимость",
+            "Количество",
+            "Общая стоимость",
+            "Количество",
+            "Общая стоимость",
+        ),
+        ("Ч-1", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, "=G3-H3-D3", "=G3-I3"),
+        ("Ч-2", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, "=G3-H4-D4", "=G4-I4"),
+    )
+    cached_rows = (
+        formula_rows[0],
+        formula_rows[1],
+        ("Ч-1", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, 1395, 1100),
+        ("Ч-2", "Монтаж", "т", 2, 14, 100, 1400, 3, 300, 1395, 1100),
+    )
+    reader = RowsReader(formula_rows, cached_rows)
+
+    schema = detect_sheet_schema(reader, "Данные")
+    extracted = tuple(extract_rows(reader, _entry(), schema, object_index="0907"))
+
+    assert schema.status == "OK"
+    assert extracted[0].remaining_quantity == Decimal("9")
+    assert extracted[1].remaining_quantity is None
+    assert "DIMENSIONAL_QUANTITY_REPAIR_SIGNATURE_MISMATCH" in extracted[1].warnings
 
 
 def test_ambiguous_optional_contract_triplets_do_not_block_explicit_period_roles() -> None:

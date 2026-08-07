@@ -801,7 +801,7 @@ class DrawingCardService:
     def retry_job(self, job_id: str, *, background: bool | None = None) -> DrawingCardJob:
         """Start a fresh attempt without destroying earlier private artifacts."""
         job = self.get_job(job_id)
-        if job.status not in {"cancelled", "failed", "blocked"}:
+        if job.status not in {"cancelled", "failed", "blocked", "ready"}:
             raise ValueError("job cannot be retried")
         before = self._retry_snapshot(job)
         job.cancel_event = threading.Event()

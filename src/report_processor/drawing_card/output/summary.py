@@ -21,7 +21,7 @@ from .contract import (
     cost_to_million_rubles,
 )
 
-_TITLE_FILL = PatternFill("solid", fgColor="C6E0B4")
+_TITLE_FILL = PatternFill("solid", fgColor="548235")
 _HEADER_FILL = PatternFill("solid", fgColor="E2F0D9")
 _BORDER = Border(
     left=Side(style="thin", color="7F8C7A"),
@@ -65,16 +65,29 @@ def _single_nonempty_unit(units: tuple[str | None, ...]) -> str | None:
     return units[0] if len(normalized) == 1 else None
 
 
-def _sum_quantity(rows: list[DrawingCardResultRow]) -> Decimal:
-    return sum((row.remaining_quantity or Decimal(0) for row in rows), Decimal(0))
+def _sum_quantity(rows: list[DrawingCardResultRow], metric: str) -> Decimal:
+    return sum(
+        (
+            (row.remaining_quantity if metric == "remaining_quantity" else getattr(row, metric))
+            or Decimal(0)
+            for row in rows
+        ),
+        Decimal(0),
+    )
 
 
-def _sum_cost(rows: list[DrawingCardResultRow], cost_scale: int) -> Decimal:
+def _sum_cost(rows: list[DrawingCardResultRow], metric: str, cost_scale: int) -> Decimal:
     """Sum the published row values so summaries reconcile with the main card."""
 
     return sum(
         (
-            cost_to_million_rubles(row.remaining_total_cost, cost_scale) or Decimal(0)
+            cost_to_million_rubles(
+                row.remaining_total_cost
+                if metric == "remaining_total_cost"
+                else getattr(row, metric),
+                cost_scale,
+            )
+            or Decimal(0)
             for row in rows
         ),
         Decimal(0),
@@ -90,22 +103,52 @@ def _style_block(sheet, *, start_row: int, start_column: int, title: str) -> Non
         end_column=end_column,
     )
     title_cell = sheet.cell(start_row, start_column, title)
-    title_cell.font = Font(name="Arial", bold=True, size=12)
+    title_cell.font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
     title_cell.fill = _TITLE_FILL
     title_cell.alignment = Alignment(horizontal="left", vertical="center")
     title_cell.border = _BORDER
     for column, header in enumerate(SUMMARY_HEADERS, start=start_column):
         cell = sheet.cell(start_row + 1, column, header)
-        cell.font = Font(name="Arial", bold=True)
+        cell.font = Font(name="Arial", bold=True, size=9, color="1F1F1F")
         cell.fill = _HEADER_FILL
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = _BORDER
     for row in range(start_row + 2, start_row + 2 + len(CATEGORY_ORDER)):
         for column in range(start_column, end_column + 1):
             cell = sheet.cell(row, column)
-            cell.font = Font(name="Arial")
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.font = Font(name="Arial", size=10, color="1F1F1F")
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
             cell.border = _BORDER
+
+
+def _write_summary_metrics(
+    sheet,
+    *,
+    row: int,
+    start_column: int,
+    rows: list[DrawingCardResultRow],
+    unit: str | None,
+    cost_scale: int,
+    exact_numeric_cells: dict[tuple[str, str], Decimal],
+) -> None:
+    if unit is not None:
+        sheet.cell(row, start_column + 1, unit)
+    metrics = (
+        ("remaining_quantity", False),
+        ("remaining_total_cost", True),
+        ("contract_quantity", False),
+        ("contract_total_cost", True),
+        ("performed_quantity", False),
+        ("performed_total_cost", True),
+    )
+    for offset, (metric, is_cost) in enumerate(metrics, start=2):
+        if not is_cost and unit is None:
+            continue
+        value = _sum_cost(rows, metric, cost_scale) if is_cost else _sum_quantity(rows, metric)
+        cell = sheet.cell(row, start_column + offset, value)
+        cell.number_format = COST_FORMAT if is_cost else FRACTIONAL_QUANTITY_FORMAT
+        cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
+        exact_numeric_cells[(sheet.title, cell.coordinate)] = value
 
 
 def add_summary_sheet(
@@ -143,14 +186,15 @@ def add_summary_sheet(
             category_cell = sheet.cell(row, start_column, CATEGORY_DISPLAY_NAMES[category])
             index_rows = rows_by_object_category[(layout.object_index, category)]
             unit = _single_nonempty_unit(units.get((layout.object_index, category), ()))
-            if unit is not None:
-                sheet.cell(row, start_column + 1, unit)
-                quantity = sheet.cell(row, start_column + 2, _sum_quantity(index_rows))
-                quantity.number_format = FRACTIONAL_QUANTITY_FORMAT
-                exact_numeric_cells[(sheet.title, quantity.coordinate)] = quantity.value
-            cost = sheet.cell(row, start_column + 3, _sum_cost(index_rows, cost_scale))
-            cost.number_format = COST_FORMAT
-            exact_numeric_cells[(sheet.title, cost.coordinate)] = cost.value
+            _write_summary_metrics(
+                sheet,
+                row=row,
+                start_column=start_column,
+                rows=index_rows,
+                unit=unit,
+                cost_scale=cost_scale,
+                exact_numeric_cells=exact_numeric_cells,
+            )
             category_cell.alignment = Alignment(vertical="top", wrap_text=True)
 
     total_start_row, total_start_column = summary_block_position(len(layouts))
@@ -168,29 +212,34 @@ def add_summary_sheet(
             for layout in layouts
         )
         unit = _single_nonempty_unit(category_units)
-        if unit is not None:
-            sheet.cell(row, total_start_column + 1, unit)
-            quantity = sheet.cell(
-                row,
-                total_start_column + 2,
-                _sum_quantity(rows_by_category[category]),
-            )
-            quantity.number_format = FRACTIONAL_QUANTITY_FORMAT
-            exact_numeric_cells[(sheet.title, quantity.coordinate)] = quantity.value
-        cost = sheet.cell(
-            row,
-            total_start_column + 3,
-            _sum_cost(rows_by_category[category], cost_scale),
+        _write_summary_metrics(
+            sheet,
+            row=row,
+            start_column=total_start_column,
+            rows=rows_by_category[category],
+            unit=unit,
+            cost_scale=cost_scale,
+            exact_numeric_cells=exact_numeric_cells,
         )
-        cost.number_format = COST_FORMAT
-        exact_numeric_cells[(sheet.title, cost.coordinate)] = cost.value
 
     for column in range(1, sheet.max_column + 1):
         offset = (column - 1) % SUMMARY_BLOCK_COLUMN_SPAN
-        sheet.column_dimensions[get_column_letter(column)].width = (38, 12, 15, 20, 3, 3)[offset]
+        sheet.column_dimensions[get_column_letter(column)].width = (
+            34,
+            10,
+            15,
+            19,
+            15,
+            19,
+            15,
+            19,
+            2.5,
+            2.5,
+        )[offset]
     for row in range(1, sheet.max_row + 1):
         sheet.row_dimensions[row].height = 22 if row % SUMMARY_BLOCK_ROW_SPAN < 2 else 30
     sheet.freeze_panes = "A3"
+    sheet.sheet_view.showGridLines = False
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
     sheet.page_setup.orientation = "landscape"
     sheet.page_setup.fitToWidth = 1

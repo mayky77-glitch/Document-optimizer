@@ -42,7 +42,7 @@ from .discrepancies import (
     report_issue_text,
 )
 from .planner import plan_write_operations
-from .styles import clone_block_columns, clone_row_style
+from .styles import apply_card_style, clone_block_columns, clone_row_style
 from .summary import add_summary_sheet
 from .validator import validate_card
 from .xlsx_xml import rewrite_exact_numeric_cells
@@ -58,7 +58,7 @@ def _existing_values(
 ) -> dict[tuple[str, str, str], tuple[object, object, object]]:
     result: dict[tuple[str, str, str], tuple[object, object, object]] = {}
     for sheet in workbook.worksheets:
-        for start_column in range(2, sheet.max_column + 1, 6):
+        for start_column in range(1, sheet.max_column + 1):
             header = sheet.cell(2, start_column).value
             if not isinstance(header, str) or "индекс объекта" not in normalize_text(header):
                 continue
@@ -247,11 +247,14 @@ def _prepare_block(sheet, layout: ObjectBlockLayout) -> None:
             existing.max_col < start or existing.min_col > layout.end_column
         ):
             sheet.unmerge_cells(str(existing))
+    index_merge_range = f"{get_column_letter(start)}2:{get_column_letter(start + 2)}2"
     merge_range = f"{get_column_letter(start + 3)}2:{get_column_letter(layout.end_column)}2"
+    if index_merge_range not in {str(item) for item in sheet.merged_cells.ranges}:
+        sheet.merge_cells(index_merge_range)
     if merge_range not in {str(item) for item in sheet.merged_cells.ranges}:
         sheet.merge_cells(merge_range)
     sheet.cell(2, start).value = f"Индекс объекта: {layout.object_index}"
-    sheet.cell(2, start + 3).value = "Показатели работ по договору"
+    sheet.cell(2, start + 3).value = "Показатели объёма и стоимости"
     for offset, header in enumerate(CARD_HEADERS):
         sheet.cell(3, start + offset).value = header
 
@@ -389,6 +392,7 @@ def write_card(
                                 old_value=old_value,
                                 new_value=cell.value,
                             )
+            apply_card_style(sheet, layout)
         _trim_unused_right_template_slots(workbook, layouts)
         if SUMMARY_SHEET_NAME in workbook.sheetnames:
             del workbook[SUMMARY_SHEET_NAME]
