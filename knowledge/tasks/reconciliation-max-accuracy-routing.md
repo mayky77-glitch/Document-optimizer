@@ -1,6 +1,6 @@
 ---
 type: task
-status: draft
+status: done
 card_status: frozen
 card_id: reconciliation-max-accuracy-routing
 version: 1
@@ -14,7 +14,9 @@ profile: L3
 routing_grade: P5
 assigned_model: gpt-5.6-sol
 reasoning_effort: medium
-launch_status: planned
+launch_status: confirmed
+actual_model: gpt-5.6-sol
+actual_reasoning_effort: medium
 source_base_sha: 8d87a2c96ec3a26b3263cbff157755d18d07ec05
 branch: main
 write_scope: []
@@ -40,3 +42,8 @@ Read-only. Use current Code Graph and active task evidence to propose no more th
 independent specialist audits plus one final P6 review. Keep three concurrent workers maximum,
 eight total launches including this triage, and give each specialist an exact question,
 source/test scope and expected evidence. Do not edit files or repeat workbook analysis owned by root.
+
+## Result
+
+Accepted decomposition: two waves of three independent P4 audits, then one P6 synthesis.
+Together with this triage, total launches equal eight and concurrency never exceeds three.
