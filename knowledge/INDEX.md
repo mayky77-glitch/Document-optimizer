@@ -23,11 +23,16 @@ Use this index as the entry point. Read only the relevant map, component card, a
 ## Navigation
 
 - [[TAGS]] — canonical tag taxonomy and targeted lookup.
+- [[CURRENT_COPY]] — canonical repository copy, branch and verified HEAD.
+- [[WORK]] — current, completed and next work.
+- [[TEST-RUNS]] — two latest reproducible verification runs.
 - [[ORCHESTRATION]] — routing, ownership, and model profiles.
 - [[maps/architecture|Architecture map]] — component links.
 - [[maps/project-map|Project map]] — product surfaces, contracts, and focused checks.
 - [[maps/active-work|Active work]] — live task links.
 - [[DECISIONS]] — accepted cross-cutting decisions.
+- [[components/reconciliation|Сверка документов]] — authoritative reconciliation component.
+- [[tasks/reconciliation-max-accuracy-audit-v1|Аудит максимальной точности сверки]] — active code/data/output audit.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 - [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.
 

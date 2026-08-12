@@ -1,0 +1,29 @@
+status: gate
+work_id: reconciliation-max-accuracy-audit-v1
+objective: "Prove current document reconciliation against code, tests, original workbooks and result workbooks."
+source_base_sha: 8d87a2c96ec3a26b3263cbff157755d18d07ec05
+integration_branch: main
+wave: 0
+max_parallel: 3
+max_spawns: 8
+max_retries: 1
+merge_method: read-only-audit-with-scoped-knowledge-commit
+shared_paths_owner: integration
+data_classification: restricted
+production_changes: forbidden_during_diagnosis
+private_artifacts_in_git: forbidden
+baseline:
+  command: "uv run pytest -q -k reconciliation"
+  result: "327 passed, 3 skipped, 1362 deselected in 4.65s"
+  worktree: "one unrelated untracked drawing-card UX specification preserved"
+dependency_order:
+  - routing-triage
+  - parallel-specialist-waves
+  - independent-p6-final-review
+hard_gates:
+  - source and target digests remain unchanged
+  - no algorithm stage relies only on historical notes
+  - direct workbook checks trace values and formulas to originals
+  - every material finding has deterministic evidence
+  - focused and full product tests pass or failures are classified
+  - knowledge validator passes separately

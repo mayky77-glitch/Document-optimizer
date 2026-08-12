@@ -2,12 +2,18 @@
 type: map
 tags:
   - knowledge/map
-  - status/done
-last_verified: 2026-08-04
-updated: 2026-08-04
+  - status/in-progress
+last_verified: 2026-08-12
+updated: 2026-08-12
 ---
 
 # Active work
+
+Active reconciliation audit:
+[[../tasks/reconciliation-max-accuracy-audit-v1|Максимальная точность сверки документов]].
+Scope: current production path, original/result workbook reconciliation, adversarial
+edge cases and knowledge refresh. ORDA allows eight total subagent launches in waves,
+with no more than three concurrent.
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 
