@@ -15,6 +15,10 @@ Scope: current production path, original/result workbook reconciliation, adversa
 edge cases and knowledge refresh. ORDA allows eight total subagent launches in waves,
 with no more than three concurrent.
 
+Current result: real wrong-output finding RA-001 plus deterministic high/medium gaps are
+catalogued in [[../errors/reconciliation-accuracy-findings|reconciliation accuracy findings]].
+Only final test/knowledge/P6 synthesis remains; remediation is deliberately separate.
+
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 
 Wave 1: [[../tasks/qdrant-dense-rag-core|core]] and

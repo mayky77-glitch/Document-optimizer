@@ -54,11 +54,18 @@ enumerate edge cases, reproduce every material risk and leave a compact evidence
 
 ## Current evidence
 
-- Canonical local/remote `main`: `8d87a2c96ec3a26b3263cbff157755d18d07ec05`.
+- Canonical local/remote `main`: `30eeafade56658d46a022eae00f5cf59928a3a55`.
 - Code Graph exposed the production chain through `prepare_review`, `_sources`,
   `apply_overrides`, `calculate_matches`, `writer_calculations` and verified publication.
 - Baseline: `327 passed, 3 skipped`; real-data checks are environment-gated and require
   independent local evidence.
+
+Representative de-identified run: 12 sources, 2,953 extracted rows, 989 visible rows,
+250 groups, 211 packages and a verified result. One unaffected row independently traced the
+original cumulative formula caches through Decimal arithmetic to the exact two changed target
+cells. Direct audit then found RA-001: one cumulative workbook was silently selected as KS-2,
+using contract metrics and producing a demonstrably wrong authoritative output when accepted.
+See [[../errors/reconciliation-accuracy-findings|finding catalog]].
 
 ## Risks to resolve
 
@@ -76,4 +83,5 @@ enumerate edge cases, reproduce every material risk and leave a compact evidence
 
 ## Next step
 
-Freeze ORDA Gate 0, complete routing triage and identify the authoritative real corpus/result pair.
+Run the full suite and independent P6 synthesis, then hand off a prioritized remediation wave.
+Production code remains unchanged in this diagnostic task.

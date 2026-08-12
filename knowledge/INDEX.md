@@ -33,6 +33,7 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[DECISIONS]] — accepted cross-cutting decisions.
 - [[components/reconciliation|Сверка документов]] — authoritative reconciliation component.
 - [[tasks/reconciliation-max-accuracy-audit-v1|Аудит максимальной точности сверки]] — active code/data/output audit.
+- [[errors/reconciliation-accuracy-findings|Ошибки точности сверки]] — evidence-backed error catalog and remediation gates.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 - [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.
 

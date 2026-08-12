@@ -44,3 +44,8 @@ verified result workbook. Source and target workbooks are read-only inputs.
 
 [[../tasks/reconciliation-max-accuracy-audit-v1|Maximum-accuracy audit]] verifies these
 invariants against current code, adversarial tests and direct workbook comparison.
+
+The audit has found a real wrong-output path and multiple deterministic safety gaps. See
+[[../errors/reconciliation-accuracy-findings|reconciliation accuracy findings]]. Until RA-001
+and the other high-severity boundaries are remediated, the component does not support a 100%
+accuracy claim.

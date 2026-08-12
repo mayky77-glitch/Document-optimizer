@@ -13,8 +13,9 @@ updated: 2026-08-12
 ## Current
 
 - [[tasks/reconciliation-max-accuracy-audit-v1|Maximum-accuracy reconciliation audit]]:
-  trace the production algorithm, compare private originals with regenerated/result
-  workbooks, enumerate failure modes, reproduce material risks and refresh durable knowledge.
+  synthesis/final review remains. Production tracing, representative original/result workbook
+  comparison and adversarial waves are complete. [[errors/reconciliation-accuracy-findings|RA-001]]
+  proves a cumulative source can be classified as KS-2 and write contract values instead.
 - Integration owner keeps production code unchanged during diagnosis. Any remediation needs
   a separate bounded card after a reproducible correctness finding.
 
@@ -27,5 +28,5 @@ updated: 2026-08-12
 
 ## Next executable step
 
-Complete ORDA routing, identify the strongest available real source/target/result corpus,
-then run independent code, lifecycle and spreadsheet-equality checks.
+Run the full suite and independent P6 review. Then open a separate remediation wave beginning
+with RA-001, exact unit/package safety, exact-once and restart/transaction boundaries.
