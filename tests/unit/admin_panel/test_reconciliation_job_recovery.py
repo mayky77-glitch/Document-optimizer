@@ -196,6 +196,20 @@ def test_ready_manifest_without_result_name_is_not_recovered(tmp_path: Path) -> 
         recovered.get_job(job.job_id)
 
 
+def test_v1_manifest_is_invalidated_before_recovery(tmp_path: Path) -> None:
+    service = _ready_service(tmp_path / "jobs")
+    job = _ready_job(service)
+    manifest_path = job.directory / "job-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["contract"] = "AdminReconciliationJobManifest-1.0"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    recovered = AdminPanelService(tmp_path / "jobs")
+
+    with pytest.raises(KeyError):
+        recovered.get_job(job.job_id)
+
+
 def test_interrupted_apply_fails_closed_without_a_download(tmp_path: Path) -> None:
     service = _ready_service(tmp_path / "jobs")
     job = _ready_job(service)

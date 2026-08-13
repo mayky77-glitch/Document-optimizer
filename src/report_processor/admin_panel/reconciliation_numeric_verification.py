@@ -16,6 +16,7 @@ from report_processor.reconciliation_review import (
 
 from .reconciliation_execution import _catalog, _review_row_id, _selected_matches
 from .reconciliation_target import category_id, read_reconciliation_target, writer_calculations
+from .reconciliation_target_measure import ReconciliationTargetMeasureError
 
 
 class NumericVerificationFailure(RuntimeError):
@@ -37,6 +38,8 @@ def verify_numeric(job, review) -> tuple[frozenset[str], int]:
         _schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
         _reject_duplicate_target_keys(targets)
         catalog = _catalog(targets)
+    except ReconciliationTargetMeasureError as error:
+        raise NumericVerificationFailure(str(error)) from error
     except NumericVerificationFailure:
         raise
     except ValueError as error:

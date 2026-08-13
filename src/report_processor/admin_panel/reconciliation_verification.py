@@ -55,6 +55,8 @@ def verify_reconciliation(job, feedback) -> VerificationResult:
 
     review = prepare_review(job, feedback)
     if review.state is None or review.source_batch is None:
+        if review.target_error_code is not None:
+            raise VerificationTechnicalFailure(review.target_error_code)
         issues = review.source_issues
         if review.target_error:
             issues = (
