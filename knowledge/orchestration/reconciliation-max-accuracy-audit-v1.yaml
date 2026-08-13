@@ -1,7 +1,7 @@
-status: gate
+status: complete
 work_id: reconciliation-max-accuracy-audit-v1
 objective: "Prove current document reconciliation against code, tests, original workbooks and result workbooks."
-source_base_sha: 8d87a2c96ec3a26b3263cbff157755d18d07ec05
+source_base_sha: 7aa8d30e5abbd49b6d5b9e76b03122c0f447f51e
 integration_branch: main
 wave: 0
 max_parallel: 3
@@ -27,3 +27,11 @@ hard_gates:
   - every material finding has deterministic evidence
   - focused and full product tests pass or failures are classified
   - knowledge validator passes separately
+completion_evidence:
+  full_gate: "1667 passed, 25 skipped"
+  focused_gate: "327 passed, 3 skipped, 1362 deselected"
+  verification_gate: "35 passed"
+  real_verify: "13 current checked/failed vs 3 intended; 10 false-red rows; inputs unchanged"
+  real_writer: "all 12 representative workbooks reproduce STYLES_MISSING"
+  final_p6: "REJECT 100% accuracy claim; owner decisions and remediation required"
+  knowledge: "new links/cards checked; global validator blocked by historical schema debt"

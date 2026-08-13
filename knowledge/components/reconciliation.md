@@ -6,8 +6,8 @@ tags:
   - layer/backend
   - capability/admin-panel
   - risk/high
-last_verified: 2026-08-12
-updated: 2026-08-12
+last_verified: 2026-08-13
+updated: 2026-08-13
 source_paths:
   - src/report_processor/admin_panel/reconciliation_*
   - src/report_processor/reconciliation_review
@@ -20,12 +20,13 @@ source_paths:
 
 # Сверка документов
 
-## Production path
+## Adjacent authoritative reconciliation path
 
-The `/` workflow reads each uploaded source independently, reads the target once,
-normalizes source rows, builds deterministic global review groups/packages, applies explicit
-row/group/package decisions, recalculates authoritative matches and writes or copies one
-verified result workbook. Source and target workbooks are read-only inputs.
+`operation=reconcile` reads each uploaded source independently, reads the target once, normalizes
+source rows, builds deterministic global review groups/packages, applies explicit decisions,
+recalculates authoritative matches and writes or copies one verified target workbook. It is not
+the public `/` button: that surface runs [[document-verification|Проверка документов]] and annotates
+source rows instead of writing target J/K.
 
 ## Fixed invariants
 
@@ -40,12 +41,12 @@ verified result workbook. Source and target workbooks are read-only inputs.
 - Private source names, paths, sheets, formulas and cell coordinates remain outside public API
   payloads and durable knowledge.
 
-## Active audit
+## Audit result
 
 [[../tasks/reconciliation-max-accuracy-audit-v1|Maximum-accuracy audit]] verifies these
 invariants against current code, adversarial tests and direct workbook comparison.
 
-The audit has found a real wrong-output path and multiple deterministic safety gaps. See
-[[../errors/reconciliation-accuracy-findings|reconciliation accuracy findings]]. Until RA-001
-and the other high-severity boundaries are remediated, the component does not support a 100%
-accuracy claim.
+The audit found a real wrong-output path plus deterministic exact-once, transaction, format and
+publication gaps. See [[../errors/reconciliation-accuracy-findings|accuracy findings]]. Until the
+high-severity boundaries are remediated, neither reconcile nor verify supports a 100% accuracy
+claim.

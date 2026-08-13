@@ -3,21 +3,18 @@ type: map
 tags:
   - knowledge/map
   - status/in-progress
-last_verified: 2026-08-12
-updated: 2026-08-12
+last_verified: 2026-08-13
+updated: 2026-08-13
 ---
 
 # Active work
 
-Active reconciliation audit:
-[[../tasks/reconciliation-max-accuracy-audit-v1|Максимальная точность сверки документов]].
-Scope: current production path, original/result workbook reconciliation, adversarial
-edge cases and knowledge refresh. ORDA allows eight total subagent launches in waves,
-with no more than three concurrent.
-
-Current result: real wrong-output finding RA-001 plus deterministic high/medium gaps are
-catalogued in [[../errors/reconciliation-accuracy-findings|reconciliation accuracy findings]].
-Only final test/knowledge/P6 synthesis remains; remediation is deliberately separate.
+No active verification implementation. Completed audit:
+[[../tasks/reconciliation-max-accuracy-audit-v1|Максимальная точность проверки и сверки]].
+Its open risks are catalogued in
+[[../errors/reconciliation-accuracy-findings|verification/reconciliation findings]]. Planned work
+is [[../tasks/admin-verification-accuracy-remediation|blocked on owner decisions]] for the numeric
+oracle and target-stage contract.
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 

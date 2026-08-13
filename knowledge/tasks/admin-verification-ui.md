@@ -25,3 +25,9 @@ dark mode, keyboard behavior, reduced motion and mobile layout.
 - Clean and failed outcomes render without manual-review controls; the latter
   offers the red-row workbook/ZIP.
 - Desktop/mobile browser smoke passed without console, page or external-request errors.
+
+## Post-acceptance audit
+
+The UI has no target-stage control and therefore relies on the server's silent `13.1` default.
+The owner must approve explicit selection, safe discovery or a documented strict default before
+accuracy remediation. See [[../errors/reconciliation-accuracy-findings|RA-017]].

@@ -2,8 +2,8 @@
 type: index
 tags:
   - knowledge/index
-last_verified: 2026-08-04
-updated: 2026-08-04
+last_verified: 2026-08-13
+updated: 2026-08-13
 ---
 
 # Project knowledge index
@@ -32,8 +32,11 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[maps/active-work|Active work]] — live task links.
 - [[DECISIONS]] — accepted cross-cutting decisions.
 - [[components/reconciliation|Сверка документов]] — authoritative reconciliation component.
-- [[tasks/reconciliation-max-accuracy-audit-v1|Аудит максимальной точности сверки]] — active code/data/output audit.
+- [[components/document-verification|Проверка документов]] — actual `/` verification verdict and red-row artifact path.
+- [[tasks/reconciliation-max-accuracy-audit-v1|Аудит максимальной точности]] — completed code/data/output audit.
 - [[errors/reconciliation-accuracy-findings|Ошибки точности сверки]] — evidence-backed error catalog and remediation gates.
+- [[tasks/admin-verification-accuracy-remediation|Ремедиация проверки]] — draft blocked on two owner decisions.
+- [[research/propextract-methods-2026-08-13|PropExtract methods]] — external commit-pinned methodology comparison; no code reuse.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 - [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.
 

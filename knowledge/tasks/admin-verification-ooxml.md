@@ -27,3 +27,10 @@ bytes unchanged, reject signed/unsafe packages, and never mutate the source.
 - Missing/cellless rows, signed packages, duplicate/unsafe entries and clobber
   attempts fail closed.
 - Office namespace declarations and `mc:Ignorable` survive unchanged.
+
+## Post-acceptance audit
+
+The 2026-08-13 representative corpus invalidates the earlier real-workbook readiness implication.
+All 12 workbooks contain mixed self-closing/paired `cellXfs` children that the raw regex combines,
+so annotation raises `STYLES_MISSING`. Multi-source cleanup also lacks output ownership. See
+[[../errors/reconciliation-accuracy-findings|RA-015/RA-018]].

@@ -2,8 +2,8 @@
 type: decisions
 tags:
   - knowledge/decision
-last_verified: 2026-08-03
-updated: 2026-08-03
+last_verified: 2026-08-13
+updated: 2026-08-13
 ---
 
 # Decisions
@@ -69,3 +69,30 @@ snapshot, а replay выполняется только по точному norm
 регрессия 2026-08-03.
 Связанные карточки: [[components/drawing-card]],
 [[tasks/drawing-card-contract-check-rag-plan]].
+
+## DO-015: claims проверки и сверки разделяются (2026-08-13)
+
+Пользовательская «Проверка документов» (`operation=verify`) и соседняя авторитетная сверка с
+записью target J/K (`operation=reconcile`) считаются разными контрактами. Выводы о корректной
+Decimal-арифметике или verified target output режима `reconcile` не доказывают точность verdict
+или красной разметки `verify`. Текущий `verify` нельзя описывать как числовое сравнение либо как
+100%-точную проверку: числового oracle нет, а реальные ingestion/writer/stage дефекты открыты.
+
+Эта запись не выбирает будущую бизнес-семантику. Определение числового равенства и способ выбора
+этапа остаются owner-gates до новой реализации. Связанные карточки:
+[[components/document-verification]], [[tasks/reconciliation-max-accuracy-audit-v1]],
+[[errors/reconciliation-accuracy-findings]],
+[[tasks/admin-verification-accuracy-remediation]].
+
+## DO-016: PropExtract используется только как источник методик (2026-08-13)
+
+Публичный проект PropExtract можно использовать при анализе `operation=verify` как внешний
+сравнительный источник методик: exact-or-ambiguous identity, field-level provenance,
+order-independent consensus, narrow normalization, staged workbook validation и adversarial
+permutation tests. Его предметные RNS/PDF/OCR-правила не переносятся автоматически.
+
+На проверенном commit отсутствует верхнеуровневая лицензия приложения, поэтому код, тесты и
+fixtures не копируются. Любое code reuse требует отдельного разрешения правообладателя/лицензии;
+новая реализация должна быть независимой. Связанная карточка:
+[[research/propextract-methods-2026-08-13]],
+[[tasks/admin-verification-accuracy-remediation]].

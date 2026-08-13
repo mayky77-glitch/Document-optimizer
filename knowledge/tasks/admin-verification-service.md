@@ -27,3 +27,11 @@ failure for unreadable/partial inputs.
   submitted source workbook once; technical failures never appear as a clean result.
 - Safe basenames are limited to repair guidance; paths, sheets, coordinates,
   values and formulas remain private.
+
+## Post-acceptance audit
+
+The 2026-08-13 real-workbook audit supersedes the former accuracy/release implication while
+preserving this historical implementation record. Verification currently proves package/feedback
+classification, not numeric equality; an empty target-stage catalog is accepted and turns all
+visible rows into failures. See [[../components/document-verification|current component contract]]
+and [[../errors/reconciliation-accuracy-findings|RA-014/RA-017]].

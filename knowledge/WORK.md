@@ -3,24 +3,25 @@ type: work
 tags:
   - knowledge/component
   - domain/document-processing
-  - status/in-progress
-last_verified: 2026-08-12
-updated: 2026-08-12
+  - status/done
+last_verified: 2026-08-13
+updated: 2026-08-13
 ---
 
 # Work
 
 ## Current
 
-- [[tasks/reconciliation-max-accuracy-audit-v1|Maximum-accuracy reconciliation audit]]:
-  synthesis/final review remains. Production tracing, representative original/result workbook
-  comparison and adversarial waves are complete. [[errors/reconciliation-accuracy-findings|RA-001]]
-  proves a cumulative source can be classified as KS-2 and write contract values instead.
-- Integration owner keeps production code unchanged during diagnosis. Any remediation needs
-  a separate bounded card after a reproducible correctness finding.
+- No verification remediation is active. The owner must first decide what numeric correctness
+  means and how target stage is selected; see
+  [[tasks/admin-verification-accuracy-remediation|planned remediation]].
 
 ## Completed context
 
+- [[tasks/reconciliation-max-accuracy-audit-v1|Maximum-accuracy verification/reconciliation
+  audit]] completed without production changes. It independently compared immutable workbook
+  copies, rejected the 100% accuracy claim and catalogued RA-001 through RA-018 in
+  [[errors/reconciliation-accuracy-findings|the evidence-backed handoff]].
 - [[tasks/reconciliation-global-batch-review-v5-final|Global batch review v5]] established
   authoritative row/group/package decisions and verified XLSX publication.
 - [[tasks/reconciliation-real-data-resilience-v4-final|Real-data resilience v4]] established
@@ -28,5 +29,5 @@ updated: 2026-08-12
 
 ## Next executable step
 
-Run the full suite and independent P6 review. Then open a separate remediation wave beginning
-with RA-001, exact unit/package safety, exact-once and restart/transaction boundaries.
+Obtain owner decisions for RA-014 and RA-017, then freeze a separate remediation Gate 0 beginning
+with structural ingestion and a guaranteed real-workbook verification artifact.

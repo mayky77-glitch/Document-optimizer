@@ -1,13 +1,13 @@
 ---
 type: error-catalog
-status: in_progress
+status: open
 tags:
   - knowledge/error
   - domain/document-processing
   - capability/admin-panel
   - risk/high
-last_verified: 2026-08-12
-updated: 2026-08-12
+last_verified: 2026-08-13
+updated: 2026-08-13
 source_paths:
   - src/report_processor/admin_panel/reconciliation_*
   - src/report_processor/reconciliation_grouping
@@ -16,135 +16,158 @@ source_paths:
   - src/report_processor/excel_writer
 ---
 
-# Reconciliation accuracy findings
+# Reconciliation and verification accuracy findings
 
-This catalog is the authoritative de-identified handoff for
-[[../tasks/reconciliation-max-accuracy-audit-v1|the active maximum-accuracy audit]].
-Code, tests and direct workbook evidence override this note.
+Authoritative de-identified handoff for
+[[../tasks/reconciliation-max-accuracy-audit-v1|the maximum-accuracy audit]]. Code, tests and
+direct workbook evidence override this note. The public `/` workflow is `operation=verify`;
+`operation=reconcile` is an adjacent calculation/write path. They share extraction, target
+interpretation, matching and grouping, but their outputs are different.
 
-## Finding matrix
+## User-facing verification findings
 
-| ID | Severity | Boundary | Deterministic result | Corpus exposure |
-| --- | --- | --- | --- | --- |
-| RA-001 | critical | source classification | cumulative KS-6a is selected as KS-2 and contract metrics reach output | confirmed in representative corpus |
-| RA-002 | high | source row boundary | a valid first data row can be skipped by fixed `leaf + 2` | synthetic; current corpus has number rows |
-| RA-003 | high | target index | trailing four-digit year can replace the document index | synthetic; absent in current target |
-| RA-004 | high | unit/package safety | mixed exact units or distinct unknown units can be mass-safe | synthetic |
-| RA-005 | high | decision persistence | mixed-scope autosave cannot restore on recreated state | synthetic |
-| RA-006 | high | lifecycle transaction | failed apply can persist feedback without a result | synthetic |
-| RA-007 | high | target format | `.xlsm` is accepted but selected writes fail; no-change output is mislabeled | synthetic contract path |
-| RA-008 | high | writer cleanup | post-publish failure can delete a concurrent replacement | synthetic |
-| RA-009 | high | exact-once calculation | one source row can contribute more than once | synthetic |
-| RA-010 | medium | target catalog | duplicate index/category silently overwrites the earlier target row | synthetic; absent in current target |
-| RA-011 | medium | formula cache | formula metrics without cached values disappear without a source issue | synthetic; none in audited metrics |
-| RA-012 | medium | service restart | ready results and review jobs are stranded after process restart | synthetic lifecycle |
-| RA-013 | medium | hard constraints | dangling negative-pair references are ignored | synthetic API contract; no current caller found |
+| ID | Severity | Boundary | Deterministic result |
+| --- | --- | --- | --- |
+| RA-014 | critical decision gate | verification meaning | `passed` proves classification/feedback only; source and target numbers are never compared |
+| RA-001 | high | source classification | one real cumulative source becomes KS-2; 13 rows are checked instead of 3 visible cumulative rows and 10 rows are falsely red |
+| RA-015 | high | red-row writer | all 12 representative real workbooks fail annotation with `STYLES_MISSING` |
+| RA-017 | high | target stage | UI silently uses `13.1`; an absent stage yields an empty catalog and makes every visible row fail |
+| RA-002 | high | source row boundary | a valid first data row can be skipped by fixed `leaf + 2` |
+| RA-003 | high | target index | a trailing four-digit year can replace the document index and change matching |
+| RA-004 | high | unit/package safety | mixed exact units or distinct unknown units can be mass-safe |
+| RA-011 | high | formula cache | formula metrics without cached values disappear from checked/failed coverage |
+| RA-018 | high | multi-source publication | failure cleanup can delete a pre-existing ZIP or deterministic temporary workbook |
+| RA-012 | medium | service restart | ready results and in-memory job metadata are stranded after restart/pruning |
+| RA-016 | medium | duplicate uploads | equal bytes under different names are counted and annotated twice |
 
-## RA-001 — cumulative source selected as contract-detail source
+## Adjacent reconciliation-only or latent findings
 
-### Root cause
+| ID | Severity | Boundary | Scope |
+| --- | --- | --- | --- |
+| RA-005 | medium latent | mixed-scope autosave restore | not reached by a normal fresh verify job |
+| RA-006 | high | feedback/output transaction | `reconcile` apply only; failed apply can persist feedback without a result |
+| RA-007 | high | target `.xlsm` | selected target writes fail; no-change output has a misleading `.xlsx` extension |
+| RA-008 | high | numeric writer cleanup | concurrent replacement can be deleted after a post-publish failure |
+| RA-009 | high | exact-once calculation | accepted source identity can contribute more than once to target arithmetic |
+| RA-010 | medium | duplicate target category | last-write-wins can bind the wrong target row; verify impact is indirect |
+| RA-013 | low latent | negative-pair API | dangling endpoints are ignored; no current production caller found |
 
-`_extract_ks6a_rows` recognizes only a work header containing `наименование этапа`.
-One structurally cumulative workbook instead uses a valid work/cost wording. Its explicit
-`выполнено за весь период` anchor and adjacent cumulative quantity/cost leaves are present,
-but the KS-6a extractor returns no rows. `_extract_one` then falls back to the generic KS-2
-extractor, which binds an earlier contract quantity/cost pair and also accepts a displayed
-column-number row as data.
+RA-016 is high for `reconcile`: duplicate physical inputs acquire distinct technical row IDs and
+can double financial contribution. It is medium for `verify`: checked/failed counts and output
+members are duplicated, but the original bytes are not changed.
 
-### Reproduction and effect
+## RA-014 — verification is not a numeric reconciliation
 
-- Production selection: `ks2`, 13 rows, no issue.
-- Correct cumulative interpretation: 12 rows.
-- Fallback totals: quantity `744.685`, cost `5,219,927` RUB.
-- Cumulative totals: quantity `171.47`, cost `311,553.59` RUB.
-- An isolated authoritative apply accepted one affected row. The source contract pair was
-  `32` and `2,874,875` RUB while its cumulative pair was `0` and `0`; the result published
-  `32.00` and `7.76` million RUB in the target cells.
+`verify_reconciliation` declares a row correct when the newest authoritative decision accepts it
+or its group belongs to a `DecisionPackage.safe`. Quantity and cost affect zero-row partitioning
+and mode selection, but are never compared with target J/K or any target numeric field. A
+deterministic real function repro passed a safe row containing deliberately extreme, contradictory
+quantity/cost values. The exact success message nevertheless says that all documents were checked
+and no errors found.
 
-This is direct wrong-output evidence and blocks any 100% accuracy claim.
+This matches the historical implementation contract in
+[[../tasks/admin-verification-service|admin verification v1]], so it is not an accidental
+branch deviation. It is a product-semantic gap. Before implementation, the owner must define
+whether “Проверка документов” means classification/membership only or numeric document equality.
+If numeric correctness is intended, define authoritative source/target measures, units,
+coefficients, aggregation level, Decimal rounding and tolerances; `passed` must be unavailable
+until that oracle succeeds.
 
-### Safe fix contract
+## RA-001 — wrong real source layout changes verification
 
-Evaluate structural layout candidates instead of first-success token matching. A cumulative
-candidate needs a normalized work-header alias, strict unit header, explicit cumulative anchor
-and adjacent quantity/total-cost leaves bound to that anchor region. Find the first detail row
-semantically (nonnumeric work, textual unit, finite pair), skipping display-number rows. A valid
-cumulative candidate wins over a generic KS-2 pair; incompatible multiple candidates fail with
-a controlled ambiguity. Add a regression with the alternate header, distant cumulative pair,
-number row, exact 12-row result and cumulative totals.
+`_extract_ks6a_rows` recognizes only a work header containing `наименование этапа`. A real
+structurally cumulative workbook uses another valid work/cost wording and contains an explicit
+`выполнено за весь период` anchor, but the extractor falls through to generic KS-2. It binds an
+earlier contract pair and accepts the displayed column-number row as data.
 
-## RA-002/003/010/011 — ingestion and target guards
+With identical source bytes, target, stage, feedback and downstream production logic:
 
-- `leaf_row + 2` silently drops the first data row when a two-row merged header has no number
-  row. Changing it blindly to `+1` would ingest number rows in the current corpus; the start
-  boundary must use the semantic detail predicate from RA-001.
-- `terminal_index` chooses the final four-digit run, so an index followed by a year resolves to
-  the year. Use the canonical document-index parser and reject ambiguity/year-only values.
-- `_catalog` uses last-write-wins for duplicate `(index, category)`. Fail closed until a stable
-  row-identity policy is owner-approved.
-- Source workbooks are opened `data_only=True`; a formula metric without a cache becomes `None`
-  and the row is skipped. Inspect formula/cache views together and surface a controlled issue.
+- current runtime selected KS-2: 13 canonical, checked and failed rows;
+- independently bound cumulative layout selected KS-6a: 12 canonical rows, of which 3 non-zero
+  rows were checked and failed;
+- the red-row sets overlap on 3 rows; current runtime adds 10 false red rows;
+- source and target digests stayed unchanged; the audit-only successful result changed only
+  `xl/styles.xml` and one worksheet part, while formulas and values stayed identical.
 
-## RA-004/013 — grouping safety
+Production cannot currently return that real red workbook because RA-015 fails first. In adjacent
+`reconcile`, an isolated authoritative apply proved the same fallback can write contract values
+instead of cumulative values to target J/K. Thus RA-001 is critical for reconcile and high for
+verify.
 
-Mass-safe packaging uses unit family, not exact normalized unit. `м` and `км` can be accepted
-together; calculation then drops mismatched quantity while still applying cost. Distinct
-unrecognized units also collapse to `UNKNOWN` and can be mass-safe. Safe `quantity_cost`
-packages need one exact normalized unit or an explicit tested conversion contract; unknown
-units stay manual. Constraint validation must also reject negative-pair endpoints absent from
-the materialized group set.
+Safe remediation: evaluate structural candidates, accept normalized work-header aliases, bind
+quantity/total-cost leaves to the cumulative anchor, find the first detail row semantically, and
+fail controlled ambiguity rather than silently fall back. Regression must assert cumulative
+precedence, the exact canonical set and no number-row ingestion.
 
-## RA-005/006/012 — decisions and lifecycle
+## RA-015/018 — verification publication is not real-workbook safe
 
-- Saved group/row versions include all decision maps. Restore validates those versions before
-  installing saved package/family maps, so valid mixed-scope snapshots look stale and are
-  discarded. Validate a prospective complete snapshot and install it atomically.
-- Apply orders output creation, feedback commit, output chmod and ready state. A failure after
-  feedback commit removes the output but leaves durable feedback. Finalize/verify permissions
-  before publishing feedback, or use an application transaction with compensation.
-- Jobs exist only in memory. A new service instance cannot download an on-disk ready result or
-  reach a review autosave, and no retry route exists. Add a durable minimal manifest/recovery
-  contract or explicitly remove restart expectations and orphaned directories.
+`row_annotations._xml_children` uses one greedy regex for self-closing and paired `xf` children.
+A self-closing `<xf/>` can be consumed together with the following `<xf>...</xf>`, so the raw
+child count differs from namespace-aware `ElementTree`. Every one of the 12 representative source
+workbooks has this shape and deterministically raises `STYLES_MISSING: cellXfs structure`; the
+service exposes only generic `PROCESSING_FAILED` and deletes the job directory. Existing tests use
+simple generated styles and omit mixed `<xf/><xf>...</xf>` adjacency.
 
-## RA-007/008 — publication contract
+Fix the raw child scanner without reserializing unrelated OOXML, add a direct two-style regression
+and a de-identified real-structure integration fixture. Reopen/parse the patched package before
+publish and project a controlled repair issue rather than a generic failure.
 
-- Reconciliation upload accepts a target `.xlsm` and review can be prepared, but selected apply
-  calls a writer that accepts only `.xlsx`, producing `INVALID_SOURCE`. No-selected apply copies
-  macro-enabled bytes into `result.xlsx`, creating an extension/content-type mismatch. Until a
-  macro/VBA/signature-safe output contract exists, fail closed for target `.xlsm` at upload.
-- After publishing an XLSX, writer cleanup unlinks the output on reopen failure using only a
-  boolean flag. If another actor replaced the path, that replacement is deleted. Capture the
-  published inode and unlink only if identity still matches.
+For multiple sources, `_write_artifact` opens the final ZIP with mode `x` and then unconditionally
+unlinks that path on any exception. A pre-existing output can therefore be deleted after
+`FileExistsError`. Deterministic `verification-source-NN` cleanup has the same ownership flaw.
+Use unique private temporary paths plus no-clobber publication, and delete only identities created
+by the current attempt.
 
-## RA-009 — exact-once boundary
+## RA-017 — hidden stage can create false failures
 
-Matching/calculation does not globally reserve selected `source_row_id`. One source can be
-selected for two targets, and distinct candidate IDs for the same source can be selected inside
-one match. Both paths duplicate arithmetic. Quality control can detect one downstream shape,
-but authoritative admin apply calls calculation and then writer with `ALLOW_WRITE` without QC.
-Reject duplicate selected source identity before calculation/write and cover both shapes.
+The verification form has no stage control and posts only files plus `operation=verify`; the server
+defaults a missing field to `13.1`. On the representative target, `13.1` selected 87 target rows,
+while a missing-stage probe selected zero. An empty selection is not a target error: review state
+is created with zero categories/proposals/safe groups, so all 13 visible source rows fail as if the
+documents were wrong.
+
+The owner must choose a stage contract: explicit user selection, safe discovery of one unambiguous
+stage, or a clearly documented strict default. Zero or ambiguous target scope must be a controlled
+input error before row verdicts are produced.
+
+## RA-002/003/004/011/016 — shared correctness guards
+
+- Replace fixed `leaf + 2` with the same semantic detail predicate required by RA-001; blindly
+  using `+1` would ingest number rows in other workbooks.
+- Use the canonical document-index parser for target rows and reject ambiguity/year-only values.
+- Safe quantity packages need one exact normalized unit or an explicit tested conversion; UNKNOWN
+  units remain manual.
+- Inspect formula and cached-value views together. An eligible formula without a cache must create
+  a controlled source issue, not silently reduce checked coverage.
+- Reject duplicate source SHA before job creation (recommended) or define explicit deduplication
+  and checked-file semantics. Two equal uploads currently produce 26 rows and 13 two-member groups
+  from a 13-row source.
+
+## Reconcile-specific integrity gaps
+
+- RA-005: validate a complete prospective decision snapshot and install it atomically.
+- RA-006: publish and verify output before feedback commit, or compensate transactionally.
+- RA-007: reject target `.xlsm` until macro/VBA/signature-safe selected and no-change contracts exist.
+- RA-008: unlink post-publish output only while its captured inode still matches.
+- RA-009: globally reserve selected physical source identity before calculation/write.
+- RA-010: fail closed on duplicate `(index, category)` until stable target-row identity is approved.
+- RA-013: reject negative-pair endpoints absent from the materialized group set or remove the inert API.
 
 ## Verified positive boundaries
 
-- Representative run kept all 12 inputs byte-identical and produced one verified result.
-- One independently traced unaffected row used cumulative formula caches `20.26398` and
-  `1,807,448.33` RUB; coefficient `2.7` published `20.26` and `4.88` million RUB.
-- Target/result comparison found exactly two non-formula value changes in the accepted row.
-  All 94 original target formulas were materialized as numeric values, with only calc-chain
-  package metadata removed as designed.
-- The audited target has 87 unique `(index, category)` keys, no duplicate keys and no ambiguous
-  four-digit index rows.
-- Audited metric cells contained 30,755 formulas with cached numeric values and zero missing
-  caches. This does not excuse RA-001: formula counting is not structural source classification.
+- Representative source and target inputs remained byte-identical through every audit run.
+- One independently traced unaffected cumulative row preserved formula caches and exact Decimal
+  coefficient/rounding behavior through the verified adjacent reconcile output.
+- The successful audit-only red annotation changed only styles and the intended worksheet part;
+  all cell formulas, values and data types remained identical.
+- Focused and full regression suites are green, but real-data verification tests are opt-in and the
+  unit fixtures do not cover the failing real style structure or alternate cumulative header.
 
-## Regression suite required for remediation
+## Remediation order
 
-1. Real-layout KS-6a alias/cumulative precedence and semantic data start.
-2. Formula-without-cache controlled issue.
-3. Ambiguous/year index and duplicate catalog fail-closed.
-4. Exact normalized unit and UNKNOWN-unit mass-safety rejection.
-5. Global selected source exact-once.
-6. Mixed-scope autosave restore and service restart recovery.
-7. Post-commit feedback failure compensation.
-8. `.xlsm` selected/no-selected target behavior.
-9. Concurrent replacement survival during writer cleanup.
+1. Owner decisions: RA-014 numeric meaning and RA-017 stage selection.
+2. Fail-closed ingestion: RA-001, RA-002, RA-003 and RA-011.
+3. Guaranteed safe artifact: RA-015 and RA-018.
+4. Unit and duplicate boundaries: RA-004 and RA-016.
+5. Adjacent reconcile exact-once/transaction/publication: RA-006 through RA-010.
+6. Restart recovery and latent contracts: RA-005, RA-012 and RA-013.

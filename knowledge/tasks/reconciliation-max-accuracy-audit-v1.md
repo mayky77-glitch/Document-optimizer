@@ -1,6 +1,6 @@
 ---
 type: task
-status: in_progress
+status: done
 card_id: reconciliation-max-accuracy-audit-v1
 version: 1
 work_id: reconciliation-max-accuracy-audit-v1
@@ -16,7 +16,7 @@ reasoning_effort: medium
 launch_status: confirmed
 actual_model: gpt-5.6-sol
 actual_reasoning_effort: medium
-source_base_sha: 8d87a2c96ec3a26b3263cbff157755d18d07ec05
+source_base_sha: 7aa8d30e5abbd49b6d5b9e76b03122c0f447f51e
 write_scope: []
 source_paths:
   - src/report_processor/admin_panel/reconciliation_*
@@ -37,12 +37,13 @@ links:
   - "[[../ORCHESTRATION|Orchestration]]"
 ---
 
-# Аудит максимальной точности сверки
+# Аудит максимальной точности проверки и сверки
 
 ## Objective
 
-Map the exact production algorithm, compare original/target/result workbooks independently,
-enumerate edge cases, reproduce every material risk and leave a compact evidence-backed handoff.
+Map the exact user-facing verification algorithm and adjacent reconciliation path, compare
+original/target/result workbooks independently, reproduce every material risk and leave a compact
+evidence-backed handoff.
 
 ## Scope and invariants
 
@@ -52,36 +53,45 @@ enumerate edge cases, reproduce every material risk and leave a compact evidence
 - Code, tests and direct cell/formula inspection override historical notes.
 - Use Code Graph before manual code search and the spreadsheet runtime for direct workbook inspection.
 
-## Current evidence
+## Final evidence
 
-- Canonical local/remote `main`: `30eeafade56658d46a022eae00f5cf59928a3a55`.
-- Code Graph exposed the production chain through `prepare_review`, `_sources`,
-  `apply_overrides`, `calculate_matches`, `writer_calculations` and verified publication.
-- Baseline: `327 passed, 3 skipped`; real-data checks are environment-gated and require
-  independent local evidence.
+- Audited product SHA: `7aa8d30e5abbd49b6d5b9e76b03122c0f447f51e`; production code was not changed.
+- Code Graph exposed both shared and adjacent paths before its root transport later closed.
+- Full gate: `1667 passed, 25 skipped`; focused reconciliation gate: `327 passed, 3 skipped`;
+  final verification/writer/API gate: `35 passed`.
 
 Representative de-identified run: 12 sources, 2,953 extracted rows, 989 visible rows,
 250 groups, 211 packages and a verified result. One unaffected row independently traced the
 original cumulative formula caches through Decimal arithmetic to the exact two changed target
-cells. Direct audit then found RA-001: one cumulative workbook was silently selected as KS-2,
-using contract metrics and producing a demonstrably wrong authoritative output when accepted.
-See [[../errors/reconciliation-accuracy-findings|finding catalog]].
+cells in adjacent `reconcile`.
 
-## Risks to resolve
+The user-facing `/` route is `operation=verify`: it never writes target J/K and never compares
+source quantity/cost with target numeric values. Direct verification audit found four release
+blockers: RA-014 missing numeric oracle, RA-001 wrong real layout with 10 false red rows, RA-015
+real-workbook annotation failure across all 12 sources and RA-017 hidden-stage false failures.
+See [[../errors/reconciliation-accuracy-findings|finding catalog]] and
+[[../components/document-verification|verification component]].
+
+## Unresolved risks
 
 - Cached formula values, merged/multi-row headers, duplicate categories and ambiguous indices.
 - Decimal/rounding, quantity-versus-cost modes, zero/negative/non-finite values and unit drift.
 - Group/package membership, stale decisions, feedback replay and concurrency/restart behavior.
 - OOXML preservation, target addressing, unchanged-copy identity and result verification gaps.
 
-## Acceptance
+## Acceptance result
 
-- Every algorithm stage has source/test evidence and an explicit invariant/result.
-- At least one representative private corpus is independently reconciled from originals to output.
-- Material gaps have a deterministic reproduction and severity; no claim of 100% accuracy without evidence.
-- Focused and full gates, knowledge validation, final P6 review and clean scoped Git status pass.
+- Every material stage has source/test/runtime evidence and a scoped `verify`/`reconcile` result.
+- Representative private inputs were inspected independently; their digests remained unchanged.
+- Material gaps have deterministic reproductions and severity; 100% accuracy is explicitly rejected.
+- Independent P6 review rejected release accuracy claims and supplied a must-fix order.
+- External [[../research/propextract-methods-2026-08-13|PropExtract]] comparison contributed
+  commit-pinned methodology only; no external code or fixtures entered the repository.
+- Focused and full product gates pass. Global knowledge validation remains blocked by historical
+  schema debt unrelated to this audit; the audit's own link/card defects were corrected.
 
-## Next step
+## Handoff
 
-Run the full suite and independent P6 synthesis, then hand off a prioritized remediation wave.
-Production code remains unchanged in this diagnostic task.
+Production code remains unchanged. Start
+[[admin-verification-accuracy-remediation|the remediation card]] only after the owner defines the
+meaning of numeric correctness and the target-stage selection contract.
