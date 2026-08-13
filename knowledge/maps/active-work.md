@@ -9,12 +9,12 @@ updated: 2026-08-13
 
 # Active work
 
-No active verification implementation. Completed audit:
-[[../tasks/reconciliation-max-accuracy-audit-v1|Максимальная точность проверки и сверки]].
-Its open risks are catalogued in
-[[../errors/reconciliation-accuracy-findings|verification/reconciliation findings]]. Planned work
-is [[../tasks/admin-verification-accuracy-remediation|blocked on owner decisions]] for the numeric
-oracle and target-stage contract.
+Active verification implementation:
+[[../tasks/admin-verification-accuracy-remediation|Accuracy remediation]] with
+[[../tasks/admin-verification-remediation-gate0|frozen ORDO Gate 0]]. Owner decisions for numeric
+J/K verification and target-stage selection are accepted. Completed discovery audit:
+[[../tasks/reconciliation-max-accuracy-audit-v1|Максимальная точность проверки и сверки]]; findings
+remain tracked in [[../errors/reconciliation-accuracy-findings|RA-001—RA-018]] until verified closed.
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 

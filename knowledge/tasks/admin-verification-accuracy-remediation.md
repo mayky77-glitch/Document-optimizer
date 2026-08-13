@@ -1,24 +1,24 @@
 ---
 type: task
-status: draft
+status: in_progress
 card_id: admin-verification-accuracy-remediation
-version: 1
+version: 2
 work_id: admin-verification-accuracy-remediation-v1
 task_id: integration
 purpose: Remediate evidence-backed verification accuracy and publication failures after owner decisions.
 role: worker
 agent_role: orchestrator
-owner: unassigned
+owner: integration-owner
 profile: L3
 routing_grade: P6
 assigned_model: gpt-5.6-sol
 reasoning_effort: high
 launch_status: planned
-source_base_sha: 7aa8d30e5abbd49b6d5b9e76b03122c0f447f51e
+source_base_sha: dc2c32131face777f4cd3f4e121181e609154ed8
 write_scope: []
 tags:
   - task/planning
-  - status/draft
+  - status/in-progress
   - domain/document-processing
   - capability/admin-panel
   - risk/high
@@ -30,22 +30,15 @@ links:
 
 # Verification accuracy remediation
 
-No production work starts from this card until the owner answers two product questions:
+Owner decisions are accepted in [[../DECISIONS#DO-017: «Проверка документов» получает числовой oracle (2026-08-13)|DO-017]]
+and [[../DECISIONS#DO-018: этап цели выбирается без скрытого значения (2026-08-13)|DO-018]].
+Implementation uses dependency waves frozen by
+[[admin-verification-remediation-gate0|Gate 0]]:
 
-1. Does “Проверка документов” promise numeric quantity/cost equality, or only recognized
-   classification/membership? If numeric, approve measures, aggregation, unit conversions,
-   coefficients, rounding and tolerance.
-2. How is target stage selected: explicit UI choice, safe single-stage discovery, or strict default?
-
-After those decisions, use dependency waves:
-
-- Wave 1: structural source candidate selection, semantic data start, dual formula/cache guard,
-  canonical target index and empty/ambiguous target-scope rejection.
-- Wave 2: numeric oracle (if approved), exact-unit safe boundary and duplicate-SHA policy.
-- Wave 3: robust raw OOXML style child scan, post-patch reopen and ownership-safe multi-source ZIP
-  publication.
-- Wave 4: real-layout regression fixtures, representative private shadow run, focused/full gates
-  and independent P6 acceptance.
+- Wave 1: structural source/target safety, grouping/state safety, and OOXML/ZIP publication.
+- Wave 2: numeric oracle plus stage/API/UI integration and adjacent target-writer safety.
+- A separate accepted integration SHA opens lifecycle/transaction remediation for remaining
+  adjacent `reconcile` findings, then real-layout shadow checks and independent P6 acceptance.
 
 Use [[../research/propextract-methods-2026-08-13|PropExtract]] only as a methodology reference:
 exact-or-ambiguous identity, field-level provenance, order-independent consensus, staged workbook

@@ -101,3 +101,36 @@ fixtures не копируются. Любое code reuse требует отд�
 новая реализация должна быть независимой. Связанная карточка:
 [[research/propextract-methods-2026-08-13]],
 [[tasks/admin-verification-accuracy-remediation]].
+
+## DO-017: «Проверка документов» получает числовой oracle (2026-08-13)
+
+Владелец подтвердил числовую семантику проверки и разрешил исправить весь каталог
+RA-001—RA-018. Авторизация сопоставления через safe package либо явное review-решение больше не
+является достаточным условием `passed`: она только выбирает целевую строку и режим. После этого
+проверка агрегирует все разрешённые source contributions на одну физическую target row и повторно
+использует существующие `calculate_matches()` и `writer_calculations()`.
+
+KS-2 сравнивает current-period quantity/cost, KS-6a — распознанные cumulative quantity/cost,
+которые уже являются авторитетной мерой этого source contract. Цель — J/K выбранного этапа.
+Количество и стоимость суммируются как finite `Decimal`, затем применяются существующие
+`ROUND_HALF_UP`, coefficient/rule-set и writer scale: J с точностью target writer, K в миллионах
+рублей с точностью target writer. Равенство точное после этой общей квантизации; отдельный epsilon
+запрещён. `cost_only` проверяет только K. Quantity требует точного совпадения нормализованных
+единиц; автоматические конверсии запрещены. Неоднозначность, неизвестная единица, пропущенный
+formula cache или non-finite value не дают `passed`.
+
+Связанные карточки: [[components/document-verification]],
+[[tasks/admin-verification-accuracy-remediation]],
+[[tasks/admin-verification-remediation-gate0]].
+
+## DO-018: этап цели выбирается без скрытого значения (2026-08-13)
+
+Если этап не передан, система автоматически выбирает его только когда в целевой книге найден ровно
+один непустой этап с валидными target rows. Ноль этапов даёт управляемый `not_found`, несколько —
+`selection_required`; проверка не создаёт красный отчёт и не считает строки ошибочными. Явно
+переданный этап обязан существовать и содержать валидные target rows. Скрытый fallback `13.1`
+удаляется. UI показывает выбор только когда он нужен.
+
+Связанные карточки: [[components/document-verification]],
+[[tasks/admin-verification-accuracy-remediation]],
+[[tasks/admin-verification-remediation-gate0]].

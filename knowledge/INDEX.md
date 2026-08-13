@@ -35,7 +35,8 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[components/document-verification|Проверка документов]] — actual `/` verification verdict and red-row artifact path.
 - [[tasks/reconciliation-max-accuracy-audit-v1|Аудит максимальной точности]] — completed code/data/output audit.
 - [[errors/reconciliation-accuracy-findings|Ошибки точности сверки]] — evidence-backed error catalog and remediation gates.
-- [[tasks/admin-verification-accuracy-remediation|Ремедиация проверки]] — draft blocked on two owner decisions.
+- [[tasks/admin-verification-accuracy-remediation|Ремедиация проверки]] — active numeric/stage and integrity work.
+- [[tasks/admin-verification-remediation-gate0|Verification remediation Gate 0]] — frozen dependency waves and acceptance.
 - [[research/propextract-methods-2026-08-13|PropExtract methods]] — external commit-pinned methodology comparison; no code reuse.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 - [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.

@@ -3,7 +3,7 @@ type: work
 tags:
   - knowledge/component
   - domain/document-processing
-  - status/done
+  - status/in-progress
 last_verified: 2026-08-13
 updated: 2026-08-13
 ---
@@ -12,9 +12,12 @@ updated: 2026-08-13
 
 ## Current
 
-- No verification remediation is active. The owner must first decide what numeric correctness
-  means and how target stage is selected; see
-  [[tasks/admin-verification-accuracy-remediation|planned remediation]].
+- [[tasks/admin-verification-accuracy-remediation|Verification accuracy remediation]] is active.
+  Owner approved a numeric J/K oracle and automatic single-stage selection in
+  [[DECISIONS#DO-017: «Проверка документов» получает числовой oracle (2026-08-13)|DO-017]] and
+  [[DECISIONS#DO-018: этап цели выбирается без скрытого значения (2026-08-13)|DO-018]].
+- [[tasks/admin-verification-remediation-gate0|Gate 0]] freezes dependency waves, private-data
+  boundaries and exact acceptance gates. Baseline at `dc2c321` is `1667 passed, 25 skipped`.
 
 ## Completed context
 
@@ -29,5 +32,5 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Obtain owner decisions for RA-014 and RA-017, then freeze a separate remediation Gate 0 beginning
-with structural ingestion and a guaranteed real-workbook verification artifact.
+Publish the Gate 0 planning SHA, run Wave 1 in three non-overlapping worktrees, integrate with
+`--no-ff`, then open the numeric/stage wave only from the accepted integration SHA.
