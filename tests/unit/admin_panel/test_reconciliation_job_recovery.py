@@ -182,6 +182,20 @@ def test_get_result_rejects_replacement_after_ready_recovery(tmp_path: Path) -> 
     assert restored.output.read_bytes() == b"replacement"
 
 
+def test_ready_manifest_without_result_name_is_not_recovered(tmp_path: Path) -> None:
+    service = _ready_service(tmp_path / "jobs")
+    job = _ready_job(service)
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    manifest.pop("result_name")
+    service._job_store.save(job.job_id, manifest)
+
+    recovered = AdminPanelService(tmp_path / "jobs")
+
+    with pytest.raises(KeyError):
+        recovered.get_job(job.job_id)
+
+
 def test_interrupted_apply_fails_closed_without_a_download(tmp_path: Path) -> None:
     service = _ready_service(tmp_path / "jobs")
     job = _ready_job(service)
