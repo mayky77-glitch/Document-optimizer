@@ -151,3 +151,14 @@ def test_delete_only_removes_manifest_not_job_artifacts(tmp_path: Path) -> None:
     assert store.delete("job_01") is True
     assert artifact.read_bytes() == b"private"
     assert store.load("job_01") is None
+
+
+def test_expected_contract_is_selectable_without_changing_drawing_card_default(
+    tmp_path: Path,
+) -> None:
+    store = DrawingCardJobStore(tmp_path / "private", expected_contract="OtherManifest-1.0")
+    other = {**_manifest(), "contract": "OtherManifest-1.0"}
+
+    assert store.save("-job_01", other) == other
+    assert store.load("-job_01") == other
+    assert DrawingCardJobStore(tmp_path / "private").load("-job_01") is None

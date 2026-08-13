@@ -26,7 +26,7 @@ MAX_MANIFEST_ITEMS = 10_000
 MAX_LOADED_JOBS = 1_024
 _ACTIVE_STATUSES = frozenset({"queued", "processing", "review_required"})
 
-_JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}\Z")
+_JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 _WINDOWS_ABSOLUTE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)")
 
 
@@ -38,7 +38,7 @@ class DrawingCardJobStore:
     with other jobs safely.
     """
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(self, workspace_root: Path, *, expected_contract: str = MANIFEST_CONTRACT) -> None:
         root = Path(workspace_root)
         if root.is_symlink():
             raise ValueError("workspace root cannot be a symlink")
@@ -47,11 +47,14 @@ class DrawingCardJobStore:
             raise ValueError("workspace root must be a directory")
         os.chmod(root, 0o700)
         self.workspace_root = root.resolve(strict=True)
+        if not isinstance(expected_contract, str) or not expected_contract:
+            raise ValueError("manifest contract is required")
+        self.expected_contract = expected_contract
 
     def save(self, job_id: str, manifest: Mapping[str, object]) -> dict[str, object]:
         """Validate and atomically persist one manifest, returning its safe copy."""
         safe_job_id = _validate_job_id(job_id)
-        normalized = _validate_manifest(manifest)
+        normalized = _validate_manifest(manifest, expected_contract=self.expected_contract)
         directory = self._job_directory(safe_job_id)
         directory.mkdir(mode=0o700, parents=False, exist_ok=True)
         if directory.is_symlink() or not directory.is_dir():
@@ -67,7 +70,7 @@ class DrawingCardJobStore:
             directory = self._job_directory(safe_job_id)
             if directory.is_symlink() or not directory.is_dir():
                 return None
-            return _read_manifest(directory / MANIFEST_FILENAME)
+            return _read_manifest(directory / MANIFEST_FILENAME, self.expected_contract)
         except ValueError:
             return None
 
@@ -82,7 +85,7 @@ class DrawingCardJobStore:
                     job_id = _validate_job_id(child.name)
                 except ValueError:
                     continue
-                manifest = _read_manifest(child / MANIFEST_FILENAME)
+                manifest = _read_manifest(child / MANIFEST_FILENAME, self.expected_contract)
                 if manifest is not None:
                     yield job_id, manifest
         except OSError:
@@ -172,11 +175,13 @@ def _retain_manifest(
     return item
 
 
-def _validate_manifest(value: Mapping[str, object]) -> dict[str, object]:
+def _validate_manifest(
+    value: Mapping[str, object], *, expected_contract: str = MANIFEST_CONTRACT
+) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError("manifest must be a mapping")
     normalized = _normalize_json(value, depth=0, path_context=False)
-    if not isinstance(normalized, dict) or normalized.get("contract") != MANIFEST_CONTRACT:
+    if not isinstance(normalized, dict) or normalized.get("contract") != expected_contract:
         raise ValueError("unsupported manifest contract")
     encoded = json.dumps(
         normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -237,7 +242,9 @@ def _looks_absolute(value: str) -> bool:
     return value.startswith("/") or bool(_WINDOWS_ABSOLUTE.match(value))
 
 
-def _read_manifest(path: Path) -> dict[str, object] | None:
+def _read_manifest(
+    path: Path, expected_contract: str = MANIFEST_CONTRACT
+) -> dict[str, object] | None:
     try:
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_MANIFEST_BYTES:
             return None
@@ -247,7 +254,7 @@ def _read_manifest(path: Path) -> dict[str, object] | None:
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, Mapping):
             return None
-        return _copy_manifest(_validate_manifest(payload))
+        return _copy_manifest(_validate_manifest(payload, expected_contract=expected_contract))
     except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
         return None
 
@@ -269,7 +276,9 @@ def _atomic_write(path: Path, manifest: Mapping[str, object]) -> None:
     )
     temporary = Path(temporary_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        # mkstemp already creates a private file; use pathname chmod so an
+        # output-descriptor hardening hook cannot affect persistence.
+        os.chmod(temporary, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(payload)
             stream.flush()

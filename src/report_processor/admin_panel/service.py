@@ -11,10 +11,12 @@ import stat
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from report_processor.domain.exceptions import ReportProcessorError
 
+from .drawing_card_job_store import DrawingCardJobStore
 from .presentation import journal_payload, processing_presentation
 from .reconciliation_execution import ReconciliationReviewResult, apply_review, prepare_review
 from .reconciliation_feedback_store import ReconciliationFeedbackStore
@@ -33,6 +35,10 @@ MAX_SOURCES = 32
 MAX_RETAINED_TERMINAL_JOBS = 64
 MAX_MANUAL_DISCREPANCY_DECISIONS = 5_000
 MAX_STAGE_OPTIONS = 64
+RECONCILIATION_MANIFEST_CONTRACT = "AdminReconciliationJobManifest-1.0"
+_RECOVERABLE_MANIFEST_STATUSES = frozenset(
+    {"ready", "review_required", "applying", "pending", "running"}
+)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -117,6 +123,10 @@ class AdminPanelService:
         self.workspace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.workspace_root, 0o700)
         self.feedback_store = ReconciliationFeedbackStore(self.workspace_root)
+        self._job_store = DrawingCardJobStore(
+            self.workspace_root, expected_contract=RECONCILIATION_MANIFEST_CONTRACT
+        )
+        self._recover_jobs()
 
     def create_job(
         self,
@@ -177,6 +187,7 @@ class AdminPanelService:
             )
             self.jobs[job_id] = job
             registered = True
+            self._persist_job(job)
             result = self.run(job_id)
             self._prune_terminal_jobs()
             return result
@@ -191,6 +202,7 @@ class AdminPanelService:
         if job.status not in {"pending", "failed"}:
             raise ValueError("job cannot be run from its current state")
         job.status = "running"
+        self._persist_job(job)
         try:
             if job.operation == "verify":
                 from .reconciliation_verification import verify_reconciliation
@@ -217,12 +229,17 @@ class AdminPanelService:
             job.status = "failed"
             job.errors = ("PROCESSING_FAILED",)
         if job.status == "failed":
+            self._job_store.delete(job.job_id)
             shutil.rmtree(job.directory, ignore_errors=True)
+        else:
+            self._persist_job(job)
         return job
 
     def get_job(self, job_id: str) -> AdminJob:
         if job_id not in self.jobs:
-            raise KeyError(job_id)
+            manifest = self._job_store.load(job_id)
+            if manifest is None or not self._recover_manifest(job_id, manifest):
+                raise KeyError(job_id)
         return self.jobs[job_id]
 
     def get(self, job_id: str) -> AdminJob:
@@ -263,7 +280,8 @@ class AdminPanelService:
             if job.review_state.unresolved_row_ids():
                 raise ValueError("authoritative review is incomplete")
             decisions = tuple(job.review_state.core_decisions())
-            job.status = "running"
+            job.status = "applying"
+            self._persist_job(job)
             owned_output: tuple[int, int] | None = None
             try:
                 apply_job = _materialize_apply_snapshot(job)
@@ -293,9 +311,11 @@ class AdminPanelService:
                 )
                 # No fallible I/O after the SQLite commit point.
                 job.output, job.result_name, job.status = output, "optimized-report.xlsx", "ready"
+                self._persist_job(job)
             except BaseException:
                 _remove_partial_output(job, owned_output)
                 job.status, job.errors = "failed", ("PROCESSING_FAILED",)
+                self._persist_job(job)
                 raise
             return job
 
@@ -335,6 +355,7 @@ class AdminPanelService:
             }
         )
         self._complete_review_if_resolved(job)
+        self._persist_job(job)
         self._prune_terminal_jobs()
         return job
 
@@ -396,6 +417,7 @@ class AdminPanelService:
         # All group and selected-member validation precedes this single mutation.
         job.decisions.extend(entries)
         self._complete_review_if_resolved(job)
+        self._persist_job(job)
         self._prune_terminal_jobs()
         return job
 
@@ -441,6 +463,7 @@ class AdminPanelService:
             for discrepancy_id in expected_ids
         )
         self._complete_review_if_resolved(job)
+        self._persist_job(job)
         self._prune_terminal_jobs()
         return job
 
@@ -472,6 +495,74 @@ class AdminPanelService:
         terminal_limit = max(0, MAX_RETAINED_TERMINAL_JOBS - active_count)
         for job_id in terminal[:-terminal_limit] if terminal_limit else terminal:
             self.jobs.pop(job_id, None)
+
+    def _persist_job(self, job: AdminJob) -> None:
+        """Persist only immutable upload facts and bounded result metadata."""
+        self._job_store.save(job.job_id, self._manifest_for(job))
+
+    def _manifest_for(self, job: AdminJob) -> dict[str, object]:
+        source_paths = tuple(job.sources or (job.source,))
+        source_digests = tuple(job.source_digests or (job.source_digest,))
+        if len(source_paths) != len(source_digests) or not source_paths:
+            raise ValueError("reconciliation job has invalid source facts")
+        payload: dict[str, object] = {
+            "contract": RECONCILIATION_MANIFEST_CONTRACT,
+            "status": job.status,
+            "operation": job.operation,
+            "mode": job.mode,
+            "stage": job.stage,
+            "source_paths": [_job_relative_path(job, path) for path in source_paths],
+            "source_digests": list(source_digests),
+            "source_names": [Path(name).name for name in job.source_names],
+            "target_path": _job_relative_path(job, job.target),
+            "target_digest": job.target_digest,
+            "target_name": Path(job.target_name).name,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        if job.output is not None:
+            payload["output_path"] = _job_relative_path(job, job.output)
+            payload["output_digest"] = _file_digest(job.output)
+            payload["result_name"] = job.result_name
+        if job.operation == "verify":
+            payload.update(
+                verification_status=job.verification_status,
+                verification_message=job.verification_message,
+                checked_row_count=job.checked_row_count,
+                failed_row_count=job.failed_row_count,
+            )
+        return payload
+
+    def _recover_jobs(self) -> None:
+        for job_id, manifest in self._job_store.load_all().items():
+            self._recover_manifest(job_id, manifest)
+        self._prune_terminal_jobs()
+
+    def _recover_manifest(self, job_id: str, manifest: dict[str, object]) -> bool:
+        if job_id in self.jobs:
+            return True
+        try:
+            job = _job_from_manifest(self.workspace_root, job_id, manifest)
+            if job.status not in _RECOVERABLE_MANIFEST_STATUSES:
+                return False
+            _verify_inputs(job)
+            if job.status == "review_required":
+                recovered = prepare_review(job, self.feedback_store.records(job.target_digest))
+                self._apply_execution_result(job, recovered)
+                if job.status != "review_required" or job.review_state is None:
+                    raise RuntimeError("review cannot be recovered")
+            elif job.status == "ready":
+                _verify_recovered_ready_job(job, manifest)
+            else:
+                # Never repeat interrupted processing.  An applying manifest
+                # lacks an immutable feedback payload, so it cannot safely
+                # exact-replay the SQLite commit and must fail closed.
+                job.status = "failed"
+                job.errors = ("PROCESSING_INTERRUPTED",)
+            self.jobs[job_id] = job
+            self._persist_job(job)
+            return True
+        except (OSError, TypeError, ValueError, RuntimeError):
+            return False
 
     def _apply_execution_result(self, job: AdminJob, result: object) -> None:
         from .reconciliation_verification import VerificationResult
@@ -545,6 +636,133 @@ class AdminPanelService:
             job.output = job.directory / "review-journal.json"
             _private_write(job.output, journal_payload(job))
             job.result_name = "review-journal.json"
+
+
+def _job_relative_path(job: AdminJob, path: Path) -> str:
+    resolved_directory = job.directory.resolve(strict=True)
+    resolved_path = path.resolve(strict=True)
+    if path.is_symlink() or not resolved_path.is_relative_to(resolved_directory):
+        raise ValueError("job artifact is outside its private directory")
+    return resolved_path.relative_to(resolved_directory).as_posix()
+
+
+def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, object]) -> AdminJob:
+    required_strings = ("status", "operation", "mode", "stage", "target_path", "target_digest")
+    if any(not isinstance(manifest.get(key), str) or not manifest[key] for key in required_strings):
+        raise ValueError("reconciliation manifest is incomplete")
+    status = str(manifest["status"])
+    if status not in _RECOVERABLE_MANIFEST_STATUSES:
+        raise ValueError("reconciliation manifest status is unsupported")
+    operation = validate_operation(manifest["operation"])
+    mode = validate_mode(manifest["mode"])
+    stage = validate_stage(manifest["stage"])
+    directory = Path(workspace_root) / job_id
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("reconciliation job directory is unsafe")
+    directory = directory.resolve(strict=True)
+    source_paths = _manifest_paths(directory, manifest.get("source_paths"))
+    source_digests = _manifest_digests(manifest.get("source_digests"), expected=len(source_paths))
+    target = _manifest_path(directory, manifest["target_path"])
+    target_digest = _manifest_digest(manifest["target_digest"])
+    names = manifest.get("source_names")
+    source_names = (
+        tuple(Path(item).name for item in names)
+        if (
+            isinstance(names, list)
+            and len(names) == len(source_paths)
+            and all(isinstance(item, str) for item in names)
+        )
+        else tuple(path.name for path in source_paths)
+    )
+    output = None
+    output_path = manifest.get("output_path")
+    if output_path is not None:
+        output = _manifest_path(directory, output_path)
+    job = AdminJob(
+        job_id=job_id,
+        directory=directory,
+        source=source_paths[0],
+        target=target,
+        stage=stage,
+        mode=mode,
+        source_digest=source_digests[0],
+        target_digest=target_digest,
+        operation=operation,
+        sources=source_paths,
+        source_digests=source_digests,
+        source_names=source_names,
+        target_name=Path(str(manifest.get("target_name") or target.name)).name,
+        status=status,
+        output=output,
+        result_name=(
+            str(manifest["result_name"]) if isinstance(manifest.get("result_name"), str) else None
+        ),
+        verification_status=(
+            str(manifest["verification_status"])
+            if isinstance(manifest.get("verification_status"), str)
+            else None
+        ),
+        verification_message=(
+            str(manifest["verification_message"])
+            if isinstance(manifest.get("verification_message"), str)
+            else None
+        ),
+        checked_row_count=_manifest_count(manifest.get("checked_row_count")),
+        failed_row_count=_manifest_count(manifest.get("failed_row_count")),
+    )
+    return job
+
+
+def _manifest_paths(directory: Path, value: object) -> tuple[Path, ...]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_SOURCES:
+        raise ValueError("reconciliation manifest sources are invalid")
+    return tuple(_manifest_path(directory, item) for item in value)
+
+
+def _manifest_path(directory: Path, value: object) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError("reconciliation manifest path is invalid")
+    candidate = directory / value
+    if candidate.parent == directory and "/" not in value:
+        pass
+    resolved = candidate.resolve(strict=True)
+    if candidate.is_symlink() or not resolved.is_relative_to(directory):
+        raise ValueError("reconciliation manifest path is unsafe")
+    return resolved
+
+
+def _manifest_digests(value: object, *, expected: int) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) != expected:
+        raise ValueError("reconciliation manifest digests are invalid")
+    return tuple(_manifest_digest(item) for item in value)
+
+
+def _manifest_digest(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError("reconciliation manifest digest is invalid")
+    return value
+
+
+def _manifest_count(value: object) -> int:
+    return value if isinstance(value, int) and 0 <= value <= 10_000_000 else 0
+
+
+def _verify_recovered_ready_job(job: AdminJob, manifest: dict[str, object]) -> None:
+    if job.output is None:
+        if job.operation != "verify" or job.verification_status != "pass":
+            raise RuntimeError("reconciliation ready result is unavailable")
+        return
+    expected_digest = _manifest_digest(manifest.get("output_digest"))
+    actual_digest = _file_digest(job.output)
+    if actual_digest != expected_digest:
+        raise RuntimeError("reconciliation output changed")
+    if job.result_name is None:
+        raise RuntimeError("reconciliation output name is missing")
+    os.chmod(job.output, 0o600)
 
 
 def _apply_verification_result(job: AdminJob, result) -> None:
