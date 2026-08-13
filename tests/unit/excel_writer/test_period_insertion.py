@@ -13,6 +13,7 @@ from report_processor.excel_writer.period_insertion import (
     _translate_formula,
     build_period_insertion_plan,
     prepare_period_insertion,
+    verify_period_insertion,
 )
 
 
@@ -196,3 +197,36 @@ def test_existing_output_sentinel_is_never_replaced(tmp_path: Path) -> None:
         prepare_period_insertion(source, output, plan)
 
     assert output.read_bytes() == b"user-sentinel"
+
+
+@pytest.mark.parametrize(
+    "needle,replacement",
+    (
+        ('r="N1"', 'r="Q1"'),  # inserted-header coordinate / extra gap
+        ('r="N2"', 'r="Q2"'),  # missing inserted blank
+        ('ref="B1:P4"', 'ref="B1:Q4"'),  # dimension
+        ('ref="L1:M1"', 'ref="L1:N1"'),  # merge
+    ),
+)
+def test_independent_verifier_rejects_tampered_worksheet_delta(
+    tmp_path: Path, needle: str, replacement: str
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    import zipfile
+
+    with zipfile.ZipFile(output) as original:
+        payloads = {info.filename: original.read(info.filename) for info in original.infolist()}
+        infos = original.infolist()
+    part = "xl/worksheets/sheet1.xml"
+    assert needle.encode() in payloads[part]
+    payloads[part] = payloads[part].replace(needle.encode(), replacement.encode(), 1)
+    with zipfile.ZipFile(output, "w") as replacement_zip:
+        for info in infos:
+            replacement_zip.writestr(info, payloads[info.filename])
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
+        verify_period_insertion(source, output, plan)
