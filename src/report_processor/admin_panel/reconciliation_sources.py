@@ -21,6 +21,10 @@ _BARE_DOCUMENT_INDEX_RE = re.compile(r"(?<!\d)(\d{4})(?!\d)")
 _YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
 
+class FormulaCacheUnavailableError(ValueError):
+    """An otherwise usable source metric cannot be verified from its cache."""
+
+
 @dataclass(frozen=True, slots=True)
 class ReconciliationSourceDescriptor:
     """Safe upload metadata; the private workbook path stays with the adapter."""
@@ -109,6 +113,9 @@ def extract_reconciliation_sources(
             continue
         try:
             selected = _extract_one(path, source_id, descriptor)
+        except FormulaCacheUnavailableError:
+            issues.append(_issue("FORMULA_CACHE_UNAVAILABLE", descriptor))
+            continue
         except Exception:
             issues.append(_issue("WORKBOOK_UNREADABLE", descriptor))
             continue
@@ -134,30 +141,34 @@ def _extract_one(
     path: Path, source_id: str, descriptor: ReconciliationSourceDescriptor
 ) -> tuple[str, tuple[NormalizedSourceRow, ...]] | None:
     workbook = load_workbook(path, read_only=True, data_only=True)
+    formulas = load_workbook(path, read_only=True, data_only=False)
     try:
         for extractor in (_extract_ks6a_rows, _extract_ks2_rows):
             for sheet in workbook.worksheets:
-                canonical = extractor(sheet, source_id, descriptor)
+                canonical = extractor(sheet, formulas[sheet.title], source_id, descriptor)
                 if canonical:
                     normalized = normalize_training_rows(prepare_training_data(canonical).rows).rows
                     if normalized:
                         return ("ks6a" if extractor is _extract_ks6a_rows else "ks2"), normalized
     finally:
+        formulas.close()
         workbook.close()
     return None
 
 
-def _extract_ks6a_rows(sheet, source_id: str, descriptor: ReconciliationSourceDescriptor):
+def _extract_ks6a_rows(
+    sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor
+):
     """Read the cumulative pair from a structural multi-row КС-6а header."""
     header_rows = tuple(
         sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 50), values_only=True)
     )
-    work_column = _column_with(header_rows, "наименование этапа")
+    work_column = _role_column(header_rows, "work")
     unit_column = _unit_column(header_rows)
-    cumulative_anchor = _column_with(header_rows, "выполнено за весь период")
+    cumulative_anchor = _role_column(header_rows, "cumulative")
     if work_column is None or unit_column is None or cumulative_anchor is None:
         return ()
-    quantity_column, cost_column, data_start = _metric_pair(header_rows, cumulative_anchor)
+    quantity_column, cost_column, header_end = _metric_pair(header_rows, cumulative_anchor)
     if quantity_column is None or cost_column is None:
         return ()
     return _canonical_rows(
@@ -165,34 +176,51 @@ def _extract_ks6a_rows(sheet, source_id: str, descriptor: ReconciliationSourceDe
         source_id,
         descriptor,
         source_type="ks6a",
-        start_row=data_start,
+        start_row=_detail_start(
+            sheet,
+            formula_sheet,
+            header_end,
+            work_column,
+            unit_column,
+            quantity_column,
+            cost_column,
+        ),
         work_column=work_column,
         unit_column=unit_column,
         quantity_column=quantity_column,
         cost_column=cost_column,
         cumulative=True,
+        formula_sheet=formula_sheet,
     )
 
 
-def _extract_ks2_rows(sheet, source_id: str, descriptor: ReconciliationSourceDescriptor):
+def _extract_ks2_rows(
+    sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor
+):
     """Read a structural КС-2 detail table only when its direct metrics are explicit."""
     header_rows = tuple(
         sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 80), values_only=True)
     )
-    work_column = _column_with(header_rows, "наименование работ")
+    work_column = _role_column(header_rows, "work")
     unit_column = _unit_column(header_rows)
     if work_column is None or unit_column is None:
         return ()
     quantity_column, cost_column, metrics_header_row = _ks2_metric_pair(header_rows)
     if quantity_column is None or cost_column is None:
         return ()
-    data_start = (
-        max(
-            _token_header_row(header_rows, work_column, "наименование работ"),
-            _unit_header_row(header_rows, unit_column),
-            metrics_header_row,
-        )
-        + 1
+    header_end = max(
+        _role_header_row(header_rows, work_column, "work"),
+        _unit_header_row(header_rows, unit_column),
+        metrics_header_row,
+    )
+    data_start = _detail_start(
+        sheet,
+        formula_sheet,
+        header_end,
+        work_column,
+        unit_column,
+        quantity_column,
+        cost_column,
     )
     return _canonical_rows(
         sheet,
@@ -205,6 +233,7 @@ def _extract_ks2_rows(sheet, source_id: str, descriptor: ReconciliationSourceDes
         quantity_column=quantity_column,
         cost_column=cost_column,
         cumulative=False,
+        formula_sheet=formula_sheet,
     )
 
 
@@ -215,6 +244,44 @@ def _column_with(rows: tuple[tuple[object, ...], ...], token: str) -> int | None
             if token in _text(value):
                 matches.append((row_number, column))
     return min((column for _row, column in matches), default=None)
+
+
+def _header_path(rows: tuple[tuple[object, ...], ...], row_number: int, column: int) -> str:
+    """Join all non-empty ancestor labels in a variable-depth header column."""
+    return " ".join(
+        _text_at(rows[number - 1], column)
+        for number in range(1, row_number + 1)
+        if _text_at(rows[number - 1], column)
+    )
+
+
+def _role_text(value: str, role: str) -> bool:
+    if role == "work":
+        return "наименован" in value and ("работ" in value or "этап" in value)
+    if role == "cumulative":
+        return "выполн" in value and ("весь" in value or "нараст" in value)
+    return False
+
+
+def _role_column(rows: tuple[tuple[object, ...], ...], role: str) -> int | None:
+    matches = [
+        column
+        for row_number, row in enumerate(rows, 1)
+        for column in range(1, len(row) + 1)
+        if _role_text(_header_path(rows, row_number, column), role)
+    ]
+    return min(matches, default=None)
+
+
+def _role_header_row(rows: tuple[tuple[object, ...], ...], column: int, role: str) -> int:
+    return max(
+        (
+            number
+            for number in range(1, len(rows) + 1)
+            if _role_text(_text_at(rows[number - 1], column), role)
+        ),
+        default=1,
+    )
 
 
 def _unit_column(rows: tuple[tuple[object, ...], ...]) -> int | None:
@@ -261,14 +328,47 @@ def _unit_header_row(rows: tuple[tuple[object, ...], ...], column: int) -> int:
 def _metric_pair(
     rows: tuple[tuple[object, ...], ...], anchor: int
 ) -> tuple[int | None, int | None, int]:
-    for row_number, row in enumerate(rows, 1):
-        if _text_at(row, anchor) and "выполнено за весь период" in _text_at(row, anchor):
+    for row_number, _row in enumerate(rows, 1):
+        if _role_text(_header_path(rows, row_number, anchor), "cumulative"):
             for leaf_row in range(row_number + 1, min(row_number + 5, len(rows)) + 1):
                 quantity = _column_within(rows[leaf_row - 1], anchor, anchor + 3, "колич")
                 cost = _column_within(rows[leaf_row - 1], anchor, anchor + 3, "общая стоимость")
                 if quantity is not None and cost is not None:
-                    return quantity, cost, leaf_row + 2
+                    return quantity, cost, leaf_row
     return None, None, 1
+
+
+def _detail_start(
+    sheet,
+    formula_sheet,
+    header_end: int,
+    work_column: int,
+    unit_column: int,
+    quantity_column: int,
+    cost_column: int,
+) -> int:
+    """Find first semantic detail row; never assume a fixed header depth."""
+    values_rows = sheet.iter_rows(min_row=header_end + 1, values_only=True)
+    for row_number, values in enumerate(values_rows, header_end + 1):
+        work, unit = _text_at(values, work_column), _text_at(values, unit_column)
+        formulas_present = (
+            formula_sheet.cell(row_number, quantity_column).data_type == "f"
+            or formula_sheet.cell(row_number, cost_column).data_type == "f"
+        )
+        if (
+            work
+            and unit
+            and _HIERARCHY_VALUE_RE.fullmatch(unit) is None
+            and (
+                formulas_present
+                or (
+                    _decimal(_value_at(values, quantity_column)) is not None
+                    and _decimal(_value_at(values, cost_column)) is not None
+                )
+            )
+        ):
+            return row_number
+    return header_end + 1
 
 
 def _column_within(row: tuple[object, ...], start: int, end: int, token: str) -> int | None:
@@ -289,6 +389,7 @@ def _canonical_rows(
     quantity_column: int,
     cost_column: int,
     cumulative: bool,
+    formula_sheet=None,
 ) -> tuple[CanonicalSourceRow, ...]:
     rows: list[CanonicalSourceRow] = []
     for row_number, values in enumerate(
@@ -298,6 +399,11 @@ def _canonical_rows(
         unit = _text_at(values, unit_column)
         quantity = _decimal(_value_at(values, quantity_column))
         cost = _decimal(_value_at(values, cost_column))
+        if formula_sheet is not None:
+            for column, cached in ((quantity_column, quantity), (cost_column, cost)):
+                formula_cell = formula_sheet.cell(row_number, column)
+                if formula_cell.data_type == "f" and cached is None:
+                    raise FormulaCacheUnavailableError("FORMULA_CACHE_UNAVAILABLE")
         if (
             not work_name
             or not unit
@@ -402,6 +508,14 @@ def _issue(code: str, descriptor: ReconciliationSourceDescriptor) -> Reconciliat
             safe_basename=descriptor.safe_basename,
             comment="Не удалось безопасно прочитать источник для сверки.",
             repair_hint="Загрузите файл Excel повторно или выберите исправную копию.",
+            can_continue=True,
+        )
+    if code == "FORMULA_CACHE_UNAVAILABLE":
+        return ReconciliationSourceIssue(
+            code=code,
+            safe_basename=descriptor.safe_basename,
+            comment="В расчётных ячейках источника нет проверяемых значений формул.",
+            repair_hint="Пересчитайте книгу в Excel и загрузите сохранённую копию.",
             can_continue=True,
         )
     return ReconciliationSourceIssue(

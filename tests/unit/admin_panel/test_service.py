@@ -358,6 +358,21 @@ def test_bulk_and_legacy_inputs_cannot_be_combined(tmp_path: Path) -> None:
         )
 
 
+def test_duplicate_source_content_is_rejected_even_when_names_differ(tmp_path: Path) -> None:
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _manual_result())
+
+    with pytest.raises(ValueError, match="duplicate source content"):
+        service.create_job(
+            sources=[
+                ("first.xlsx", b"PK\x03\x04same"),
+                ("second.xlsx", b"PK\x03\x04same"),
+            ],
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04target",
+            stage="13.1",
+        )
+
+
 def test_completed_jobs_are_bounded_without_evicting_an_active_review(tmp_path: Path) -> None:
     service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _manual_result())
 

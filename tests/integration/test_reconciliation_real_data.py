@@ -112,6 +112,38 @@ def test_bare_four_digit_upload_name_survives_production_source_path(tmp_path: P
     assert batch.issues == ()
 
 
+def test_hierarchical_cumulative_header_keeps_first_detail_row(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("", "Наименование", "Единица", "Выполнено", "", ""))
+    sheet.append(("", "работ и этапов", "измерения", "за весь период", "", ""))
+    sheet.append(("№", "", "", "Количество", "Общая стоимость", ""))
+    sheet.append(("1", "Первая работа", "м", "1.25", "1250.50", ""))
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert len(batch.rows) == 1
+    assert batch.selections[0].source_type == "ks6a"
+
+
+def test_formula_metric_without_cache_is_controlled_source_issue(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("№", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"))
+    sheet.append(("1", "Работа", "м", "=1+1", "10"))
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "FORMULA_CACHE_UNAVAILABLE"
+
+
 def test_opt_in_real_workbooks_leave_all_input_bytes_unchanged() -> None:
     source_values = tuple(
         value
