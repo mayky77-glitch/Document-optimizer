@@ -11,6 +11,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 
 _HEADER_ROWS = 80
+_MAX_SUFFIX_INSPECTED_CELLS = 100_000
 _MAX_SUFFIX_CELLS = 50_000
 _MAX_SUFFIX_ROW = 1_048_576
 _MAX_SUFFIX_COLUMN = 16_384
@@ -294,6 +295,8 @@ def _suffix_evidence(sheet, cost_column: int) -> tuple[int, str, str, str, str] 
     cells = getattr(sheet, "_cells", None)
     if not isinstance(cells, dict):
         raise ReconciliationTargetMeasureError("TARGET_HISTORICAL_PAIR_MISSING")
+    if len(cells) > _MAX_SUFFIX_INSPECTED_CELLS:
+        raise ReconciliationTargetMeasureError("TARGET_HISTORICAL_PAIR_MISSING")
     coordinates: list[tuple[int, int]] = []
     for (row, column), cell in cells.items():
         if column <= cost_column or cell.value is None:
@@ -312,14 +315,14 @@ def _suffix_evidence(sheet, cost_column: int) -> tuple[int, str, str, str, str] 
         len(references),
         references[0],
         references[-1],
-        max(references, key=lambda reference: _coordinate_key(reference)),
+        max(references, key=lambda reference: _rightmost_coordinate_key(reference)),
         digest,
     )
 
 
-def _coordinate_key(reference: str) -> tuple[int, int]:
+def _rightmost_coordinate_key(reference: str) -> tuple[int, int]:
     column, row = coordinate_from_string(reference)
-    return row, column_index_from_string(column)
+    return column_index_from_string(column), row
 
 
 def _header_cells(sheet, start: int, end: int, merged_ranges: tuple[str, ...]):

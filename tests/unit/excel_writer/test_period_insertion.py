@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill
 
 from report_processor.admin_panel import reconciliation_target_measure
 from report_processor.admin_panel.reconciliation_period import ReconciliationPeriodError
@@ -90,6 +91,22 @@ def test_sparse_far_suffix_is_compact_and_part_of_the_immutable_plan(tmp_path: P
     assert len(anchor.suffix_coordinate_sha256) == 64
 
 
+def test_suffix_rightmost_is_column_major_while_bounds_are_row_major(tmp_path: Path) -> None:
+    source = tmp_path / "crossed-axis.xlsx"
+    _historical_book(source)
+    workbook = load_workbook(source)
+    sheet = workbook["Отчёт"]
+    sheet["Z4"] = "rightmost"
+    sheet["N100"] = "last"
+    workbook.save(source)
+
+    (anchor,) = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3}).anchors
+
+    assert anchor.suffix_first_coordinate == "N3"
+    assert anchor.suffix_last_coordinate == "N100"
+    assert anchor.suffix_rightmost_coordinate == "Z4"
+
+
 def test_forged_suffix_evidence_is_rejected_before_creating_output(tmp_path: Path) -> None:
     source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
     _historical_book(source)
@@ -133,6 +150,23 @@ def test_suffix_over_limit_fails_closed(tmp_path: Path, monkeypatch: pytest.Monk
     source = tmp_path / "over-limit.xlsx"
     _historical_book(source)
     monkeypatch.setattr(reconciliation_target_measure, "_MAX_SUFFIX_CELLS", 1)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+
+def test_materialized_cell_inspection_limit_includes_empty_left_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "inspection-limit.xlsx"
+    _historical_book(source)
+    assert build_period_insertion_plan(source, "2026-08", {"Отчёт": 3}).anchors
+    workbook = load_workbook(source)
+    sheet = workbook["Отчёт"]
+    for column in range(1, 11):
+        sheet.cell(20, column).fill = PatternFill("solid", fgColor="FFFFFF")
+    workbook.save(source)
+    monkeypatch.setattr(reconciliation_target_measure, "_MAX_SUFFIX_INSPECTED_CELLS", 15)
 
     with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
         build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
