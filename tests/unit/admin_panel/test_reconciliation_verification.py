@@ -11,13 +11,14 @@ from openpyxl import Workbook, load_workbook
 
 from report_processor.admin_panel.app import _result_media_type, _safe_download_name
 from report_processor.admin_panel.presentation import job_payload
-from report_processor.admin_panel.reconciliation_execution import _review_row_id
+from report_processor.admin_panel.reconciliation_execution import _Catalog, _review_row_id
 from report_processor.admin_panel.reconciliation_numeric_verification import (
     NumericVerificationFailure,
     _authorizations,
     _matches_target,
     _reject_duplicate_source_identities,
     _reject_duplicate_target_keys,
+    _validate_units,
     verify_numeric,
 )
 from report_processor.admin_panel.reconciliation_sources import ReconciliationSourceIssue
@@ -29,6 +30,7 @@ from report_processor.admin_panel.reconciliation_verification import (
 from report_processor.admin_panel.service import AdminPanelService
 from report_processor.excel_writer import ExcelWriterSafetyError
 from report_processor.reconciliation_review import (
+    AppliedOverride,
     ReviewAction,
     ReviewDecision,
     ReviewMode,
@@ -178,6 +180,15 @@ def test_numeric_comparison_reads_target_numeric_cell_value() -> None:
     )
 
     assert _matches_target(calculation, ReviewMode.QUANTITY_COST) is True
+
+
+def test_cost_only_does_not_require_source_or_target_unit() -> None:
+    target = SimpleNamespace(unit=None)
+    overrides = {"row": AppliedOverride("row", "category:target", False, True, ReviewAction.ACCEPT)}
+    source_rows = {"row": SimpleNamespace(source_filename="source.xlsx", unit=None)}
+    catalog = _Catalog({"category:target": "Target"}, {("1234", "category:target"): target})
+
+    _validate_units(overrides, source_rows, catalog, SimpleNamespace())
 
 
 def test_explicit_rejection_wins_over_safe_package_authorization() -> None:

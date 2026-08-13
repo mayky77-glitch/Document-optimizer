@@ -155,6 +155,8 @@ def _candidate_inclusions(overrides, matches) -> dict[str, tuple[bool, bool]]:
 
 def _validate_units(overrides, source_rows, catalog, job) -> None:
     for row_id, override in overrides.items():
+        if not override.include_quantity:
+            continue
         source = source_rows[row_id]
         index = _source_index(source.source_filename)
         target = catalog.targets.get((index or "", override.target_category or ""))
