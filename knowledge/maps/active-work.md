@@ -15,6 +15,8 @@ Active verification implementation:
 J/K verification and target-stage selection are accepted. Completed discovery audit:
 [[../tasks/reconciliation-max-accuracy-audit-v1|Максимальная точность проверки и сверки]]; findings
 remain tracked in [[../errors/reconciliation-accuracy-findings|RA-001—RA-018]] until verified closed.
+Numeric/stage remediation is integrated at `75a39f3`; the sequential lifecycle wave is frozen in
+[[../tasks/admin-verification-lifecycle-gate0|Lifecycle Gate 0]].
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 

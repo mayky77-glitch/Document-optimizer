@@ -40,6 +40,10 @@ Implementation uses dependency waves frozen by
 - A separate accepted integration SHA opens lifecycle/transaction remediation for remaining
   adjacent `reconcile` findings, then real-layout shadow checks and independent P6 acceptance.
 
+The lifecycle wave is frozen in [[admin-verification-lifecycle-gate0|Lifecycle Gate 0]]: first
+[[admin-verification-apply-integrity|transactional apply]], then dependent
+[[admin-verification-job-recovery|restart recovery]].
+
 Use [[../research/propextract-methods-2026-08-13|PropExtract]] only as a methodology reference:
 exact-or-ambiguous identity, field-level provenance, order-independent consensus, staged workbook
 delta allowlists and permutation tests. Do not adopt its narrow comparison normalization: source

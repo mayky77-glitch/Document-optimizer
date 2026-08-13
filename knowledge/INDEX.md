@@ -37,6 +37,7 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[errors/reconciliation-accuracy-findings|Ошибки точности сверки]] — evidence-backed error catalog and remediation gates.
 - [[tasks/admin-verification-accuracy-remediation|Ремедиация проверки]] — active numeric/stage and integrity work.
 - [[tasks/admin-verification-remediation-gate0|Verification remediation Gate 0]] — frozen dependency waves and acceptance.
+- [[tasks/admin-verification-lifecycle-gate0|Verification lifecycle Gate 0]] — transactional apply followed by restart recovery.
 - [[research/propextract-methods-2026-08-13|PropExtract methods]] — external commit-pinned methodology comparison; no code reuse.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 - [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.
