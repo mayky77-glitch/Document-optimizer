@@ -138,6 +138,8 @@ def _sheet_candidates(
             common_current = any(_current_scope(label.text) for label in common_labels)
             quantity_periods = _period_mentions(quantity_text)
             cost_periods = _period_mentions(cost_text)
+            if _period_conflict(quantity_periods, cost_periods):
+                continue
             same_period = _same_unambiguous_period(quantity_periods, cost_periods)
             if not common_current and not same_period:
                 continue
@@ -252,13 +254,18 @@ def _same_unambiguous_period(
     quantity_periods: frozenset[tuple[int, int | None]],
     cost_periods: frozenset[tuple[int, int | None]],
 ) -> bool:
-    if len(quantity_periods) != 1 or len(cost_periods) != 1:
-        return False
-    ((quantity_month, quantity_year),) = quantity_periods
-    ((cost_month, cost_year),) = cost_periods
-    return quantity_month == cost_month and (
-        quantity_year is None or cost_year is None or quantity_year == cost_year
-    )
+    return len(quantity_periods) == len(cost_periods) == 1 and quantity_periods == cost_periods
+
+
+def _period_conflict(
+    quantity_periods: frozenset[tuple[int, int | None]],
+    cost_periods: frozenset[tuple[int, int | None]],
+) -> bool:
+    """Reject multiple or contradictory calendar evidence before parent fallback."""
+
+    if len(quantity_periods) > 1 or len(cost_periods) > 1:
+        return True
+    return bool(quantity_periods and cost_periods and quantity_periods != cost_periods)
 
 
 def _year(value: str) -> bool:

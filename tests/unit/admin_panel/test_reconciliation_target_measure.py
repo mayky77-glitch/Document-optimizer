@@ -116,6 +116,38 @@ def test_multiple_month_mentions_are_not_an_unambiguous_period(
 
 
 @pytest.mark.parametrize(
+    ("quantity_header", "cost_header"),
+    (
+        ("Март Апрель Количество", "Март Апрель Стоимость"),
+        ("Март Количество", "Апрель Стоимость"),
+    ),
+)
+def test_current_parent_does_not_override_conflicting_calendar_evidence(
+    quantity_header: str, cost_header: str
+) -> None:
+    workbook, sheet = _workbook()
+    sheet.merge_cells("L1:M1")
+    sheet["L1"] = "Текущий отчетный период"
+    sheet["L2"], sheet["M2"] = quantity_header, cost_header
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+def test_month_identity_requires_equal_year_presence() -> None:
+    workbook, sheet = _workbook()
+    sheet["L1"], sheet["M1"] = "Август", "Август 2026"
+    _pair(sheet, 12, None)
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize(
     "scope", ("Отчетный период с начала строительства", "Отчетный период итого")
 )
 def test_cumulative_scope_conflicts_reject_otherwise_current_pair(scope: str) -> None:
