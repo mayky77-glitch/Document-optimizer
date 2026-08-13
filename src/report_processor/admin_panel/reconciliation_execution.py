@@ -31,6 +31,7 @@ from report_processor.reconciliation_review import (
     normalize_name,
     normalize_unit,
 )
+from report_processor.schema import LogicalColumn
 
 from .reconciliation_batch_store import ReconciliationBatchStore
 from .reconciliation_semantic_assist import RUBERT_TINY2_MODEL_REVISION, run_local_semantic_assist
@@ -43,6 +44,7 @@ from .reconciliation_target import (
     terminal_index,
     writer_calculations,
 )
+from .reconciliation_target_measure import ReconciliationTargetMeasureError
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +53,7 @@ class ReconciliationReviewResult:
     source_batch: ReconciliationSourceBatch | None
     source_issues: tuple[object, ...] = ()
     target_error: bool = False
+    target_error_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +73,8 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
     try:
         _schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
         catalog = _catalog(targets)
+    except ReconciliationTargetMeasureError as error:
+        return ReconciliationReviewResult(None, None, (), True, str(error))
     except Exception:
         return ReconciliationReviewResult(None, None, (), True)
     try:
@@ -295,7 +300,23 @@ def _group_category_availability(
 def _catalog_version(catalog: _Catalog) -> str:
     return sha256(
         json.dumps(
-            sorted(catalog.labels.items()), ensure_ascii=False, separators=(",", ":")
+            {
+                "contract": "ReconciliationTargetMeasure-2.0",
+                "labels": sorted(catalog.labels.items()),
+                "targets": sorted(
+                    (
+                        index,
+                        category,
+                        target.sheet_name,
+                        target.row_number,
+                        _target_cell_coordinate(target, LogicalColumn.CURRENT_PERIOD_QUANTITY),
+                        _target_cell_coordinate(target, LogicalColumn.CURRENT_PERIOD_COST),
+                    )
+                    for (index, category), target in catalog.targets.items()
+                ),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         ).encode()
     ).hexdigest()
 
@@ -389,7 +410,7 @@ def _apply_plan(
         for item in decisions
     ]
     payload = {
-        "contract": "ReconciliationApplyIntegrity-1.0",
+        "contract": "ReconciliationApplyIntegrity-2.0",
         "job_id": getattr(job, "job_id", "direct-apply"),
         "source_digests": tuple(getattr(job, "source_digests", ())),
         "target_digest": job.target_digest,
@@ -422,7 +443,22 @@ def _target_id(job, target) -> str:
         f"sha256:{job.target_digest}",
         target.sheet_name,
         target.row_number,
+        _target_cell_coordinate(target, LogicalColumn.CURRENT_PERIOD_QUANTITY),
+        _target_cell_coordinate(target, LogicalColumn.CURRENT_PERIOD_COST),
     )
+
+
+def _target_cell_coordinate(target, logical_column: LogicalColumn) -> str | None:
+    cell_for = getattr(target, "cell_for", None)
+    cell = cell_for(logical_column) if callable(cell_for) else None
+    coordinate = getattr(cell, "coordinate", None)
+    return coordinate if isinstance(coordinate, str) else None
+
+
+def _source_index(filename: str) -> str | None:
+    from .reconciliation_sources import document_index_from_basename
+
+    return document_index_from_basename(filename)
 
 
 def _review_row_id(job, source_row_id: str) -> str:
