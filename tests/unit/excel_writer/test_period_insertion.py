@@ -10,6 +10,7 @@ from openpyxl.styles import PatternFill
 from report_processor.admin_panel import reconciliation_target_measure
 from report_processor.admin_panel.reconciliation_period import ReconciliationPeriodError
 from report_processor.excel_writer.period_insertion import (
+    _translate_formula,
     build_period_insertion_plan,
     prepare_period_insertion,
 )
@@ -170,3 +171,28 @@ def test_materialized_cell_inspection_limit_includes_empty_left_cells(
 
     with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
         build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+
+def test_formula_translation_preserves_quoted_coordinate_and_translates_local_range() -> None:
+    assert _translate_formula('SUM(L4:N4)+"N4"', 13) == 'SUM(L4:P4)+"N4"'
+
+
+@pytest.mark.parametrize(
+    "formula",
+    ("'Другой лист'!N4", "Book.xlsx!N4", "MyNamedRange+N4", 'INDIRECT("N4")'),
+)
+def test_formula_translation_rejects_nonlocal_or_named_operands(formula: str) -> None:
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_UNSUPPORTED_FEATURE"):
+        _translate_formula(formula, 13)
+
+
+def test_existing_output_sentinel_is_never_replaced(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    output.write_bytes(b"user-sentinel")
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_OUTPUT_EXISTS"):
+        prepare_period_insertion(source, output, plan)
+
+    assert output.read_bytes() == b"user-sentinel"

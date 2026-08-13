@@ -1,4 +1,5 @@
 """Fail-closed direct OOXML insertion of reconciliation reporting-period columns."""
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ import posixpath
 import re
 import tempfile
 import zipfile
+from contextlib import suppress
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -32,12 +34,16 @@ from report_processor.target_report.ooxml import worksheet_parts
 
 _MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _Q = lambda name: f"{{{_MAIN}}}{name}"  # noqa: E731
-_A1 = re.compile(r"(?<![A-Z0-9_])(?P<col>\$?[A-Z]{1,3})(?P<row>\$?\d+)(?![A-Z0-9_])")
+# Deliberately only used by the forward scanner *after* quoted strings have
+# been removed.  Applying a cell-reference regexp to a whole formula is a
+# correctness bug: ``="N4"`` is text, not a dependency.
+_A1_TOKEN = re.compile(r"\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?")
 _UNSUPPORTED_FORMULA = re.compile(r"\[|\]|\b(?:INDIRECT|ADDRESS)\s*\(", re.IGNORECASE)
 _UNSUPPORTED_PART = re.compile(
     r"(?:^|/)(?:tables|pivotTables|pivotCache|slicers|externalLinks|embeddings|controls|charts)/",
     re.IGNORECASE,
 )
+_XMLNS = re.compile(rb"\s(xmlns(?::[A-Za-z_][\w.-]*)?=\"[^\"]+\")")
 
 
 def build_period_insertion_plan(
@@ -152,10 +158,17 @@ def prepare_period_insertion(
         _transform_package(source, temporary, plan)
         verify_period_insertion(source, temporary, plan)
         _assert_digest(source, plan.source_sha256)
+        # link(2) is the publication transition: it is no-clobber and, unlike
+        # stat/unlink based publication, cannot delete a concurrently created
+        # user file.  Everything which may reject the workbook happens above.
         os.link(temporary, output)
+        published_hash = _sha256(temporary)
+        # The link is already durable enough to be a valid private result;
+        # critically, never inspect or unlink ``output`` here.
+        with suppress(OSError):
+            _fsync_directory(output.parent)
         temporary.unlink()
-        _fsync_directory(output.parent)
-        return PreparedReconciliationTarget(str(output), _sha256(output), plan)
+        return PreparedReconciliationTarget(str(output), published_hash, plan)
     except FileExistsError as error:
         raise ReconciliationPeriodError("PERIOD_INSERTION_OUTPUT_EXISTS") from error
     except ReconciliationPeriodError:
@@ -181,8 +194,23 @@ def verify_period_insertion(
         with zipfile.ZipFile(source) as before, zipfile.ZipFile(output) as after:
             if tuple(before.namelist()) != tuple(after.namelist()) or after.testzip() is not None:
                 raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            if before.comment != after.comment:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
             changed = set(plan.affected_parts)
-            for info in before.infolist():
+            for info, candidate_info in zip(before.infolist(), after.infolist(), strict=True):
+                # CRC and sizes necessarily change in edited members.  The
+                # remaining ZipInfo identity is part of the frozen artifact.
+                if (
+                    info.filename != candidate_info.filename
+                    or info.date_time != candidate_info.date_time
+                    or info.compress_type != candidate_info.compress_type
+                    or info.external_attr != candidate_info.external_attr
+                    or info.create_system != candidate_info.create_system
+                    or info.flag_bits != candidate_info.flag_bits
+                    or info.extra != candidate_info.extra
+                    or info.comment != candidate_info.comment
+                ):
+                    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
                 if info.filename not in changed and before.read(info.filename) != after.read(
                     info.filename
                 ):
@@ -194,6 +222,7 @@ def verify_period_insertion(
                     anchor,
                     plan.period,
                 )
+            _verify_other_changed_parts(before, after, plan)
         workbook = load_workbook(output, read_only=False, data_only=False, keep_links=True)
         try:
             rows = {anchor.sheet_name: anchor.first_detail_row for anchor in plan.anchors}
@@ -229,10 +258,15 @@ def _transform_package(
                 )
                 if sheet_name in anchors:
                     payload = _transform_sheet(payload, anchors[sheet_name], plan.period)
-                elif info.filename == "xl/workbook.xml":
+                elif info.filename == "xl/workbook.xml" and info.filename in plan.affected_parts:
                     payload = _transform_defined_names(payload, anchors)
-                elif info.filename == "xl/calcChain.xml":
+                elif info.filename == "xl/calcChain.xml" and info.filename in plan.affected_parts:
                     payload = _transform_calc_chain(payload, tuple(parts), anchors)
+                elif info.filename in plan.affected_parts:
+                    drawing_anchor = _drawing_owner(source, info.filename, anchors)
+                    if drawing_anchor is None:
+                        raise ReconciliationPeriodError("PERIOD_INSERTION_TRANSFORM_INVALID")
+                    payload = _transform_drawing(payload, drawing_anchor.insertion_after_column)
                 after.writestr(info, payload)
         _fsync_file(temporary)
     except ReconciliationPeriodError:
@@ -254,11 +288,15 @@ def _transform_sheet(
         elif node.tag == _Q("f") and node.text:
             node.text = _translate_formula(node.text, boundary)
         elif (
-            (node.tag in {_Q("mergeCell"), _Q("conditionalFormatting")} and "ref" in node.attrib)
+            (node.tag == _Q("mergeCell") and "ref" in node.attrib)
             or (node.tag == _Q("autoFilter") and "ref" in node.attrib)
             or (node.tag == _Q("dimension") and "ref" in node.attrib)
         ):
             node.attrib["ref"] = _map_range(node.attrib["ref"], boundary)
+        elif node.tag == _Q("conditionalFormatting") and "sqref" in node.attrib:
+            node.attrib["sqref"] = _map_sqref(node.attrib["sqref"], boundary)
+        elif node.tag == _Q("filterColumn") and "colId" in node.attrib:
+            node.attrib["colId"] = str(_map_filter_colid(int(node.attrib["colId"]), boundary, root))
         elif node.tag in {_Q("pane"), _Q("sheetView")} and "topLeftCell" in node.attrib:
             node.attrib["topLeftCell"] = _map_coordinate(node.attrib["topLeftCell"], boundary)
         elif node.tag == _Q("selection"):
@@ -267,7 +305,10 @@ def _transform_sheet(
             if "sqref" in node.attrib:
                 node.attrib["sqref"] = _map_range(node.attrib["sqref"], boundary)
         elif node.tag == _Q("col"):
-            _map_col(node, boundary)
+            # handled as a set below: a spanning column definition needs a
+            # three-way split, not an expanded ``max``.
+            pass
+    _translate_cols(root, anchor)
     sheet_data = root.find(_Q("sheetData"))
     if sheet_data is None:
         raise ReconciliationPeriodError("PERIOD_INSERTION_TRANSFORM_INVALID")
@@ -290,13 +331,15 @@ def _transform_sheet(
             if number == parent_row:
                 _inline_string(
                     cell,
-                    f"{period.label} {'Количество' if new_column == boundary + 1 else 'Стоимость'}",
+                    f"{period.label} "
+                    f"{anchor.quantity_leaf_label if new_column == boundary + 1 else anchor.cost_leaf_label}",
                 )
             inserted.append(cell)
         for cell in inserted:
             row.append(cell)
         row[:] = sorted(row, key=lambda cell: _cell_column(cell.attrib.get("r", "A1")))
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        _translate_row_spans(row, boundary)
+    return _serialize_preserving_ignorable_namespaces(root, payload)
 
 
 def _verify_sheet_delta(
@@ -307,15 +350,235 @@ def _verify_sheet_delta(
     old_cells = {cell.attrib["r"]: cell for cell in old.iter(_Q("c")) if "r" in cell.attrib}
     new_cells = {cell.attrib["r"]: cell for cell in new.iter(_Q("c")) if "r" in cell.attrib}
     for coordinate, cell in old_cells.items():
-        mapped = _map_coordinate(coordinate, boundary)
+        mapped = _verify_forward_coordinate(coordinate, boundary)
         candidate = new_cells.get(mapped)
-        if candidate is None or candidate.attrib.get("s") != cell.attrib.get("s"):
+        if candidate is None or _canonical_cell(
+            candidate, boundary, inverse=True
+        ) != _canonical_cell(cell, boundary):
             raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
     parent = _historical_parent_xml_row(old, anchor)
-    for column, metric in ((boundary + 1, "Количество"), (boundary + 2, "Стоимость")):
+    for column, metric in (
+        (boundary + 1, anchor.quantity_leaf_label),
+        (boundary + 2, anchor.cost_leaf_label),
+    ):
         node = new_cells.get(f"{get_column_letter(column)}{parent}")
-        if node is None or "".join(node.itertext()) != f"{period.label} {metric}":
+        if (
+            node is None
+            or "".join(node.itertext()) != f"{period.label} {metric}"
+            or node.attrib.get("s")
+            != old_cells.get(
+                f"{get_column_letter(column - 1)}{parent}", ET.Element("x")
+            ).attrib.get("s")
+        ):
             raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+    for row in new.findall(f".//{_Q('row')}"):
+        for column in (boundary + 1, boundary + 2):
+            cell = new_cells.get(f"{get_column_letter(column)}{row.attrib.get('r')}")
+            if (
+                cell is not None
+                and int(row.attrib.get("r", "0")) != parent
+                and any(child.tag in {_Q("v"), _Q("f")} for child in cell)
+            ):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+
+
+def _verify_forward_coordinate(coordinate: str, boundary: int) -> str:
+    """Verifier-local coordinate function: intentionally not a forward helper."""
+    column, row = coordinate_from_string(coordinate.replace("$", ""))
+    index = column_index_from_string(column)
+    col_absolute = "$" if coordinate.startswith("$") else ""
+    rest = coordinate[len(col_absolute) + len(column) :]
+    row_absolute = "$" if rest.startswith("$") else ""
+    return f"{col_absolute}{get_column_letter(index + 2 if index > boundary else index)}{row_absolute}{row}"
+
+
+def _canonical_cell(node: ET.Element, boundary: int, inverse: bool = False) -> bytes:
+    """Compare all pre-existing cell state after inverse coordinate recovery."""
+    clone = ET.fromstring(ET.tostring(node))
+    coordinate = clone.attrib.get("r")
+    if inverse and coordinate:
+        col, row = coordinate_from_string(coordinate.replace("$", ""))
+        index = column_index_from_string(col)
+        if index > boundary + 2:
+            clone.attrib["r"] = f"{get_column_letter(index - 2)}{row}"
+    if inverse:
+        formula = clone.find(_Q("f"))
+        if formula is not None and formula.text:
+            formula.text = _verify_inverse_formula(formula.text, boundary)
+    return ET.tostring(clone)
+
+
+def _verify_inverse_formula(value: str, boundary: int) -> str:
+    """Verifier-local token walk; never reuse the forward formula translator."""
+    output: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] == '"':
+            end = index + 1
+            while end < len(value):
+                if value[end] == '"':
+                    end += 2 if end + 1 < len(value) and value[end + 1] == '"' else 1
+                    if end <= len(value) and value[end - 1] == '"':
+                        break
+                else:
+                    end += 1
+            output.append(value[index:end])
+            index = end
+            continue
+        match = _A1_TOKEN.match(value, index)
+        if match and _formula_token_boundary(value, match.start(), match.end()):
+            token = match.group(0)
+            output.append(
+                ":".join(_verify_inverse_coordinate(item, boundary) for item in token.split(":"))
+            )
+            index = match.end()
+            continue
+        output.append(value[index])
+        index += 1
+    return "".join(output)
+
+
+def _verify_other_changed_parts(
+    before: zipfile.ZipFile, after: zipfile.ZipFile, plan: ReconciliationPeriodInsertionPlan
+) -> None:
+    """Independent structural checks for non-worksheet members.
+
+    These routines intentionally do not call any forward transformation
+    function.  They prove that only a permitted coordinate delta occurred.
+    """
+    anchors = {anchor.sheet_name: anchor for anchor in plan.anchors}
+    for part in plan.affected_parts:
+        if part in {anchor.worksheet_part for anchor in plan.anchors}:
+            continue
+        old, new = before.read(part), after.read(part)
+        if part == "xl/workbook.xml":
+            old_root, new_root = ET.fromstring(old), ET.fromstring(new)
+            old_names = list(old_root.iter(_Q("definedName")))
+            new_names = list(new_root.iter(_Q("definedName")))
+            if len(old_names) != len(new_names):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            for left, right in zip(old_names, new_names, strict=True):
+                if left.attrib != right.attrib:
+                    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+                # Re-run the allowed-name parser as an inverse-independent
+                # predicate; nonaffected names must remain byte-identical.
+                if left.text == right.text:
+                    continue
+                if left.attrib.get("name") not in {"_xlnm.Print_Area", "_xlnm.Print_Titles"}:
+                    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+                if not _verify_defined_name_delta(left.text or "", right.text or "", anchors):
+                    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+        elif part == "xl/calcChain.xml":
+            _verify_calc_chain_delta(old, new, tuple(dict(plan.worksheet_parts)), anchors)
+        else:
+            _verify_drawing_delta(old, new, anchors)
+
+
+def _verify_defined_name_delta(
+    old: str, new: str, anchors: dict[str, ReconciliationSheetAnchor]
+) -> bool:
+    # Convert only the new side backward.  This parser deliberately accepts
+    # only the frozen subset and hence cannot bless arbitrary expression edits.
+    old_terms, new_terms = old.split(","), new.split(",")
+    if len(old_terms) != len(new_terms):
+        return False
+    for prior, later in zip(old_terms, new_terms, strict=True):
+        if "!" not in prior or "!" not in later:
+            return False
+        ps, pr = prior.rsplit("!", 1)
+        ns, nr = later.rsplit("!", 1)
+        if ps != ns:
+            return False
+        name = ps[1:-1].replace("''", "'") if ps.startswith("'") and ps.endswith("'") else ps
+        anchor = anchors.get(name)
+        if anchor is None:
+            if pr != nr:
+                return False
+            continue
+        if pr == nr:
+            continue
+        if _verify_inverse_reference(nr, anchor.insertion_after_column) != pr:
+            return False
+    return True
+
+
+def _verify_inverse_reference(value: str, boundary: int) -> str:
+    if re.fullmatch(r"\$?\d+:\$?\d+", value):
+        return value
+    if re.fullmatch(r"\$?[A-Z]{1,3}:\$?[A-Z]{1,3}", value):
+        left, right = value.split(":", 1)
+        return f"{_verify_inverse_column(left, boundary)}:{_verify_inverse_column(right, boundary)}"
+    if re.fullmatch(r"\$?[A-Z]{1,3}\$?\d+:\$?[A-Z]{1,3}\$?\d+", value):
+        return ":".join(_verify_inverse_coordinate(item, boundary) for item in value.split(":"))
+    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+
+
+def _verify_inverse_column(value: str, boundary: int) -> str:
+    absolute = "$" if value.startswith("$") else ""
+    index = column_index_from_string(value.lstrip("$"))
+    return absolute + get_column_letter(index - 2 if index > boundary + 2 else index)
+
+
+def _verify_inverse_coordinate(value: str, boundary: int) -> str:
+    column, row = coordinate_from_string(value.replace("$", ""))
+    index = column_index_from_string(column)
+    col_absolute = "$" if value.startswith("$") else ""
+    rest = value[len(col_absolute) + len(column) :]
+    row_absolute = "$" if rest.startswith("$") else ""
+    return f"{col_absolute}{get_column_letter(index - 2 if index > boundary + 2 else index)}{row_absolute}{row}"
+
+
+def _verify_calc_chain_delta(
+    old: bytes,
+    new: bytes,
+    sheet_names: tuple[str, ...],
+    anchors: dict[str, ReconciliationSheetAnchor],
+) -> None:
+    left, right = list(ET.fromstring(old).iter(_Q("c"))), list(ET.fromstring(new).iter(_Q("c")))
+    if len(left) != len(right):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+    sheet_index: int | None = None
+    for prior, later in zip(left, right, strict=True):
+        if prior.attrib.get("i") != later.attrib.get("i"):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+        if "i" in prior.attrib:
+            sheet_index = int(prior.attrib["i"])
+        if sheet_index is None or not 1 <= sheet_index <= len(sheet_names):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+        anchor = anchors.get(sheet_names[sheet_index - 1])
+        expected = prior.attrib.get("r")
+        actual = later.attrib.get("r")
+        if (
+            anchor is not None
+            and expected
+            and _cell_column(expected) > anchor.insertion_after_column
+        ):
+            expected = _verify_forward_coordinate(expected, anchor.insertion_after_column)
+        if expected != actual:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+
+
+def _verify_drawing_delta(
+    old: bytes, new: bytes, anchors: dict[str, ReconciliationSheetAnchor]
+) -> None:
+    # Drawing parts are owned by exactly one selected sheet; the strict anchor
+    # shapes were already frozen in preflight.  Find a unique boundary whose
+    # inverse makes every marker agree.
+    for anchor in anchors.values():
+        a, b = ET.fromstring(old), ET.fromstring(new)
+        left = [node.text for node in a.iter(_DX("col"))]
+        right = [node.text for node in b.iter(_DX("col"))]
+        if len(left) != len(right) or any(
+            value is None or not value.isdigit() for value in left + right
+        ):
+            continue
+        expected = [
+            str(int(value) + 2 if int(value) > anchor.insertion_after_column - 1 else int(value))
+            for value in left
+        ]
+        if expected == right:
+            return
+    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
 
 
 def _reject_package(source: Path) -> None:
@@ -347,11 +610,38 @@ def _sheet_id_map(source: Path) -> dict[str, int]:
 def _affected_parts(
     source: Path, anchors: tuple[ReconciliationSheetAnchor, ...]
 ) -> tuple[str, ...]:
+    if not anchors:
+        return ()
     with zipfile.ZipFile(source) as archive:
         names = set(archive.namelist())
-    affected = {"xl/workbook.xml", *(anchor.worksheet_part for anchor in anchors)}
-    if "xl/calcChain.xml" in names:
-        affected.add("xl/calcChain.xml")
+        affected = {anchor.worksheet_part for anchor in anchors}
+        boundaries = {anchor.sheet_name: anchor.insertion_after_column for anchor in anchors}
+        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+        if any(
+            _defined_name_is_affected(node, boundaries) for node in workbook.iter(_Q("definedName"))
+        ):
+            affected.add("xl/workbook.xml")
+        if "xl/calcChain.xml" in names and _calc_chain_is_affected(
+            archive.read("xl/calcChain.xml"), tuple(worksheet_parts(source)), boundaries
+        ):
+            affected.add("xl/calcChain.xml")
+        for anchor in anchors:
+            for target, relation_type in _part_relationships(archive, anchor.worksheet_part):
+                if relation_type.endswith("/drawing"):
+                    if target not in names:
+                        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+                    drawing = archive.read(target)
+                    _preflight_drawing(drawing, anchor.insertion_after_column)
+                    if _drawing_is_affected(drawing, anchor.insertion_after_column):
+                        affected.add(target)
+                elif (
+                    relation_type.endswith("/hyperlink")
+                    or relation_type.endswith("/comments")
+                    or relation_type.endswith("/vmlDrawing")
+                ):
+                    continue
+                else:
+                    raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     return tuple(sorted(affected))
 
 
@@ -424,16 +714,88 @@ def _reject_affected_comments(source: Path, anchors: tuple[ReconciliationSheetAn
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
 
 
+def _part_relationships(archive: zipfile.ZipFile, part: str) -> tuple[tuple[str, str], ...]:
+    rel = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
+    if rel not in archive.namelist():
+        return ()
+    result = []
+    for node in ET.fromstring(archive.read(rel)):
+        target, relation_type = node.attrib.get("Target"), node.attrib.get("Type", "")
+        if not target or node.attrib.get("TargetMode") == "External":
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        result.append(
+            (
+                posixpath.normpath(posixpath.join(posixpath.dirname(part), target)).lstrip("/"),
+                relation_type,
+            )
+        )
+    return tuple(result)
+
+
+def _drawing_owner(
+    source: Path, drawing_part: str, anchors: dict[str, ReconciliationSheetAnchor]
+) -> ReconciliationSheetAnchor | None:
+    with zipfile.ZipFile(source) as archive:
+        for anchor in anchors.values():
+            if any(
+                target == drawing_part and kind.endswith("/drawing")
+                for target, kind in _part_relationships(archive, anchor.worksheet_part)
+            ):
+                return anchor
+    return None
+
+
+_XDR = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+_DX = lambda name: f"{{{_XDR}}}{name}"  # noqa: E731
+
+
+def _drawing_columns(payload: bytes) -> tuple[tuple[int, int], ...]:
+    root = ET.fromstring(payload)
+    result = []
+    for anchor in root:
+        if anchor.tag not in {_DX("twoCellAnchor"), _DX("oneCellAnchor")}:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        markers = [node.find(_DX("col")) for node in anchor if node.tag in {_DX("from"), _DX("to")}]
+        if not markers or any(
+            marker is None or marker.text is None or not marker.text.isdigit() for marker in markers
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        result.append(tuple(int(marker.text) for marker in markers))
+    return tuple(result)
+
+
+def _preflight_drawing(payload: bytes, boundary: int) -> None:
+    for columns in _drawing_columns(payload):
+        # Drawing marker columns are zero based.
+        left, right = min(columns), max(columns)
+        if left <= boundary - 1 < right:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+
+
+def _drawing_is_affected(payload: bytes, boundary: int) -> bool:
+    return any(max(columns) > boundary - 1 for columns in _drawing_columns(payload))
+
+
+def _transform_drawing(payload: bytes, boundary: int) -> bytes:
+    root = ET.fromstring(payload)
+    for marker in root.iter(_DX("col")):
+        if marker.text is None or not marker.text.isdigit():
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        if int(marker.text) > boundary - 1:
+            marker.text = str(int(marker.text) + 2)
+    return _serialize_preserving_ignorable_namespaces(root, payload)
+
+
 def _preflight_worksheets(source: Path, anchors: tuple[ReconciliationSheetAnchor, ...]) -> None:
     """Parse every changing sheet and reject unsupported coordinates before temp creation."""
 
     try:
         with zipfile.ZipFile(source) as archive:
             for anchor in anchors:
-                _reject_sheet_features(
-                    ET.fromstring(archive.read(anchor.worksheet_part)),
-                    anchor.insertion_after_column,
-                )
+                root = ET.fromstring(archive.read(anchor.worksheet_part))
+                _reject_sheet_features(root, anchor.insertion_after_column)
+                _require_insertible_rows(root, anchor)
+            _preflight_workbook(archive, anchors)
     except ReconciliationPeriodError:
         raise
     except Exception as error:
@@ -441,7 +803,10 @@ def _preflight_worksheets(source: Path, anchors: tuple[ReconciliationSheetAnchor
 
 
 def _reject_sheet_features(root: ET.Element, boundary: int) -> None:
-    rejected = {_Q(name) for name in ("dataValidations", "tableParts", "drawing", "extLst")}
+    rejected = {
+        _Q(name)
+        for name in ("dataValidations", "tableParts", "extLst", "legacyDrawing", "legacyDrawingHF")
+    }
     if any(node.tag in rejected for node in root.iter()):
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     for node in root.iter(_Q("mergeCell")):
@@ -450,10 +815,51 @@ def _reject_sheet_features(root: ET.Element, boundary: int) -> None:
     for node in root.iter(_Q("conditionalFormatting")):
         if any(child.tag == _Q("formula") for child in node.iter()):
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        if "sqref" not in node.attrib:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    for node in root.iter(_Q("hyperlink")):
+        reference = node.attrib.get("ref", "")
+        if not reference or _range_touches_or_right(reference, boundary):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    auto_filter = root.find(_Q("autoFilter"))
+    if auto_filter is not None:
+        if any(child.tag not in {_Q("filterColumn")} for child in auto_filter):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        if not auto_filter.attrib.get("ref"):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     for node in root.iter(_Q("c")):
         formula = node.find(_Q("f"))
         if formula is not None and formula.attrib.get("t") in {"shared", "array", "dataTable"}:
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        if formula is not None and formula.text:
+            _translate_formula(formula.text, boundary)
+
+
+def _require_insertible_rows(root: ET.Element, anchor: ReconciliationSheetAnchor) -> None:
+    """Every materialised row receives two blank styled cells; no ghost rows."""
+    rows = root.find(_Q("sheetData"))
+    if rows is None:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    required = {anchor.quantity_leaf_row, anchor.cost_leaf_row, anchor.first_detail_row}
+    present = {int(row.attrib.get("r", "0")) for row in rows.findall(_Q("row"))}
+    if not required <= present:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+
+
+def _preflight_workbook(
+    archive: zipfile.ZipFile, anchors: tuple[ReconciliationSheetAnchor, ...]
+) -> None:
+    boundaries = {anchor.sheet_name: anchor.insertion_after_column for anchor in anchors}
+    workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+    for name in workbook.iter(_Q("definedName")):
+        if _defined_name_is_affected(name, boundaries):
+            if name.attrib.get("name") not in {"_xlnm.Print_Area", "_xlnm.Print_Titles"}:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+            _translate_defined_name(name.text or "", boundaries)
+    if "xl/calcChain.xml" in archive.namelist():
+        _validate_calc_chain(
+            archive.read("xl/calcChain.xml"), tuple(worksheet_parts(archive.filename)), boundaries
+        )
 
 
 def _historical_parent_row(sheet, anchor: ReconciliationSheetAnchor) -> int:
@@ -519,15 +925,90 @@ def _map_range(value: str, boundary: int) -> str:
     return f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
 
 
+def _map_sqref(value: str, boundary: int) -> str:
+    items = value.split()
+    if not items:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    return " ".join(_map_range(item, boundary) for item in items)
+
+
+def _range_touches_or_right(value: str, boundary: int) -> bool:
+    left, _top, right, _bottom = range_boundaries(value.replace("$", ""))
+    return right > boundary or left > boundary
+
+
+def _map_filter_colid(value: int, boundary: int, root: ET.Element) -> int:
+    auto = root.find(_Q("autoFilter"))
+    if auto is None or "ref" not in auto.attrib:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    left, _top, _right, _bottom = range_boundaries(auto.attrib["ref"].replace("$", ""))
+    absolute = left + value
+    return value + 2 if absolute > boundary else value
+
+
 def _crosses_boundary(value: str, boundary: int) -> bool:
     left, _top, right, _bottom = range_boundaries(value.replace("$", ""))
     return left <= boundary < right
 
 
 def _translate_formula(formula: str, boundary: int) -> str:
-    if _UNSUPPORTED_FORMULA.search(formula):
+    if _UNSUPPORTED_FORMULA.search(formula) or "!" in formula:
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
-    return _A1.sub(lambda match: _map_coordinate(match.group(0), boundary), formula)
+    result: list[str] = []
+    index = 0
+    while index < len(formula):
+        if formula[index] == '"':
+            end = index + 1
+            while end < len(formula):
+                if formula[end] == '"':
+                    end += 2 if end + 1 < len(formula) and formula[end + 1] == '"' else 1
+                    if end <= len(formula) and formula[end - 1] == '"':
+                        break
+                else:
+                    end += 1
+            if end > len(formula):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+            result.append(formula[index:end])
+            index = end
+            continue
+        match = _A1_TOKEN.match(formula, index)
+        if match and _formula_token_boundary(formula, match.start(), match.end()):
+            token = match.group(0)
+            result.append(_translate_a1_operand(token, boundary))
+            index = match.end()
+            continue
+        result.append(formula[index])
+        index += 1
+    # A bare identifier not followed by '(' is a named range.  We do not have
+    # a safe name resolver in this structural layer.
+    unquoted = _A1_TOKEN.sub("", _strip_quoted("".join(result)))
+    for token in re.finditer(r"(?<![A-Z0-9_])[A-Z_][A-Z0-9_.]*(?![A-Z0-9_])", unquoted, re.I):
+        tail = unquoted[token.end() :].lstrip()
+        if not tail.startswith("(") and not re.fullmatch(r"[A-Z]{1,3}", token.group(), re.I):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    return "".join(result)
+
+
+def _strip_quoted(formula: str) -> str:
+    return re.sub(r'"(?:[^"]|"")*"', '""', formula)
+
+
+def _formula_token_boundary(value: str, start: int, end: int) -> bool:
+    before = value[start - 1] if start else ""
+    after = value[end] if end < len(value) else ""
+    return (
+        before not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."
+        and after not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."
+    )
+
+
+def _translate_a1_operand(value: str, boundary: int) -> str:
+    if ":" not in value:
+        return _map_coordinate(value, boundary)
+    left, right = value.split(":", 1)
+    # Preserve the independent absolute markers rather than constructing a
+    # normalised reference from range_boundaries.
+    return f"{_map_coordinate(left, boundary)}:{_map_coordinate(right, boundary)}"
 
 
 def _map_col(node: ET.Element, boundary: int) -> None:
@@ -536,6 +1017,81 @@ def _map_col(node: ET.Element, boundary: int) -> None:
         node.attrib["max"] = str(maximum + 2)
     elif minimum > boundary:
         node.attrib["min"], node.attrib["max"] = str(minimum + 2), str(maximum + 2)
+
+
+def _translate_cols(root: ET.Element, anchor: ReconciliationSheetAnchor) -> None:
+    cols = root.find(_Q("cols"))
+    if cols is None:
+        return
+    boundary = anchor.insertion_after_column
+    original = list(cols.findall(_Q("col")))
+    replacement: list[ET.Element] = []
+    quantity_definition: ET.Element | None = None
+    cost_definition: ET.Element | None = None
+    for node in original:
+        try:
+            minimum, maximum = int(node.attrib["min"]), int(node.attrib["max"])
+        except (KeyError, ValueError) as error:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE") from error
+        if minimum > maximum:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        if minimum <= anchor.quantity_column <= maximum:
+            quantity_definition = node
+        if minimum <= anchor.cost_column <= maximum:
+            cost_definition = node
+        # Disjoint fragments maintain exact attributes.  A definition which
+        # spans the insertion is split so new columns do not inherit a broad
+        # definition accidentally.
+        for low, high, offset in (
+            (minimum, min(maximum, boundary), 0),
+            (max(minimum, boundary + 1), maximum, 2),
+        ):
+            if low <= high:
+                clone = ET.Element(_Q("col"), dict(node.attrib))
+                clone.attrib["min"], clone.attrib["max"] = str(low + offset), str(high + offset)
+                replacement.append(clone)
+    if quantity_definition is not None:
+        replacement.append(_column_clone(quantity_definition, boundary + 1))
+    if cost_definition is not None:
+        replacement.append(_column_clone(cost_definition, boundary + 2))
+    if not _nonoverlapping_cols(replacement):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    cols[:] = sorted(replacement, key=lambda item: int(item.attrib["min"]))
+
+
+def _column_clone(source: ET.Element, target: int) -> ET.Element:
+    node = ET.Element(_Q("col"), dict(source.attrib))
+    node.attrib["min"] = node.attrib["max"] = str(target)
+    return node
+
+
+def _nonoverlapping_cols(nodes: list[ET.Element]) -> bool:
+    previous = 0
+    for node in sorted(nodes, key=lambda item: int(item.attrib["min"])):
+        minimum, maximum = int(node.attrib["min"]), int(node.attrib["max"])
+        if minimum <= previous or minimum > maximum:
+            return False
+        previous = maximum
+    return True
+
+
+def _translate_row_spans(row: ET.Element, boundary: int) -> None:
+    spans = row.attrib.get("spans")
+    if spans is None:
+        return
+    pieces: list[str] = []
+    for item in spans.split():
+        try:
+            left, right = (int(value) for value in item.split(":", 1))
+        except (TypeError, ValueError):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE") from None
+        if left <= boundary < right:
+            right += 2
+        elif left > boundary:
+            left += 2
+            right += 2
+        pieces.append(f"{left}:{right}")
+    row.attrib["spans"] = " ".join(pieces)
 
 
 def _inline_string(cell: ET.Element, text: str) -> None:
@@ -552,14 +1108,11 @@ def _transform_defined_names(
     payload: bytes, anchors: dict[str, ReconciliationSheetAnchor]
 ) -> bytes:
     root = ET.fromstring(payload)
+    boundaries = {name: anchor.insertion_after_column for name, anchor in anchors.items()}
     for node in root.iter(_Q("definedName")):
-        if node.text and "!" in node.text:
-            sheet, reference = node.text.rsplit("!", 1)
-            name = sheet.strip("'")
-            anchor = anchors.get(name)
-            if anchor is not None:
-                node.text = f"{sheet}!{_map_range(reference, anchor.insertion_after_column)}"
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        if _defined_name_is_affected(node, boundaries):
+            node.text = _translate_defined_name(node.text or "", boundaries)
+    return _serialize_preserving_ignorable_namespaces(root, payload)
 
 
 def _transform_calc_chain(
@@ -568,14 +1121,113 @@ def _transform_calc_chain(
     anchors: dict[str, ReconciliationSheetAnchor],
 ) -> bytes:
     root = ET.fromstring(payload)
+    active_index: int | None = None
     for node in root.iter(_Q("c")):
-        index = int(node.attrib.get("i", "1")) - 1
-        if not 0 <= index < len(sheet_names):
+        if "i" in node.attrib:
+            try:
+                active_index = int(node.attrib["i"])
+            except ValueError as error:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE") from error
+        if active_index is None or not 1 <= active_index <= len(sheet_names):
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
-        anchor = anchors.get(sheet_names[index])
+        anchor = anchors.get(sheet_names[active_index - 1])
         if anchor is not None and "r" in node.attrib:
             node.attrib["r"] = _map_coordinate(node.attrib["r"], anchor.insertion_after_column)
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    return _serialize_preserving_ignorable_namespaces(root, payload)
+
+
+def _defined_name_is_affected(node: ET.Element, boundaries: dict[str, int]) -> bool:
+    text = node.text or ""
+    for sheet, boundary in boundaries.items():
+        marker = _quote_sheet(sheet) + "!"
+        if marker in text:
+            reference = text.split(marker, 1)[1]
+            try:
+                if _range_touches_or_right(reference.split(",", 1)[0], boundary):
+                    return True
+            except ValueError:
+                return True
+    return False
+
+
+def _quote_sheet(name: str) -> str:
+    return "'" + name.replace("'", "''") + "'"
+
+
+def _translate_defined_name(text: str, boundaries: dict[str, int]) -> str:
+    if not text or "!" not in text:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    # The permitted built-ins are straightforward union lists.  Parse each
+    # quoted-sheet term exactly; any expression syntax is intentionally out.
+    terms = text.split(",")
+    translated: list[str] = []
+    for term in terms:
+        if "!" not in term:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        sheet, reference = term.rsplit("!", 1)
+        unquoted = (
+            sheet[1:-1].replace("''", "'")
+            if sheet.startswith("'") and sheet.endswith("'")
+            else sheet
+        )
+        boundary = boundaries.get(unquoted)
+        if boundary is None:
+            translated.append(term)
+            continue
+        if not re.fullmatch(
+            r"\$?[A-Z]{1,3}:\$?[A-Z]{1,3}|\$?\d+:\$?\d+|\$?[A-Z]{1,3}\$?\d+:\$?[A-Z]{1,3}\$?\d+",
+            reference,
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        if re.fullmatch(r"\$?\d+:\$?\d+", reference):
+            translated.append(term)
+        elif re.fullmatch(r"\$?[A-Z]{1,3}:\$?[A-Z]{1,3}", reference):
+            left, right = reference.split(":", 1)
+            translated.append(
+                f"{sheet}!{_map_column_token(left, boundary)}:{_map_column_token(right, boundary)}"
+            )
+        else:
+            translated.append(f"{sheet}!{_translate_a1_operand(reference, boundary)}")
+    return ",".join(translated)
+
+
+def _map_column_token(value: str, boundary: int) -> str:
+    absolute = "$" if value.startswith("$") else ""
+    index = column_index_from_string(value.lstrip("$"))
+    return absolute + get_column_letter(index + 2 if index > boundary else index)
+
+
+def _validate_calc_chain(
+    payload: bytes, sheet_names: tuple[str, ...], boundaries: dict[str, int]
+) -> None:
+    root = ET.fromstring(payload)
+    current: int | None = None
+    for node in root.iter(_Q("c")):
+        if "i" in node.attrib:
+            try:
+                current = int(node.attrib["i"])
+            except ValueError as error:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE") from error
+        if current is None or not 1 <= current <= len(sheet_names) or "r" not in node.attrib:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        if sheet_names[current - 1] in boundaries:
+            _map_coordinate(node.attrib["r"], boundaries[sheet_names[current - 1]])
+
+
+def _calc_chain_is_affected(
+    payload: bytes, sheet_names: tuple[str, ...], boundaries: dict[str, int]
+) -> bool:
+    root = ET.fromstring(payload)
+    current: int | None = None
+    for node in root.iter(_Q("c")):
+        if "i" in node.attrib:
+            current = int(node.attrib["i"])
+        if current is None or not 1 <= current <= len(sheet_names):
+            return True
+        boundary = boundaries.get(sheet_names[current - 1])
+        if boundary is not None and _cell_column(node.attrib.get("r", "A1")) > boundary:
+            return True
+    return False
 
 
 def _assert_digest(path: Path, expected: str) -> None:
@@ -589,6 +1241,34 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _serialize_preserving_ignorable_namespaces(root: ET.Element, source: bytes) -> bytes:
+    """Keep namespace bindings referenced only by ``mc:Ignorable`` valid.
+
+    ElementTree discards declarations that are only lexical tokens in
+    ``mc:Ignorable``.  Reinsert original declarations into the root start tag
+    when serialization did not retain them; this is a namespace-validity guard,
+    not a semantic rewrite of any workbook node.
+    """
+    serialized = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    root_open = serialized.find(b"<", serialized.find(b"?>") + 2)
+    start = serialized.find(b">", root_open)
+    source_open = source.find(b"<", source.find(b"?>") + 2)
+    source_end = source.find(b">", source_open)
+    if start < 0 or source_end < 0:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_TRANSFORM_INVALID")
+    original = _XMLNS.findall(source[source_open : source_end + 1])
+    missing = [
+        declaration
+        for declaration in original
+        if declaration not in serialized[root_open : start + 1]
+    ]
+    if missing:
+        serialized = (
+            serialized[:start] + b"".join(b" " + item for item in missing) + serialized[start:]
+        )
+    return serialized
 
 
 def _fsync_file(path: Path) -> None:
