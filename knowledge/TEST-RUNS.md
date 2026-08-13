@@ -11,15 +11,17 @@ updated: 2026-08-13
 
 Keep only the two latest completed runs relevant to active work.
 
-## 2026-08-13 — structural target-measure Wave 2
+## 2026-08-13 — period-insertion feature P6 rejection
 
-- Feature tip `57a56efa7621e3d65277e6117e033a6718094f1f`; accepted ORDA integration
-  `1362c538bbb81fdb5d16e5617cd4f9a55cb01632`; published checkpoint `959e3b9`.
-- The exact focused target/execution/verification/recovery profile completed with `104 passed` on
-  the feature integration and canonical `main`. Ruff, format and diff checks passed.
-- Independent P6 review reproduced month-only and month+year identities, March/May disambiguation,
-  multi-period/conflicting evidence rejection, historical-scope rejection, exact error propagation
-  and discovered-cell-only writing. Merge verdict: yes.
+- Feature tip `dd3273e246ffee69c635a19f85a01339c91ee2ab` passed its narrow profile (`24
+  passed`, Ruff/format/diff clean) but failed independent P6 and remains unmerged.
+- Small synthetic repros proved that the verifier accepted a changed old cell value; conditional
+  formatting `sqref`, auto-filter relative IDs, inherited calcChain sheet identity, hyperlinks,
+  row/column layout and inter-sheet formulas were not handled safely. New inserted columns also did
+  not clone effective widths.
+- The result is a controlled remediation, not test expansion or a private-data exception: bind an
+  immutable plan/preflight first, then require full inverse-delta comparison and fail closed for
+  every unsupported coordinate-bearing structure.
 
 ## 2026-08-13 — low-load period-insertion architecture shadow
 

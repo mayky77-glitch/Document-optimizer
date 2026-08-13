@@ -71,7 +71,7 @@ members are duplicated, but the original bytes are not changed.
 
 | ID | Severity | Boundary | Deterministic result |
 | --- | --- | --- | --- |
-| RA-021 | high implementation gate | missing reporting-period pair | structural target binding is fixed, but reconcile cannot yet create the explicit pair required by a historical-only target |
+| RA-021 | high implementation gate | missing reporting-period pair | structural target binding is fixed; first insertion feature `dd3273e` failed P6 because its verifier and OOXML coordinate translation were incomplete |
 
 RA-019 and RA-020 are closed at published checkpoint `fe3d5ee`: exact merged-parent binding,
 semantic detail start, broad structural work nomination and unique bounded source/stage identity
@@ -96,6 +96,15 @@ result. The remaining write gate is period insertion. Reconciliation may insert 
 an explicit period, after strict workbook-delta preflight, and only when calculated values will be
 written; rerun must be idempotent. See
 [[../DECISIONS#DO-020: период вставляется только для реальной записи (2026-08-13)|DO-020]].
+
+The unmerged feature tip `dd3273e` is negative evidence, not a release candidate. Deterministic
+synthetic cases showed that its verifier compared an old cell only by mapped coordinate and style,
+so a changed value passed. The same implementation left conditional-format `sqref`, hyperlink and
+auto-filter relative bindings stale, mishandled inherited calcChain sheet identity and inter-sheet
+formula references, omitted effective cloned column widths and lacked a canonical plan digest.
+Remediation must retain broad structural header discovery and must not add a private-template phrase
+allowlist. Unknown coordinate-bearing OOXML remains a controlled failure until exact forward and
+independent inverse mappings are covered.
 
 ## RA-014 — verification is not a numeric reconciliation
 
