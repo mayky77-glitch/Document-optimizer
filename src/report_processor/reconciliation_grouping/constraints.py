@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from .features import normalize_unit
 from .models import FeatureVector, GroupingException, GroupInput
 
 _INCOMPATIBLE = frozenset(
@@ -34,6 +35,7 @@ def hard_conflict(
     right: FeatureVector,
     *,
     negative_pairs: frozenset[tuple[str, str]],
+    items_by_id: dict[str, GroupInput],
 ) -> str | None:
     """Return a stable conflict reason or ``None`` when two groups may share a family."""
     if tuple(sorted((left.group_id, right.group_id))) in negative_pairs:
@@ -42,6 +44,15 @@ def hard_conflict(
         return "category_mismatch"
     if left.mode is not right.mode:
         return "accounting_mode_mismatch"
+    if left.mode.value == "quantity_cost" and (
+        left.unit_family.value == "unknown" or right.unit_family.value == "unknown"
+    ):
+        return "quantity_cost_unit_unrecognized"
+    if left.mode.value == "quantity_cost" and (
+        normalize_unit(items_by_id[left.group_id].group.normalized_unit)
+        != normalize_unit(items_by_id[right.group_id].group.normalized_unit)
+    ):
+        return "quantity_cost_unit_mismatch"
     if left.unit_family is not right.unit_family:
         return "unit_family_mismatch"
     labels = set(left.critical_modifiers) | set(left.negative_markers)
@@ -68,18 +79,35 @@ def validate_hard_constraints(
 ) -> tuple[GroupingException, ...]:
     """Return all deterministic per-group and pair exceptions in stable order."""
     materialized = tuple(sorted(features, key=lambda feature: feature.group_id))
-    exceptions = [
-        exception
-        for feature in materialized
-        if (exception := unavailable_category_exception(items_by_id[feature.group_id])) is not None
-    ]
+    feature_ids = {feature.group_id for feature in materialized}
+    dangling_ids = sorted(
+        {group_id for pair in negative_pairs for group_id in pair if group_id not in feature_ids}
+    )
+    if dangling_ids:
+        raise ValueError("negative feedback references an unknown materialized group")
+    exceptions = []
+    for feature in materialized:
+        item = items_by_id[feature.group_id]
+        if (exception := unavailable_category_exception(item)) is not None:
+            exceptions.append(exception)
+        if feature.mode.value == "quantity_cost" and (
+            feature.unit_family.value == "unknown" or not normalize_unit(item.group.normalized_unit)
+        ):
+            exceptions.append(
+                GroupingException((feature.group_id,), "quantity_cost_unit_unrecognized")
+            )
     by_boundary: dict[tuple[str, str, str, str, str], list[FeatureVector]] = {}
     for feature in materialized:
         by_boundary.setdefault(feature.package_key, []).append(feature)
     for boundary in by_boundary.values():
         for index, left in enumerate(boundary):
             for right in boundary[index + 1 :]:
-                reason = hard_conflict(left, right, negative_pairs=negative_pairs)
+                reason = hard_conflict(
+                    left,
+                    right,
+                    negative_pairs=negative_pairs,
+                    items_by_id=items_by_id,
+                )
                 if reason:
                     exceptions.append(GroupingException((left.group_id, right.group_id), reason))
     return tuple(sorted(set(exceptions), key=lambda value: (value.group_ids, value.reason)))

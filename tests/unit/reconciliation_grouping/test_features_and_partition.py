@@ -8,6 +8,7 @@ import pytest
 from report_processor.reconciliation_grouping.features import (
     extract_features,
     normalize_text,
+    normalize_unit,
     unit_family,
 )
 from report_processor.reconciliation_grouping.models import GroupInput, UnitFamily
@@ -54,6 +55,7 @@ def test_feature_contract_normalizes_and_retains_critical_typed_fields() -> None
     feature = extract_features(GroupInput(_group((row,)), (row,), ReviewMode.QUANTITY_COST))
 
     assert normalize_text("  Ёлка—КАБЕЛЬ ") == "елка кабель"
+    assert normalize_unit(" М ") == "м"
     assert unit_family("м²") is UnitFamily.AREA
     assert feature.action == "installation"
     assert feature.object_kind == "cable"
