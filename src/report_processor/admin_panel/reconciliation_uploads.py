@@ -37,6 +37,7 @@ def validated_sources(
         raise ValueError("provide from 1 to 32 source workbooks")
     result: list[tuple[str, bytes]] = []
     names: set[str] = set()
+    digests: set[str] = set()
     for item in values:
         if not isinstance(item, tuple) or len(item) != 2:
             raise ValueError("invalid source upload")
@@ -45,7 +46,11 @@ def validated_sources(
         basename = unicodedata.normalize("NFC", name)
         if basename.casefold() in names:
             raise ValueError("duplicate source filename")
+        content_digest = digest(content)
+        if content_digest in digests:
+            raise ValueError("duplicate source content")
         names.add(basename.casefold())
+        digests.add(content_digest)
         result.append((basename, content))
     return sorted(result, key=lambda item: (item[0].casefold(), digest(item[1])))
 

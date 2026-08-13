@@ -13,6 +13,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
+from report_processor.identifiers import extract_document_index
 from report_processor.processing.adapters import _materialized
 from report_processor.schema import LogicalColumn, SheetType, analyze_workbook_schema
 from report_processor.target_report import (
@@ -27,8 +28,11 @@ from report_processor.target_report.ooxml import (
 )
 from report_processor.target_report.reader import _cell_snapshot
 
-_INDEX_RE = re.compile(r"(\d{4})(?!.*\d)")
 _STAGE_RE = re.compile(r"этап\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
+
+
+class ReconciliationTargetScopeError(ValueError):
+    """The target cannot supply one safe reconciliation stage."""
 
 
 def publish_unchanged_target(source, output, expected_sha256: str) -> str:
@@ -74,16 +78,22 @@ def publish_unchanged_target(source, output, expected_sha256: str) -> str:
         temporary.unlink(missing_ok=True)
 
 
-def read_reconciliation_target(path, digest: str, stage: str):
+def read_reconciliation_target(path, digest: str, stage: str | None):
     """Read A/B/C/D/E/F/J/K while retaining the verified writer schema."""
     source = _materialized(path, f"target:{digest}")
     with open_dual_workbook(WorkbookOpenRequest(source)) as session:
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
+        stages = enumerate_reconciliation_stages(session)
+        selected_stage = resolve_reconciliation_stage(stages, stage)
         report = generic.read_target_report(
-            session, analyze_workbook_schema(session), TargetReportReadRequest(selected_stage=stage)
+            session,
+            analyze_workbook_schema(session),
+            TargetReportReadRequest(selected_stage=selected_stage),
         )
         bindings = _bindings()
-        rows = tuple(_rows(session, stage, bindings))
+        rows = tuple(_rows(session, selected_stage, bindings))
+    if not rows:
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
     schema = replace(report.schema, column_bindings=bindings)
     return schema, rows
 
@@ -93,8 +103,46 @@ def category_id(label: str) -> str:
 
 
 def terminal_index(value: object) -> str | None:
-    match = _INDEX_RE.search(str(value or ""))
-    return match.group(1) if match else None
+    parsed = extract_document_index(value, allow_loose=True)
+    index = parsed.value
+    if index is not None and len(index.main) == 4:
+        return index.main
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d{4}", text) and not re.fullmatch(r"(?:19|20)\d{2}", text):
+        return text
+    return None
+
+
+def enumerate_reconciliation_stages(session) -> tuple[str, ...]:
+    """Return canonical stage identities observed in the fixed target layout."""
+    stages: set[str] = set()
+    for sheet in session.formula_workbook.worksheets:
+        active_index = None
+        for row_number in range(1, int(sheet.max_row or 0) + 1):
+            index_value = sheet.cell(row_number, 2).value
+            if index_value is not None:
+                active_index = terminal_index(index_value)
+            value = sheet.cell(row_number, 3).value
+            if value is None or not str(value).strip():
+                continue
+            if active_index is None:
+                continue
+            match = _STAGE_RE.search(str(value).strip())
+            stages.add(match.group(1) if match else str(value).strip())
+    return tuple(sorted(stages))
+
+
+def resolve_reconciliation_stage(stages: tuple[str, ...], requested: str | None) -> str:
+    """Resolve only explicit existing stage or exactly one discovered stage."""
+    if requested is not None:
+        if requested in stages:
+            return requested
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_MISSING")
+    if len(stages) == 1:
+        return stages[0]
+    if not stages:
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
+    raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_AMBIGUOUS")
 
 
 def writer_calculations(calculations: Iterable[object]) -> tuple[object, ...]:

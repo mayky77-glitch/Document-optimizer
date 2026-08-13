@@ -112,6 +112,131 @@ def test_bare_four_digit_upload_name_survives_production_source_path(tmp_path: P
     assert batch.issues == ()
 
 
+def test_hierarchical_cumulative_header_keeps_first_detail_row(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("", "Наименование", "Единица", "Выполнено", "", ""))
+    sheet.append(("", "работ и этапов", "измерения", "за весь период", "", ""))
+    sheet.append(("№", "", "", "Количество", "Общая стоимость", ""))
+    sheet.append(("1", "Первая работа", "м", "1.25", "1250.50", ""))
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert len(batch.rows) == 1
+    assert batch.selections[0].source_type == "ks6a"
+
+
+def _cumulative_sheet(sheet, name: str = "Работа") -> None:
+    sheet.append(("", "Описание", "Единица", "Освоено", "", ""))
+    sheet.append(("", "строительных работ", "измерения", "нарастающим итогом", "", ""))
+    sheet.append(("№", "", "", "Объём", "Сумма затрат", ""))
+    sheet.append(("1", name, "м", "1.25", "1250.50", ""))
+
+
+def test_two_viable_cumulative_sheets_fail_controlled_ambiguity(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    _cumulative_sheet(workbook.active)
+    _cumulative_sheet(workbook.create_sheet("Копия"), "Другая работа")
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
+
+
+def test_unique_cumulative_candidate_outranks_direct_candidate(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    _cumulative_sheet(workbook.active)
+    direct = workbook.create_sheet("КС-2")
+    _ks2_sheet = (
+        ("№", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("1", "Прямая работа", "м", "2", "20"),
+    )
+    for row in _ks2_sheet:
+        direct.append(row)
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert len(batch.rows) == 1
+    assert batch.selections[0].source_type == "ks6a"
+
+
+def test_two_cumulative_regions_in_one_sheet_fail_controlled_ambiguity(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    _cumulative_sheet(sheet)
+    sheet.append(())
+    _cumulative_sheet(sheet, "Вторая работа")
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
+
+
+def test_two_direct_regions_in_one_sheet_fail_controlled_ambiguity(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("1", "Первая", "м", "1", "10"),
+        (),
+        ("", "Описание работ", "Единица измерения", "Объём", "Сумма затрат"),
+        ("2", "Вторая", "м", "2", "20"),
+    ):
+        sheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
+
+
+def test_footer_formula_does_not_invalidate_eligible_source_rows(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("№", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"))
+    sheet.append(("1", "Работа", "м", "1", "10"))
+    sheet.append(("", "Итого", "", "=SUM(D2:D2)", "=SUM(E2:E2)"))
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert len(batch.rows) == 1
+
+
+def test_formula_metric_without_cache_is_controlled_source_issue(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("№", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"))
+    sheet.append(("1", "Работа", "м", "=1+1", "10"))
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "FORMULA_CACHE_UNAVAILABLE"
+
+
 def test_opt_in_real_workbooks_leave_all_input_bytes_unchanged() -> None:
     source_values = tuple(
         value
