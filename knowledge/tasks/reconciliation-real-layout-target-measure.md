@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: accepted
 card_id: reconciliation-real-layout-target-measure
 version: 1
 work_id: reconciliation-target-measure-v1
@@ -8,7 +8,10 @@ task_id: target-measure
 purpose: Discover the current-period target quantity/cost pair from structural header evidence and remove positional J/K verification.
 role: developer
 route: P4 -> developer / gpt-5.6-terra / high; reason: cross-path numeric correctness and fail-closed target interpretation.
-launch_status: planned
+launch_status: completed
+accepted_feature_sha: 57a56efa7621e3d65277e6117e033a6718094f1f
+accepted_integration_sha: 1362c538bbb81fdb5d16e5617cd4f9a55cb01632
+published_main_sha: 959e3b94bca5c441b56a12f3bb22d371c79567de
 card_path: knowledge/tasks/reconciliation-real-layout-target-measure.md
 card_commit_sha_source: exact planning commit supplied by launch envelope
 base_sha_source: exact planning commit
@@ -80,3 +83,9 @@ structurally valid legacy pair; same-parent adjacency; split/conflicting parents
 duplicate evidence; two candidate periods; alternate wording; sheet-local columns; formula/cache
 provenance; numeric verdict independence from contradictory historical cells; discovered-cell-only
 apply; no-artifact failure; and invalidation of obsolete manifests/apply identities.
+
+## Acceptance
+
+Accepted after `104 passed`, Ruff/format/diff gates and independent P6 review. The final detector
+rejects multi-period and mixed month/month+year evidence before any current-parent fallback, while
+preserving broad total-cost wording and exact technical error propagation.

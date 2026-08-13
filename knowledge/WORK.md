@@ -26,6 +26,14 @@ updated: 2026-08-13
   accepted and published at `fe3d5ee`: exact merged-parent binding, broad structural work-header
   nomination and unique 3/4-digit source-to-stage identity are enforced without positional or
   narrow-phrase fallback.
+- [[tasks/reconciliation-real-layout-target-measure|Structural target-measure Wave 2]] is accepted
+  through ORDA integration `1362c53` and published at `959e3b9`. Verification now reads only one
+  structurally proven current-period quantity/cost pair; a historical-only target fails with an
+  exact technical code and produces no red artifact.
+- [[tasks/reconciliation-period-insertion-gate0|Reporting-period insertion Gate 0]] freezes two
+  sequential low-load waves: a direct OOXML transformer, then preview/apply integration. The
+  insertion is reachable only from reconciliation with an explicit `YYYY-MM` period and only when
+  at least one calculated value will be written.
 
 ## Completed context
 
@@ -40,6 +48,6 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Freeze and execute the structural target-measure card from published `fe3d5ee`. Verification must
-return a technical no-artifact result when the current-period pair is absent; period insertion is a
-later dependency wave.
+Execute [[tasks/reconciliation-period-ooxml|the frozen OOXML transformer card]] from published
+`959e3b9`, independently review it, then open the dependent preview/apply card. Do not start the
+service/API/UI period field until both production insertion waves are accepted.

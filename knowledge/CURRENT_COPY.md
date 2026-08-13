@@ -11,11 +11,13 @@ updated: 2026-08-13
 
 - Path: `Document-optimizer-ready` under the project documents directory.
 - Branch: `main`.
-- Local and remote product checkpoint: `fe3d5eee01077c6130dd67b5f300d20fb316f276`.
+- Local and remote product checkpoint: `959e3b94bca5c441b56a12f3bb22d371c79567de`.
 - Purpose: canonical production and audit copy for document reconciliation and drawing-card workflows.
 - Working tree: one unrelated untracked drawing-card UX specification; preserve and never stage it with reconciliation work.
 
 The accepted lifecycle integration is `c8da7108b5c0dd228d5ef5eb1fee2568cdcca3b8`.
 Real-layout Wave 1 is accepted through ORDA integration `3364bb3` and published in `main` at
 `fe3d5ee`.
+Target-measure Wave 2 is accepted through ORDA integration `1362c53` and published in `main` at
+`959e3b9` after `104 passed`, Ruff, format, diff and independent P6 review.
 Source spreadsheets, generated reports and audit helpers remain outside Git.

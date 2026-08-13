@@ -40,8 +40,10 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[tasks/admin-verification-lifecycle-gate0|Verification lifecycle Gate 0]] — transactional apply followed by restart recovery.
 - [[tasks/reconciliation-real-layout-gate0|Reconciliation real-layout Gate 0]] — structural
   source/target measure discovery and reference-compatible period insertion.
-- [[tasks/reconciliation-target-measure-gate0|Target-measure Gate 0]] — active structural target
-  oracle wave from the accepted source/identity checkpoint.
+- [[tasks/reconciliation-target-measure-gate0|Target-measure Gate 0]] — accepted structural target
+  oracle checkpoint published at `959e3b9`.
+- [[tasks/reconciliation-period-insertion-gate0|Period-insertion Gate 0]] — active direct-OOXML
+  transformation and dependent preview/apply waves.
 - [[research/propextract-methods-2026-08-13|PropExtract methods]] — external commit-pinned methodology comparison; no code reuse.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 - [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.

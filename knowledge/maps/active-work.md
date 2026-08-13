@@ -17,10 +17,11 @@ J/K verification and target-stage selection are accepted. Completed discovery au
 remain tracked in [[../errors/reconciliation-accuracy-findings|RA-001—RA-018]] until verified closed.
 Numeric/stage remediation is integrated; the sequential lifecycle wave is accepted at `c8da710`.
 The active dependency chain is [[../tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]].
-Structural source/identity is accepted at `fe3d5ee`; next is structural target oracle, followed by
-reporting-period insertion and release shadow.
-Active frozen card: [[../tasks/reconciliation-real-layout-target-measure|Target measure]] under
-[[../tasks/reconciliation-target-measure-gate0|its Gate 0]].
+Structural source/identity is accepted at `fe3d5ee`; the structural target oracle is accepted at
+`959e3b9`. Active work is [[../tasks/reconciliation-period-insertion-gate0|period-insertion Gate 0]]:
+first [[../tasks/reconciliation-period-ooxml|direct OOXML transformation]], then
+[[../tasks/reconciliation-period-apply|preview/apply integration]], then a separate service/UI wave
+and release shadow.
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 

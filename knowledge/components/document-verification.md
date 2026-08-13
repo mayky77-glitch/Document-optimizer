@@ -47,11 +47,8 @@ artifact.
 
 ## Active accuracy limit
 
-The numeric oracle currently receives a positionally bound J/K pair. Direct comparison of the
-clean target with the desired reference proves that pair is not the current reporting period for
-the designated template: J/K remain unchanged and a new pair is inserted later. Until
-[[../DECISIONS#DO-019: числовая пара цели определяется структурой, а не адресом (2026-08-13)|DO-019]]
-is implemented, verification must not claim 100% accuracy on that layout. The required safe result
-for a clean target without a structural current-period pair is
-`TARGET_CURRENT_PERIOD_PAIR_MISSING`, not pass/red. Track implementation in
-[[../tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]].
+The numeric oracle now receives only a structurally proven current-period pair. A historical-only
+clean target returns `TARGET_CURRENT_PERIOD_PAIR_MISSING` before verdict or annotation; verify never
+inserts a period. This closes the positional J/K risk but means the designated clean template is
+intentionally not verifiable until reconciliation creates its period pair. Track that separate
+write path in [[../tasks/reconciliation-period-insertion-gate0|period-insertion Gate 0]].

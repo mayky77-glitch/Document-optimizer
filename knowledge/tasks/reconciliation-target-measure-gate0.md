@@ -1,6 +1,6 @@
 ---
 type: orchestration
-status: frozen
+status: accepted
 work_id: reconciliation-target-measure-v1
 objective: Bind verification and reconciliation to one structurally proven current-period target quantity/cost pair.
 project_root: /Users/x/Documents/Сооотношение документов/Document-optimizer-ready
@@ -44,3 +44,5 @@ Period-column insertion, API/UI period input, source extraction, arithmetic, uni
 writer production are forbidden in this wave. A target without a proven pair fails technically and
 creates no red artifact. A later insertion wave may prepare the missing pair only after this reader
 contract is accepted.
+
+Accepted feature tip: `57a56ef`; accepted integration: `1362c53`; published `main`: `959e3b9`.

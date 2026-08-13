@@ -27,8 +27,9 @@ links:
 
 # Reconciliation real-layout Gate 0
 
-Wave 1 is accepted at ORDA integration `3364bb3` and published in `main` at `fe3d5ee`. Wave 2
-starts from that published checkpoint.
+Wave 1 is accepted at ORDA integration `3364bb3` and published in `main` at `fe3d5ee`. Wave 2 is
+accepted at ORDA integration `1362c53` and published in `main` at `959e3b9`. Period insertion starts
+from that published checkpoint under [[reconciliation-period-insertion-gate0|a separate Gate 0]].
 
 The lifecycle baseline is `1754 passed, 25 skipped`. Twelve immutable sources, one clean target and
 one desired reference were inspected independently. The clean/reference shape is 180 rows and

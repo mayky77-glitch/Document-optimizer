@@ -71,7 +71,7 @@ members are duplicated, but the original bytes are not changed.
 
 | ID | Severity | Boundary | Deterministic result |
 | --- | --- | --- | --- |
-| RA-021 | critical decision gate | target numeric measure | current verification/write treats J/K as current period although clean/reference comparison shows J/K unchanged and a new period pair inserted later |
+| RA-021 | high implementation gate | missing reporting-period pair | structural target binding is fixed, but reconcile cannot yet create the explicit pair required by a historical-only target |
 
 RA-019 and RA-020 are closed at published checkpoint `fe3d5ee`: exact merged-parent binding,
 semantic detail start, broad structural work nomination and unique bounded source/stage identity
@@ -90,11 +90,12 @@ zeroes. Years and multiple target candidates fail closed. A source may expose a 
 of primary/parenthetical candidates; reconciliation selects only a unique intersection with the
 terminal identities present in the selected target stage.
 
-RA-021 is governed by [[../DECISIONS#DO-019: числовая пара цели определяется структурой, а не адресом (2026-08-13)|DO-019]].
-The verified reference keeps the historical J/K pair unchanged, inserts a reporting-period pair
-later and shifts the narrative block. Verification of a clean target without that pair must be a
-technical no-artifact result. Reconciliation may insert one pair only for an explicit period and
-after a strict workbook-delta allowlist; rerun must be idempotent.
+RA-021 target interpretation is closed at published `959e3b9`: the reader binds only a structurally
+proven current-period pair, and verification of a clean target without it is a technical no-artifact
+result. The remaining write gate is period insertion. Reconciliation may insert one pair only for
+an explicit period, after strict workbook-delta preflight, and only when calculated values will be
+written; rerun must be idempotent. See
+[[../DECISIONS#DO-020: период вставляется только для реальной записи (2026-08-13)|DO-020]].
 
 ## RA-014 — verification is not a numeric reconciliation
 

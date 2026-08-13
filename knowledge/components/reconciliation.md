@@ -52,9 +52,9 @@ leaves to the exact nominated parent and resolves bounded filename candidates by
 terminal intersection. Broad work-header stems nominate candidates, while structural overlap and
 equal coherent candidates fail closed; no narrow phrase ranking was introduced.
 
-The clean target and desired reference prove that J/K are historical documentary totals and remain
-unchanged. The reference inserts the current reporting-period quantity/cost pair in L/M and shifts
-the narrative block. Therefore positional J/K writing is superseded by structural
-[[../DECISIONS#DO-019: числовая пара цели определяется структурой, а не адресом (2026-08-13)|DO-019]].
-See [[../tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]] and
-[[../errors/reconciliation-accuracy-findings|RA-021]].
+The accepted target reader no longer treats J/K or any other address as current by position. It
+requires one adjacent quantity/total-cost pair with coherent current scope or one exact common
+calendar identity; competing, cumulative and conflicting period evidence fails closed. A clean
+historical-only target therefore needs the explicit, idempotent insertion governed by
+[[../DECISIONS#DO-020: период вставляется только для реальной записи (2026-08-13)|DO-020]] and
+[[../tasks/reconciliation-period-insertion-gate0|its Gate 0]].
