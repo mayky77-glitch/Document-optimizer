@@ -129,6 +129,47 @@ def test_hierarchical_cumulative_header_keeps_first_detail_row(tmp_path: Path) -
     assert batch.selections[0].source_type == "ks6a"
 
 
+def _cumulative_sheet(sheet, name: str = "Работа") -> None:
+    sheet.append(("", "Описание", "Единица", "Освоено", "", ""))
+    sheet.append(("", "строительных работ", "измерения", "нарастающим итогом", "", ""))
+    sheet.append(("№", "", "", "Объём", "Сумма затрат", ""))
+    sheet.append(("1", name, "м", "1.25", "1250.50", ""))
+
+
+def test_two_viable_cumulative_sheets_fail_controlled_ambiguity(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    _cumulative_sheet(workbook.active)
+    _cumulative_sheet(workbook.create_sheet("Копия"), "Другая работа")
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
+
+
+def test_unique_cumulative_candidate_outranks_direct_candidate(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    _cumulative_sheet(workbook.active)
+    direct = workbook.create_sheet("КС-2")
+    _ks2_sheet = (
+        ("№", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("1", "Прямая работа", "м", "2", "20"),
+    )
+    for row in _ks2_sheet:
+        direct.append(row)
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert len(batch.rows) == 1
+    assert batch.selections[0].source_type == "ks6a"
+
+
 def test_formula_metric_without_cache_is_controlled_source_issue(tmp_path: Path) -> None:
     path = tmp_path / "source.xlsx"
     workbook = Workbook()

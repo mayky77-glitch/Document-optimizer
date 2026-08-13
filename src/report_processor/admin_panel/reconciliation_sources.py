@@ -25,6 +25,10 @@ class FormulaCacheUnavailableError(ValueError):
     """An otherwise usable source metric cannot be verified from its cache."""
 
 
+class SourceLayoutAmbiguousError(ValueError):
+    """More than one structurally viable source layout exists."""
+
+
 @dataclass(frozen=True, slots=True)
 class ReconciliationSourceDescriptor:
     """Safe upload metadata; the private workbook path stays with the adapter."""
@@ -116,6 +120,9 @@ def extract_reconciliation_sources(
         except FormulaCacheUnavailableError:
             issues.append(_issue("FORMULA_CACHE_UNAVAILABLE", descriptor))
             continue
+        except SourceLayoutAmbiguousError:
+            issues.append(_issue("SOURCE_LAYOUT_AMBIGUOUS", descriptor))
+            continue
         except Exception:
             issues.append(_issue("WORKBOOK_UNREADABLE", descriptor))
             continue
@@ -140,16 +147,28 @@ def extract_reconciliation_sources(
 def _extract_one(
     path: Path, source_id: str, descriptor: ReconciliationSourceDescriptor
 ) -> tuple[str, tuple[NormalizedSourceRow, ...]] | None:
-    workbook = load_workbook(path, read_only=True, data_only=True)
-    formulas = load_workbook(path, read_only=True, data_only=False)
+    # Candidate enumeration needs repeated, deterministic passes over each sheet.
+    workbook = load_workbook(path, read_only=False, data_only=True)
+    formulas = load_workbook(path, read_only=False, data_only=False)
     try:
-        for extractor in (_extract_ks6a_rows, _extract_ks2_rows):
-            for sheet in workbook.worksheets:
+        candidates = []
+        for sheet in workbook.worksheets:
+            for extractor, source_type in (
+                (_extract_ks6a_rows, "ks6a"),
+                (_extract_ks2_rows, "ks2"),
+            ):
                 canonical = extractor(sheet, formulas[sheet.title], source_id, descriptor)
                 if canonical:
                     normalized = normalize_training_rows(prepare_training_data(canonical).rows).rows
                     if normalized:
-                        return ("ks6a" if extractor is _extract_ks6a_rows else "ks2"), normalized
+                        candidates.append((source_type, sheet.title, normalized))
+        cumulative = [candidate for candidate in candidates if candidate[0] == "ks6a"]
+        viable = cumulative or candidates
+        if len(viable) > 1:
+            raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+        if viable:
+            source_type, _sheet_name, normalized = viable[0]
+            return source_type, normalized
     finally:
         formulas.close()
         workbook.close()
@@ -257,9 +276,11 @@ def _header_path(rows: tuple[tuple[object, ...], ...], row_number: int, column: 
 
 def _role_text(value: str, role: str) -> bool:
     if role == "work":
-        return "наименован" in value and ("работ" in value or "этап" in value)
+        return any(stem in value for stem in ("наименован", "описан", "вид работ", "работ"))
     if role == "cumulative":
-        return "выполн" in value and ("весь" in value or "нараст" in value)
+        return ("выполн" in value or "освоен" in value) and (
+            "весь" in value or "нараст" in value or "итог" in value
+        )
     return False
 
 
@@ -274,25 +295,30 @@ def _role_column(rows: tuple[tuple[object, ...], ...], role: str) -> int | None:
 
 
 def _role_header_row(rows: tuple[tuple[object, ...], ...], column: int, role: str) -> int:
-    return max(
+    return min(
         (
             number
             for number in range(1, len(rows) + 1)
-            if _role_text(_text_at(rows[number - 1], column), role)
+            if _role_text(_header_path(rows, number, column), role)
         ),
         default=1,
     )
 
 
 def _unit_column(rows: tuple[tuple[object, ...], ...]) -> int | None:
-    """Match only unit-of-measure aliases, never an arbitrary ``ед`` substring."""
+    """Find one semantic unit column across variable hierarchical headers."""
     matches = [
         column
-        for row in rows
-        for column, value in enumerate(row, 1)
-        if _header_text(value) in _UNIT_ALIASES
+        for row_number, row in enumerate(rows, 1)
+        for column in range(1, len(row) + 1)
+        if _unit_text(_header_path(rows, row_number, column))
     ]
     return min(matches, default=None)
+
+
+def _unit_text(value: str) -> bool:
+    compact = _header_text(value)
+    return compact in _UNIT_ALIASES or ("ед" in compact and "измер" in compact) or "unit" in compact
 
 
 def _ks2_metric_pair(
@@ -300,10 +326,12 @@ def _ks2_metric_pair(
 ) -> tuple[int | None, int | None, int]:
     """Require one explicit quantity / total-cost pair; unit prices are ineligible."""
     for row_number, row in enumerate(rows, 1):
-        quantity = _column_within(row, 1, len(row), "количество")
-        cost = _column_within(row, 1, len(row), "общая стоимость")
-        if quantity is not None and cost is not None and quantity < cost:
+        pairs = _metric_pairs(row, 1, len(row))
+        if len(pairs) == 1:
+            quantity, cost = pairs[0]
             return quantity, cost, row_number
+        if len(pairs) > 1:
+            raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
     return None, None, 1
 
 
@@ -316,11 +344,7 @@ def _token_header_row(rows: tuple[tuple[object, ...], ...], column: int, token: 
 
 def _unit_header_row(rows: tuple[tuple[object, ...], ...], column: int) -> int:
     return max(
-        (
-            number
-            for number, row in enumerate(rows, 1)
-            if _header_text(_value_at(row, column)) in _UNIT_ALIASES
-        ),
+        (number for number, row in enumerate(rows, 1) if _unit_text(_text_at(row, column))),
         default=1,
     )
 
@@ -331,10 +355,12 @@ def _metric_pair(
     for row_number, _row in enumerate(rows, 1):
         if _role_text(_header_path(rows, row_number, anchor), "cumulative"):
             for leaf_row in range(row_number + 1, min(row_number + 5, len(rows)) + 1):
-                quantity = _column_within(rows[leaf_row - 1], anchor, anchor + 3, "колич")
-                cost = _column_within(rows[leaf_row - 1], anchor, anchor + 3, "общая стоимость")
-                if quantity is not None and cost is not None:
+                pairs = _metric_pairs(rows[leaf_row - 1], anchor, anchor + 5)
+                if len(pairs) == 1:
+                    quantity, cost = pairs[0]
                     return quantity, cost, leaf_row
+                if len(pairs) > 1:
+                    raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
     return None, None, 1
 
 
@@ -374,6 +400,26 @@ def _detail_start(
 def _column_within(row: tuple[object, ...], start: int, end: int, token: str) -> int | None:
     return next(
         (column for column in range(start, end + 1) if token in _text_at(row, column)), None
+    )
+
+
+def _metric_pairs(row: tuple[object, ...], start: int, end: int) -> list[tuple[int, int]]:
+    quantities = [
+        column
+        for column in range(start, min(end, len(row)) + 1)
+        if any(stem in _text_at(row, column) for stem in ("колич", "объем", "объём"))
+    ]
+    costs = [
+        column
+        for column in range(start, min(end, len(row)) + 1)
+        if _cost_text(_text_at(row, column))
+    ]
+    return [(quantity, cost) for quantity in quantities for cost in costs if quantity < cost]
+
+
+def _cost_text(value: str) -> bool:
+    return ("стоим" in value or "сумм" in value or "затрат" in value) and not (
+        "единиц" in value or "цен" in value
     )
 
 
@@ -516,6 +562,14 @@ def _issue(code: str, descriptor: ReconciliationSourceDescriptor) -> Reconciliat
             safe_basename=descriptor.safe_basename,
             comment="В расчётных ячейках источника нет проверяемых значений формул.",
             repair_hint="Пересчитайте книгу в Excel и загрузите сохранённую копию.",
+            can_continue=True,
+        )
+    if code == "SOURCE_LAYOUT_AMBIGUOUS":
+        return ReconciliationSourceIssue(
+            code=code,
+            safe_basename=descriptor.safe_basename,
+            comment="В источнике найдено несколько несовместимых табличных структур.",
+            repair_hint="Оставьте один однозначный лист с таблицей и загрузите книгу снова.",
             can_continue=True,
         )
     return ReconciliationSourceIssue(
