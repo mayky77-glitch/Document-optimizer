@@ -55,6 +55,16 @@
               <small id="target-help">Один Excel-файл, относительно которого проверяются исходные строки.</small>
             </label>
           </div>
+          <fieldset id="stage-selection" class="file-field" aria-describedby="stage-selection-help" hidden>
+            <legend>Этап для проверки</legend>
+            <label for="stage">
+              <span>Выберите этап <em>обязательно</em></span>
+              <select id="stage" name="stage" disabled>
+                <option value="">Выберите этап</option>
+              </select>
+            </label>
+            <small id="stage-selection-help">В отчёте найдено несколько этапов. Выберите один и повторите проверку с теми же файлами.</small>
+          </fieldset>
           <input name="operation" type="hidden" value="verify">
           <button class="primary" type="submit">Проверить документы</button>
         </form>

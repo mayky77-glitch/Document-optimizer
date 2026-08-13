@@ -29,7 +29,7 @@ from .package_reconciliation_service import (
     MAX_PACKAGE_UPLOAD_BYTES,
     PackageReconciliationService,
 )
-from .presentation import job_payload
+from .presentation import job_payload, stage_selection_payload
 from .reconciliation_review_routes import reconciliation_review_routes
 from .review_api import (
     ReviewRequestError,
@@ -42,6 +42,7 @@ from .service import (
 from .service import (
     MAX_UPLOAD_BYTES,
     AdminPanelService,
+    TargetStageSelectionError,
     validate_mode,
     validate_operation,
     validate_stage,
@@ -219,7 +220,8 @@ def create_app(
                 if combined_size > MAX_UPLOAD_BYTES:
                     raise ValueError("combined upload is too large")
                 validate_workbook_upload(target.filename, target_content)
-                stage = validate_stage(form.get("stage", "13.1"))
+                stage_value = form.get("stage")
+                stage = validate_stage(stage_value) if stage_value is not None else None
                 mode = validate_mode(form.get("mode", "write"))
                 operation = validate_operation(form.get("operation", "reconcile"))
                 operation_kwargs = {"operation": operation} if operation != "reconcile" else {}
@@ -231,6 +233,7 @@ def create_app(
                         target_content=target_content,
                         stage=stage,
                         mode=mode,
+                        validate_target_stage=True,
                         **operation_kwargs,
                     )
                 else:
@@ -240,8 +243,17 @@ def create_app(
                         target_content=target_content,
                         stage=stage,
                         mode=mode,
+                        validate_target_stage=True,
                         **operation_kwargs,
                     )
+        except TargetStageSelectionError as error:
+            payload = stage_selection_payload(error.code, error.stage_options)
+            return _secure(
+                JSONResponse(
+                    payload,
+                    status_code=409 if error.code == "selection_required" else 400,
+                )
+            )
         except (KeyError, TypeError, ValueError):
             return _error("Проверьте исходные книги и отчёт, этап и режим", 400)
         return _secure(JSONResponse(job_payload(job), status_code=201))

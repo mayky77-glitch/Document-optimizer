@@ -9,6 +9,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from report_processor.admin_panel import create_app
+from report_processor.admin_panel.service import TargetStageSelectionError
 
 
 class FakeAdminService:
@@ -19,6 +20,7 @@ class FakeAdminService:
         self.create_calls: list[dict[str, object]] = []
         self.decision_calls: list[dict[str, str]] = []
         self.manual_decision_calls: list[dict[str, object]] = []
+        self.stage_error: TargetStageSelectionError | None = None
         self.jobs = {
             "job-001": {
                 "job_id": "job-001",
@@ -58,8 +60,10 @@ class FakeAdminService:
         source_content: bytes,
         target_name: str,
         target_content: bytes,
-        stage: str,
+        stage: str | None,
         mode: str,
+        operation: str = "reconcile",
+        validate_target_stage: bool = False,
     ) -> Mapping[str, object]:
         self.create_calls.append(
             {
@@ -69,8 +73,12 @@ class FakeAdminService:
                 "target_content": target_content,
                 "stage": stage,
                 "mode": mode,
+                "operation": operation,
+                "validate_target_stage": validate_target_stage,
             }
         )
+        if self.stage_error is not None:
+            raise self.stage_error
         return self.jobs["job-001"]
 
     def get_job(self, job_id: str) -> Mapping[str, object]:
@@ -149,7 +157,7 @@ def test_upload_requires_two_xlsx_files_and_keeps_bytes_in_injected_service(clie
     assert service.create_calls[0]["target_content"] == b"PK\x03\x04target"
 
 
-def test_default_stage_and_explicit_stage_mode_map_to_service_without_legacy_side_effects(
+def test_omitted_stage_and_explicit_stage_mode_map_to_service_without_legacy_side_effects(
     client,
 ) -> None:
     test_client, service, _ = client
@@ -162,9 +170,36 @@ def test_default_stage_and_explicit_stage_mode_map_to_service_without_legacy_sid
     )
 
     assert [(call["stage"], call["mode"]) for call in service.create_calls] == [
-        ("13.1", "write"),
+        (None, "write"),
         ("14.2", "dry-run"),
     ]
+    assert all(call["validate_target_stage"] is True for call in service.create_calls)
+
+
+def test_stage_selection_and_missing_stage_responses_are_controlled_and_private(client) -> None:
+    test_client, service, tmp_path = client
+    service.stage_error = TargetStageSelectionError(
+        "selection_required", ("14.2", "13.1", "/private/target.xlsx")
+    )
+
+    selection = test_client.post("/api/jobs", files=_files())
+
+    assert selection.status_code == 409
+    assert selection.json() == {
+        "error": "В отчёте найдено несколько этапов. Выберите нужный этап.",
+        "code": "selection_required",
+        "stage_options": ["13.1", "14.2"],
+    }
+    assert str(tmp_path) not in selection.text and "private" not in selection.text.casefold()
+    assert "download_url" not in selection.json() and "job_id" not in selection.json()
+
+    service.stage_error = TargetStageSelectionError("not_found")
+    missing = test_client.post("/api/jobs", files=_files(), data={"stage": "99.9"})
+
+    assert missing.status_code == 400
+    assert missing.json()["code"] == "not_found"
+    assert missing.json()["stage_options"] == []
+    assert "download_url" not in missing.json() and "job_id" not in missing.json()
 
 
 def test_job_payload_uses_controlled_ids_and_never_leaks_private_paths(client) -> None:
@@ -262,6 +297,8 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
         assert label in html
     assert 'id="sources"' in html and 'name="sources"' in html
     assert 'id="target"' in html and 'name="target"' in html
+    assert 'id="stage-selection"' in html and 'id="stage"' in html
+    assert 'aria-describedby="stage-selection-help"' in html
     assert "post /api/jobs" in html
     assert 'name="viewport"' in html and "focus" in css
     assert 'id="theme-toggle"' in html
@@ -286,6 +323,10 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
         assert token in css
     assert "@media" in css
     assert "http://" not in html + css and "https://" not in html + css
+    javascript = test_client.get("/static/admin.js").text
+    assert "selection_required" in javascript
+    assert "showStageSelection" in javascript and "clearStageSelection" in javascript
+    assert 'data.append("stage", stage.value)' in javascript
 
 
 def test_admin_review_cards_expose_authoritative_group_and_row_controls(client) -> None:

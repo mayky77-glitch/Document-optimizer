@@ -1,6 +1,43 @@
 from types import SimpleNamespace
 
-from report_processor.admin_panel.presentation import job_payload, processing_presentation
+from report_processor.admin_panel.presentation import (
+    job_payload,
+    processing_presentation,
+    stage_selection_payload,
+)
+
+
+def test_stage_selection_payload_exposes_only_safe_stage_values() -> None:
+    payload = stage_selection_payload(
+        "selection_required",
+        ("14.2", "13.1", "/private/target.xlsx", "Лист1!A1"),
+    )
+
+    assert payload == {
+        "error": "В отчёте найдено несколько этапов. Выберите нужный этап.",
+        "code": "selection_required",
+        "stage_options": ["13.1", "14.2"],
+    }
+    assert "private" not in repr(payload).casefold()
+
+
+def test_verification_payload_reports_a_safe_selected_stage() -> None:
+    job = SimpleNamespace(
+        job_id="job-1",
+        operation="verify",
+        stage="14.2",
+        status="ready",
+        verification_status="passed",
+        verification_message="Все документы проверены. Ошибок не найдено.",
+        checked_row_count=1,
+        failed_row_count=0,
+        result_available=False,
+    )
+
+    payload = job_payload(job)
+
+    assert payload["stage"] == "14.2"
+    assert "sheets" not in repr(payload) and "coordinates" not in repr(payload)
 
 
 def test_rag_candidates_are_separate_named_manual_decisions() -> None:
