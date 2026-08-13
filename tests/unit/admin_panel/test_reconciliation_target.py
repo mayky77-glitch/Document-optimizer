@@ -32,8 +32,10 @@ class _Session:
 
 def test_terminal_index_rejects_year_and_ambiguous_values() -> None:
     assert terminal_index("1234") == "1234"
+    assert terminal_index("10.02.0123") == "0123"
     assert terminal_index("1234 2025") is None
     assert terminal_index("2025") is None
+    assert terminal_index("10.02.2025") is None
     assert terminal_index("1234 (1) and 5678 (1)") is None
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -10,15 +11,14 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from report_processor.extraction.models import CanonicalSourceRow, SourceLocation
-from report_processor.identifiers import extract_document_index
 from report_processor.metadata.periods import extract_period_from_filename
 from report_processor.normalization import NormalizedSourceRow, normalize_training_rows
 from report_processor.training_data import prepare_training_data
 
+from .reconciliation_identity import resolve_source_identity, source_basename_identities
+
 _UNIT_ALIASES = frozenset({"ед изм", "единица измерения", "единица"})
 _HIERARCHY_VALUE_RE = re.compile(r"^\d+(?:\.\d+)+\.?$")
-_BARE_DOCUMENT_INDEX_RE = re.compile(r"(?<!\d)(\d{4})(?!\d)")
-_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
 
 class FormulaCacheUnavailableError(ValueError):
@@ -36,33 +36,52 @@ class ReconciliationSourceDescriptor:
     safe_basename: str
     document_index: str | None = None
     document_period: str | None = None
+    document_index_candidates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.safe_basename or self.safe_basename != Path(self.safe_basename).name:
             raise ValueError("safe_basename must be a basename")
 
 
+@dataclass(frozen=True, slots=True)
+class _HeaderGraph:
+    """Bounded header cells with real merged-cell propagation and parent spans."""
+
+    rows: tuple[tuple[object, ...], ...]
+    spans: dict[tuple[int, int], tuple[int, int, int, int]]
+
+    def parent_span(self, row: int, column: int) -> tuple[int, int]:
+        _top, left, _bottom, right = self.spans.get((row, column), (row, column, row, column))
+        return left, right
+
+
 def descriptor_from_upload_basename(safe_basename: str) -> ReconciliationSourceDescriptor:
     """Infer optional metadata solely from one validated upload basename."""
-    index = extract_document_index(safe_basename).value
     period = extract_period_from_filename(safe_basename).value
+    candidates = source_basename_identities(safe_basename)
     return ReconciliationSourceDescriptor(
         safe_basename=safe_basename,
-        document_index=(
-            index.normalized if index is not None else document_index_from_basename(safe_basename)
-        ),
+        document_index=candidates[0] if len(candidates) == 1 else None,
         document_period=period.normalized if period is not None else None,
+        document_index_candidates=candidates,
     )
 
 
 def document_index_from_basename(safe_basename: str) -> str | None:
-    """Return a strict index or one unambiguous non-year four-digit main index."""
-    parsed = extract_document_index(safe_basename).value
-    if parsed is not None:
-        return parsed.main
-    candidates = tuple(dict.fromkeys(_BARE_DOCUMENT_INDEX_RE.findall(Path(safe_basename).stem)))
-    non_year = tuple(value for value in candidates if _YEAR_RE.fullmatch(value) is None)
-    return non_year[0] if len(non_year) == 1 else None
+    """Return an unambiguous bounded filename identity."""
+    candidates = source_basename_identities(safe_basename)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def resolve_descriptor_identity(
+    descriptor: ReconciliationSourceDescriptor, target_identities: set[str] | frozenset[str]
+) -> ReconciliationSourceDescriptor:
+    """Bind a source basename only to one terminal identity in the selected stage."""
+    candidates = descriptor.document_index_candidates or (
+        (descriptor.document_index,) if descriptor.document_index else ()
+    )
+    identity = resolve_source_identity(candidates, target_identities)
+    return replace(descriptor, document_index=identity)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +111,7 @@ class ReconciliationSourceBatch:
     rows: tuple[NormalizedSourceRow, ...]
     issues: tuple[ReconciliationSourceIssue, ...]
     selections: tuple[ReconciliationSourceSelection, ...]
+    terminal_identities: tuple[tuple[str, str], ...] = ()
 
 
 class AllReconciliationSourcesUnusableError(ValueError):
@@ -111,6 +131,7 @@ def extract_reconciliation_sources(
     rows: list[NormalizedSourceRow] = []
     issues: list[ReconciliationSourceIssue] = []
     selections: list[ReconciliationSourceSelection] = []
+    identities: list[tuple[str, str]] = []
     for path, source_id, descriptor in workbooks:
         if require_document_index and not _has_usable_document_index(descriptor):
             issues.append(_issue("DOCUMENT_INDEX_MISSING", descriptor))
@@ -131,6 +152,8 @@ def extract_reconciliation_sources(
             continue
         source_type, normalized = selected
         rows.extend(normalized)
+        if descriptor.document_index is not None:
+            identities.append((source_id, descriptor.document_index))
         selections.append(
             ReconciliationSourceSelection(
                 safe_basename=descriptor.safe_basename,
@@ -138,7 +161,9 @@ def extract_reconciliation_sources(
                 usable_row_count=len(normalized),
             )
         )
-    batch = ReconciliationSourceBatch(tuple(rows), tuple(issues), tuple(selections))
+    batch = ReconciliationSourceBatch(
+        tuple(rows), tuple(issues), tuple(selections), tuple(sorted(identities))
+    )
     if not batch.rows:
         raise AllReconciliationSourcesUnusableError(batch.issues)
     return batch
@@ -179,14 +204,18 @@ def _extract_ks6a_rows(
     sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor
 ):
     """Read the cumulative pair from a structural multi-row КС-6а header."""
-    header_rows = tuple(
-        sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 50), values_only=True)
-    )
+    header_rows = _header_graph(sheet, maximum=50)
     candidates = []
     for work_column, unit_column, anchor in _layout_columns(header_rows, cumulative=True):
-        for quantity_column, cost_column, header_end in _metric_pairs_for_anchor(
+        for quantity_column, cost_column, header_end, parent_span in _metric_regions_for_anchor(
             header_rows, anchor
         ):
+            parent_top, parent_left, _parent_bottom, parent_right = parent_span
+            if (
+                parent_left <= work_column <= parent_right
+                or parent_left <= unit_column <= parent_right
+            ):
+                continue
             rows = _canonical_rows(
                 sheet,
                 source_id,
@@ -209,7 +238,21 @@ def _extract_ks6a_rows(
                 formula_sheet=formula_sheet,
             )
             if rows:
-                candidates.append(rows)
+                candidates.append(
+                    (
+                        (
+                            work_column,
+                            unit_column,
+                            parent_top,
+                            parent_left,
+                            parent_right,
+                            quantity_column,
+                            cost_column,
+                            header_end,
+                        ),
+                        rows,
+                    )
+                )
     return _unique_layout_rows(candidates)
 
 
@@ -217,12 +260,15 @@ def _extract_ks2_rows(
     sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor
 ):
     """Read a structural КС-2 detail table only when its direct metrics are explicit."""
-    header_rows = tuple(
-        sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 80), values_only=True)
-    )
+    header_rows = _header_graph(sheet, maximum=80)
     candidates = []
     for work_column, unit_column, _anchor in _layout_columns(header_rows, cumulative=False):
         for quantity_column, cost_column, metric_row in _metric_pairs_for_row(header_rows):
+            if work_column in (quantity_column, cost_column) or unit_column in (
+                quantity_column,
+                cost_column,
+            ):
+                continue
             header_end = max(
                 _role_header_row(header_rows, work_column, "work"),
                 _unit_header_row(header_rows, unit_column),
@@ -250,11 +296,40 @@ def _extract_ks2_rows(
                 formula_sheet=formula_sheet,
             )
             if rows:
-                candidates.append(rows)
+                candidates.append(
+                    ((work_column, unit_column, quantity_column, cost_column, metric_row), rows)
+                )
     return _unique_layout_rows(candidates)
 
 
-def _layout_columns(rows, *, cumulative: bool) -> list[tuple[int, int, int | None]]:
+def _header_graph(sheet, *, maximum: int) -> _HeaderGraph:
+    """Materialize only bounded header cells, filling each merged range from its top-left."""
+    max_row = min(int(sheet.max_row or 0), maximum)
+    max_column = int(sheet.max_column or 0)
+    values = [
+        [sheet.cell(row, column).value for column in range(1, max_column + 1)]
+        for row in range(1, max_row + 1)
+    ]
+    spans: dict[tuple[int, int], tuple[int, int, int, int]] = {}
+    for merged in sheet.merged_cells.ranges:
+        if merged.min_row > max_row or merged.min_col > max_column:
+            continue
+        top, left = merged.min_row, merged.min_col
+        bottom, right = min(merged.max_row, max_row), min(merged.max_col, max_column)
+        value = sheet.cell(top, left).value
+        for row in range(top, bottom + 1):
+            for column in range(left, right + 1):
+                values[row - 1][column - 1] = value
+                spans[(row, column)] = (top, left, bottom, right)
+    return _HeaderGraph(tuple(tuple(row) for row in values), spans)
+
+
+def _rows(header: _HeaderGraph | tuple[tuple[object, ...], ...]):
+    return header.rows if isinstance(header, _HeaderGraph) else header
+
+
+def _layout_columns(header, *, cumulative: bool) -> list[tuple[int, int, int | None]]:
+    rows = _rows(header)
     work = _role_columns(rows, "work")
     units = _unit_columns(rows)
     anchors = _role_columns(rows, "cumulative") if cumulative else [None]
@@ -268,9 +343,12 @@ def _layout_columns(rows, *, cumulative: bool) -> list[tuple[int, int, int | Non
 
 
 def _unique_layout_rows(candidates):
-    if len(candidates) > 1:
+    # Merged parent labels legitimately nominate every covered child column;
+    # normalize those candidates to their parent-left physical boundary.
+    unique = {key: rows for key, rows in candidates}
+    if len(unique) > 1:
         raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
-    return candidates[0] if candidates else ()
+    return next(iter(unique.values()), ())
 
 
 def _column_with(rows: tuple[tuple[object, ...], ...], token: str) -> int | None:
@@ -293,7 +371,7 @@ def _header_path(rows: tuple[tuple[object, ...], ...], row_number: int, column: 
 
 def _role_text(value: str, role: str) -> bool:
     if role == "work":
-        return any(stem in value for stem in ("наименован", "описан", "вид работ", "работ"))
+        return any(stem in value for stem in ("наименован", "описан", "работ"))
     if role == "cumulative":
         return ("выполн" in value or "освоен" in value) and (
             "весь" in value or "нараст" in value or "итог" in value
@@ -317,6 +395,7 @@ def _role_columns(rows: tuple[tuple[object, ...], ...], role: str) -> list[int]:
 
 
 def _role_header_row(rows: tuple[tuple[object, ...], ...], column: int, role: str) -> int:
+    rows = _rows(rows)
     return min(
         (
             number
@@ -360,7 +439,8 @@ def _ks2_metric_pair(
     return None, None, 1
 
 
-def _metric_pairs_for_row(rows) -> list[tuple[int, int, int]]:
+def _metric_pairs_for_row(header) -> list[tuple[int, int, int]]:
+    rows = _rows(header)
     return [
         (quantity, cost, row_number)
         for row_number, row in enumerate(rows, 1)
@@ -376,6 +456,7 @@ def _token_header_row(rows: tuple[tuple[object, ...], ...], column: int, token: 
 
 
 def _unit_header_row(rows: tuple[tuple[object, ...], ...], column: int) -> int:
+    rows = _rows(rows)
     return max(
         (number for number, row in enumerate(rows, 1) if _unit_text(_text_at(row, column))),
         default=1,
@@ -393,14 +474,69 @@ def _metric_pair(
     return None, None, 1
 
 
-def _metric_pairs_for_anchor(rows, anchor: int) -> list[tuple[int, int, int]]:
-    candidates = []
+def _metric_pairs_for_anchor(header, anchor: int) -> list[tuple[int, int, int]]:
+    return [
+        (quantity, cost, leaf_row)
+        for quantity, cost, leaf_row, _span in _metric_regions_for_anchor(header, anchor)
+    ]
+
+
+def _metric_regions_for_anchor(
+    header, anchor: int
+) -> list[tuple[int, int, int, tuple[int, int, int, int]]]:
+    """Bind leaves to the exact cumulative header cell that nominated them."""
+
+    rows = _rows(header)
+    candidates: dict[
+        tuple[int, int, int, tuple[int, int, int, int]],
+        tuple[int, int, int, tuple[int, int, int, int]],
+    ] = {}
     for row_number, _row in enumerate(rows, 1):
-        if _role_text(_header_path(rows, row_number, anchor), "cumulative"):
-            for leaf_row in range(row_number + 1, min(row_number + 5, len(rows)) + 1):
-                pairs = _metric_pairs(rows[leaf_row - 1], anchor, anchor + 5)
-                candidates.extend((quantity, cost, leaf_row) for quantity, cost in pairs)
-    return candidates
+        path = _header_path(rows, row_number, anchor)
+        if not _role_text(path, "cumulative"):
+            continue
+        local = _text_at(rows[row_number - 1], anchor)
+        previous = _header_path(rows, row_number - 1, anchor) if row_number > 1 else ""
+        if not _role_text(local, "cumulative") and _role_text(previous, "cumulative"):
+            continue
+
+        exact_span = None
+        if isinstance(header, _HeaderGraph):
+            exact_span = header.spans.get((row_number, anchor))
+        if exact_span is not None and exact_span[3] > exact_span[1]:
+            top, start, bottom, end = exact_span
+            pairs = _nearest_metric_pairs(rows, bottom + 1, start, end, anchor)
+            regions = [
+                (quantity, cost, leaf_row, (top, start, bottom, end))
+                for quantity, cost, leaf_row in pairs
+            ]
+        else:
+            pairs = _nearest_metric_pairs(rows, row_number + 1, 1, len(_row), anchor)
+            regions = [
+                (quantity, cost, leaf_row, (row_number, quantity, row_number, cost))
+                for quantity, cost, leaf_row in pairs
+                if quantity <= anchor <= cost
+            ]
+        candidates.update((region, region) for region in regions)
+    return list(candidates.values())
+
+
+def _nearest_metric_pairs(
+    rows: tuple[tuple[object, ...], ...],
+    first_row: int,
+    start: int,
+    end: int,
+    anchor: int,
+) -> list[tuple[int, int, int]]:
+    """Return the nearest explicit adjacent leaves before another cumulative region."""
+
+    for leaf_row in range(first_row, len(rows) + 1):
+        if _role_text(_text_at(rows[leaf_row - 1], anchor), "cumulative"):
+            break
+        pairs = _metric_pairs(rows[leaf_row - 1], start, end)
+        if pairs:
+            return [(quantity, cost, leaf_row) for quantity, cost in pairs]
+    return []
 
 
 def _detail_start(
@@ -453,7 +589,7 @@ def _metric_pairs(row: tuple[object, ...], start: int, end: int) -> list[tuple[i
         for column in range(start, min(end, len(row)) + 1)
         if _cost_text(_text_at(row, column))
     ]
-    return [(quantity, cost) for quantity in quantities for cost in costs if quantity < cost]
+    return [(quantity, cost) for quantity in quantities for cost in costs if cost == quantity + 1]
 
 
 def _cost_text(value: str) -> bool:
@@ -484,15 +620,20 @@ def _canonical_rows(
         unit = _text_at(values, unit_column)
         quantity = _decimal(_value_at(values, quantity_column))
         cost = _decimal(_value_at(values, cost_column))
-        formulas_present = formula_sheet is not None and (
-            formula_sheet.cell(row_number, quantity_column).data_type == "f"
-            or formula_sheet.cell(row_number, cost_column).data_type == "f"
+        quantity_formula = (
+            formula_sheet is not None
+            and formula_sheet.cell(row_number, quantity_column).data_type == "f"
+        )
+        cost_formula = (
+            formula_sheet is not None
+            and formula_sheet.cell(row_number, cost_column).data_type == "f"
         )
         if (
             not work_name
             or not unit
             or _HIERARCHY_VALUE_RE.fullmatch(unit) is not None
-            or (not formulas_present and (quantity is None or cost is None))
+            or (quantity is None and not quantity_formula)
+            or (cost is None and not cost_formula)
         ):
             continue
         if formula_sheet is not None:
@@ -559,11 +700,12 @@ def _text_at(row: tuple[object, ...], column: int) -> str:
 
 
 def _text(value: object | None) -> str:
-    return " ".join(str(value or "").replace("\u00a0", " ").casefold().split())
+    normalized = unicodedata.normalize("NFKC", str(value or "")).replace("\u00a0", " ")
+    return " ".join(re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).casefold().split())
 
 
 def _header_text(value: object | None) -> str:
-    return _text(value).replace(".", "")
+    return _text(value)
 
 
 def _decimal(value: object | None) -> Decimal | None:
@@ -583,7 +725,7 @@ def _issue(code: str, descriptor: ReconciliationSourceDescriptor) -> Reconciliat
         return ReconciliationSourceIssue(
             code=code,
             safe_basename=descriptor.safe_basename,
-            comment="В имени файла не найден четырёхзначный индекс документа.",
+            comment="В имени файла не найден точный трёх- или четырёхзначный индекс документа.",
             repair_hint=(
                 "Добавьте один индекс из целевого отчёта, например «1234», "
                 "в имя файла и загрузите его снова."
@@ -625,6 +767,4 @@ def _issue(code: str, descriptor: ReconciliationSourceDescriptor) -> Reconciliat
 
 def _has_usable_document_index(descriptor: ReconciliationSourceDescriptor) -> bool:
     raw = descriptor.document_index or ""
-    parsed = extract_document_index(raw).value
-    main = parsed.main if parsed is not None else raw
-    return re.fullmatch(r"\d{4}", main) is not None
+    return re.fullmatch(r"\d{3,4}", raw) is not None

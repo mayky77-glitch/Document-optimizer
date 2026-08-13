@@ -122,14 +122,19 @@ def test_selected_matches_rejects_same_physical_source_row_across_upload_ordinal
         sheet_name="КС-6а",
         row_number=20,
     )
-    first = SimpleNamespace(source_location=location, source_filename="1001 source.xlsx")
+    first = SimpleNamespace(
+        source_location=location,
+        source_filename="source-1001.xlsx",
+        source_file_id=location.source_file_id,
+    )
     second = SimpleNamespace(
         source_location=SimpleNamespace(
             source_file_id="source:1:" + "a" * 64,
             sheet_name="КС-6а",
             row_number=20,
         ),
-        source_filename="1001 copy.xlsx",
+        source_filename="copy-1001.xlsx",
+        source_file_id="source:1:" + "a" * 64,
     )
     overrides = {
         "first": SimpleNamespace(action=ReviewAction.ACCEPT, target_category="category"),
@@ -138,7 +143,14 @@ def test_selected_matches_rejects_same_physical_source_row_across_upload_ordinal
     job = SimpleNamespace(target_digest="b" * 64)
 
     with pytest.raises(ValueError, match="DUPLICATE_SOURCE_IDENTITY"):
-        _selected_matches(None, overrides, catalog, job, {"first": first, "second": second})
+        _selected_matches(
+            None,
+            overrides,
+            catalog,
+            job,
+            {"first": first, "second": second},
+            ((location.source_file_id, "1001"), (second.source_file_id, "1001")),
+        )
 
 
 def test_feedback_records_restore_row_feedback_over_group_feedback() -> None:
