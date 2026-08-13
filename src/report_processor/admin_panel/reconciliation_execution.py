@@ -54,6 +54,19 @@ class ReconciliationReviewResult:
     target_error: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class ReconciliationApplyResult:
+    output: object
+    feedback: tuple[FeedbackRecord, ...]
+    apply_key: str
+    payload_hash: str
+
+    def __iter__(self):
+        # Preserve the narrow pre-integrity adapter contract for direct callers.
+        yield self.output
+        yield self.feedback
+
+
 def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationReviewResult:
     try:
         batch = _sources(job)
@@ -61,9 +74,9 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         return ReconciliationReviewResult(None, None, error.issues)
     try:
         _schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
+        catalog = _catalog(targets)
     except Exception:
         return ReconciliationReviewResult(None, batch, batch.issues, True)
-    catalog = _catalog(targets)
     source_rows = _review_rows(batch.rows, targets, catalog, job)
     partition = partition_rows(source_rows)
     # Zero-activity rows remain internal source facts.  They must never reach
@@ -100,8 +113,8 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
 
 
 def apply_review(
-    job, state: ReconciliationReviewState
-) -> tuple[object, tuple[FeedbackRecord, ...]]:
+    job, state: ReconciliationReviewState, decisions: tuple[ReviewDecision, ...] | None = None
+) -> ReconciliationApplyResult:
     from report_processor.business_rules import load_default_rule_set, load_rule_configuration
     from report_processor.excel_writer import write_target_report
     from report_processor.quality_control import WriteDecision
@@ -115,9 +128,12 @@ def apply_review(
         raise ValueError("RULE_CONFIGURATION_INVALID")
     schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
     catalog = _catalog(targets)
-    overrides = apply_overrides(state.rows.values(), state.groups.values(), state.core_decisions())
+    snapshot = decisions if decisions is not None else tuple(state.core_decisions())
+    overrides = apply_overrides(state.rows.values(), state.groups.values(), snapshot)
     source_rows = {_review_row_id(job, row.source_row_id): row for row in _sources(job).rows}
     matches = _selected_matches(state, overrides, catalog, job, source_rows)
+    feedback = _feedback_records(state, snapshot)
+    plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, snapshot)
     calculations = calculate_matches(
         matches,
         rule_set.rule_set,
@@ -133,13 +149,13 @@ def apply_review(
     )
     if not selected:
         publish_unchanged_target(job.target, job.directory / "result.xlsx", job.target_digest)
-        return job.directory / "result.xlsx", _feedback_records(state)
+        return ReconciliationApplyResult(job.directory / "result.xlsx", feedback, *plan)
     result = write_target_report(
         job.target, job.directory / "result.xlsx", WriteDecision.ALLOW_WRITE, selected, schema
     )
     if getattr(result, "output_sha256", None) is None:
         raise RuntimeError("authoritative workbook write was not verified")
-    return job.directory / "result.xlsx", _feedback_records(state)
+    return ReconciliationApplyResult(job.directory / "result.xlsx", feedback, *plan)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +174,10 @@ def _catalog(targets) -> _Catalog:
             continue
         key = category_id(label)
         labels.setdefault(key, label)
-        by_index[index, key] = target
+        pair = (index, key)
+        if pair in by_index:
+            raise ValueError("DUPLICATE_TARGET_CATEGORY")
+        by_index[pair] = target
     return _Catalog(labels, by_index)
 
 
@@ -270,10 +289,15 @@ def _normalized_source_digests(values) -> tuple[str, ...]:
 
 def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows):
     buckets: dict[str, tuple[object, list[MatchCandidate]]] = {}
+    reserved_identities: set[tuple[str, str, int]] = set()
     for row_id, override in sorted(overrides.items()):
         if override.action is None or override.target_category is None:
             continue
         source = source_rows[row_id]
+        identity = _physical_source_identity(source)
+        if identity in reserved_identities:
+            raise ValueError("DUPLICATE_SOURCE_IDENTITY")
+        reserved_identities.add(identity)
         index = _source_index(source.source_filename)
         target = catalog.targets.get((index or "", override.target_category))
         if target is None:
@@ -307,6 +331,64 @@ def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows):
         )
         for target_id, (target, candidates) in sorted(buckets.items())
     )
+
+
+def _physical_source_identity(source) -> tuple[str, str, int]:
+    location = source.source_location
+    digest = str(location.source_file_id).split(":", 2)[-1]
+    row = location.row_number
+    if (
+        not digest
+        or not isinstance(location.sheet_name, str)
+        or not location.sheet_name
+        or row <= 0
+    ):
+        raise ValueError("INVALID_SOURCE_IDENTITY")
+    return digest, location.sheet_name, row
+
+
+def _apply_plan(
+    job,
+    state: ReconciliationReviewState,
+    rules_hash: str,
+    feedback: tuple[FeedbackRecord, ...],
+    decisions: tuple[ReviewDecision, ...],
+) -> tuple[str, str]:
+    decisions = [
+        {
+            "action": item.action.value,
+            "mode": item.mode.value if item.mode else None,
+            "target_category": item.target_category,
+            "group_id": item.group_id,
+            "row_id": item.row_id,
+            "version": item.version,
+        }
+        for item in decisions
+    ]
+    payload = {
+        "contract": "ReconciliationApplyIntegrity-1.0",
+        "job_id": getattr(job, "job_id", "direct-apply"),
+        "source_digests": tuple(getattr(job, "source_digests", ())),
+        "target_digest": job.target_digest,
+        "stage": job.stage,
+        "state_fingerprint": getattr(state, "version_fingerprint", "direct-apply"),
+        "rules_hash": rules_hash,
+        "decisions": sorted(
+            decisions, key=lambda item: (item["group_id"] or "", item["row_id"] or "")
+        ),
+        "feedback": [
+            (
+                item.name_key,
+                item.unit_key,
+                item.action.value,
+                item.target_category,
+                item.mode.value if item.mode else None,
+            )
+            for item in feedback
+        ],
+    }
+    payload_hash = _hash("apply-payload", payload)
+    return _hash("apply-key", payload), payload_hash
 
 
 def _source_index(filename: str) -> str | None:
@@ -377,18 +459,22 @@ def _restore_feedback(state, feedback) -> None:
             state.familiar_group_ids.add(group.group_id)
 
 
-def _feedback_records(state) -> tuple[FeedbackRecord, ...]:
+def _feedback_records(
+    state, decisions: tuple[ReviewDecision, ...] | None = None
+) -> tuple[FeedbackRecord, ...]:
     from report_processor.reconciliation_review import (
         feedback_from_decision,
         feedback_from_row_decision,
     )
 
-    effective_decisions = getattr(state, "effective_decisions", None)
-    effective = (
-        tuple(effective_decisions())
-        if callable(effective_decisions)
-        else (*state.group_decisions.values(), *state.row_decisions.values())
-    )
+    effective = decisions
+    if effective is None:
+        effective_decisions = getattr(state, "effective_decisions", None)
+        effective = (
+            tuple(effective_decisions())
+            if callable(effective_decisions)
+            else (*state.group_decisions.values(), *state.row_decisions.values())
+        )
     group_decisions = sorted(
         (decision for decision in effective if decision.group_id is not None),
         key=lambda decision: decision.group_id or "",

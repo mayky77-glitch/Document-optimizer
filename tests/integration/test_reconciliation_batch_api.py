@@ -1,6 +1,7 @@
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from threading import Event, Thread
 
 from openpyxl import Workbook
 from starlette.testclient import TestClient
@@ -156,3 +157,54 @@ def test_package_and_family_routes_require_versions_without_mutation(tmp_path: P
     unchanged_package = unchanged["review_packages"][0]
     assert unchanged_package["action"] is None
     assert unchanged_package["families"][0]["action"] is None
+
+
+def test_http_mutation_cannot_cross_apply_lock_boundary(tmp_path: Path, monkeypatch) -> None:
+    """Every HTTP decision route must share the service apply lock."""
+    service = AdminPanelService(tmp_path, execute=lambda _job: _result())
+    app = create_app(service=service, workspace_root=tmp_path)
+    entered = Event()
+    release = Event()
+
+    original = service._mutate_reconciliation
+
+    def paused_mutation(job_id, method, *args):
+        entered.set()
+        assert release.wait(5)
+        return original(job_id, method, *args)
+
+    monkeypatch.setattr(service, "_mutate_reconciliation", paused_mutation)
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/jobs",
+            files={
+                "sources": ("source.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+                "target": ("target.xlsx", _target_workbook_bytes(), "application/vnd.ms-excel"),
+            },
+        ).json()
+        package = created["review_packages"][0]
+        response = []
+        worker = Thread(
+            target=lambda: response.append(
+                client.put(
+                    f"/api/jobs/{created['job_id']}/review/packages/{package['package_id']}",
+                    json={
+                        "version": package["version"],
+                        "action": "accept",
+                        "category_id": "target-1",
+                        "mode": "quantity_cost",
+                    },
+                )
+            )
+        )
+        worker.start()
+        assert entered.wait(5)
+
+        # Simulate apply having crossed the status boundary while the HTTP
+        # mutation is paused before the service-owned lock/status check.
+        service.get_job(created["job_id"]).status = "running"
+        release.set()
+        worker.join(5)
+
+    assert len(response) == 1 and response[0].status_code == 409
+    assert service.get_job(created["job_id"]).review_state.package_decisions == {}

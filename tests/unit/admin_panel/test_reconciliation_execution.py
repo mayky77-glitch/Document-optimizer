@@ -8,9 +8,11 @@ from openpyxl import Workbook, load_workbook
 
 from report_processor.admin_panel.reconciliation_execution import (
     _Catalog,
+    _catalog,
     _feedback_records,
     _normalized_source_digests,
     _review_row_id,
+    _selected_matches,
     apply_review,
     prepare_review,
 )
@@ -72,6 +74,71 @@ def test_package_version_source_digests_are_normalized_sorted_and_unique() -> No
     assert _normalized_source_digests((" B ", "a", "b", "A")) == ("a", "b")
     with pytest.raises(ValueError, match="required"):
         _normalized_source_digests(("source", None))
+
+
+def test_catalog_rejects_duplicate_document_index_and_category() -> None:
+    first = SimpleNamespace(work_name="Монтаж", document_index_normalized="1001")
+    second = SimpleNamespace(work_name="Монтаж", document_index_normalized="1001")
+
+    with pytest.raises(ValueError, match="DUPLICATE_TARGET_CATEGORY"):
+        _catalog((first, second))
+
+
+def test_prepare_review_projects_duplicate_target_category_as_controlled_target_error(
+    tmp_path, monkeypatch
+) -> None:
+    job = SimpleNamespace(
+        source_digests=("source",),
+        target_digest="target",
+        target=tmp_path / "target.xlsx",
+        stage="13.1",
+        directory=tmp_path,
+    )
+    duplicate = SimpleNamespace(work_name="Монтаж", document_index_normalized="1001")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution._sources",
+        lambda _job: SimpleNamespace(rows=(), issues=()),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution.read_reconciliation_target",
+        lambda *_args: (object(), (duplicate, duplicate)),
+    )
+
+    result = prepare_review(job, ())
+
+    assert result.state is None and result.target_error is True
+
+
+def test_selected_matches_rejects_same_physical_source_row_across_upload_ordinals() -> None:
+    target = SimpleNamespace(
+        document_index_normalized=("1001", ""),
+        work_name="Монтаж",
+        sheet_name="Отчёт",
+        row_number=10,
+    )
+    catalog = _Catalog({"category": "Монтаж"}, {("1001", "category"): target})
+    location = SimpleNamespace(
+        source_file_id="source:0:" + "a" * 64,
+        sheet_name="КС-6а",
+        row_number=20,
+    )
+    first = SimpleNamespace(source_location=location, source_filename="1001 source.xlsx")
+    second = SimpleNamespace(
+        source_location=SimpleNamespace(
+            source_file_id="source:1:" + "a" * 64,
+            sheet_name="КС-6а",
+            row_number=20,
+        ),
+        source_filename="1001 copy.xlsx",
+    )
+    overrides = {
+        "first": SimpleNamespace(action=ReviewAction.ACCEPT, target_category="category"),
+        "second": SimpleNamespace(action=ReviewAction.ACCEPT, target_category="category"),
+    }
+    job = SimpleNamespace(target_digest="b" * 64)
+
+    with pytest.raises(ValueError, match="DUPLICATE_SOURCE_IDENTITY"):
+        _selected_matches(None, overrides, catalog, job, {"first": first, "second": second})
 
 
 def test_feedback_records_restore_row_feedback_over_group_feedback() -> None:

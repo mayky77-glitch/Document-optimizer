@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from report_processor.admin_panel.reconciliation_feedback_store import ReconciliationFeedbackStore
 from report_processor.reconciliation_review import (
     FeedbackRecord,
@@ -43,3 +47,95 @@ def test_exact_row_feedback_wins_over_group_key_at_latest_sequence() -> None:
     latest = latest_feedback((group, row))
 
     assert next(iter(latest.values())).action is ReviewAction.REJECT
+
+
+def test_commit_apply_is_exact_once_and_conflicting_key_fails_closed(tmp_path) -> None:
+    store = ReconciliationFeedbackStore(tmp_path)
+    record = FeedbackRecord("работа", "м", ReviewAction.REJECT)
+
+    assert (
+        store.commit_apply(
+            target_digest="target", apply_key="key", payload_hash="payload", records=(record,)
+        )
+        is True
+    )
+    assert (
+        store.commit_apply(
+            target_digest="target", apply_key="key", payload_hash="payload", records=(record,)
+        )
+        is False
+    )
+    assert store.records("target") == (
+        FeedbackRecord("работа", "м", ReviewAction.REJECT, sequence=1),
+    )
+    with pytest.raises(ValueError, match="CONFLICT"):
+        store.commit_apply(
+            target_digest="target", apply_key="key", payload_hash="other", records=()
+        )
+
+
+def test_exact_replay_runs_validator_and_rolls_back_its_failure(tmp_path) -> None:
+    store = ReconciliationFeedbackStore(tmp_path)
+    store.commit_apply(target_digest="target", apply_key="key", payload_hash="payload", records=())
+    called = False
+
+    def reject_replay() -> None:
+        nonlocal called
+        called = True
+        raise RuntimeError("output changed")
+
+    with pytest.raises(RuntimeError, match="output changed"):
+        store.commit_apply(
+            target_digest="target",
+            apply_key="key",
+            payload_hash="payload",
+            records=(),
+            precommit_validator=reject_replay,
+        )
+    assert called is True
+
+
+def test_commit_apply_rolls_back_feedback_when_marker_insert_fails(tmp_path) -> None:
+    store = ReconciliationFeedbackStore(tmp_path)
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            """CREATE TRIGGER reject_apply_marker BEFORE INSERT ON reconciliation_applies
+            BEGIN SELECT RAISE(ABORT, 'marker failure'); END"""
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="marker failure"):
+        store.commit_apply(
+            target_digest="target",
+            apply_key="key",
+            payload_hash="payload",
+            records=(FeedbackRecord("работа", "м", ReviewAction.REJECT),),
+        )
+    assert store.records("target") == ()
+
+
+def test_legacy_v1_database_migrates_without_losing_feedback(tmp_path) -> None:
+    path = tmp_path / "reconciliation-feedback.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE reconciliation_feedback (
+            target_digest TEXT NOT NULL, name_key TEXT NOT NULL, unit_key TEXT,
+            action TEXT NOT NULL, category_id TEXT, mode TEXT, sequence INTEGER NOT NULL,
+            PRIMARY KEY (target_digest, sequence))"""
+        )
+        connection.execute(
+            "INSERT INTO reconciliation_feedback VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("target", "работа", "м", "reject", None, None, 1),
+        )
+        connection.execute("PRAGMA user_version = 1")
+    store = ReconciliationFeedbackStore(tmp_path)
+
+    assert store.records("target")[0].action is ReviewAction.REJECT
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_unknown_feedback_schema_fails_closed(tmp_path) -> None:
+    path = tmp_path / "reconciliation-feedback.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE reconciliation_feedback (wrong TEXT)")
+    with pytest.raises(RuntimeError, match="unsupported"):
+        ReconciliationFeedbackStore(tmp_path)
