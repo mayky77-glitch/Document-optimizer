@@ -1086,11 +1086,16 @@ def _shared_formula_topology(
             anchor_formula = anchor[3]
             if set(anchor_formula.attrib) != {"t", "si", "ref"} or not anchor_formula.text:
                 raise ReconciliationPeriodError(error_code)
+            anchor_si = anchor_formula.attrib["si"]
             for member in members:
                 formula = member[3]
                 if member is anchor:
                     continue
-                if set(formula.attrib) != {"t", "si"} or formula.text is not None:
+                if (
+                    set(formula.attrib) != {"t", "si"}
+                    or formula.attrib["si"] != anchor_si
+                    or formula.text is not None
+                ):
                     raise ReconciliationPeriodError(error_code)
 
             reference = anchor_formula.attrib["ref"]

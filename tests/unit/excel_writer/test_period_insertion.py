@@ -555,6 +555,7 @@ def test_shared_formula_calc_chain_keeps_left_members_and_shifts_right_entries(
         "extra_member",
         "overlap",
         "duplicate_si",
+        "mismatched_si",
         "negative_si",
         "follower_text",
         "follower_ref",
@@ -622,6 +623,9 @@ def test_invalid_shared_formula_groups_fail_closed_without_clobbering_output(
             elif case == "follower_ref":
                 assert formulas["B4"] is not None
                 formulas["B4"].attrib["ref"] = "A4:B4"
+            elif case == "mismatched_si":
+                assert formulas["B4"] is not None
+                formulas["B4"].attrib["si"] = "00"
             elif case == "array":
                 assert formulas["A4"] is not None
                 formulas["A4"].attrib["t"] = "array"
