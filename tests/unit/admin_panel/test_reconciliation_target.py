@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 from report_processor.admin_panel.reconciliation_target import (
+    ReconciliationTargetInputError,
     ReconciliationTargetScopeError,
+    publish_unchanged_target,
+    read_reconciliation_target,
     resolve_reconciliation_stage,
     terminal_index,
 )
@@ -53,3 +56,20 @@ def test_stage_enumeration_ignores_header_and_notes_without_index() -> None:
     )
 
     assert enumerate_reconciliation_stages(session) == ("13.1",)
+
+
+@pytest.mark.parametrize("stage", ("13.1", None), ids=("selected", "no-selected"))
+def test_macro_enabled_target_is_rejected_before_reconciliation_review(tmp_path, stage) -> None:
+    target = tmp_path / "target.xlsm"
+    target.write_bytes(b"not-opened")
+
+    with pytest.raises(ReconciliationTargetInputError, match=r"Целевой отчёт \.xlsm"):
+        read_reconciliation_target(target, "digest", stage)
+
+
+def test_macro_enabled_target_is_rejected_on_no_selected_publish_path(tmp_path) -> None:
+    target = tmp_path / "target.xlsm"
+    target.write_bytes(b"not-opened")
+
+    with pytest.raises(ReconciliationTargetInputError, match=r"Целевой отчёт \.xlsm"):
+        publish_unchanged_target(target, tmp_path / "result.xlsx", "digest")

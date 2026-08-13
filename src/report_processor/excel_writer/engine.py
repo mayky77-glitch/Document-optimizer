@@ -67,6 +67,12 @@ class _SourceIdentity:
     sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class _PublishedOutputIdentity:
+    device: int
+    inode: int
+
+
 def write_target_report(
     source_path: str | Path,
     output_path: str | Path,
@@ -104,6 +110,7 @@ def write_target_report(
     changes_by_part = _changes_by_part(written_cells, parts)
     temp_path = _temp_path(output)
     published = False
+    published_identity: _PublishedOutputIdentity | None = None
     try:
         _write_temp_package(source, temp_path, changes_by_part, remove_calc_chain=True)
         _verify_temp_package(source, temp_path, changes_by_part, remove_calc_chain=True)
@@ -111,6 +118,7 @@ def write_target_report(
             recalculate_and_materialize(temp_path)
         verify_formula_free_package(temp_path, parts)
         _assert_source_unchanged(source, source_identity)
+        published_identity = _published_output_identity(temp_path)
         _publish_no_clobber(temp_path, output)
         published = True
         output_sha256 = _sha256(output)
@@ -130,11 +138,11 @@ def write_target_report(
         )
     except (ExcelWriterAtomicError, ExcelWriterIntegrityError, ExcelWriterSafetyError):
         if published:
-            output.unlink(missing_ok=True)
+            _remove_published_output_if_owned(output, published_identity)
         raise
     except OSError as error:
         if published:
-            output.unlink(missing_ok=True)
+            _remove_published_output_if_owned(output, published_identity)
         raise ExcelWriterAtomicError("ATOMIC_PUBLISH_FAILED", str(error)) from error
     finally:
         temp_path.unlink(missing_ok=True)
@@ -353,6 +361,25 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1_048_576), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _published_output_identity(path: Path) -> _PublishedOutputIdentity:
+    details = path.stat()
+    return _PublishedOutputIdentity(details.st_dev, details.st_ino)
+
+
+def _remove_published_output_if_owned(
+    path: Path, identity: _PublishedOutputIdentity | None
+) -> None:
+    """Remove a failed publication only when its pathname still has our inode."""
+
+    if identity is None:
+        return
+    try:
+        if _published_output_identity(path) == identity:
+            path.unlink()
+    except FileNotFoundError:
+        return
 
 
 def _reopen_published_output(output: Path) -> None:

@@ -35,9 +35,14 @@ class ReconciliationTargetScopeError(ValueError):
     """The target cannot supply one safe reconciliation stage."""
 
 
+class ReconciliationTargetInputError(ValueError):
+    """The selected target type is unsafe for reconciliation output."""
+
+
 def publish_unchanged_target(source, output, expected_sha256: str) -> str:
     """Atomically publish one verified byte-identical target copy without clobbering."""
     source_path, output_path = Path(source), Path(output)
+    _validate_reconciliation_target_type(source_path)
     if output_path.exists() or output_path.is_symlink():
         raise ValueError("RECONCILIATION_OUTPUT_EXISTS")
     source_sha256 = _sha256(source_path)
@@ -80,6 +85,7 @@ def publish_unchanged_target(source, output, expected_sha256: str) -> str:
 
 def read_reconciliation_target(path, digest: str, stage: str | None):
     """Read A/B/C/D/E/F/J/K while retaining the verified writer schema."""
+    _validate_reconciliation_target_type(Path(path))
     source = _materialized(path, f"target:{digest}")
     with open_dual_workbook(WorkbookOpenRequest(source)) as session:
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
@@ -288,3 +294,10 @@ def _same_inode(path: Path, identity: tuple[int, int] | None) -> bool:
 def _file_identity(path: Path) -> tuple[int, int]:
     current = path.stat()
     return current.st_dev, current.st_ino
+
+
+def _validate_reconciliation_target_type(path: Path) -> None:
+    if path.suffix.casefold() == ".xlsm":
+        raise ReconciliationTargetInputError(
+            "Целевой отчёт .xlsm пока не поддерживается: загрузите целевой файл .xlsx."
+        )
