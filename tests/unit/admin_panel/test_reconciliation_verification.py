@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,16 @@ from openpyxl import Workbook, load_workbook
 
 from report_processor.admin_panel.app import _result_media_type, _safe_download_name
 from report_processor.admin_panel.presentation import job_payload
-from report_processor.admin_panel.reconciliation_execution import _review_row_id
+from report_processor.admin_panel.reconciliation_execution import _Catalog, _review_row_id
+from report_processor.admin_panel.reconciliation_numeric_verification import (
+    NumericVerificationFailure,
+    _authorizations,
+    _matches_target,
+    _reject_duplicate_source_identities,
+    _reject_duplicate_target_keys,
+    _validate_units,
+    verify_numeric,
+)
 from report_processor.admin_panel.reconciliation_sources import ReconciliationSourceIssue
 from report_processor.admin_panel.reconciliation_verification import (
     VerificationTechnicalFailure,
@@ -19,7 +29,15 @@ from report_processor.admin_panel.reconciliation_verification import (
 )
 from report_processor.admin_panel.service import AdminPanelService
 from report_processor.excel_writer import ExcelWriterSafetyError
-from report_processor.reconciliation_review import ReviewAction, ReviewRow, build_review_groups
+from report_processor.reconciliation_review import (
+    AppliedOverride,
+    ReviewAction,
+    ReviewDecision,
+    ReviewMode,
+    ReviewRow,
+    build_review_groups,
+)
+from report_processor.target_report import TargetNumericCell
 
 
 def _job(tmp_path: Path) -> SimpleNamespace:
@@ -83,6 +101,10 @@ def test_safe_package_passes_without_an_artifact(tmp_path: Path, monkeypatch) ->
         "report_processor.admin_panel.reconciliation_verification.prepare_review",
         lambda *_args: _review(job, safe=True),
     )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.verify_numeric",
+        lambda *_args: (frozenset(), 1),
+    )
 
     result = verify_reconciliation(job, ())
 
@@ -105,6 +127,13 @@ def test_safe_package_and_latest_authoritative_feedback_have_expected_precedence
         lambda *_args: _review(job, safe=safe, action=action),
     )
     monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.verify_numeric",
+        lambda *_args: (
+            frozenset() if expected_failed == 0 else frozenset({_review_row_id(job, "source-row")}),
+            1,
+        ),
+    )
+    monkeypatch.setattr(
         "report_processor.admin_panel.reconciliation_verification._write_artifact",
         lambda *_args: (tmp_path / "verification.xlsx", "Проверено_source.xlsx"),
     )
@@ -113,6 +142,236 @@ def test_safe_package_and_latest_authoritative_feedback_have_expected_precedence
 
     assert result.failed_row_count == expected_failed
     assert result.verification_status == ("failed" if expected_failed else "passed")
+
+
+def test_numeric_comparison_uses_writer_scale_and_cost_only_omits_quantity() -> None:
+    target = SimpleNamespace(
+        selected_quantity=SimpleNamespace(value=Decimal("999.999")),
+        selected_cost=SimpleNamespace(value=Decimal("2.695")),
+    )
+    calculation = SimpleNamespace(target_row=target, quantity=Decimal("1.01"), cost=Decimal("2.70"))
+
+    assert _matches_target(calculation, ReviewMode.COST_ONLY) is True
+    assert _matches_target(calculation, ReviewMode.QUANTITY_COST) is False
+
+
+def test_numeric_comparison_requires_finite_target_value() -> None:
+    calculation = SimpleNamespace(
+        target_row=SimpleNamespace(
+            selected_quantity=SimpleNamespace(value=Decimal("1.00")),
+            selected_cost=SimpleNamespace(value=Decimal("NaN")),
+        ),
+        quantity=Decimal("1.00"),
+        cost=Decimal("1.00"),
+    )
+
+    with pytest.raises(NumericVerificationFailure, match="TARGET_VALUE_UNAVAILABLE"):
+        _matches_target(calculation, ReviewMode.COST_ONLY)
+
+
+@pytest.mark.parametrize("mode", (ReviewMode.COST_ONLY, ReviewMode.QUANTITY_COST))
+def test_missing_calculated_value_is_an_ordinary_numeric_mismatch(mode: ReviewMode) -> None:
+    calculation = SimpleNamespace(
+        target_row=SimpleNamespace(
+            selected_quantity=TargetNumericCell(Decimal("1.00"), "1", "NOT_FORMULA", "OK"),
+            selected_cost=TargetNumericCell(Decimal("2.70"), "2.7", "NOT_FORMULA", "OK"),
+        ),
+        quantity=Decimal("1.00"),
+        cost=None,
+    )
+
+    assert _matches_target(calculation, mode) is False
+
+
+def test_numeric_comparison_reads_target_numeric_cell_value() -> None:
+    calculation = SimpleNamespace(
+        target_row=SimpleNamespace(
+            selected_quantity=TargetNumericCell(Decimal("1.00"), "1", "NOT_FORMULA", "OK"),
+            selected_cost=TargetNumericCell(Decimal("2.70"), "2.7", "NOT_FORMULA", "OK"),
+        ),
+        quantity=Decimal("1.00"),
+        cost=Decimal("2.70"),
+    )
+
+    assert _matches_target(calculation, ReviewMode.QUANTITY_COST) is True
+
+
+def test_cost_only_does_not_require_source_or_target_unit() -> None:
+    target = SimpleNamespace(unit=None)
+    overrides = {"row": AppliedOverride("row", "category:target", False, True, ReviewAction.ACCEPT)}
+    source_rows = {"row": SimpleNamespace(source_filename="source.xlsx", unit=None)}
+    catalog = _Catalog({"category:target": "Target"}, {("1234", "category:target"): target})
+
+    _validate_units(overrides, source_rows, catalog, SimpleNamespace())
+
+
+@pytest.mark.parametrize(("target_unit", "fails"), (("п.м.", False), ("км", True)))
+def test_quantity_unit_comparison_uses_calculation_canonical_tokens(
+    target_unit: str, fails: bool
+) -> None:
+    target = SimpleNamespace(unit=target_unit)
+    overrides = {"row": AppliedOverride("row", "category:target", True, True, ReviewAction.ACCEPT)}
+    source_rows = {"row": SimpleNamespace(source_filename="source-1234.xlsx", unit="м")}
+    catalog = _Catalog({"category:target": "Target"}, {("1234", "category:target"): target})
+
+    if fails:
+        with pytest.raises(NumericVerificationFailure, match="UNIT_MISMATCH"):
+            _validate_units(overrides, source_rows, catalog, SimpleNamespace())
+    else:
+        _validate_units(overrides, source_rows, catalog, SimpleNamespace())
+
+
+def test_explicit_rejection_wins_over_safe_package_authorization() -> None:
+    row = ReviewRow("row", "Монтаж", "м", Decimal("1"), Decimal("1"))
+    (group,) = build_review_groups((row,))
+    rejected = ReviewDecision(ReviewAction.REJECT, group_id=group.group_id)
+    state = SimpleNamespace(
+        rows={row.row_id: row},
+        groups={group.group_id: group},
+        grouping=SimpleNamespace(
+            packages=(
+                SimpleNamespace(
+                    safe=True,
+                    package_key=("category:target", "quantity_cost"),
+                    member_group_ids=(group.group_id,),
+                ),
+            )
+        ),
+        effective_decisions=lambda: (rejected,),
+    )
+
+    assert _authorizations(state)[row.row_id] is rejected
+
+
+@pytest.mark.parametrize("reversed_rows", (False, True))
+def test_duplicate_physical_source_identity_is_technical_failure(reversed_rows: bool) -> None:
+    first = SimpleNamespace(source_filename="first.xlsx", source_sheet="Sheet", source_row_number=7)
+    second = SimpleNamespace(
+        source_filename="second.xlsx", source_sheet="Sheet", source_row_number=7
+    )
+
+    with pytest.raises(NumericVerificationFailure, match="SOURCE_IDENTITY_AMBIGUOUS"):
+        _reject_duplicate_source_identities(
+            (second, first) if reversed_rows else (first, second),
+            {"first.xlsx": "same-content", "second.xlsx": "same-content"},
+        )
+
+
+def test_duplicate_target_key_is_technical_failure() -> None:
+    target = SimpleNamespace(document_index_normalized="1234", work_name="Монтаж")
+
+    with pytest.raises(NumericVerificationFailure, match="TARGET_BINDING_AMBIGUOUS"):
+        _reject_duplicate_target_keys((target, target))
+
+
+@pytest.mark.parametrize(
+    ("quantity", "cost", "mismatch"),
+    (
+        (Decimal("5.00"), Decimal("2.70"), False),
+        (Decimal("4.99"), Decimal("2.70"), True),
+        (Decimal("5.00"), Decimal("2.69"), True),
+    ),
+)
+def test_numeric_oracle_aggregates_two_contributions_and_marks_each_mismatch(
+    tmp_path: Path, monkeypatch, quantity: Decimal, cost: Decimal, mismatch: bool
+) -> None:
+    job = SimpleNamespace(
+        source_names=("first.xlsx", "second.xlsx"),
+        source_digests=("digest-first", "digest-second"),
+        target=tmp_path / "target.xlsx",
+        target_digest="target-digest",
+        stage="13.1",
+    )
+    first_source = SimpleNamespace(
+        source_row_id="first-source",
+        source_filename="first.xlsx",
+        source_sheet="Sheet",
+        source_row_number=7,
+    )
+    second_source = SimpleNamespace(
+        source_row_id="second-source",
+        source_filename="second.xlsx",
+        source_sheet="Sheet",
+        source_row_number=8,
+    )
+    first, second = (
+        _review_row_id(job, source.source_row_id) for source in (first_source, second_source)
+    )
+    rows = tuple(
+        ReviewRow(row_id, "Монтаж", "м", Decimal("1"), Decimal("1")) for row_id in (first, second)
+    )
+    (group,) = build_review_groups(rows)
+    decision = ReviewDecision(
+        ReviewAction.ACCEPT,
+        ReviewMode.QUANTITY_COST,
+        "category:target",
+        group_id=group.group_id,
+    )
+    state = SimpleNamespace(
+        rows={row.row_id: row for row in rows},
+        groups={group.group_id: group},
+        grouping=SimpleNamespace(packages=()),
+        effective_decisions=lambda: (decision,),
+    )
+    target = SimpleNamespace(document_index_normalized="1234", work_name="Target")
+    calculation = SimpleNamespace(
+        target_row=SimpleNamespace(
+            selected_quantity=TargetNumericCell(Decimal("5.00"), "5", "NOT_FORMULA", "OK"),
+            selected_cost=TargetNumericCell(Decimal("2.70"), "2.7", "NOT_FORMULA", "OK"),
+        ),
+        quantity=quantity,
+        cost=cost,
+        trace=SimpleNamespace(
+            contributions=(
+                SimpleNamespace(candidate_id="candidate-first", source_row_id="first-source"),
+                SimpleNamespace(candidate_id="candidate-second", source_row_id="second-source"),
+            )
+        ),
+        status=SimpleNamespace(value="calculated"),
+    )
+    review = SimpleNamespace(
+        state=state, source_batch=SimpleNamespace(rows=(first_source, second_source))
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_numeric_verification.read_reconciliation_target",
+        lambda *_args: (None, (target,)),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_numeric_verification._catalog",
+        lambda *_args: SimpleNamespace(targets={}),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_numeric_verification._validate_units",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_numeric_verification._selected_matches",
+        lambda *_args: (
+            SimpleNamespace(
+                effective_selected_candidates=(
+                    SimpleNamespace(candidate_id="candidate-first", source_row_id=first),
+                    SimpleNamespace(candidate_id="candidate-second", source_row_id=second),
+                )
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_numeric_verification._candidate_inclusions",
+        lambda *_args: {},
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_numeric_verification.calculate_matches",
+        lambda *_args: (calculation,),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_numeric_verification.writer_calculations",
+        lambda values: tuple(values),
+    )
+
+    failed, checked = verify_numeric(job, review)
+
+    assert failed == (frozenset({first, second}) if mismatch else frozenset())
+    assert checked == 2
 
 
 def test_partial_source_input_is_a_technical_failure(tmp_path: Path, monkeypatch) -> None:

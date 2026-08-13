@@ -17,9 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from report_processor.excel_writer.ooxml import publish_no_clobber
-from report_processor.reconciliation_review import ReviewAction
 
 from .reconciliation_execution import _review_row_id, prepare_review
+from .reconciliation_numeric_verification import NumericVerificationFailure, verify_numeric
 
 _MAX_RESULT_BYTES = 256 * 1024 * 1024
 _PASSED_MESSAGE = "Все документы проверены. Ошибок не найдено."
@@ -71,56 +71,26 @@ def verify_reconciliation(job, feedback) -> VerificationResult:
             "VERIFICATION_INPUT_UNUSABLE", review.source_batch.issues
         )
 
-    state = review.state
-    safe_groups = {
-        group_id
-        for package in (state.grouping.packages if state.grouping is not None else ())
-        if package.safe
-        for group_id in package.member_group_ids
-    }
-    group_by_row = {
-        row_id: group.group_id for group in state.groups.values() for row_id in group.member_ids
-    }
-    group_decisions, row_decisions = _effective_decisions(state)
     locations = _source_locations(job, review.source_batch.rows)
+    try:
+        failed_row_ids, checked = verify_numeric(job, review)
+    except NumericVerificationFailure as error:
+        raise VerificationTechnicalFailure(str(error)) from error
 
     failed_locations: dict[Path, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
-    checked = 0
-    failed = 0
-    for row_id in sorted(state.rows):
-        checked += 1
-        decision = row_decisions.get(row_id) or group_decisions.get(group_by_row[row_id])
-        passes = (
-            decision.action is ReviewAction.ACCEPT
-            if decision is not None
-            else group_by_row[row_id] in safe_groups
-        )
-        if passes:
-            continue
+    for row_id in sorted(failed_row_ids):
         location = locations.get(row_id)
         if location is None:
             raise VerificationTechnicalFailure("VERIFICATION_LOCATION_UNAVAILABLE")
         source, sheet_name, row_number = location
         failed_locations[source][sheet_name].add(row_number)
-        failed += 1
 
-    if not failed:
+    if not failed_row_ids:
         return VerificationResult("passed", _PASSED_MESSAGE, checked, 0)
     output, result_name = _write_artifact(job, failed_locations)
-    return VerificationResult("failed", _FAILED_MESSAGE, checked, failed, output, result_name)
-
-
-def _effective_decisions(state) -> tuple[dict[str, object], dict[str, object]]:
-    """Split the state-resolved package/family/group/row precedence once."""
-
-    group_decisions: dict[str, object] = {}
-    row_decisions: dict[str, object] = {}
-    for decision in state.effective_decisions():
-        if decision.row_id is not None:
-            row_decisions[decision.row_id] = decision
-        elif decision.group_id is not None:
-            group_decisions[decision.group_id] = decision
-    return group_decisions, row_decisions
+    return VerificationResult(
+        "failed", _FAILED_MESSAGE, checked, len(failed_row_ids), output, result_name
+    )
 
 
 def _source_locations(job, rows) -> dict[str, tuple[Path, str, int]]:
