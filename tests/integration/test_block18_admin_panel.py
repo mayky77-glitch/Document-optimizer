@@ -297,6 +297,9 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
         assert label in html
     assert 'id="sources"' in html and 'name="sources"' in html
     assert 'id="target"' in html and 'name="target"' in html
+    assert 'id="sources" name="sources" type="file" accept=".xlsx,.xlsm"' in html
+    assert 'id="target" name="target" type="file" accept=".xlsx"' in html
+    assert 'target-help">один excel-файл .xlsx' in html
     assert 'id="stage-selection"' in html and 'id="stage"' in html
     assert 'aria-describedby="stage-selection-help"' in html
     assert "post /api/jobs" in html
@@ -327,6 +330,9 @@ def test_local_ui_is_accessible_mobile_safe_and_uses_only_local_assets(client) -
     assert "selection_required" in javascript
     assert "showStageSelection" in javascript and "clearStageSelection" in javascript
     assert 'data.append("stage", stage.value)' in javascript
+    assert 'sourceWorkbookExtensions = new Set([".xlsx", ".xlsm"])' in javascript
+    assert 'targetWorkbookExtensions = new Set([".xlsx"])' in javascript
+    assert "Целевой отчёт должен быть Excel-файлом .xlsx." in javascript
 
 
 def test_admin_review_cards_expose_authoritative_group_and_row_controls(client) -> None:

@@ -22,7 +22,8 @@
   const resultPanel = document.querySelector(".result-panel");
   const submit = form.querySelector('button[type="submit"]');
   const operation = form.querySelector('input[name="operation"]');
-  const workbookExtensions = new Set([".xlsx", ".xlsm"]);
+  const sourceWorkbookExtensions = new Set([".xlsx", ".xlsm"]);
+  const targetWorkbookExtensions = new Set([".xlsx"]);
   let currentJobId = "";
   let batchReview = null;
   let activeLearningReview = null;
@@ -80,9 +81,9 @@
     const sources = [...sourceFiles.files];
     if (!sources.length) return "Добавьте хотя бы один исходный документ.";
     if (sources.length > 32) return "Можно выбрать не больше 32 исходных документов. Уберите лишние файлы.";
-    if (sources.some((file) => !workbookExtensions.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx или .xlsm.";
+    if (sources.some((file) => !sourceWorkbookExtensions.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx или .xlsm.";
     if (!targetFile.files.length) return "Выберите один целевой отчёт.";
-    if (!workbookExtensions.has(fileExtension(targetFile.files[0]))) return "Целевой отчёт должен быть Excel-файлом .xlsx или .xlsm.";
+    if (!targetWorkbookExtensions.has(fileExtension(targetFile.files[0]))) return "Целевой отчёт должен быть Excel-файлом .xlsx.";
     if (!stageSelection.hidden && !stage.value) return "Выберите этап из списка.";
     return "";
   };
