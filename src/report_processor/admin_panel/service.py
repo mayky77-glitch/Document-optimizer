@@ -873,6 +873,8 @@ def _verify_recovered_ready_job(job: AdminJob, manifest: dict[str, object]) -> N
     _verify_output_facts(job.output, identity, expected_digest)
     job.output_identity = identity
     job.output_digest = expected_digest
+    if job.result_name is None:
+        raise RuntimeError("reconciliation output name is missing")
 
 
 def _rebuild_apply_plan(job: AdminJob, state: ReconciliationReviewState):
@@ -897,8 +899,6 @@ def _rebuild_apply_plan(job: AdminJob, state: ReconciliationReviewState):
         f"{plan_hash}:output-sha256:{job.output_digest}".encode()
     ).hexdigest()
     return decisions, feedback, apply_key, payload_hash
-    if job.result_name is None:
-        raise RuntimeError("reconciliation output name is missing")
 
 
 def _apply_verification_result(job: AdminJob, result) -> None:
