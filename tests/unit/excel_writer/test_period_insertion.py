@@ -3,6 +3,7 @@
 import zipfile
 from dataclasses import replace
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -271,6 +272,69 @@ def _add_zip_members(path: Path, replacements: dict[str, bytes]) -> None:
             archive.writestr(name, payload)
 
 
+_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_Q = lambda name: f"{{{_MAIN}}}{name}"  # noqa: E731
+
+
+def _replace_worksheet(path: Path, mutate) -> None:
+    with zipfile.ZipFile(path) as archive:
+        root = ET.fromstring(archive.read("xl/worksheets/sheet1.xml"))
+    mutate(root)
+    _add_zip_members(path, {"xl/worksheets/sheet1.xml": ET.tostring(root)})
+
+
+def _add_shared_formula_group(
+    path: Path,
+    si: str,
+    reference: str,
+    text: str,
+    members: tuple[str, ...],
+) -> None:
+    """Inject a minimal OOXML shared group into the synthetic workbook only."""
+
+    def mutate(root: ET.Element) -> None:
+        sheet_data = root.find(_Q("sheetData"))
+        assert sheet_data is not None
+        rows = {int(row.attrib["r"]): row for row in sheet_data.findall(_Q("row"))}
+        for coordinate in members:
+            row_number = int("".join(character for character in coordinate if character.isdigit()))
+            row = rows.get(row_number)
+            if row is None:
+                row = ET.SubElement(sheet_data, _Q("row"), {"r": str(row_number)})
+                rows[row_number] = row
+            for cell in tuple(row.findall(_Q("c"))):
+                if cell.attrib.get("r") == coordinate:
+                    row.remove(cell)
+            cell = ET.SubElement(row, _Q("c"), {"r": coordinate})
+            attributes = {"t": "shared", "si": si}
+            formula = ET.SubElement(cell, _Q("f"), attributes)
+            if coordinate == members[0]:
+                formula.attrib["ref"] = reference
+                formula.text = text
+            row[:] = sorted(row, key=lambda node: node.attrib.get("r", ""))
+
+    _replace_worksheet(path, mutate)
+
+
+def _shared_formula_state(
+    path: Path,
+) -> tuple[tuple[str, tuple[tuple[str, str], ...], str | None], ...]:
+    with zipfile.ZipFile(path) as archive:
+        root = ET.fromstring(archive.read("xl/worksheets/sheet1.xml"))
+    return tuple(
+        sorted(
+            (
+                cell.attrib["r"],
+                tuple(sorted(formula.attrib.items())),
+                formula.text,
+            )
+            for cell in root.iter(_Q("c"))
+            for formula in cell.findall(_Q("f"))
+            if formula.attrib.get("t") == "shared"
+        )
+    )
+
+
 def _source_with_affected_workbook_part(path: Path) -> None:
     _historical_book(path)
     with zipfile.ZipFile(path) as archive:
@@ -430,3 +494,173 @@ def test_right_comment_or_external_hyperlink_is_rejected(tmp_path: Path, kind: s
     workbook.save(source)
     with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_UNSUPPORTED_FEATURE"):
         build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+
+@pytest.mark.parametrize(
+    "groups",
+    (
+        (("0", "A4", "A1", ("A4",)),),
+        (("0", "A4:B5", "SUM(A1:B1)", ("A4", "B4", "A5", "B5")),),
+        (
+            ("0", "A4:B4", "A1", ("A4", "B4")),
+            ("1", "C4:C5", "B1", ("C4", "C5")),
+        ),
+    ),
+)
+def test_wholly_left_complete_shared_formula_groups_are_preserved(
+    tmp_path: Path, groups: tuple[tuple[str, str, str, tuple[str, ...]], ...]
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    for si, reference, text, members in groups:
+        _add_shared_formula_group(source, si, reference, text, members)
+    before = _shared_formula_state(source)
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    assert _shared_formula_state(output) == before
+    verify_period_insertion(source, output, plan)
+
+
+def test_shared_formula_calc_chain_keeps_left_members_and_shifts_right_entries(
+    tmp_path: Path,
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _add_shared_formula_group(source, "0", "A4:B4", "A1", ("A4", "B4"))
+    _add_zip_members(
+        source,
+        {
+            "xl/calcChain.xml": (
+                b'<calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                b'<c r="A4" i="1"/><c r="N4"/></calcChain>'
+            )
+        },
+    )
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    with zipfile.ZipFile(output) as archive:
+        calc_chain = archive.read("xl/calcChain.xml")
+    assert b'r="A4"' in calc_chain
+    assert b'r="P4"' in calc_chain
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "missing_member",
+        "extra_member",
+        "overlap",
+        "duplicate_si",
+        "negative_si",
+        "follower_text",
+        "follower_ref",
+        "array",
+        "data_table",
+        "reversed_ref",
+        "non_top_left_anchor",
+        "affected_operand",
+        "affected_ref",
+        "dynamic",
+        "huge_ref",
+    ),
+)
+def test_invalid_shared_formula_groups_fail_closed_without_clobbering_output(
+    tmp_path: Path, case: str
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    output.write_bytes(b"user-sentinel")
+    if case == "missing_member":
+        _add_shared_formula_group(source, "0", "A4:B4", "A1", ("A4",))
+    elif case == "extra_member":
+        _add_shared_formula_group(source, "0", "A4", "A1", ("A4", "B4"))
+    elif case == "overlap":
+        _add_shared_formula_group(source, "0", "A4:B4", "A1", ("A4", "B4"))
+
+        def add_overlapping_group(root: ET.Element) -> None:
+            row = next(row for row in root.iter(_Q("row")) if row.attrib.get("r") == "4")
+            duplicate = ET.SubElement(row, _Q("c"), {"r": "B4"})
+            anchor_formula = ET.SubElement(
+                duplicate, _Q("f"), {"t": "shared", "si": "1", "ref": "B4:C4"}
+            )
+            anchor_formula.text = "A1"
+            follower = ET.SubElement(row, _Q("c"), {"r": "C4"})
+            ET.SubElement(follower, _Q("f"), {"t": "shared", "si": "1"})
+
+        _replace_worksheet(source, add_overlapping_group)
+    elif case == "duplicate_si":
+        _add_shared_formula_group(source, "0", "A4", "A1", ("A4",))
+        _add_shared_formula_group(source, "0", "B4", "A1", ("B4",))
+    elif case == "negative_si":
+        _add_shared_formula_group(source, "-1", "A4", "A1", ("A4",))
+    elif case == "affected_ref":
+        _add_shared_formula_group(source, "0", "M4:N4", "M1", ("M4", "N4"))
+    elif case == "huge_ref":
+        _add_shared_formula_group(source, "0", "A4:XFD1048576", "A1", ("A4",))
+    else:
+        _add_shared_formula_group(
+            source,
+            "0",
+            "A4:B4",
+            "N4" if case == "affected_operand" else "@A1" if case == "dynamic" else "A1",
+            ("B4", "A4") if case == "non_top_left_anchor" else ("A4", "B4"),
+        )
+
+        def mutate(root: ET.Element) -> None:
+            formulas = {
+                cell.attrib["r"]: cell.find(_Q("f"))
+                for cell in root.iter(_Q("c"))
+                if cell.find(_Q("f")) is not None
+            }
+            if case == "follower_text":
+                assert formulas["B4"] is not None
+                formulas["B4"].text = "A1"
+            elif case == "follower_ref":
+                assert formulas["B4"] is not None
+                formulas["B4"].attrib["ref"] = "A4:B4"
+            elif case == "array":
+                assert formulas["A4"] is not None
+                formulas["A4"].attrib["t"] = "array"
+            elif case == "data_table":
+                assert formulas["A4"] is not None
+                formulas["A4"].attrib["t"] = "dataTable"
+            elif case == "reversed_ref":
+                assert formulas["A4"] is not None
+                formulas["A4"].attrib["ref"] = "B4:A4"
+
+        _replace_worksheet(source, mutate)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_UNSUPPORTED_FEATURE"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    assert output.read_bytes() == b"user-sentinel"
+
+
+@pytest.mark.parametrize("tamper", ("text", "attribute", "member"))
+def test_verifier_rejects_shared_formula_topology_tampering(tmp_path: Path, tamper: str) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _add_shared_formula_group(source, "0", "A4:B4", "A1", ("A4", "B4"))
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    def mutate(root: ET.Element) -> None:
+        cells = {cell.attrib["r"]: cell for cell in root.iter(_Q("c"))}
+        if tamper == "text":
+            formula = cells["A4"].find(_Q("f"))
+            assert formula is not None
+            formula.text = "B1"
+        elif tamper == "attribute":
+            formula = cells["B4"].find(_Q("f"))
+            assert formula is not None
+            formula.attrib["ca"] = "1"
+        else:
+            cells["B4"].attrib["r"] = "C4"
+
+    _replace_worksheet(output, mutate)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
+        verify_period_insertion(source, output, plan)
