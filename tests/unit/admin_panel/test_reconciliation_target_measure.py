@@ -7,6 +7,7 @@ from openpyxl import Workbook
 
 from report_processor.admin_panel.reconciliation_target_measure import (
     ReconciliationTargetMeasureError,
+    discover_historical_target_measures,
     discover_target_measures,
 )
 
@@ -194,3 +195,42 @@ def test_pairs_are_sheet_local_and_can_use_different_columns() -> None:
         ("Дополнение", "N", "O"),
         ("Отчёт", "L", "M"),
     ]
+
+
+def test_documentary_pair_is_a_separate_fail_closed_insertion_anchor() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Документальная отчетность за весь период")
+    sheet["N3"] = "suffix"
+
+    (pair,) = discover_historical_target_measures(workbook, {sheet.title: 3})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+def test_nested_historical_parent_is_selected_over_a_broad_outer_ancestor() -> None:
+    workbook, sheet = _workbook()
+    sheet.merge_cells("J1:N1")
+    sheet["J1"] = "Показатели"
+    sheet.merge_cells("L2:M2")
+    sheet["L2"] = "Документальная отчетность за весь период"
+    sheet["L3"], sheet["M3"] = "Количество", "Стоимость"
+    sheet["N4"] = "suffix"
+
+    (pair,) = discover_historical_target_measures(workbook, {sheet.title: 4})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+    assert pair.parent_span == (2, 12, 2, 13)
+    assert pair.historical_parent_label == "документальная отчетность за весь период"
+
+
+def test_competing_historical_ancestors_fail_closed() -> None:
+    workbook, sheet = _workbook()
+    sheet.merge_cells("J1:N1")
+    sheet["J1"] = "Накопленные показатели"
+    sheet.merge_cells("L2:M2")
+    sheet["L2"] = "Документальная отчетность за весь период"
+    sheet["L3"], sheet["M3"] = "Количество", "Стоимость"
+    sheet["N4"] = "suffix"
+
+    with pytest.raises(ReconciliationTargetMeasureError, match="TARGET_HISTORICAL_PAIR_MISSING"):
+        discover_historical_target_measures(workbook, {sheet.title: 4})

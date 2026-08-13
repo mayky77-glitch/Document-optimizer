@@ -1,0 +1,432 @@
+"""Synthetic direct-OOXML reporting-period insertion regressions."""
+
+import zipfile
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
+from openpyxl.styles import PatternFill
+
+from report_processor.admin_panel import reconciliation_target_measure
+from report_processor.admin_panel.reconciliation_period import ReconciliationPeriodError
+from report_processor.excel_writer.period_insertion import (
+    _translate_formula,
+    _verify_drawing_delta,
+    build_period_insertion_plan,
+    prepare_period_insertion,
+    verify_period_insertion,
+)
+
+
+def _historical_book(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"] = "1", "Этап 1", 1, "Монтаж"
+    sheet.merge_cells("L1:M1")
+    sheet["L1"] = "Документальная отчетность за весь период"
+    sheet["L2"], sheet["M2"] = "Количество", "Стоимость"
+    sheet["N3"] = "хвост"
+    sheet["N4"] = "=L4+M4"
+    workbook.save(path)
+
+
+def test_inserts_unmerged_period_columns_with_parent_row_labels(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepared = prepare_period_insertion(source, output, plan)
+
+    assert prepared.output_sha256
+    workbook = load_workbook(output, data_only=False)
+    sheet = workbook["Отчёт"]
+    assert sheet["N1"].value == "Август 2026 Количество"
+    assert sheet["O1"].value == "Август 2026 Стоимость"
+    assert sheet["N2"].value is None and sheet["O2"].value is None
+    assert sheet["P3"].value == "хвост"
+    assert sheet["P4"].value == "=L4+M4"
+
+
+def test_plan_digest_is_deterministic_and_rejects_a_forged_digest(tmp_path: Path) -> None:
+    source = tmp_path / "source.xlsx"
+    _historical_book(source)
+
+    first = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    second = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+    assert first.plan_digest == second.plan_digest
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PLAN_INVALID"):
+        replace(first, plan_digest="0" * 64)
+
+
+def test_current_equivalent_calendar_identity_is_idempotent_and_conflict_fails(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "current.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"] = "1", "Этап 1", 1, "Монтаж"
+    sheet["L1"], sheet["M1"] = "08.2026", "2026-08"
+    sheet["L2"], sheet["M2"] = "Количество", "Стоимость"
+    workbook.save(source)
+
+    assert build_period_insertion_plan(source, "2026-08", {"Отчёт": 3}).idempotent
+    with pytest.raises(ReconciliationPeriodError, match="REPORTING_PERIOD_CONFLICT"):
+        build_period_insertion_plan(source, "2026-09", {"Отчёт": 3})
+
+
+def test_sparse_far_suffix_is_compact_and_part_of_the_immutable_plan(tmp_path: Path) -> None:
+    source = tmp_path / "sparse.xlsx"
+    _historical_book(source)
+    workbook = load_workbook(source)
+    workbook["Отчёт"]["Z1000000"] = "far suffix"
+    workbook.save(source)
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    (anchor,) = plan.anchors
+
+    assert anchor.suffix_nonempty_count == 3
+    assert anchor.suffix_first_coordinate == "N3"
+    assert anchor.suffix_last_coordinate == "Z1000000"
+    assert anchor.suffix_rightmost_coordinate == "Z1000000"
+    assert len(anchor.suffix_coordinate_sha256) == 64
+
+
+def test_suffix_rightmost_is_column_major_while_bounds_are_row_major(tmp_path: Path) -> None:
+    source = tmp_path / "crossed-axis.xlsx"
+    _historical_book(source)
+    workbook = load_workbook(source)
+    sheet = workbook["Отчёт"]
+    sheet["Z4"] = "rightmost"
+    sheet["N100"] = "last"
+    workbook.save(source)
+
+    (anchor,) = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3}).anchors
+
+    assert anchor.suffix_first_coordinate == "N3"
+    assert anchor.suffix_last_coordinate == "N100"
+    assert anchor.suffix_rightmost_coordinate == "Z4"
+
+
+def test_forged_suffix_evidence_is_rejected_before_creating_output(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    (anchor,) = plan.anchors
+    forged = replace(
+        plan,
+        anchors=(
+            replace(
+                anchor,
+                historical_parent_label="поддельная историческая подпись",
+                suffix_coordinate_sha256="0" * 64,
+            ),
+        ),
+        plan_digest="",
+    )
+    assert forged.plan_digest != plan.plan_digest
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PLAN_INVALID"):
+        prepare_period_insertion(source, output, forged)
+
+    assert not output.exists()
+
+
+def test_empty_suffix_fails_closed(tmp_path: Path) -> None:
+    source = tmp_path / "empty-suffix.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"] = "1", "Этап 1", 1, "Монтаж"
+    sheet.merge_cells("L1:M1")
+    sheet["L1"] = "Документальная отчетность за весь период"
+    sheet["L2"], sheet["M2"] = "Количество", "Стоимость"
+    workbook.save(source)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+
+def test_suffix_over_limit_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "over-limit.xlsx"
+    _historical_book(source)
+    monkeypatch.setattr(reconciliation_target_measure, "_MAX_SUFFIX_CELLS", 1)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+
+def test_materialized_cell_inspection_limit_includes_empty_left_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "inspection-limit.xlsx"
+    _historical_book(source)
+    assert build_period_insertion_plan(source, "2026-08", {"Отчёт": 3}).anchors
+    workbook = load_workbook(source)
+    sheet = workbook["Отчёт"]
+    for column in range(1, 11):
+        sheet.cell(20, column).fill = PatternFill("solid", fgColor="FFFFFF")
+    workbook.save(source)
+    monkeypatch.setattr(reconciliation_target_measure, "_MAX_SUFFIX_INSPECTED_CELLS", 15)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+
+def test_formula_translation_preserves_quoted_coordinate_and_translates_local_range() -> None:
+    assert _translate_formula('SUM(L4:N4)+"N4"', 13) == 'SUM(L4:P4)+"N4"'
+    assert _translate_formula('="N""4"+N4', 13) == '="N""4"+P4'
+
+
+@pytest.mark.parametrize("formula", ("SUM(N:N)", "SUM(4:4)", '"N:N"+N4'))
+def test_formula_translation_rejects_whole_column_or_row_operands(formula: str) -> None:
+    if formula.startswith('"'):
+        assert _translate_formula(formula, 13) == '"N:N"+P4'
+    else:
+        with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_UNSUPPORTED_FEATURE"):
+            _translate_formula(formula, 13)
+
+
+@pytest.mark.parametrize(
+    "formula",
+    ("'Другой лист'!N4", "Book.xlsx!N4", "MyNamedRange+N4", 'INDIRECT("N4")'),
+)
+def test_formula_translation_rejects_nonlocal_or_named_operands(formula: str) -> None:
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_UNSUPPORTED_FEATURE"):
+        _translate_formula(formula, 13)
+
+
+def test_existing_output_sentinel_is_never_replaced(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    output.write_bytes(b"user-sentinel")
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_OUTPUT_EXISTS"):
+        prepare_period_insertion(source, output, plan)
+
+    assert output.read_bytes() == b"user-sentinel"
+
+
+@pytest.mark.parametrize(
+    "needle,replacement",
+    (
+        ('r="N1"', 'r="Q1"'),  # inserted-header coordinate / extra gap
+        ('r="N2"', 'r="Q2"'),  # missing inserted blank
+        ('ref="B1:P4"', 'ref="B1:Q4"'),  # dimension
+        ('ref="L1:M1"', 'ref="L1:N1"'),  # merge
+    ),
+)
+def test_independent_verifier_rejects_tampered_worksheet_delta(
+    tmp_path: Path, needle: str, replacement: str
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    import zipfile
+
+    with zipfile.ZipFile(output) as original:
+        payloads = {info.filename: original.read(info.filename) for info in original.infolist()}
+        infos = original.infolist()
+    part = "xl/worksheets/sheet1.xml"
+    assert needle.encode() in payloads[part]
+    payloads[part] = payloads[part].replace(needle.encode(), replacement.encode(), 1)
+    with zipfile.ZipFile(output, "w") as replacement_zip:
+        for info in infos:
+            replacement_zip.writestr(info, payloads[info.filename])
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
+        verify_period_insertion(source, output, plan)
+
+
+def _rewrite_zip_member(path: Path, member: str, mutate) -> None:
+    with zipfile.ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+        comment = archive.comment
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.comment = comment
+        for info, payload in entries:
+            if info.filename == member:
+                mutate(info, payload)
+            archive.writestr(info, payload)
+
+
+def _add_zip_members(path: Path, replacements: dict[str, bytes]) -> None:
+    with zipfile.ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+        comment = archive.comment
+    seen = {info.filename for info, _payload in entries}
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.comment = comment
+        for info, payload in entries:
+            archive.writestr(info, replacements.pop(info.filename, payload))
+        for name, payload in replacements.items():
+            assert name not in seen
+            archive.writestr(name, payload)
+
+
+def _source_with_affected_workbook_part(path: Path) -> None:
+    _historical_book(path)
+    with zipfile.ZipFile(path) as archive:
+        workbook = archive.read("xl/workbook.xml")
+    workbook = workbook.replace(
+        b"</workbook>",
+        b'<definedNames><definedName name="_xlnm.Print_Area">'
+        b"'&#1054;&#1090;&#1095;&#1105;&#1090;'!$N:$N</definedName></definedNames></workbook>",
+    )
+    _add_zip_members(path, {"xl/workbook.xml": workbook})
+
+
+def test_verifier_rejects_tampered_workbook_payload_attribute(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _source_with_affected_workbook_part(source)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    def mutate(_info: zipfile.ZipInfo, payload: bytes) -> None:
+        nonlocal tampered
+        tampered = payload.replace(b"<s:workbookPr", b'<s:workbookPr date1904="1"', 1)
+
+    tampered = b""
+    _rewrite_zip_member(output, "xl/workbook.xml", mutate)
+    # `_rewrite_zip_member` writes the local payload variable, so replace once
+    # more with the intentionally altered workbook payload.
+    _add_zip_members(output, {"xl/workbook.xml": tampered})
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
+        verify_period_insertion(source, output, plan)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda payload: payload.replace(b'<s:c r="P4" i="1"', b'<s:c r="P4" i="1" extra="1"'),
+        lambda payload: payload.replace(b"</s:calcChain>", b'<s:c r="P4" i="1"/></s:calcChain>'),
+    ),
+)
+def test_verifier_rejects_calc_chain_extra_attribute_or_node(tmp_path: Path, mutation) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _add_zip_members(
+        source,
+        {
+            "xl/calcChain.xml": (
+                b'<calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                b'<c r="N4" i="1"/></calcChain>'
+            )
+        },
+    )
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+    with zipfile.ZipFile(output) as archive:
+        payload = archive.read("xl/calcChain.xml")
+    _add_zip_members(output, {"xl/calcChain.xml": mutation(payload)})
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
+        verify_period_insertion(source, output, plan)
+
+
+def test_drawing_verifier_rejects_payload_attribute_tamper(tmp_path: Path) -> None:
+    source = tmp_path / "source.xlsx"
+    _historical_book(source)
+    with zipfile.ZipFile(source) as archive:
+        sheet = archive.read("xl/worksheets/sheet1.xml")
+    sheet = sheet.replace(
+        b"<worksheet ",
+        b'<worksheet xmlns:r="http://schemas.openxmlformats.org/'
+        b'officeDocument/2006/relationships" ',
+        1,
+    ).replace(b"</worksheet>", b'<drawing r:id="rIdDrawing"/></worksheet>')
+    drawing = (
+        b'<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing">'
+        b"<xdr:twoCellAnchor><xdr:from><xdr:col>13</xdr:col></xdr:from>"
+        b"<xdr:to><xdr:col>14</xdr:col></xdr:to></xdr:twoCellAnchor></xdr:wsDr>"
+    )
+    rels = (
+        b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        b'<Relationship Id="rIdDrawing" Type="http://schemas.openxmlformats.org/'
+        b'officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>'
+        b"</Relationships>"
+    )
+    _add_zip_members(
+        source,
+        {
+            "xl/worksheets/sheet1.xml": sheet,
+            "xl/worksheets/_rels/sheet1.xml.rels": rels,
+            "xl/drawings/drawing1.xml": drawing,
+        },
+    )
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    (anchor,) = plan.anchors
+    tampered = drawing.replace(b"<xdr:to>", b'<xdr:to payload="tampered">')
+    with (
+        zipfile.ZipFile(source) as archive,
+        pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"),
+    ):
+        _verify_drawing_delta(
+            drawing,
+            tampered,
+            archive,
+            "xl/drawings/drawing1.xml",
+            {anchor.sheet_name: anchor},
+        )
+
+
+@pytest.mark.parametrize("attribute,value", (("internal_attr", 1), ("create_version", 63)))
+def test_verifier_rejects_tampered_zipinfo_metadata(
+    tmp_path: Path, attribute: str, value: int
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    def mutate(info: zipfile.ZipInfo, _payload: bytes) -> None:
+        setattr(info, attribute, value)
+
+    _rewrite_zip_member(output, "xl/worksheets/sheet1.xml", mutate)
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
+        verify_period_insertion(source, output, plan)
+
+
+def test_wholly_left_comment_and_external_hyperlink_are_preserved(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    workbook = load_workbook(source)
+    sheet = workbook["Отчёт"]
+    sheet["A1"].comment = Comment("left", "tester")
+    sheet["B1"].hyperlink = "https://example.test/left"
+    workbook.save(source)
+    with zipfile.ZipFile(source) as archive:
+        related = {
+            info.filename: archive.read(info.filename)
+            for info in archive.infolist()
+            if (
+                "comments" in info.filename
+                or "vmlDrawing" in info.filename
+                or info.filename.endswith("sheet1.xml.rels")
+            )
+        }
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+    with zipfile.ZipFile(output) as archive:
+        assert {name: archive.read(name) for name in related} == related
+
+
+@pytest.mark.parametrize("kind", ("comment", "hyperlink"))
+def test_right_comment_or_external_hyperlink_is_rejected(tmp_path: Path, kind: str) -> None:
+    source = tmp_path / "source.xlsx"
+    _historical_book(source)
+    workbook = load_workbook(source)
+    sheet = workbook["Отчёт"]
+    if kind == "comment":
+        sheet["N1"].comment = Comment("right", "tester")
+    else:
+        sheet["N1"].hyperlink = "https://example.test/right"
+    workbook.save(source)
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_UNSUPPORTED_FEATURE"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
