@@ -1,3 +1,4 @@
+import threading
 from decimal import Decimal
 from hashlib import sha256
 
@@ -192,14 +193,13 @@ def test_apply_validates_and_chmods_output_before_feedback_commit(tmp_path, monk
     monkeypatch.setattr(
         "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
     )
-    original_chmod = __import__("os").chmod
+    original_fchmod = __import__("os").fchmod
 
-    def chmod(path, mode):
-        if path == output:
-            events.append("chmod")
-        return original_chmod(path, mode)
+    def fchmod(descriptor, mode):
+        events.append("chmod")
+        return original_fchmod(descriptor, mode)
 
-    monkeypatch.setattr("report_processor.admin_panel.service.os.chmod", chmod)
+    monkeypatch.setattr("report_processor.admin_panel.service.os.fchmod", fchmod)
     monkeypatch.setattr(
         service.feedback_store,
         "commit_apply",
@@ -223,8 +223,8 @@ def test_apply_chmod_failure_never_commits_feedback_and_removes_owned_output(
         "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
     )
     monkeypatch.setattr(
-        "report_processor.admin_panel.service.os.chmod",
-        lambda path, _mode: (_ for _ in ()).throw(OSError("chmod")) if path == output else None,
+        "report_processor.admin_panel.service.os.fchmod",
+        lambda _descriptor, _mode: (_ for _ in ()).throw(OSError("chmod")),
     )
     committed = False
 
@@ -235,10 +235,10 @@ def test_apply_chmod_failure_never_commits_feedback_and_removes_owned_output(
 
     monkeypatch.setattr(service.feedback_store, "commit_apply", should_not_commit)
 
-    with pytest.raises(OSError, match="chmod"):
+    with pytest.raises(RuntimeError, match="OUTPUT_INVALID"):
         service.apply_reconciliation(job.job_id)
 
-    assert committed is False and output.exists() is False and job.status == "failed"
+    assert committed is False and output.exists() is True and job.status == "failed"
 
 
 def test_apply_failure_keeps_concurrent_output_replacement(tmp_path, monkeypatch) -> None:
@@ -262,3 +262,107 @@ def test_apply_failure_keeps_concurrent_output_replacement(tmp_path, monkeypatch
         service.apply_reconciliation(job.job_id)
 
     assert output.read_bytes() == b"replacement"
+
+
+def test_apply_rejects_wrong_output_path_before_feedback_commit(tmp_path, monkeypatch) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    wrong = job.directory / "other.xlsx"
+    wrong.write_bytes(b"result")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review", lambda *_args: (wrong, ())
+    )
+    committed = False
+
+    def should_not_commit(**_kwargs):
+        nonlocal committed
+        committed = True
+        return True
+
+    monkeypatch.setattr(service.feedback_store, "commit_apply", should_not_commit)
+    with pytest.raises(RuntimeError, match="OUTPUT_INVALID"):
+        service.apply_reconciliation(job.job_id)
+    assert committed is False and wrong.exists()
+
+
+def test_apply_precommit_rejects_replaced_source_and_preserves_owned_result(
+    tmp_path, monkeypatch
+) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"result")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
+    )
+
+    def replace_source_then_validate(**kwargs):
+        replacement = job.directory / "replacement-source.xlsx"
+        replacement.write_bytes(b"source")
+        replacement.replace(job.source)
+        kwargs["precommit_validator"]()
+        raise AssertionError("commit must not continue")
+
+    monkeypatch.setattr(service.feedback_store, "commit_apply", replace_source_then_validate)
+    with pytest.raises(RuntimeError, match="input upload changed"):
+        service.apply_reconciliation(job.job_id)
+    assert output.exists() is False
+
+
+def test_apply_precommit_rejects_replaced_output_and_preserves_replacement(
+    tmp_path, monkeypatch
+) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"attempt")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
+    )
+
+    def replace_output_then_validate(**kwargs):
+        replacement = job.directory / "replacement.xlsx"
+        replacement.write_bytes(b"replacement")
+        replacement.replace(output)
+        kwargs["precommit_validator"]()
+
+    monkeypatch.setattr(service.feedback_store, "commit_apply", replace_output_then_validate)
+    with pytest.raises(RuntimeError, match="OUTPUT_INVALID"):
+        service.apply_reconciliation(job.job_id)
+    assert output.read_bytes() == b"replacement"
+
+
+def test_decision_mutation_cannot_interleave_authoritative_apply(tmp_path, monkeypatch) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    entered, release, mutation_done = threading.Event(), threading.Event(), threading.Event()
+    errors: list[Exception] = []
+
+    def blocked_apply(*_args):
+        output.write_bytes(b"result")
+        entered.set()
+        assert release.wait(2)
+        return output, ()
+
+    monkeypatch.setattr("report_processor.admin_panel.service.apply_review", blocked_apply)
+    apply_thread = threading.Thread(target=lambda: service.apply_reconciliation(job.job_id))
+    apply_thread.start()
+    assert entered.wait(2)
+
+    def mutate():
+        try:
+            service.put_reconciliation_group(
+                job.job_id, group_id, ReviewDecision(ReviewAction.REJECT)
+            )
+        except Exception as error:
+            errors.append(error)
+        finally:
+            mutation_done.set()
+
+    mutation_thread = threading.Thread(target=mutate)
+    mutation_thread.start()
+    release.set()
+    apply_thread.join(2)
+    mutation_thread.join(2)
+    assert job.status == "ready" and len(errors) == 1 and isinstance(errors[0], ValueError)

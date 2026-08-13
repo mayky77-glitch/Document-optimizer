@@ -112,7 +112,9 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
     return ReconciliationReviewResult(state, batch, batch.issues)
 
 
-def apply_review(job, state: ReconciliationReviewState) -> ReconciliationApplyResult:
+def apply_review(
+    job, state: ReconciliationReviewState, decisions: tuple[ReviewDecision, ...] | None = None
+) -> ReconciliationApplyResult:
     from report_processor.business_rules import load_default_rule_set, load_rule_configuration
     from report_processor.excel_writer import write_target_report
     from report_processor.quality_control import WriteDecision
@@ -126,11 +128,12 @@ def apply_review(job, state: ReconciliationReviewState) -> ReconciliationApplyRe
         raise ValueError("RULE_CONFIGURATION_INVALID")
     schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
     catalog = _catalog(targets)
-    overrides = apply_overrides(state.rows.values(), state.groups.values(), state.core_decisions())
+    snapshot = decisions if decisions is not None else tuple(state.core_decisions())
+    overrides = apply_overrides(state.rows.values(), state.groups.values(), snapshot)
     source_rows = {_review_row_id(job, row.source_row_id): row for row in _sources(job).rows}
     matches = _selected_matches(state, overrides, catalog, job, source_rows)
-    feedback = _feedback_records(state)
-    plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback)
+    feedback = _feedback_records(state, snapshot)
+    plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, snapshot)
     calculations = calculate_matches(
         matches,
         rule_set.rule_set,
@@ -345,7 +348,11 @@ def _physical_source_identity(source) -> tuple[str, str, int]:
 
 
 def _apply_plan(
-    job, state: ReconciliationReviewState, rules_hash: str, feedback: tuple[FeedbackRecord, ...]
+    job,
+    state: ReconciliationReviewState,
+    rules_hash: str,
+    feedback: tuple[FeedbackRecord, ...],
+    decisions: tuple[ReviewDecision, ...],
 ) -> tuple[str, str]:
     decisions = [
         {
@@ -356,7 +363,7 @@ def _apply_plan(
             "row_id": item.row_id,
             "version": item.version,
         }
-        for item in state.core_decisions()
+        for item in decisions
     ]
     payload = {
         "contract": "ReconciliationApplyIntegrity-1.0",
@@ -452,18 +459,22 @@ def _restore_feedback(state, feedback) -> None:
             state.familiar_group_ids.add(group.group_id)
 
 
-def _feedback_records(state) -> tuple[FeedbackRecord, ...]:
+def _feedback_records(
+    state, decisions: tuple[ReviewDecision, ...] | None = None
+) -> tuple[FeedbackRecord, ...]:
     from report_processor.reconciliation_review import (
         feedback_from_decision,
         feedback_from_row_decision,
     )
 
-    effective_decisions = getattr(state, "effective_decisions", None)
-    effective = (
-        tuple(effective_decisions())
-        if callable(effective_decisions)
-        else (*state.group_decisions.values(), *state.row_decisions.values())
-    )
+    effective = decisions
+    if effective is None:
+        effective_decisions = getattr(state, "effective_decisions", None)
+        effective = (
+            tuple(effective_decisions())
+            if callable(effective_decisions)
+            else (*state.group_decisions.values(), *state.row_decisions.values())
+        )
     group_decisions = sorted(
         (decision for decision in effective if decision.group_id is not None),
         key=lambda decision: decision.group_id or "",
