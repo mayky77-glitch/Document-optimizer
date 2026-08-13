@@ -442,6 +442,31 @@ def test_partial_source_input_is_a_technical_failure(tmp_path: Path, monkeypatch
     assert len(raised.value.issues) == 1
 
 
+def test_missing_target_measure_is_a_no_artifact_technical_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    job = _job(tmp_path)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.prepare_review",
+        lambda *_args: __import__(
+            "report_processor.admin_panel.reconciliation_execution",
+            fromlist=["ReconciliationReviewResult"],
+        ).ReconciliationReviewResult(
+            state=None,
+            source_batch=None,
+            target_error=True,
+            target_error_code="TARGET_CURRENT_PERIOD_PAIR_MISSING",
+        ),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification._write_artifact",
+        lambda *_args: pytest.fail("target-measure failure must not publish an artifact"),
+    )
+
+    with pytest.raises(VerificationTechnicalFailure, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"):
+        verify_reconciliation(job, ())
+
+
 def test_technical_verification_payload_keeps_bounded_repair_guidance(tmp_path: Path) -> None:
     issue = ReconciliationSourceIssue(
         "WORKBOOK_UNREADABLE",

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+
 import pytest
+from openpyxl import Workbook
 
 from report_processor.admin_panel.reconciliation_target import (
     ReconciliationTargetInputError,
@@ -12,6 +15,7 @@ from report_processor.admin_panel.reconciliation_target import (
     resolve_reconciliation_stage,
     terminal_index,
 )
+from report_processor.schema import LogicalColumn
 
 
 class _Sheet:
@@ -106,3 +110,36 @@ def test_stage_validation_keeps_broad_printable_labels_without_locations() -> No
         validate_stage("/private/target.xlsx")
     with pytest.raises(ValueError):
         validate_stage("Лист1!A1")
+
+
+def test_reader_uses_discovered_cells_for_target_snapshot_provenance(tmp_path) -> None:
+    target = tmp_path / "target.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet.merge_cells("L1:M1")
+    sheet["L1"] = "Отчетный период"
+    sheet["L2"], sheet["M2"] = "Количество", "Стоимость"
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"], sheet["F3"] = (
+        "1234",
+        "Этап 13.1",
+        "1",
+        "Монтаж",
+        "м",
+    )
+    sheet["J3"], sheet["K3"], sheet["L3"], sheet["M3"] = 99, 88, 12, 3.5
+    workbook.save(target)
+    workbook.close()
+
+    schema, (row,) = read_reconciliation_target(
+        target, sha256(target.read_bytes()).hexdigest(), "13.1"
+    )
+
+    assert [(binding.logical_column, binding.column_letter) for binding in schema.column_bindings][
+        -2:
+    ] == [
+        (LogicalColumn.CURRENT_PERIOD_QUANTITY, "L"),
+        (LogicalColumn.CURRENT_PERIOD_COST, "M"),
+    ]
+    assert row.cell_for(LogicalColumn.CURRENT_PERIOD_QUANTITY).coordinate == "L3"
+    assert row.cell_for(LogicalColumn.CURRENT_PERIOD_COST).coordinate == "M3"

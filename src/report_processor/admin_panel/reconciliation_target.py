@@ -24,10 +24,12 @@ from report_processor.target_report.ooxml import (
     formula_caches_trusted,
     read_sheet_comments,
     read_sheet_lexemes,
+    read_sheet_structure,
 )
 from report_processor.target_report.reader import _cell_snapshot
 
 from .reconciliation_identity import terminal_identity
+from .reconciliation_target_measure import TargetMeasurePair, discover_target_measures
 
 _STAGE_RE = re.compile(r"этап\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
 
@@ -85,20 +87,30 @@ def publish_unchanged_target(source, output, expected_sha256: str) -> str:
 
 
 def read_reconciliation_target(path, digest: str, stage: str | None):
-    """Read A/B/C/D/E/F/J/K while retaining the verified writer schema."""
+    """Read one structurally proven current-period pair per selected sheet."""
     _validate_reconciliation_target_type(Path(path))
     source = _materialized(path, f"target:{digest}")
     with open_dual_workbook(WorkbookOpenRequest(source)) as session:
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
         stages = enumerate_reconciliation_stages(session)
         selected_stage = resolve_reconciliation_stage(stages, stage)
+        measure_pairs = discover_target_measures(
+            session.formula_workbook,
+            _first_detail_rows(session.formula_workbook, selected_stage),
+            {
+                sheet_name: read_sheet_structure(
+                    session.source.local_path, sheet_name
+                ).merged_ranges
+                for sheet_name in session.formula_workbook.sheetnames
+            },
+        )
         report = generic.read_target_report(
             session,
             analyze_workbook_schema(session),
             TargetReportReadRequest(selected_stage=selected_stage),
         )
-        bindings = _bindings()
-        rows = tuple(_rows(session, selected_stage, bindings))
+        bindings = _bindings(measure_pairs)
+        rows = tuple(_rows(session, selected_stage, measure_pairs))
     if not rows:
         raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
     schema = replace(report.schema, column_bindings=bindings)
@@ -203,7 +215,7 @@ def _million_rub(value: Decimal | None) -> Decimal | None:
     return (value / Decimal(1_000_000)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def _bindings() -> tuple[TargetColumnBinding, ...]:
+def _bindings(measure_pairs: tuple[TargetMeasurePair, ...] = ()) -> tuple[TargetColumnBinding, ...]:
     columns = (
         (LogicalColumn.OBJECT_CODE, 1, "A"),
         (LogicalColumn.DOCUMENT_INDEX, 2, "B"),
@@ -211,21 +223,71 @@ def _bindings() -> tuple[TargetColumnBinding, ...]:
         (LogicalColumn.ROW_NUMBER, 4, "D"),
         (LogicalColumn.WORK_NAME, 5, "E"),
         (LogicalColumn.UNIT, 6, "F"),
-        (LogicalColumn.CURRENT_PERIOD_QUANTITY, 10, "J"),
-        (LogicalColumn.CURRENT_PERIOD_COST, 11, "K"),
     )
-    return tuple(
+    static = tuple(
         TargetColumnBinding(key, number, letter, None, "RECONCILIATION_LAYOUT")
         for key, number, letter in columns
     )
+    bindings = list(static)
+    seen = {(binding.logical_column, binding.column_index) for binding in bindings}
+    for pair in measure_pairs:
+        for logical_column, column, letter, header in (
+            (
+                LogicalColumn.CURRENT_PERIOD_QUANTITY,
+                pair.quantity_column,
+                pair.quantity_letter,
+                pair.quantity_header,
+            ),
+            (
+                LogicalColumn.CURRENT_PERIOD_COST,
+                pair.cost_column,
+                pair.cost_letter,
+                pair.cost_header,
+            ),
+        ):
+            if (logical_column, column) not in seen:
+                seen.add((logical_column, column))
+                bindings.append(
+                    TargetColumnBinding(logical_column, column, letter, header, "TARGET_MEASURE")
+                )
+    return tuple(bindings)
 
 
-def _rows(session, selected_stage: str, bindings):
+def _first_detail_rows(workbook, selected_stage: str) -> dict[str, int]:
+    rows: dict[str, int] = {}
+    for sheet in workbook.worksheets:
+        active_index = active_stage = None
+        for row_number in range(1, int(sheet.max_row or 0) + 1):
+            raw_index = sheet.cell(row_number, 2).value
+            raw_stage = sheet.cell(row_number, 3).value
+            if raw_index is not None:
+                active_index = terminal_index(raw_index)
+            if raw_stage is not None and str(raw_stage).strip():
+                stage_name = str(raw_stage).strip()
+                stage_match = _STAGE_RE.search(stage_name)
+                active_stage = stage_match.group(1) if stage_match else stage_name
+            if (
+                active_stage == selected_stage
+                and active_index
+                and sheet.cell(row_number, 4).value is not None
+                and sheet.cell(row_number, 5).value
+            ):
+                rows[sheet.title] = row_number
+                break
+    return rows
+
+
+def _rows(session, selected_stage: str, measure_pairs: tuple[TargetMeasurePair, ...]):
     formula = session.formula_workbook
     values = session.value_workbook
     trusted = formula_caches_trusted(session.source.local_path)
+    pair_by_sheet = {pair.sheet_name: pair for pair in measure_pairs}
     for sheet_name in formula.sheetnames:
         formula_sheet, value_sheet = formula[sheet_name], values[sheet_name]
+        pair = pair_by_sheet.get(sheet_name)
+        if pair is None:
+            continue
+        bindings = _bindings((pair,))
         lexemes = read_sheet_lexemes(session.source.local_path, sheet_name)
         comments = dict(read_sheet_comments(session.source.local_path, sheet_name))
         active_index = active_name = active_stage = None
@@ -263,7 +325,7 @@ def _rows(session, selected_stage: str, bindings):
             )
             by_key = dict(cells)
             yield TargetReportRow(
-                "ReconciliationTarget-1.0",
+                "ReconciliationTarget-2.0",
                 sheet_name,
                 SheetType.ADDITIONAL_REPORT,
                 row_number,
