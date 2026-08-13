@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import replace
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
@@ -261,11 +262,13 @@ def test_filters_and_order_are_deterministic_and_bounded(tmp_path: Path):
     assert [row.row_id for row in one] == ["row-a"]
 
 
-def test_default_export_includes_more_than_iter_rows_default_limit(tmp_path: Path):
+def test_default_export_includes_more_than_iter_rows_default_limit(
+    tmp_path: Path, duckdb_over_default_limit_seed: Path
+):
     output_path = tmp_path / "all.jsonl"
-    rows = tuple(_row(f"row-{index:04d}") for index in range(1_001))
-    with DuckDBStore(tmp_path / "rows.duckdb") as store:
-        store.write_rows(rows)
+    database_path = tmp_path / "rows.duckdb"
+    shutil.copy2(duckdb_over_default_limit_seed, database_path)
+    with DuckDBStore(database_path) as store:
         assert len(list(store.iter_rows())) == 1_000
         assert len(list(store.iter_all_rows())) == 1_001
         exported = store.export_jsonl(output_path)

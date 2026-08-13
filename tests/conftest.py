@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import zipfile
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -11,13 +12,54 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.utils.cell import get_column_letter
 
 from report_processor.domain.models import FileManifest, FileManifestEntry
+from report_processor.extraction.models import CanonicalSourceRow, SourceLocation
 from report_processor.inventory.file_classifier import classify_file_by_name
 from report_processor.inventory.file_manifest import build_manifest_summary
+from report_processor.storage import DuckDBStore
 from report_processor.training_data import (
     DataQualityStatus,
     FormulaErrorCode,
     TrainingDataRow,
 )
+
+
+@pytest.fixture(scope="session")
+def duckdb_over_default_limit_seed(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Create the expensive 1,001-row boundary database once; consumers copy it."""
+    database_path = tmp_path_factory.mktemp("duckdb-boundary") / "rows.duckdb"
+    template = CanonicalSourceRow(
+        row_id="row-0000",
+        source_type="ks2",
+        source_location=SourceLocation("file", "source.xlsx", "КС-2", "ks2", 4),
+        document_index="1006",
+        document_period="2026-07",
+        object_code_raw="1006",
+        object_name_raw="Объект",
+        subobject_code_raw=None,
+        subobject_name_raw=None,
+        position_code_raw="0004",
+        work_name_raw="Монтаж",
+        unit_raw="м",
+        contract_quantity=Decimal("123.45"),
+        current_period_quantity=Decimal("12.3"),
+        cumulative_quantity=None,
+        remaining_quantity=None,
+        unit_price=None,
+        contract_cost=None,
+        current_period_cost=None,
+        cumulative_cost=None,
+        total_cost=None,
+        basis_code_raw=None,
+        drawing_code_raw=None,
+        cost_type_code_raw=None,
+        source_values=(),
+        status="OK",
+        warnings=(),
+    )
+    rows = (replace(template, row_id=f"row-{index:04d}") for index in range(1_001))
+    with DuckDBStore(database_path) as store:
+        store.write_rows(rows)
+    return database_path
 
 
 @pytest.fixture

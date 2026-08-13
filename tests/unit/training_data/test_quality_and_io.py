@@ -1,4 +1,5 @@
 import json
+import shutil
 from dataclasses import asdict, replace
 from decimal import Decimal
 from pathlib import Path
@@ -13,7 +14,7 @@ from report_processor.extraction.models import (
     ValueProvenance,
 )
 from report_processor.extraction.statuses import CellValueStatus
-from report_processor.storage import DuckDBStore, StorageError, StorageSchemaError
+from report_processor.storage import StorageError, StorageSchemaError
 from report_processor.training_data import (
     FormulaErrorCode,
     TrainingDataConfig,
@@ -163,12 +164,11 @@ def test_jsonl_loader_rejects_invalid_decimal_values(tmp_path: Path, value: str)
         load_canonical_rows_jsonl(path)
 
 
-def test_duckdb_loader_reads_every_row_not_bounded_query_default(tmp_path: Path):
+def test_duckdb_loader_reads_every_row_not_bounded_query_default(
+    tmp_path: Path, duckdb_over_default_limit_seed: Path
+):
     database_path = tmp_path / "rows.duckdb"
-    source = make_source_row(CellValueStatus.FORMULA_WITH_CACHED_VALUE.value)
-    rows = tuple(replace(source, row_id=f"row-{index:04d}") for index in range(1_001))
-    with DuckDBStore(database_path) as store:
-        store.write_rows(rows)
+    shutil.copy2(duckdb_over_default_limit_seed, database_path)
     original = database_path.read_bytes()
 
     restored = load_canonical_rows_duckdb(database_path)
