@@ -272,12 +272,133 @@ def _xml_prefix(qname: bytes) -> bytes:
 
 
 def _xml_children(body: bytes, parent_qname: bytes, local_name: bytes) -> list[bytes]:
+    """Return byte-identical direct children without reserializing the parent.
+
+    OOXML writers commonly mix ``<xf/>`` and ``<xf>...</xf>``.  A regex that
+    tries to match both forms can consume a self-closing child together with
+    the following paired child, so walk XML markup and retain its byte slices
+    instead.  This deliberately handles only enough XML syntax to find element
+    boundaries, while leaving every original byte untouched.
+    """
+
     qname = _xml_prefix(parent_qname) + local_name
-    pattern = re.compile(
-        rb"<" + re.escape(qname) + rb"\b[^>]*(?:/>|>.*?</" + re.escape(qname) + rb"\s*>)",
-        re.DOTALL,
-    )
-    return [match.group(0) for match in pattern.finditer(body)]
+    result: list[bytes] = []
+    cursor = 0
+    depth = 0
+    while cursor < len(body):
+        start = body.find(b"<", cursor)
+        if start < 0:
+            break
+        end = _xml_markup_end(body, start)
+        token = body[start : end + 1]
+        tag_name = _xml_tag_name(token)
+        if _is_xml_start_tag(token, qname):
+            if depth == 0:
+                child_end = _xml_element_end(body, start, qname, end)
+                result.append(body[start : child_end + 1])
+                cursor = child_end + 1
+                continue
+            if not _is_self_closing_tag(token):
+                depth += 1
+        elif tag_name is not None and not token.startswith(b"</"):
+            if not _is_self_closing_tag(token):
+                depth += 1
+        elif _is_xml_end_tag(token, qname):
+            if depth:
+                depth -= 1
+        elif tag_name is not None and token.startswith(b"</") and depth:
+            depth -= 1
+        cursor = end + 1
+    return result
+
+
+def _xml_markup_end(xml: bytes, start: int) -> int:
+    """Return a quote-aware end offset for one markup token."""
+
+    if xml.startswith(b"<!--", start):
+        end = xml.find(b"-->", start + 4)
+        if end >= 0:
+            return end + 2
+    if xml.startswith(b"<![CDATA[", start):
+        end = xml.find(b"]]>", start + 9)
+        if end >= 0:
+            return end + 2
+    if xml.startswith(b"<?", start):
+        end = xml.find(b"?>", start + 2)
+        if end >= 0:
+            return end + 1
+    quote: int | None = None
+    for offset in range(start + 1, len(xml)):
+        value = xml[offset]
+        if quote is not None:
+            if value == quote:
+                quote = None
+        elif value in (ord('"'), ord("'")):
+            quote = value
+        elif value == ord(">"):
+            return offset
+    raise ExcelWriterIntegrityError("STYLES_MISSING", "XML markup end")
+
+
+def _xml_element_end(xml: bytes, start: int, qname: bytes, opening_end: int) -> int:
+    """Return the matching end offset for one element beginning at ``start``."""
+
+    if _is_self_closing_tag(xml[start : opening_end + 1]):
+        return opening_end
+    depth = 1
+    cursor = opening_end + 1
+    while cursor < len(xml):
+        nested_start = xml.find(b"<", cursor)
+        if nested_start < 0:
+            break
+        nested_end = _xml_markup_end(xml, nested_start)
+        token = xml[nested_start : nested_end + 1]
+        if _is_xml_start_tag(token, qname) and not _is_self_closing_tag(token):
+            depth += 1
+        elif _is_xml_end_tag(token, qname):
+            depth -= 1
+            if depth == 0:
+                return nested_end
+        cursor = nested_end + 1
+    raise ExcelWriterIntegrityError("STYLES_MISSING", "unclosed XML child")
+
+
+def _is_xml_start_tag(token: bytes, qname: bytes) -> bool:
+    if token.startswith((b"</", b"<!", b"<?")):
+        return False
+    value = token[1:]
+    if qname:
+        if not value.startswith(qname):
+            return False
+        value = value[len(qname) :]
+    return bool(value) and value[:1] in b" \t\r\n/>"
+
+
+def _xml_tag_name(token: bytes) -> bytes | None:
+    """Return an element name for start/end tags, excluding XML declarations."""
+
+    if token.startswith((b"<!", b"<?")):
+        return None
+    start = 2 if token.startswith(b"</") else 1
+    end = start
+    while end < len(token) and token[end] not in b" \t\r\n/>":
+        end += 1
+    return token[start:end] or None
+
+
+def _is_xml_end_tag(token: bytes, qname: bytes) -> bool:
+    if not token.startswith(b"</"):
+        return False
+    value = token[2:]
+    if qname:
+        if not value.startswith(qname):
+            return False
+        value = value[len(qname) :]
+    return bool(value) and value[:1] in b" \t\r\n>"
+
+
+def _is_self_closing_tag(token: bytes) -> bool:
+    return token[:-1].rstrip().endswith(b"/")
 
 
 def _append_xml_children(xml: bytes, section, children: bytes, count: int) -> bytes:

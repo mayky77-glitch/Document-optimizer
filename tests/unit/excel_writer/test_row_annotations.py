@@ -200,3 +200,23 @@ def test_style_patch_preserves_office_ignorable_namespace_declarations() -> None
     ):
         assert declaration in updated
     ElementTree.fromstring(updated)
+
+
+def test_style_patch_handles_adjacent_self_closing_and_paired_xfs() -> None:
+    styles = (
+        b'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+        b'<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+        b'<xf numFmtId="0" fontId="0" fillId="0" borderId="0">'
+        b'<alignment horizontal="center"/></xf></cellXfs></styleSheet>'
+    )
+
+    updated, variants = _red_style_variants(styles, {0, 1})
+
+    root = ElementTree.fromstring(updated)
+    namespace = root.tag.partition("}")[0].removeprefix("{")
+    cell_xfs = root.find(f"{{{namespace}}}cellXfs")
+    assert variants == {0: 2, 1: 3}
+    assert len(cell_xfs) == 4  # type: ignore[arg-type]
+    assert b'<alignment horizontal="center"/>' in updated
+    assert b'<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>' in updated
