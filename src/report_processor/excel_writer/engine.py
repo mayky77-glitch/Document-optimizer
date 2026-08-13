@@ -118,9 +118,9 @@ def write_target_report(
             recalculate_and_materialize(temp_path)
         verify_formula_free_package(temp_path, parts)
         _assert_source_unchanged(source, source_identity)
+        published_identity = _published_output_identity(temp_path)
         _publish_no_clobber(temp_path, output)
         published = True
-        published_identity = _published_output_identity(output)
         output_sha256 = _sha256(output)
         _reopen_published_output(output)
         return _result(

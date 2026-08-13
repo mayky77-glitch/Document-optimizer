@@ -13,7 +13,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from fixtures.quality_control.builders import calculated_match, calculated_result
-from report_processor.excel_writer import ExcelWriterIntegrityError, write_target_report
+from report_processor.excel_writer import ExcelWriterIntegrityError, engine, write_target_report
 from report_processor.quality_control import WriteDecision
 from report_processor.schema import LogicalColumn, SheetType
 from report_processor.target_report.models import (
@@ -72,19 +72,27 @@ def _workbook(path: Path) -> None:
     workbook.close()
 
 
-def test_reopen_failure_never_removes_concurrently_replaced_output(tmp_path, monkeypatch) -> None:
+def test_reopen_failure_never_removes_output_replaced_during_publication(
+    tmp_path, monkeypatch
+) -> None:
     source = tmp_path / "source.xlsx"
     output = tmp_path / "result.xlsx"
     replacement = tmp_path / "replacement.xlsx"
     _workbook(source)
     replacement.write_bytes(b"concurrent replacement")
 
-    def replace_then_fail(path: Path) -> None:
-        os.replace(replacement, path)
+    publish = engine._publish_no_clobber
+
+    def publish_then_replace(temporary: Path, destination: Path) -> None:
+        publish(temporary, destination)
+        os.replace(replacement, destination)
+
+    def fail_reopen(_path: Path) -> None:
         raise ExcelWriterIntegrityError("REOPEN_FAILED", "injected")
 
+    monkeypatch.setattr(engine, "_publish_no_clobber", publish_then_replace)
     monkeypatch.setattr(
-        "report_processor.excel_writer.engine._reopen_published_output", replace_then_fail
+        "report_processor.excel_writer.engine._reopen_published_output", fail_reopen
     )
 
     with pytest.raises(ExcelWriterIntegrityError, match="REOPEN_FAILED"):
