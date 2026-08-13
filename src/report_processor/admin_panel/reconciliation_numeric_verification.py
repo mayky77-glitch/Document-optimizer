@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
 
-from report_processor.calculation import calculate_matches
+from report_processor.calculation import CalculationError, calculate_matches
 from report_processor.reconciliation_review import (
     AppliedOverride,
     ReviewAction,
@@ -30,10 +30,16 @@ def verify_numeric(job, review) -> tuple[frozenset[str], int]:
 
     state = review.state
     assert state is not None and review.source_batch is not None
-    _reject_duplicate_source_identities(review.source_batch.rows)
-    _schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
-    catalog = _catalog(targets)
-    _reject_duplicate_target_keys(targets)
+    source_digests = _source_digests_by_filename(job)
+    _reject_duplicate_source_identities(review.source_batch.rows, source_digests)
+    try:
+        _schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
+        _reject_duplicate_target_keys(targets)
+        catalog = _catalog(targets)
+    except NumericVerificationFailure:
+        raise
+    except ValueError as error:
+        raise NumericVerificationFailure("VERIFICATION_TARGET_BINDING_AMBIGUOUS") from error
     source_rows = {_review_row_id(job, row.source_row_id): row for row in review.source_batch.rows}
     if len(source_rows) != len(review.source_batch.rows) or not set(state.rows).issubset(
         source_rows
@@ -61,11 +67,16 @@ def verify_numeric(job, review) -> tuple[frozenset[str], int]:
         )
         for row_id, decision in accepted.items()
     }
-    _validate_units(overrides, source_rows, catalog, job)
-    matches = _selected_matches(state, overrides, catalog, job, source_rows)
-    calculations = calculate_matches(
-        matches, _rule_set(job), _candidate_inclusions(overrides, matches)
-    )
+    try:
+        _validate_units(overrides, source_rows, catalog, job)
+        matches = _selected_matches(state, overrides, catalog, job, source_rows)
+        calculations = calculate_matches(
+            matches, _rule_set(job), _candidate_inclusions(overrides, matches)
+        )
+    except NumericVerificationFailure:
+        raise
+    except (CalculationError, ValueError) as error:
+        raise NumericVerificationFailure("VERIFICATION_CALCULATION_UNAVAILABLE") from error
     if any(not item.status.value.startswith("calculated") for item in calculations):
         raise NumericVerificationFailure("VERIFICATION_CALCULATION_UNAVAILABLE")
     written = writer_calculations(calculations)
@@ -192,8 +203,28 @@ def _reject_duplicate_target_keys(targets) -> None:
         keys.add(key)
 
 
-def _reject_duplicate_source_identities(rows) -> None:
-    identities = [(row.source_filename, row.source_sheet, row.source_row_number) for row in rows]
+def _source_digests_by_filename(job) -> dict[str, str]:
+    names = tuple(getattr(job, "source_names", ()) or ())
+    digests = tuple(getattr(job, "source_digests", ()) or ())
+    if len(names) != len(digests) or not names or len(set(names)) != len(names):
+        raise NumericVerificationFailure("VERIFICATION_SOURCE_IDENTITY_AMBIGUOUS")
+    if any(not isinstance(digest, str) or not digest.strip() for digest in digests):
+        raise NumericVerificationFailure("VERIFICATION_SOURCE_IDENTITY_AMBIGUOUS")
+    return dict(zip(names, digests, strict=True))
+
+
+def _reject_duplicate_source_identities(rows, source_digests: dict[str, str]) -> None:
+    try:
+        identities = [
+            (
+                source_digests[row.source_filename].strip().casefold(),
+                row.source_sheet,
+                row.source_row_number,
+            )
+            for row in rows
+        ]
+    except (AttributeError, KeyError):
+        raise NumericVerificationFailure("VERIFICATION_SOURCE_IDENTITY_AMBIGUOUS") from None
     if len(identities) != len(set(identities)):
         raise NumericVerificationFailure("VERIFICATION_SOURCE_IDENTITY_AMBIGUOUS")
 
