@@ -71,6 +71,9 @@ class AdminJob:
     verification_message: str | None = None
     checked_row_count: int = 0
     failed_row_count: int = 0
+    output_identity: tuple[int, int] | None = None
+    output_digest: str | None = None
+    apply_manifest: dict[str, object] | None = None
     reconciliation_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     @property
@@ -80,7 +83,7 @@ class AdminJob:
             and self.output.is_file()
             and not self.unresolved_suggestion_ids
             and not self.unresolved_manual_discrepancy_ids
-            and self.status not in {"pending", "running", "failed"}
+            and self.status not in {"pending", "running", "applying", "failed"}
         )
 
     @property
@@ -300,6 +303,15 @@ class AdminPanelService:
                 payload_hash = hashlib.sha256(
                     f"{plan_hash}:output-sha256:{output_digest}".encode()
                 ).hexdigest()
+                job.output = output
+                job.result_name = "optimized-report.xlsx"
+                job.output_identity = owned_output
+                job.output_digest = output_digest
+                job.apply_manifest = _apply_manifest(
+                    output, owned_output, output_digest, apply_key, payload_hash
+                )
+                # The exact replay plan is durable before touching SQLite.
+                self._persist_job(job)
                 self.feedback_store.commit_apply(
                     target_digest=job.target_digest,
                     apply_key=apply_key,
@@ -309,13 +321,18 @@ class AdminPanelService:
                         job, output, owned_output, output_digest
                     ),
                 )
-                # No fallible I/O after the SQLite commit point.
-                job.output, job.result_name, job.status = output, "optimized-report.xlsx", "ready"
-                self._persist_job(job)
+                # Publish a ready manifest while keeping the in-memory state
+                # applying until that durable write succeeds.
+                ready_manifest = self._manifest_for(job)
+                ready_manifest["status"] = "ready"
+                self._job_store.save(job.job_id, ready_manifest)
+                job.status = "ready"
+                job.apply_manifest = None
             except BaseException:
-                _remove_partial_output(job, owned_output)
-                job.status, job.errors = "failed", ("PROCESSING_FAILED",)
-                self._persist_job(job)
+                if job.apply_manifest is None:
+                    _remove_partial_output(job, owned_output)
+                    job.status, job.errors = "failed", ("PROCESSING_FAILED",)
+                    self._persist_job(job)
                 raise
             return job
 
@@ -483,6 +500,7 @@ class AdminPanelService:
         job = self.get_job(job_id)
         if not job.result_available or job.output is None or job.result_name is None:
             raise KeyError(job_id)
+        _verify_served_output(job)
         return job.output, job.result_name
 
     def _prune_terminal_jobs(self) -> None:
@@ -521,8 +539,15 @@ class AdminPanelService:
         }
         if job.output is not None:
             payload["output_path"] = _job_relative_path(job, job.output)
-            payload["output_digest"] = _file_digest(job.output)
+            if job.output_identity is None or job.output_digest is None:
+                identity, output_digest, _mode = _current_output_facts(job.output)
+                job.output_identity = identity
+                job.output_digest = output_digest
+            payload["output_digest"] = job.output_digest
+            payload["output_identity"] = list(job.output_identity)
             payload["result_name"] = job.result_name
+        if job.apply_manifest is not None:
+            payload["apply"] = job.apply_manifest
         if job.operation == "verify":
             payload.update(
                 verification_status=job.verification_status,
@@ -552,6 +577,8 @@ class AdminPanelService:
                     raise RuntimeError("review cannot be recovered")
             elif job.status == "ready":
                 _verify_recovered_ready_job(job, manifest)
+            elif job.status == "applying":
+                self._recover_applying_job(job, manifest)
             else:
                 # Never repeat interrupted processing.  An applying manifest
                 # lacks an immutable feedback payload, so it cannot safely
@@ -563,6 +590,33 @@ class AdminPanelService:
             return True
         except (OSError, TypeError, ValueError, RuntimeError):
             return False
+
+    def _recover_applying_job(self, job: AdminJob, manifest: dict[str, object]) -> None:
+        plan = _load_apply_manifest(job, manifest.get("apply"))
+        job.output = _manifest_path(job.directory, plan["output_path"])
+        job.result_name = "optimized-report.xlsx"
+        job.output_identity = plan["output_identity"]
+        job.output_digest = plan["output_digest"]
+        _verify_apply_artifacts(job, job.output, plan["output_identity"], plan["output_digest"])
+        recovered = prepare_review(job, self.feedback_store.records(job.target_digest))
+        self._apply_execution_result(job, recovered)
+        if job.status != "review_required" or job.review_state is None:
+            raise RuntimeError("reconciliation apply plan cannot be rebuilt")
+        decisions, feedback, apply_key, payload_hash = _rebuild_apply_plan(job, job.review_state)
+        del decisions
+        if apply_key != plan["apply_key"] or payload_hash != plan["payload_hash"]:
+            raise RuntimeError("reconciliation apply plan changed")
+        self.feedback_store.commit_apply(
+            target_digest=job.target_digest,
+            apply_key=plan["apply_key"],
+            payload_hash=plan["payload_hash"],
+            records=feedback,
+            precommit_validator=lambda: _verify_apply_artifacts(
+                job, job.output, plan["output_identity"], plan["output_digest"]
+            ),
+        )
+        job.status = "ready"
+        job.apply_manifest = None
 
     def _apply_execution_result(self, job: AdminJob, result: object) -> None:
         from .reconciliation_verification import VerificationResult
@@ -678,6 +732,8 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
     output_path = manifest.get("output_path")
     if output_path is not None:
         output = _manifest_path(directory, output_path)
+    output_identity = _manifest_identity(manifest.get("output_identity")) if output else None
+    output_digest = _manifest_digest(manifest.get("output_digest")) if output else None
     job = AdminJob(
         job_id=job_id,
         directory=directory,
@@ -694,6 +750,8 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
         target_name=Path(str(manifest.get("target_name") or target.name)).name,
         status=status,
         output=output,
+        output_identity=output_identity,
+        output_digest=output_digest,
         result_name=(
             str(manifest["result_name"]) if isinstance(manifest.get("result_name"), str) else None
         ),
@@ -751,18 +809,96 @@ def _manifest_count(value: object) -> int:
     return value if isinstance(value, int) and 0 <= value <= 10_000_000 else 0
 
 
+def _manifest_identity(value: object) -> tuple[int, int]:
+    if (
+        not isinstance(value, list)
+        or len(value) != 2
+        or any(not isinstance(item, int) or item < 0 for item in value)
+    ):
+        raise ValueError("reconciliation manifest output identity is invalid")
+    return value[0], value[1]
+
+
+def _apply_manifest(
+    output: Path,
+    identity: tuple[int, int],
+    output_digest: str,
+    apply_key: str,
+    payload_hash: str,
+) -> dict[str, object]:
+    if not all(
+        isinstance(value, str) and 1 <= len(value) <= 128 for value in (apply_key, payload_hash)
+    ):
+        raise ValueError("reconciliation apply key is invalid")
+    return {
+        "output_path": output.name,
+        "output_digest": output_digest,
+        "output_identity": list(identity),
+        "apply_key": apply_key,
+        "payload_hash": payload_hash,
+    }
+
+
+def _load_apply_manifest(job: AdminJob, value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("reconciliation apply plan is missing")
+    required = ("output_path", "output_digest", "apply_key", "payload_hash")
+    if any(key not in value for key in required):
+        raise ValueError("reconciliation apply plan is incomplete")
+    output_path = value["output_path"]
+    if output_path != "result.xlsx":
+        raise ValueError("reconciliation apply output path is invalid")
+    apply_key = value["apply_key"]
+    payload_hash = value["payload_hash"]
+    if not all(
+        isinstance(item, str) and 1 <= len(item) <= 128 for item in (apply_key, payload_hash)
+    ):
+        raise ValueError("reconciliation apply key is invalid")
+    return {
+        "output_path": output_path,
+        "output_digest": _manifest_digest(value["output_digest"]),
+        "output_identity": _manifest_identity(value.get("output_identity")),
+        "apply_key": apply_key,
+        "payload_hash": payload_hash,
+    }
+
+
 def _verify_recovered_ready_job(job: AdminJob, manifest: dict[str, object]) -> None:
     if job.output is None:
         if job.operation != "verify" or job.verification_status != "pass":
             raise RuntimeError("reconciliation ready result is unavailable")
         return
     expected_digest = _manifest_digest(manifest.get("output_digest"))
-    actual_digest = _file_digest(job.output)
-    if actual_digest != expected_digest:
-        raise RuntimeError("reconciliation output changed")
+    identity = _manifest_identity(manifest.get("output_identity"))
+    _verify_output_facts(job.output, identity, expected_digest)
+    job.output_identity = identity
+    job.output_digest = expected_digest
+
+
+def _rebuild_apply_plan(job: AdminJob, state: ReconciliationReviewState):
+    """Derive the replay inputs from immutable uploads and autosaved decisions."""
+    from report_processor.business_rules import load_default_rule_set, load_rule_configuration
+
+    from .reconciliation_execution import _apply_plan, _feedback_records
+
+    validation = (
+        load_rule_configuration(job.rules_path)
+        if getattr(job, "rules_path", None)
+        else load_default_rule_set()
+    )
+    if not validation.valid or validation.rule_set is None:
+        raise RuntimeError("RULE_CONFIGURATION_INVALID")
+    decisions = tuple(state.core_decisions())
+    feedback = _feedback_records(state, decisions)
+    apply_key, plan_hash = _apply_plan(
+        job, state, validation.rule_set.content_hash, feedback, decisions
+    )
+    payload_hash = hashlib.sha256(
+        f"{plan_hash}:output-sha256:{job.output_digest}".encode()
+    ).hexdigest()
+    return decisions, feedback, apply_key, payload_hash
     if job.result_name is None:
         raise RuntimeError("reconciliation output name is missing")
-    os.chmod(job.output, 0o600)
 
 
 def _apply_verification_result(job: AdminJob, result) -> None:
@@ -1040,9 +1176,40 @@ def _current_output_facts(path: Path) -> tuple[tuple[int, int], str, int]:
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-        return (info.st_dev, info.st_ino), digest.hexdigest(), stat.S_IMODE(info.st_mode)
+        identity = (info.st_dev, info.st_ino)
+        path_info = os.lstat(path)
+        if stat.S_ISLNK(path_info.st_mode) or (path_info.st_dev, path_info.st_ino) != identity:
+            raise RuntimeError("RECONCILIATION_OUTPUT_INVALID")
+        return identity, digest.hexdigest(), stat.S_IMODE(info.st_mode)
     finally:
         os.close(descriptor)
+
+
+def _verify_output_facts(
+    path: Path, expected_identity: tuple[int, int], expected_digest: str
+) -> None:
+    identity, digest, mode = _current_output_facts(path)
+    if identity != expected_identity or digest != expected_digest or mode != 0o600:
+        raise RuntimeError("RECONCILIATION_OUTPUT_INVALID")
+
+
+def _verify_served_output(job: AdminJob) -> None:
+    if job.output is None or job.output_identity is None:
+        raise KeyError(job.job_id)
+    try:
+        identity, digest, _mode = _current_output_facts(job.output)
+    except (OSError, RuntimeError) as error:
+        raise KeyError(job.job_id) from error
+    if identity != job.output_identity:
+        raise KeyError(job.job_id)
+    if job.output_digest is None or digest != job.output_digest:
+        raise KeyError(job.job_id)
+    try:
+        path_info = os.lstat(job.output)
+    except OSError as error:
+        raise KeyError(job.job_id) from error
+    if stat.S_ISLNK(path_info.st_mode) or (path_info.st_dev, path_info.st_ino) != identity:
+        raise KeyError(job.job_id)
 
 
 def _digest_apply_fallback(

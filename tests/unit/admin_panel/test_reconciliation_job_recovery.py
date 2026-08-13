@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -137,6 +138,50 @@ def test_passed_verification_without_an_artifact_recovers(tmp_path: Path) -> Non
     assert restored.verification_status == "pass"
 
 
+def test_recovery_rejects_output_swapped_after_descriptor_validation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _ready_service(tmp_path / "jobs")
+    job = _ready_job(service)
+    assert job.output is not None
+    outside = tmp_path / "outside.xlsx"
+    outside.write_bytes(b"outside")
+    from report_processor.admin_panel import service as service_module
+
+    original = service_module._current_output_facts
+    swapped = False
+
+    def validate_then_swap(path):
+        nonlocal swapped
+        result = original(path)
+        if not swapped:
+            swapped = True
+            path.unlink()
+            outside.replace(path)
+        return result
+
+    monkeypatch.setattr(service_module, "_current_output_facts", validate_then_swap)
+    recovered = AdminPanelService(tmp_path / "jobs")
+
+    with pytest.raises(KeyError):
+        recovered.get_result(job.job_id)
+    assert job.output.read_bytes() == b"outside"
+
+
+def test_get_result_rejects_replacement_after_ready_recovery(tmp_path: Path) -> None:
+    service = _ready_service(tmp_path / "jobs")
+    job = _ready_job(service)
+    restored = AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
+    assert restored.output is not None
+    replacement = tmp_path / "replacement.xlsx"
+    replacement.write_bytes(b"replacement")
+    replacement.replace(restored.output)
+
+    with pytest.raises(KeyError):
+        AdminPanelService(tmp_path / "jobs").get_result(job.job_id)
+    assert restored.output.read_bytes() == b"replacement"
+
+
 def test_interrupted_apply_fails_closed_without_a_download(tmp_path: Path) -> None:
     service = _ready_service(tmp_path / "jobs")
     job = _ready_job(service)
@@ -145,9 +190,32 @@ def test_interrupted_apply_fails_closed_without_a_download(tmp_path: Path) -> No
     service._persist_job(job)
 
     recovered = AdminPanelService(tmp_path / "jobs")
-    restored = recovered.get_job(job.job_id)
 
-    assert restored.status == "failed"
-    assert restored.result_available is False
+    # An old/incomplete applying record has no immutable replay plan and is
+    # deliberately invisible rather than being rerun or made downloadable.
     with pytest.raises(KeyError):
-        recovered.get_result(job.job_id)
+        recovered.get_job(job.job_id)
+
+
+def test_apply_manifest_never_contains_workbook_derived_feedback_values(tmp_path: Path) -> None:
+    service = _ready_service(tmp_path / "jobs")
+    job = _ready_job(service)
+    job.status = "applying"
+    job.output = job.directory / "result.xlsx"
+    job.output.write_bytes(b"result")
+    job.output_identity = (job.output.stat().st_dev, job.output.stat().st_ino)
+    job.output_digest = hashlib.sha256(job.output.read_bytes()).hexdigest()
+    job.apply_manifest = {
+        "output_path": "result.xlsx",
+        "output_digest": job.output_digest,
+        "output_identity": list(job.output_identity),
+        "apply_key": "a" * 64,
+        "payload_hash": "b" * 64,
+    }
+    service._persist_job(job)
+
+    text = json.dumps(service._job_store.load(job.job_id), ensure_ascii=False)
+
+    assert "feedback" not in text
+    assert "distinctive work" not in text
+    assert "distinctive-unit" not in text
