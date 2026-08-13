@@ -169,6 +169,20 @@ def test_numeric_comparison_requires_finite_target_value() -> None:
         _matches_target(calculation, ReviewMode.COST_ONLY)
 
 
+@pytest.mark.parametrize("mode", (ReviewMode.COST_ONLY, ReviewMode.QUANTITY_COST))
+def test_missing_calculated_value_is_an_ordinary_numeric_mismatch(mode: ReviewMode) -> None:
+    calculation = SimpleNamespace(
+        target_row=SimpleNamespace(
+            selected_quantity=TargetNumericCell(Decimal("1.00"), "1", "NOT_FORMULA", "OK"),
+            selected_cost=TargetNumericCell(Decimal("2.70"), "2.7", "NOT_FORMULA", "OK"),
+        ),
+        quantity=Decimal("1.00"),
+        cost=None,
+    )
+
+    assert _matches_target(calculation, mode) is False
+
+
 def test_numeric_comparison_reads_target_numeric_cell_value() -> None:
     calculation = SimpleNamespace(
         target_row=SimpleNamespace(
@@ -293,8 +307,8 @@ def test_numeric_oracle_aggregates_two_contributions_and_marks_each_mismatch(
         cost=cost,
         trace=SimpleNamespace(
             contributions=(
-                SimpleNamespace(source_row_id=first),
-                SimpleNamespace(source_row_id=second),
+                SimpleNamespace(candidate_id="candidate-first", source_row_id="first-source"),
+                SimpleNamespace(candidate_id="candidate-second", source_row_id="second-source"),
             )
         ),
         status=SimpleNamespace(value="calculated"),
@@ -316,7 +330,14 @@ def test_numeric_oracle_aggregates_two_contributions_and_marks_each_mismatch(
     )
     monkeypatch.setattr(
         "report_processor.admin_panel.reconciliation_numeric_verification._selected_matches",
-        lambda *_args: (object(),),
+        lambda *_args: (
+            SimpleNamespace(
+                effective_selected_candidates=(
+                    SimpleNamespace(candidate_id="candidate-first", source_row_id=first),
+                    SimpleNamespace(candidate_id="candidate-second", source_row_id=second),
+                )
+            ),
+        ),
     )
     monkeypatch.setattr(
         "report_processor.admin_panel.reconciliation_numeric_verification._candidate_inclusions",

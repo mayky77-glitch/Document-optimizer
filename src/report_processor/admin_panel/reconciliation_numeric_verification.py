@@ -80,14 +80,48 @@ def verify_numeric(job, review) -> tuple[frozenset[str], int]:
     if any(not item.status.value.startswith("calculated") for item in calculations):
         raise NumericVerificationFailure("VERIFICATION_CALCULATION_UNAVAILABLE")
     written = writer_calculations(calculations)
+    candidate_rows = _candidate_review_rows(matches, accepted)
     for calculation in written:
-        row_ids = {item.source_row_id for item in calculation.trace.contributions}
+        row_ids = {
+            _contribution_review_row_id(contribution, candidate_rows)
+            for contribution in calculation.trace.contributions
+        }
         modes = {accepted[row_id].mode for row_id in row_ids}
         if len(modes) != 1:
             raise NumericVerificationFailure("VERIFICATION_CATEGORY_AMBIGUOUS")
         if not _matches_target(calculation, next(iter(modes))):
             failed.update(row_ids)
     return frozenset(failed), len(state.rows)
+
+
+def _candidate_review_rows(matches, accepted) -> dict[str, str]:
+    """Bind calculation contributions back to opaque review-row identities."""
+
+    values: dict[str, str] = {}
+    for match in matches:
+        for candidate in match.effective_selected_candidates:
+            candidate_id = getattr(candidate, "candidate_id", None)
+            row_id = getattr(candidate, "source_row_id", None)
+            if (
+                not isinstance(candidate_id, str)
+                or not candidate_id
+                or not isinstance(row_id, str)
+                or row_id not in accepted
+                or candidate_id in values
+            ):
+                raise NumericVerificationFailure("VERIFICATION_SOURCE_IDENTITY_AMBIGUOUS")
+            values[candidate_id] = row_id
+    if not values:
+        raise NumericVerificationFailure("VERIFICATION_SOURCE_IDENTITY_AMBIGUOUS")
+    return values
+
+
+def _contribution_review_row_id(contribution, candidate_rows: dict[str, str]) -> str:
+    candidate_id = getattr(contribution, "candidate_id", None)
+    row_id = candidate_rows.get(candidate_id) if isinstance(candidate_id, str) else None
+    if row_id is None:
+        raise NumericVerificationFailure("VERIFICATION_SOURCE_IDENTITY_AMBIGUOUS")
+    return row_id
 
 
 def _authorizations(state) -> dict[str, ReviewDecision]:
@@ -170,20 +204,25 @@ def _validate_units(overrides, source_rows, catalog, job) -> None:
 
 def _matches_target(calculation, mode: ReviewMode) -> bool:
     target_cost = _finite_target_value(calculation.target_row.selected_cost)
-    if target_cost is None or calculation.cost is None or not calculation.cost.is_finite():
+    if target_cost is None:
         raise NumericVerificationFailure("VERIFICATION_TARGET_VALUE_UNAVAILABLE")
-    if calculation.cost != target_cost:
+    if (
+        calculation.cost is None
+        or not isinstance(calculation.cost, Decimal)
+        or not calculation.cost.is_finite()
+        or calculation.cost != target_cost
+    ):
         return False
     if mode is ReviewMode.COST_ONLY:
         return True
     target_quantity = _finite_target_value(calculation.target_row.selected_quantity)
-    if (
-        target_quantity is None
-        or calculation.quantity is None
-        or not calculation.quantity.is_finite()
-    ):
+    if target_quantity is None:
         raise NumericVerificationFailure("VERIFICATION_TARGET_VALUE_UNAVAILABLE")
-    return calculation.quantity == target_quantity
+    return (
+        isinstance(calculation.quantity, Decimal)
+        and calculation.quantity.is_finite()
+        and calculation.quantity == target_quantity
+    )
 
 
 def _finite_target_value(cell) -> Decimal | None:
