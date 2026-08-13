@@ -11,19 +11,22 @@ updated: 2026-08-13
 
 Keep only the two latest completed runs relevant to active work.
 
-## 2026-08-13 — period-insertion A accepted, B rejected
+## 2026-08-13 — direct OOXML period insertion accepted
 
-- Plan/preflight tip `fb5d1aaa24479f1ce3f3bb97a636e743fdc27d12` passed independent P6-A:
-  canonical source-rebuilt plan digest, broad nested historical ancestry, bounded compact suffix
-  evidence, calendar equivalence/conflict and fail-closed preflight. Focused profile: `34 passed`.
-- Transform tip `5eb87b9c8827970076cdd32588739fddb8f17e3a` passed its narrow `40 passed`
-  profile but failed independent P6-B and remains unmerged. Synthetic tampering of dimension,
-  merge, width, row spans, conditional-format range, extra/missing cells and unrelated workbook
-  attributes passed the partial verifier. A forced post-link hash failure also reported failure
-  while leaving an output published.
-- Remediation requires complete independent inverse-tree comparison, a no-fallible-work-after-link
-  boundary and exact supported handling for filter database, print titles, left comments/VML,
-  left hyperlinks, strict formula tokens and sheetId-bound calcChain.
+- Final feature `07401099c25898eef14ad6fcf2703040391dbdb9`, ORDA integration `f236291` and
+  published main checkpoint `991002a` passed the exact low-load profile: `56 passed` in `0.32s`
+  on canonical main; Ruff check, Ruff format and `git diff --check` passed.
+- Independent P6 re-ran the prior adversarial cases. Whole-tree inverse verification rejected
+  unrelated workbook, calcChain, drawing, worksheet and ZIP-metadata changes. Doubled-quote A1
+  formulas translated correctly; whole-row/column, dynamic, cross-sheet and unsupported formulas
+  failed closed. Wholly-left comments/VML/external hyperlinks remained byte-identical, while
+  affected variants were rejected.
+- Publication performs every fallible proof before the final hard-link. A pre-existing sentinel
+  survives, pre-link failure publishes nothing and post-link best-effort cleanup cannot turn a
+  valid published result into a reported failure.
+- Full and private runs were deliberately deferred to the final release shadow to limit system
+  load. The actual clean target still needs the separate wholly-left shared-formula compatibility
+  gate before it is an eligible end-to-end insertion input.
 
 ## 2026-08-13 — low-load period-insertion architecture shadow
 

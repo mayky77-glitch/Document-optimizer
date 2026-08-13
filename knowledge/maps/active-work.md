@@ -18,10 +18,10 @@ remain tracked in [[../errors/reconciliation-accuracy-findings|RA-001—RA-018]]
 Numeric/stage remediation is integrated; the sequential lifecycle wave is accepted at `c8da710`.
 The active dependency chain is [[../tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]].
 Structural source/identity is accepted at `fe3d5ee`; the structural target oracle is accepted at
-`959e3b9`. Active work is [[../tasks/reconciliation-period-insertion-gate0|period-insertion Gate 0]]:
-first [[../tasks/reconciliation-period-ooxml|direct OOXML transformation]], then
-[[../tasks/reconciliation-period-apply|preview/apply integration]], then a separate service/UI wave
-and release shadow.
+`959e3b9`. Direct OOXML transformation is accepted at `991002a`. Active work is
+[[../tasks/reconciliation-period-shared-formulas|bounded wholly-left shared-formula preservation]],
+then [[../tasks/reconciliation-period-apply|preview/apply integration]], then a separate service/UI
+wave and one low-load release shadow.
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 

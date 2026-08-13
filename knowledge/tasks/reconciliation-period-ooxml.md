@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: accepted
 card_id: reconciliation-period-ooxml
 version: 1
 work_id: reconciliation-period-insertion-v1
@@ -8,7 +8,7 @@ task_id: period-ooxml
 purpose: Plan and verify one direct OOXML insertion of a reporting-period quantity/cost pair.
 role: developer
 route: P4 -> developer / gpt-5.6-terra / high; reason: exact package transformation with formulas and coordinate-bearing workbook structures.
-launch_status: planned
+launch_status: accepted
 card_path: knowledge/tasks/reconciliation-period-ooxml.md
 card_commit_sha_source: exact period-insertion planning SHA supplied by launch envelope
 base_sha_source: exact period-insertion planning SHA
@@ -81,3 +81,14 @@ Regressions cover varied columns/header depth/multisheet boundaries; missing/tie
 anchors; exact period validation and conflict/idempotence; every supported coordinate structure;
 every rejected feature family; ZIP preservation; source/output races; no-clobber cleanup; inverse
 delta tampering; and strict detector reread. Tests use only generated minimal workbooks/packages.
+
+## Accepted evidence
+
+- Feature: `07401099c25898eef14ad6fcf2703040391dbdb9`.
+- ORDA integration: `f236291f0a4cdda23cc5b77114f62cf7298b0834`.
+- Published main: `991002a7e54f08a4c875a68ecb5ccb1f27c3e449`.
+- Exact focused profile: `56 passed`; Ruff check/format and diff check passed.
+- Independent P6: merge yes after adversarial workbook/calcChain/drawing/worksheet/ZIP tampering,
+  formula grammar, comments/VML/hyperlink and no-clobber checks.
+- Shared formulas remain intentionally unsupported here and move to
+  [[reconciliation-period-shared-formulas|the bounded dependent card]].

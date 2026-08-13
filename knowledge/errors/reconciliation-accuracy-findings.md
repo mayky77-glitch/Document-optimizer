@@ -71,7 +71,7 @@ members are duplicated, but the original bytes are not changed.
 
 | ID | Severity | Boundary | Deterministic result |
 | --- | --- | --- | --- |
-| RA-021 | high implementation gate | missing reporting-period pair | structural target binding is fixed; first insertion feature `dd3273e` failed P6 because its verifier and OOXML coordinate translation were incomplete |
+| RA-021 | high implementation gate | missing reporting-period pair | direct insertion core is accepted at `991002a`; shared-formula compatibility, apply wiring and release shadow remain |
 
 RA-019 and RA-020 are closed at published checkpoint `fe3d5ee`: exact merged-parent binding,
 semantic detail start, broad structural work nomination and unique bounded source/stage identity
@@ -106,13 +106,13 @@ Remediation must retain broad structural header discovery and must not add a pri
 allowlist. Unknown coordinate-bearing OOXML remains a controlled failure until exact forward and
 independent inverse mappings are covered.
 
-Substep A is now accepted at `fb5d1aa`: the plan is rebuilt from the digest-bound source, includes
-bounded structural ancestry/suffix evidence and rejects unsupported affected structures before a
-temporary output. Substep B tip `5eb87b9` remains negative evidence. Its verifier accepted changes
-to non-cell worksheet structures and unrelated workbook attributes, and fallible hashing after the
-publication link could expose an output while returning failure. Filters, print titles, wholly-left
-comments/VML and hyperlinks, strict formula grammar and non-contiguous calcChain sheet IDs require
-the exact remediation recorded in the active task before integration.
+The final direct transformer is accepted at feature `0740109`, ORDA integration `f236291` and
+published checkpoint `991002a`. It closes the earlier partial-verifier and publication findings:
+the verifier inverse-normalizes only authorized coordinate fields and compares complete semantic
+trees; stable ZIP metadata and unaffected members are preserved; all fallible proof precedes the
+no-clobber link. The remaining corpus compatibility gate is not a verifier bypass: only a complete
+shared-formula group wholly left of the boundary, with unchanged operands, may pass unchanged.
+Affected, incomplete, duplicate, array and data-table formula topology remains rejected.
 
 ## RA-014 — verification is not a numeric reconciliation
 

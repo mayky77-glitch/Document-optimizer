@@ -58,3 +58,9 @@ calendar identity; competing, cumulative and conflicting period evidence fails c
 historical-only target therefore needs the explicit, idempotent insertion governed by
 [[../DECISIONS#DO-020: период вставляется только для реальной записи (2026-08-13)|DO-020]] and
 [[../tasks/reconciliation-period-insertion-gate0|its Gate 0]].
+
+The direct insertion core is published at `991002a`: it rebuilds a digest-bound structural plan,
+changes only an independently proven OOXML allowlist, inverse-verifies the whole semantic delta and
+publishes no-clobber. Release compatibility remains intentionally narrower than arbitrary Excel:
+the next card permits only complete shared-formula groups wholly left and semantically unaffected;
+all affected or ambiguous formula topology stays fail-closed.

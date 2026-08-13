@@ -51,4 +51,6 @@ The numeric oracle now receives only a structurally proven current-period pair. 
 clean target returns `TARGET_CURRENT_PERIOD_PAIR_MISSING` before verdict or annotation; verify never
 inserts a period. This closes the positional J/K risk but means the designated clean template is
 intentionally not verifiable until reconciliation creates its period pair. Track that separate
-write path in [[../tasks/reconciliation-period-insertion-gate0|period-insertion Gate 0]].
+write path in [[../tasks/reconciliation-period-insertion-gate0|period-insertion Gate 0]]. The direct
+OOXML core is accepted, but `verify` remains unchanged and cannot consume a historical-only target
+until the dependent reconcile apply and service/API period-input waves are complete.

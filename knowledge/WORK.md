@@ -34,10 +34,14 @@ updated: 2026-08-13
   sequential low-load waves: a direct OOXML transformer, then preview/apply integration. The
   insertion is reachable only from reconciliation with an explicit `YYYY-MM` period and only when
   at least one calculated value will be written.
-- Plan/preflight substep A is independently accepted at `fb5d1aa`. Transform substep B tip
-  `5eb87b9` is not accepted: P6 reproduced partial inverse verification, a post-link failure-state
-  split and unsupported actual-layout structures. No private corpus or full-suite run is allowed
-  until the complete inverse verifier passes.
+- Direct OOXML insertion is accepted through feature `0740109`, ORDA integration `f236291` and
+  published main checkpoint `991002a`. Its source-rebuilt plan, full inverse semantic verifier,
+  stable ZIP metadata proof, left comments/VML/external hyperlinks and no-clobber publication all
+  passed the final independent P6 and a `56 passed` focused gate.
+- [[tasks/reconciliation-period-shared-formulas|Shared-formula preservation]] is the active bounded
+  dependency. It may permit only complete unchanged shared groups whose cells, `ref` range and all
+  formula operands are wholly left of the insertion boundary. Affected, incomplete, duplicate,
+  translated, array or data-table groups remain controlled failures.
 
 ## Completed context
 
@@ -52,7 +56,8 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Complete substep B of [[tasks/reconciliation-period-ooxml|the frozen OOXML transformer card]] from
-accepted A tip `fb5d1aa`: require whole-tree inverse comparison and a final no-clobber link with no
-fallible work afterward. Do not integrate `5eb87b9`, open the dependent preview/apply card, or start
-the service/API/UI period field before P6 accepts the transformer.
+Implement and independently review
+[[tasks/reconciliation-period-shared-formulas|the bounded shared-formula card]] from published
+checkpoint `991002a`. Keep execution sequential and low-load. Do not open preview/apply or the
+service/API/UI period field until this compatibility gate is accepted; run the private release
+shadow and full suite only once after the complete write path is integrated.
