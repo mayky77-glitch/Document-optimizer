@@ -15,6 +15,11 @@ from .models import (
     WriteStatus,
     WrittenCell,
 )
+from .period_insertion import (
+    build_period_insertion_plan,
+    prepare_period_insertion,
+    verify_period_insertion,
+)
 from .row_annotations import annotate_failed_rows
 
 __all__ = (
@@ -29,5 +34,8 @@ __all__ = (
     "WriteStatus",
     "WrittenCell",
     "annotate_failed_rows",
+    "build_period_insertion_plan",
+    "prepare_period_insertion",
+    "verify_period_insertion",
     "write_target_report",
 )

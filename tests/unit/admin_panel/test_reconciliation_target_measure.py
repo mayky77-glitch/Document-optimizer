@@ -7,6 +7,7 @@ from openpyxl import Workbook
 
 from report_processor.admin_panel.reconciliation_target_measure import (
     ReconciliationTargetMeasureError,
+    discover_historical_target_measures,
     discover_target_measures,
 )
 
@@ -194,3 +195,12 @@ def test_pairs_are_sheet_local_and_can_use_different_columns() -> None:
         ("Дополнение", "N", "O"),
         ("Отчёт", "L", "M"),
     ]
+
+
+def test_documentary_pair_is_a_separate_fail_closed_insertion_anchor() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Документальная отчетность за весь период")
+
+    (pair,) = discover_historical_target_measures(workbook, {sheet.title: 3})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")

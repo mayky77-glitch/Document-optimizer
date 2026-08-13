@@ -100,6 +100,32 @@ def discover_target_measures(
     return tuple(pairs)
 
 
+def discover_historical_target_measures(
+    workbook,
+    first_detail_rows: dict[str, int],
+    merged_ranges_by_sheet: dict[str, tuple[str, ...]] | None = None,
+) -> tuple[TargetMeasurePair, ...]:
+    """Return one documentary/historical adjacent measure pair per selected sheet.
+
+    This is deliberately separate from the current-period reader: a pair is an
+    insertion anchor only when its header path positively says it is historical.
+    """
+
+    pairs: list[TargetMeasurePair] = []
+    for sheet_name, first_detail_row in sorted(first_detail_rows.items()):
+        candidates = _sheet_historical_candidates(
+            workbook[sheet_name],
+            first_detail_row,
+            (merged_ranges_by_sheet or {}).get(sheet_name, ()),
+        )
+        if len(candidates) != 1:
+            raise ReconciliationTargetMeasureError("TARGET_HISTORICAL_PAIR_MISSING")
+        pairs.append(candidates[0])
+    if not pairs:
+        raise ReconciliationTargetMeasureError("TARGET_HISTORICAL_PAIR_MISSING")
+    return tuple(pairs)
+
+
 def _sheet_candidates(
     sheet, first_detail_row: int, merged_ranges: tuple[str, ...]
 ) -> tuple[TargetMeasurePair, ...]:
@@ -156,6 +182,44 @@ def _sheet_candidates(
                 cost_column,
                 quantity_text,
                 cost_text,
+            )
+    return tuple(candidates.values())
+
+
+def _sheet_historical_candidates(
+    sheet, first_detail_row: int, merged_ranges: tuple[str, ...]
+) -> tuple[TargetMeasurePair, ...]:
+    end = max(0, first_detail_row - 1)
+    start = max(1, end - _HEADER_ROWS + 1)
+    if end < start:
+        return ()
+    values, spans = _header_cells(sheet, start, end, merged_ranges)
+    candidates: dict[tuple[object, ...], TargetMeasurePair] = {}
+    for row in range(start, end + 1):
+        for quantity_column in range(1, int(sheet.max_column or 0)):
+            cost_column = quantity_column + 1
+            quantity = _labels(values, spans, start, row, quantity_column)
+            cost = _labels(values, spans, start, row, cost_column)
+            if (
+                not quantity
+                or not cost
+                or not _leaf_at_row(quantity, row)
+                or not _leaf_at_row(cost, row)
+            ):
+                continue
+            quantity_text = " ".join(label.text for label in quantity)
+            cost_text = " ".join(label.text for label in cost)
+            if (
+                not _quantity_leaf(quantity[-1].text)
+                or not _total_cost_leaf(cost[-1].text)
+                or _unit_price(quantity_text)
+                or _unit_price(cost_text)
+                or not _historical(quantity_text + " " + cost_text)
+            ):
+                continue
+            key = (sheet.title, quantity_column, cost_column, quantity[-1].key, cost[-1].key)
+            candidates[key] = TargetMeasurePair(
+                sheet.title, quantity_column, cost_column, quantity_text, cost_text
             )
     return tuple(candidates.values())
 
