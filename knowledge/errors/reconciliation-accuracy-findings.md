@@ -106,6 +106,14 @@ Remediation must retain broad structural header discovery and must not add a pri
 allowlist. Unknown coordinate-bearing OOXML remains a controlled failure until exact forward and
 independent inverse mappings are covered.
 
+Substep A is now accepted at `fb5d1aa`: the plan is rebuilt from the digest-bound source, includes
+bounded structural ancestry/suffix evidence and rejects unsupported affected structures before a
+temporary output. Substep B tip `5eb87b9` remains negative evidence. Its verifier accepted changes
+to non-cell worksheet structures and unrelated workbook attributes, and fallible hashing after the
+publication link could expose an output while returning failure. Filters, print titles, wholly-left
+comments/VML and hyperlinks, strict formula grammar and non-contiguous calcChain sheet IDs require
+the exact remediation recorded in the active task before integration.
+
 ## RA-014 — verification is not a numeric reconciliation
 
 `verify_reconciliation` declares a row correct when the newest authoritative decision accepts it

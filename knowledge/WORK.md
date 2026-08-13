@@ -34,10 +34,10 @@ updated: 2026-08-13
   sequential low-load waves: a direct OOXML transformer, then preview/apply integration. The
   insertion is reachable only from reconciliation with an explicit `YYYY-MM` period and only when
   at least one calculated value will be written.
-- The first OOXML feature tip `dd3273e` is not accepted. Independent P6 review reproduced unsafe
-  inverse verification, formula/range translation and column/filter/calcChain defects. Remediation
-  is deliberately split into plan/preflight integrity and exact transform/verifier work; no private
-  corpus or full-suite run is allowed inside either low-load substep.
+- Plan/preflight substep A is independently accepted at `fb5d1aa`. Transform substep B tip
+  `5eb87b9` is not accepted: P6 reproduced partial inverse verification, a post-link failure-state
+  split and unsupported actual-layout structures. No private corpus or full-suite run is allowed
+  until the complete inverse verifier passes.
 
 ## Completed context
 
@@ -52,8 +52,7 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Remediate [[tasks/reconciliation-period-ooxml|the frozen OOXML transformer card]] from published
-base `f024d16`: first bind a digest-stable structural plan and fail-closed preflight, then implement
-and independently verify the exact OOXML inverse delta. Do not integrate `dd3273e`, open the
-dependent preview/apply card, or start the service/API/UI period field before P6 accepts the
-transformer.
+Complete substep B of [[tasks/reconciliation-period-ooxml|the frozen OOXML transformer card]] from
+accepted A tip `fb5d1aa`: require whole-tree inverse comparison and a final no-clobber link with no
+fallible work afterward. Do not integrate `5eb87b9`, open the dependent preview/apply card, or start
+the service/API/UI period field before P6 accepts the transformer.

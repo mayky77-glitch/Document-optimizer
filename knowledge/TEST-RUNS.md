@@ -11,17 +11,19 @@ updated: 2026-08-13
 
 Keep only the two latest completed runs relevant to active work.
 
-## 2026-08-13 — period-insertion feature P6 rejection
+## 2026-08-13 — period-insertion A accepted, B rejected
 
-- Feature tip `dd3273e246ffee69c635a19f85a01339c91ee2ab` passed its narrow profile (`24
-  passed`, Ruff/format/diff clean) but failed independent P6 and remains unmerged.
-- Small synthetic repros proved that the verifier accepted a changed old cell value; conditional
-  formatting `sqref`, auto-filter relative IDs, inherited calcChain sheet identity, hyperlinks,
-  row/column layout and inter-sheet formulas were not handled safely. New inserted columns also did
-  not clone effective widths.
-- The result is a controlled remediation, not test expansion or a private-data exception: bind an
-  immutable plan/preflight first, then require full inverse-delta comparison and fail closed for
-  every unsupported coordinate-bearing structure.
+- Plan/preflight tip `fb5d1aaa24479f1ce3f3bb97a636e743fdc27d12` passed independent P6-A:
+  canonical source-rebuilt plan digest, broad nested historical ancestry, bounded compact suffix
+  evidence, calendar equivalence/conflict and fail-closed preflight. Focused profile: `34 passed`.
+- Transform tip `5eb87b9c8827970076cdd32588739fddb8f17e3a` passed its narrow `40 passed`
+  profile but failed independent P6-B and remains unmerged. Synthetic tampering of dimension,
+  merge, width, row spans, conditional-format range, extra/missing cells and unrelated workbook
+  attributes passed the partial verifier. A forced post-link hash failure also reported failure
+  while leaving an output published.
+- Remediation requires complete independent inverse-tree comparison, a no-fallible-work-after-link
+  boundary and exact supported handling for filter database, print titles, left comments/VML,
+  left hyperlinks, strict formula tokens and sheetId-bound calcChain.
 
 ## 2026-08-13 — low-load period-insertion architecture shadow
 
