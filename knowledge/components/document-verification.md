@@ -12,6 +12,7 @@ source_paths:
   - src/report_processor/admin_panel/assets/admin.js
   - src/report_processor/admin_panel/app.py
   - src/report_processor/admin_panel/reconciliation_verification.py
+  - src/report_processor/admin_panel/reconciliation_numeric_verification.py
   - src/report_processor/admin_panel/reconciliation_execution.py
   - src/report_processor/excel_writer/row_annotations.py
 ---
@@ -20,37 +21,37 @@ source_paths:
 
 ## Actual production path
 
-The `/` form submits `operation=verify`. It reads source workbooks and the target through the
-shared reconciliation adapter, partitions zero-activity rows, builds match/group/package state and
-then classifies each visible source row:
+The `/` form submits `operation=verify`. The server discovers one valid target stage or asks the
+user to select among bounded safe options. It extracts source rows, restores exact decisions,
+authorizes safe/explicit matches and then runs the same Decimal calculation and writer
+quantization as reconciliation. A clean result is possible only when the numeric oracle matches
+the authoritative target pair.
 
-1. latest explicit ACCEPT passes and REJECT fails;
-2. otherwise membership in a `DecisionPackage.safe` passes;
-3. every other row fails and its physical source row is selected for red annotation.
+Ordinary numeric mismatch fails every contributing physical source row. One failed source returns
+an annotated copy; multiple sources return a no-clobber ZIP. Technical source, target, unit,
+identity, formula-cache or publication failures never become `passed` and do not manufacture a red
+artifact.
 
-One failed source returns an annotated copy; multiple sources return a ZIP with every original
-basename once. Target J/K is never written by this operation. Numeric source values are not
-compared with target values; they only affect visibility and grouping mode.
+## Enforced invariants
 
-## Current invariants and limits
-
-- Uploaded originals and target are private read-only copies and must retain their digests.
+- Uploaded originals and target remain private, read-only and digest-bound.
 - Zero quantity plus zero cost is neutral and excluded from checked/failed counts.
-- RAG/semantic hints cannot change pass/fail.
-- Technical source/target failures must never become a clean `passed` result.
-- Public payloads omit sheets, rows, values, formulas and private paths.
-- The UI currently supplies no stage; the server silently uses `13.1`.
-- A clean result has no artifact; a failed result requires a safe red-row artifact.
+- Explicit rejection overrides safe authorization; row decisions override broader scopes.
+- Numeric comparison uses finite `Decimal`, exact canonical units without conversion, million-RUB
+  scaling and the same two-decimal `ROUND_HALF_UP` writer boundary.
+- Formula targets are eligible only with a trusted cache and `OK` status.
+- Public payloads omit sheets, rows, values, formulas, private paths and workbook-derived labels.
+- Red annotation preserves formulas/values and supports adjacent self-closing/paired style records;
+  multi-source publication uses unique owned temporary paths.
+- Ready/review/pass-without-artifact jobs recover safely after restart or bounded memory pruning.
 
-The current implementation cannot support a 100% accuracy claim. It has no numeric oracle, can
-select the wrong source layout, accepts an empty target-stage catalog, and fails red annotation on
-the representative real corpus. See
-[[../errors/reconciliation-accuracy-findings|RA-001, RA-014, RA-015 and RA-017]].
+## Active accuracy limit
 
-## Tests and evidence
-
-Synthetic verification tests cover decision precedence, technical failure projection, file type
-and basic annotation/ZIP behavior. They do not cover numeric mismatch, alternate cumulative
-headers, formula-without-cache rows, empty/ambiguous stages, duplicate source SHA or the real
-mixed self-closing/paired style table. The 2026-08-13 audit compared current and independently
-bound cumulative interpretations on immutable private copies and kept only de-identified counts.
+The numeric oracle currently receives a positionally bound J/K pair. Direct comparison of the
+clean target with the desired reference proves that pair is not the current reporting period for
+the designated template: J/K remain unchanged and a new pair is inserted later. Until
+[[../DECISIONS#DO-019: числовая пара цели определяется структурой, а не адресом (2026-08-13)|DO-019]]
+is implemented, verification must not claim 100% accuracy on that layout. The required safe result
+for a clean target without a structural current-period pair is
+`TARGET_CURRENT_PERIOD_PAIR_MISSING`, not pass/red. Track implementation in
+[[../tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]].

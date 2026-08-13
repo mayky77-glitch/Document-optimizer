@@ -38,6 +38,8 @@ Use this index as the entry point. Read only the relevant map, component card, a
 - [[tasks/admin-verification-accuracy-remediation|Ремедиация проверки]] — active numeric/stage and integrity work.
 - [[tasks/admin-verification-remediation-gate0|Verification remediation Gate 0]] — frozen dependency waves and acceptance.
 - [[tasks/admin-verification-lifecycle-gate0|Verification lifecycle Gate 0]] — transactional apply followed by restart recovery.
+- [[tasks/reconciliation-real-layout-gate0|Reconciliation real-layout Gate 0]] — structural
+  source/target measure discovery and reference-compatible period insertion.
 - [[research/propextract-methods-2026-08-13|PropExtract methods]] — external commit-pinned methodology comparison; no code reuse.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 - [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.

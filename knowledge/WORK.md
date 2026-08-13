@@ -13,11 +13,15 @@ updated: 2026-08-13
 ## Current
 
 - [[tasks/admin-verification-accuracy-remediation|Verification accuracy remediation]] is active.
-  Owner approved a numeric J/K oracle and automatic single-stage selection in
+  Owner approved a numeric oracle and automatic single-stage selection in
   [[DECISIONS#DO-017: «Проверка документов» получает числовой oracle (2026-08-13)|DO-017]] and
   [[DECISIONS#DO-018: этап цели выбирается без скрытого значения (2026-08-13)|DO-018]].
-- [[tasks/admin-verification-remediation-gate0|Gate 0]] freezes dependency waves, private-data
-  boundaries and exact acceptance gates. Baseline at `dc2c321` is `1667 passed, 25 skipped`.
+- [[tasks/admin-verification-lifecycle-gate0|Lifecycle Gate 0]] is accepted: transactional
+  exact-once apply and restart/pruning recovery are integrated at `c8da710`.
+- Original/reference comparison supersedes the fixed-column clause through
+  [[DECISIONS#DO-019: числовая пара цели определяется структурой, а не адресом (2026-08-13)|DO-019]].
+  [[tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]] freezes the remaining structural
+  source, target-oracle and period-insertion waves.
 
 ## Completed context
 
@@ -32,5 +36,6 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Publish the Gate 0 planning SHA, run Wave 1 in three non-overlapping worktrees, integrate with
-`--no-ff`, then open the numeric/stage wave only from the accepted integration SHA.
+Publish the lifecycle checkpoint and real-layout planning SHA, then run the structural
+source/terminal-identity card. Target-oracle and period-insertion cards start only from exact
+accepted predecessors.

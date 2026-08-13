@@ -56,6 +56,42 @@ RA-016 is high for `reconcile`: duplicate physical inputs acquire distinct techn
 can double financial contribution. It is medium for `verify`: checked/failed counts and output
 members are duplicated, but the original bytes are not changed.
 
+## Remediation status after accepted lifecycle integration
+
+| Findings | Status | Evidence boundary |
+| --- | --- | --- |
+| RA-001 | closed as silent-fallback defect | competing layouts now fail `SOURCE_LAYOUT_AMBIGUOUS`; real-layout support continues as RA-019 |
+| RA-002—RA-005, RA-011, RA-013, RA-016 | closed | semantic detail start, canonical target parsing, exact-unit packages, atomic restore, formula-cache issue, dangling-pair rejection and physical identity guards |
+| RA-006, RA-009, RA-010, RA-012 | closed | exact-once SQLite apply, immutable snapshots, duplicate target rejection and restart/pruning recovery |
+| RA-007—RA-008 | closed fail-safe | unsupported macro target policy and ownership-safe writer cleanup |
+| RA-014 | numeric oracle implemented | target-measure binding is superseded by RA-021/DO-019 |
+| RA-015, RA-017—RA-018 | closed | style scanner, explicit stage discovery/selection and no-clobber multi-source publication |
+
+## Open real-layout findings
+
+| ID | Severity | Boundary | Deterministic result |
+| --- | --- | --- | --- |
+| RA-019 | high | merged source header graph | the representative cumulative sources produce false ambiguity because ancestry is column-local and leaf pairing uses a bounded positional window |
+| RA-020 | high | terminal document identity | a valid full dotted target identifier is rejected; source basenames with one primary plus parenthetical candidates cannot be resolved by unique stage intersection |
+| RA-021 | critical decision gate | target numeric measure | current verification/write treats J/K as current period although clean/reference comparison shows J/K unchanged and a new period pair inserted later |
+
+RA-019 must build ancestry from actual merged spans, bind adjacent quantity/total-cost leaves under
+one parent region and deduplicate physically identical candidates. Broad semantic stems may produce
+candidates, but never a best guess: equal coherent candidates remain a controlled ambiguity. This
+is structural recognition, not a narrow wording allowlist.
+
+RA-020 requires one shared terminal identity contract. It accepts an unambiguous bare four-digit
+index or the final three/four-digit component of a full dotted identifier while preserving leading
+zeroes. Years and multiple target candidates fail closed. A source may expose a bounded ordered set
+of primary/parenthetical candidates; reconciliation selects only a unique intersection with the
+terminal identities present in the selected target stage.
+
+RA-021 is governed by [[../DECISIONS#DO-019: числовая пара цели определяется структурой, а не адресом (2026-08-13)|DO-019]].
+The verified reference keeps the historical J/K pair unchanged, inserts a reporting-period pair
+later and shifts the narrative block. Verification of a clean target without that pair must be a
+technical no-artifact result. Reconciliation may insert one pair only for an explicit period and
+after a strict workbook-delta allowlist; rerun must be idempotent.
+
 ## RA-014 — verification is not a numeric reconciliation
 
 `verify_reconciliation` declares a row correct when the newest authoritative decision accepts it
@@ -166,9 +202,6 @@ input error before row verdicts are produced.
 
 ## Remediation order
 
-1. Owner decisions: RA-014 numeric meaning and RA-017 stage selection.
-2. Fail-closed ingestion: RA-001, RA-002, RA-003 and RA-011.
-3. Guaranteed safe artifact: RA-015 and RA-018.
-4. Unit and duplicate boundaries: RA-004 and RA-016.
-5. Adjacent reconcile exact-once/transaction/publication: RA-006 through RA-010.
-6. Restart recovery and latent contracts: RA-005, RA-012 and RA-013.
+1. RA-019/RA-020 structural source and terminal identity.
+2. RA-021 structural target pair and numeric oracle.
+3. Reporting-period insertion, API/UI input and private original/reference release shadow.

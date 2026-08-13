@@ -44,6 +44,10 @@ The lifecycle wave is frozen in [[admin-verification-lifecycle-gate0|Lifecycle G
 [[admin-verification-apply-integrity|transactional apply]], then dependent
 [[admin-verification-job-recovery|restart recovery]].
 
+That lifecycle is accepted at `c8da710`. A subsequent original/reference comparison proved the
+fixed J/K target clause wrong for the designated template and opened
+[[reconciliation-real-layout-gate0|Real-layout Gate 0]] under DO-019.
+
 Use [[../research/propextract-methods-2026-08-13|PropExtract]] only as a methodology reference:
 exact-or-ambiguous identity, field-level provenance, order-independent consensus, staged workbook
 delta allowlists and permutation tests. Do not adopt its narrow comparison normalization: source

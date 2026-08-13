@@ -11,12 +11,11 @@ updated: 2026-08-13
 
 - Path: `Document-optimizer-ready` under the project documents directory.
 - Branch: `main`.
-- Verified product HEAD: `7aa8d30e5abbd49b6d5b9e76b03122c0f447f51e`.
-- Published audit/knowledge commit: `dcd09b8bd85b8a519567afd517fe24ae04f9c4a5`.
-- Remote: local `origin/main` and remote `refs/heads/main` match verified HEAD.
+- Local product HEAD: `8cc233ebb7830d504983475838cf134a6cd82c1a` before this knowledge update.
+- Remote checkpoint: `origin/main` is `4e9ca944cbb73e4035e16afc59a29b98837877df` until the accepted lifecycle
+  and real-layout planning commits are published.
 - Purpose: canonical production and audit copy for document reconciliation and drawing-card workflows.
 - Working tree: one unrelated untracked drawing-card UX specification; preserve and never stage it with reconciliation work.
 
-Previous Wave 9 branch metadata is historical. The completed audit changed only knowledge after
-the verified product commit above; the metadata-only `CURRENT_COPY` update does not recursively
-change this reference. Source spreadsheets, generated reports and audit helpers remain outside Git.
+The accepted lifecycle integration is `c8da7108b5c0dd228d5ef5eb1fee2568cdcca3b8`.
+Source spreadsheets, generated reports and audit helpers remain outside Git.
