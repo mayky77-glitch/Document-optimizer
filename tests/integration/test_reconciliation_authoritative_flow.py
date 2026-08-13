@@ -147,7 +147,9 @@ def test_feedback_failure_removes_written_output_and_never_marks_job_ready(
         "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
     )
     monkeypatch.setattr(
-        service.feedback_store, "persist", lambda *_args: (_ for _ in ()).throw(OSError("db"))
+        service.feedback_store,
+        "commit_apply",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db")),
     )
 
     with pytest.raises(OSError, match="db"):
@@ -179,3 +181,84 @@ def test_repeated_apply_keeps_verified_ready_result_unchanged(tmp_path, monkeypa
     assert calls == 1
     assert output.read_bytes() == before
     assert job.status == "ready" and job.result_available is True
+
+
+def test_apply_validates_and_chmods_output_before_feedback_commit(tmp_path, monkeypatch) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"result")
+    events: list[str] = []
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
+    )
+    original_chmod = __import__("os").chmod
+
+    def chmod(path, mode):
+        if path == output:
+            events.append("chmod")
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr("report_processor.admin_panel.service.os.chmod", chmod)
+    monkeypatch.setattr(
+        service.feedback_store,
+        "commit_apply",
+        lambda **_kwargs: events.append("commit") or True,
+    )
+
+    service.apply_reconciliation(job.job_id)
+
+    assert events == ["chmod", "commit"]
+    assert job.status == "ready" and job.output == output
+
+
+def test_apply_chmod_failure_never_commits_feedback_and_removes_owned_output(
+    tmp_path, monkeypatch
+) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"result")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.os.chmod",
+        lambda path, _mode: (_ for _ in ()).throw(OSError("chmod")) if path == output else None,
+    )
+    committed = False
+
+    def should_not_commit(**_kwargs):
+        nonlocal committed
+        committed = True
+        return True
+
+    monkeypatch.setattr(service.feedback_store, "commit_apply", should_not_commit)
+
+    with pytest.raises(OSError, match="chmod"):
+        service.apply_reconciliation(job.job_id)
+
+    assert committed is False and output.exists() is False and job.status == "failed"
+
+
+def test_apply_failure_keeps_concurrent_output_replacement(tmp_path, monkeypatch) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"attempt")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
+    )
+
+    def replace_then_fail(**_kwargs):
+        replacement = job.directory / "replacement.xlsx"
+        replacement.write_bytes(b"replacement")
+        replacement.replace(output)
+        raise OSError("database")
+
+    monkeypatch.setattr(service.feedback_store, "commit_apply", replace_then_fail)
+
+    with pytest.raises(OSError, match="database"):
+        service.apply_reconciliation(job.job_id)
+
+    assert output.read_bytes() == b"replacement"

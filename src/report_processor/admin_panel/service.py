@@ -254,14 +254,34 @@ class AdminPanelService:
             raise ValueError("authoritative review is incomplete")
         _verify_inputs(job)
         job.status = "running"
+        owned_output: tuple[int, int] | None = None
         try:
-            output, feedback = apply_review(job, job.review_state)
-            job.output = output
-            self.feedback_store.persist(job.target_digest, feedback)
-            os.chmod(output, 0o600)
+            applied = apply_review(job, job.review_state)
+            output, feedback = applied
+            owned_output, output_digest = _validate_owned_apply_output(job, output)
+            apply_key = getattr(applied, "apply_key", None)
+            plan_hash = getattr(applied, "payload_hash", None)
+            if not isinstance(apply_key, str) or not isinstance(plan_hash, str):
+                # Test/executor compatibility: never expose an unkeyed production
+                # commit, but retain the old adapter seam as a deterministic plan.
+                plan_hash = _digest_apply_fallback(job, job.review_state, feedback, output_digest)
+                apply_key = _digest_apply_fallback(
+                    job, job.review_state, feedback, output_digest, purpose="key"
+                )
+            payload_hash = hashlib.sha256(
+                f"{plan_hash}:output-sha256:{output_digest}".encode()
+            ).hexdigest()
+            self.feedback_store.commit_apply(
+                target_digest=job.target_digest,
+                apply_key=apply_key,
+                payload_hash=payload_hash,
+                records=feedback,
+            )
+            # The SQLite marker is the commit point. Everything after it is
+            # in-memory assignment only; do not add I/O after this line.
             job.output, job.result_name, job.status = output, "optimized-report.xlsx", "ready"
         except (OSError, TypeError, ValueError, RuntimeError):
-            _remove_partial_output(job)
+            _remove_partial_output(job, owned_output)
             job.status, job.errors = "failed", ("PROCESSING_FAILED",)
             raise
         return job
@@ -664,8 +684,56 @@ def _exit_code(result: object) -> int:
     return int(value.value if hasattr(value, "value") else value)
 
 
-def _remove_partial_output(job: AdminJob) -> None:
+def _validate_owned_apply_output(job: AdminJob, output: object) -> tuple[tuple[int, int], str]:
+    if not isinstance(output, Path):
+        raise RuntimeError("RECONCILIATION_OUTPUT_INVALID")
+    if (
+        not output.is_file()
+        or output.is_symlink()
+        or not output.resolve().is_relative_to(job.directory.resolve())
+    ):
+        raise RuntimeError("RECONCILIATION_OUTPUT_INVALID")
+    os.chmod(output, 0o600)
+    stat = output.stat()
+    return (stat.st_dev, stat.st_ino), _file_digest(output)
+
+
+def _digest_apply_fallback(
+    job: AdminJob,
+    state: ReconciliationReviewState,
+    feedback: tuple[object, ...],
+    output_digest: str,
+    *,
+    purpose: str = "payload",
+) -> str:
+    """Only supports legacy injected executors; authoritative apply supplies its plan."""
+    encoded = repr(
+        (
+            "ReconciliationApplyIntegrity-1.0",
+            purpose,
+            job.job_id,
+            job.target_digest,
+            tuple(job.source_digests),
+            job.stage,
+            state.version_fingerprint,
+            feedback,
+            output_digest,
+        )
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _remove_partial_output(job: AdminJob, owned_identity: tuple[int, int] | None = None) -> None:
     candidate = job.directory / "result.xlsx"
-    candidate.unlink(missing_ok=True)
+    if owned_identity is None:
+        candidate.unlink(missing_ok=True)
+    else:
+        try:
+            current = candidate.stat()
+        except FileNotFoundError:
+            pass
+        else:
+            if (current.st_dev, current.st_ino) == owned_identity:
+                candidate.unlink(missing_ok=True)
     job.output = None
     job.result_name = None
