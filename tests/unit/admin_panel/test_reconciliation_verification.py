@@ -18,6 +18,7 @@ from report_processor.admin_panel.reconciliation_verification import (
     verify_reconciliation,
 )
 from report_processor.admin_panel.service import AdminPanelService
+from report_processor.excel_writer import ExcelWriterSafetyError
 from report_processor.reconciliation_review import ReviewAction, ReviewRow, build_review_groups
 
 
@@ -229,6 +230,60 @@ def test_multiple_source_artifact_contains_each_original_name_once(tmp_path: Pat
         annotated = load_workbook(BytesIO(archive.read("Первый.xlsx")))
         assert annotated["Лист1"]["A2"].fill.fgColor.rgb == "FFFF0000"
         annotated.close()
+
+
+def test_multiple_source_artifact_does_not_clobber_existing_output(tmp_path: Path) -> None:
+    inputs = tmp_path / "inputs"
+    job_dir = tmp_path / "job"
+    inputs.mkdir()
+    job_dir.mkdir()
+    failed_source = inputs / "failed.xlsx"
+    clean_source = inputs / "clean.xlsx"
+    _xlsx(failed_source, "failed")
+    _xlsx(clean_source, "clean")
+    output = job_dir / "verification-documents.zip"
+    output.write_bytes(b"existing-output")
+    job = SimpleNamespace(
+        source=failed_source,
+        sources=(failed_source, clean_source),
+        source_names=("Первый.xlsx", "Второй.xlsx"),
+        directory=job_dir,
+    )
+
+    with pytest.raises(ExcelWriterSafetyError, match="OUTPUT_EXISTS"):
+        _write_artifact(job, {failed_source: {"Лист1": {2}}})
+
+    assert output.read_bytes() == b"existing-output"
+
+
+def test_multiple_source_artifact_does_not_touch_legacy_temporary_name(
+    tmp_path: Path, monkeypatch
+) -> None:
+    inputs = tmp_path / "inputs"
+    job_dir = tmp_path / "job"
+    inputs.mkdir()
+    job_dir.mkdir()
+    failed_source = inputs / "failed.xlsx"
+    clean_source = inputs / "clean.xlsx"
+    _xlsx(failed_source, "failed")
+    _xlsx(clean_source, "clean")
+    legacy = job_dir / "verification-source-01.xlsx"
+    legacy.write_bytes(b"existing-temporary")
+    job = SimpleNamespace(
+        source=failed_source,
+        sources=(failed_source, clean_source),
+        source_names=("Первый.xlsx", "Второй.xlsx"),
+        directory=job_dir,
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification._annotate",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("annotation failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="annotation failed"):
+        _write_artifact(job, {failed_source: {"Лист1": {2}}})
+
+    assert legacy.read_bytes() == b"existing-temporary"
 
 
 @pytest.mark.parametrize(

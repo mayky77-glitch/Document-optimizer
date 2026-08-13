@@ -8,12 +8,15 @@ writer boundary.
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import zipfile
 from collections import defaultdict
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from report_processor.excel_writer.ooxml import publish_no_clobber
 from report_processor.reconciliation_review import ReviewAction
 
 from .reconciliation_execution import _review_row_id, prepare_review
@@ -164,33 +167,44 @@ def _write_artifact(
         return output, result_name
 
     output = job.directory / "verification-documents.zip"
-    temporary: list[Path] = []
+    temporary_directory = Path(
+        tempfile.mkdtemp(prefix=".verification-artifact-", dir=job.directory)
+    )
+    temporary_output = temporary_directory / output.name
     try:
         with zipfile.ZipFile(
-            output, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6
+            temporary_output, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6
         ) as archive:
             for index, (source, source_name) in enumerate(zip(sources, names, strict=True), 1):
                 member = Path(source_name).name
                 annotated = failed_locations.get(source)
                 if annotated:
-                    copied = job.directory / (
+                    copied = temporary_directory / (
                         f"verification-source-{index:02d}{source.suffix.casefold()}"
                     )
-                    temporary.append(copied)
                     _annotate(source, copied, annotated)
                     archive.write(copied, member)
                 else:
                     archive.write(source, member)
-        if output.stat().st_size > _MAX_RESULT_BYTES:
+        _verify_zip_artifact(temporary_output, tuple(Path(name).name for name in names))
+        if temporary_output.stat().st_size > _MAX_RESULT_BYTES:
             raise VerificationTechnicalFailure("VERIFICATION_RESULT_TOO_LARGE")
-        os.chmod(output, 0o600)
+        os.chmod(temporary_output, 0o600)
+        publish_no_clobber(temporary_output, output)
         return output, "Проверка_документов.zip"
-    except Exception:
-        output.unlink(missing_ok=True)
-        raise
     finally:
-        for path in temporary:
-            path.unlink(missing_ok=True)
+        shutil.rmtree(temporary_directory, ignore_errors=True)
+
+
+def _verify_zip_artifact(path: Path, expected_names: tuple[str, ...]) -> None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if tuple(archive.namelist()) != expected_names or archive.testzip() is not None:
+                raise VerificationTechnicalFailure("VERIFICATION_ARTIFACT_INVALID")
+    except VerificationTechnicalFailure:
+        raise
+    except (OSError, zipfile.BadZipFile) as error:
+        raise VerificationTechnicalFailure("VERIFICATION_ARTIFACT_INVALID") from error
 
 
 def _annotate(source: Path, output: Path, rows: Mapping[str, Collection[int]]) -> None:
