@@ -99,11 +99,16 @@ def build_period_insertion_plan(
                 pair.cost_column,
                 first_detail_rows[pair.sheet_name],
                 pair.parent_span,
+                pair.historical_parent_label,
                 pair.quantity_leaf_row,
                 pair.cost_leaf_row,
                 pair.quantity_leaf_label,
                 pair.cost_leaf_label,
-                pair.suffix_coordinates,
+                pair.suffix_nonempty_count,
+                pair.suffix_first_coordinate,
+                pair.suffix_last_coordinate,
+                pair.suffix_rightmost_coordinate,
+                pair.suffix_coordinate_sha256,
             )
             for pair in historical
         )
@@ -373,7 +378,12 @@ def _validate_plan(source: Path, plan: ReconciliationPeriodInsertionPlan) -> Non
             or anchor.cost_column != anchor.quantity_column + 1
             or anchor.parent_span[1] != anchor.quantity_column
             or anchor.parent_span[3] != anchor.cost_column
-            or not anchor.suffix_coordinates
+            or not anchor.historical_parent_label
+            or anchor.suffix_nonempty_count < 1
+            or not anchor.suffix_first_coordinate
+            or not anchor.suffix_last_coordinate
+            or not anchor.suffix_rightmost_coordinate
+            or len(anchor.suffix_coordinate_sha256) != 64
         ):
             raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
 

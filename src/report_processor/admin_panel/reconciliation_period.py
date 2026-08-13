@@ -66,11 +66,16 @@ class ReconciliationSheetAnchor:
     cost_column: int
     first_detail_row: int
     parent_span: tuple[int, int, int, int]
+    historical_parent_label: str
     quantity_leaf_row: int
     cost_leaf_row: int
     quantity_leaf_label: str
     cost_leaf_label: str
-    suffix_coordinates: tuple[str, ...]
+    suffix_nonempty_count: int
+    suffix_first_coordinate: str
+    suffix_last_coordinate: str
+    suffix_rightmost_coordinate: str
+    suffix_coordinate_sha256: str
 
     @property
     def insertion_after_column(self) -> int:
@@ -108,12 +113,17 @@ class ReconciliationPeriodInsertionPlan:
                     "cost_leaf_row": item.cost_leaf_row,
                     "first_detail_row": item.first_detail_row,
                     "parent_span": item.parent_span,
+                    "historical_parent_label": item.historical_parent_label,
                     "quantity_column": item.quantity_column,
                     "quantity_leaf_label": item.quantity_leaf_label,
                     "quantity_leaf_row": item.quantity_leaf_row,
                     "sheet_id": item.sheet_id,
                     "sheet_name": item.sheet_name,
-                    "suffix_coordinates": item.suffix_coordinates,
+                    "suffix_nonempty_count": item.suffix_nonempty_count,
+                    "suffix_first_coordinate": item.suffix_first_coordinate,
+                    "suffix_last_coordinate": item.suffix_last_coordinate,
+                    "suffix_rightmost_coordinate": item.suffix_rightmost_coordinate,
+                    "suffix_coordinate_sha256": item.suffix_coordinate_sha256,
                     "worksheet_part": item.worksheet_part,
                 }
                 for item in sorted(self.anchors, key=lambda item: (item.sheet_name, item.sheet_id))

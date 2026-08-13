@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook, load_workbook
 
+from report_processor.admin_panel import reconciliation_target_measure
 from report_processor.admin_panel.reconciliation_period import ReconciliationPeriodError
 from report_processor.excel_writer.period_insertion import (
     build_period_insertion_plan,
@@ -70,3 +71,68 @@ def test_current_equivalent_calendar_identity_is_idempotent_and_conflict_fails(
     assert build_period_insertion_plan(source, "2026-08", {"Отчёт": 3}).idempotent
     with pytest.raises(ReconciliationPeriodError, match="REPORTING_PERIOD_CONFLICT"):
         build_period_insertion_plan(source, "2026-09", {"Отчёт": 3})
+
+
+def test_sparse_far_suffix_is_compact_and_part_of_the_immutable_plan(tmp_path: Path) -> None:
+    source = tmp_path / "sparse.xlsx"
+    _historical_book(source)
+    workbook = load_workbook(source)
+    workbook["Отчёт"]["Z1000000"] = "far suffix"
+    workbook.save(source)
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    (anchor,) = plan.anchors
+
+    assert anchor.suffix_nonempty_count == 3
+    assert anchor.suffix_first_coordinate == "N3"
+    assert anchor.suffix_last_coordinate == "Z1000000"
+    assert anchor.suffix_rightmost_coordinate == "Z1000000"
+    assert len(anchor.suffix_coordinate_sha256) == 64
+
+
+def test_forged_suffix_evidence_is_rejected_before_creating_output(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    (anchor,) = plan.anchors
+    forged = replace(
+        plan,
+        anchors=(
+            replace(
+                anchor,
+                historical_parent_label="поддельная историческая подпись",
+                suffix_coordinate_sha256="0" * 64,
+            ),
+        ),
+        plan_digest="",
+    )
+    assert forged.plan_digest != plan.plan_digest
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PLAN_INVALID"):
+        prepare_period_insertion(source, output, forged)
+
+    assert not output.exists()
+
+
+def test_empty_suffix_fails_closed(tmp_path: Path) -> None:
+    source = tmp_path / "empty-suffix.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"] = "1", "Этап 1", 1, "Монтаж"
+    sheet.merge_cells("L1:M1")
+    sheet["L1"] = "Документальная отчетность за весь период"
+    sheet["L2"], sheet["M2"] = "Количество", "Стоимость"
+    workbook.save(source)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+
+def test_suffix_over_limit_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "over-limit.xlsx"
+    _historical_book(source)
+    monkeypatch.setattr(reconciliation_target_measure, "_MAX_SUFFIX_CELLS", 1)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})

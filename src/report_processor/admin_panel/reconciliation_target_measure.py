@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
 
 from openpyxl.utils import get_column_letter
-from openpyxl.utils.cell import range_boundaries
+from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 
 _HEADER_ROWS = 80
+_MAX_SUFFIX_CELLS = 50_000
+_MAX_SUFFIX_ROW = 1_048_576
+_MAX_SUFFIX_COLUMN = 16_384
 _RUSSIAN_MONTH_TOKENS = {
     "январь": 1,
     "января": 1,
@@ -72,11 +76,16 @@ class HistoricalTargetMeasureEvidence:
     quantity_column: int
     cost_column: int
     parent_span: tuple[int, int, int, int]
+    historical_parent_label: str
     quantity_leaf_row: int
     cost_leaf_row: int
     quantity_leaf_label: str
     cost_leaf_label: str
-    suffix_coordinates: tuple[str, ...]
+    suffix_nonempty_count: int
+    suffix_first_coordinate: str
+    suffix_last_coordinate: str
+    suffix_rightmost_coordinate: str
+    suffix_coordinate_sha256: str
 
     @property
     def quantity_letter(self) -> str:
@@ -217,7 +226,7 @@ def _sheet_historical_candidates(
     if end < start:
         return ()
     values, spans = _header_cells(sheet, start, end, merged_ranges)
-    candidates: dict[tuple[object, ...], TargetMeasurePair] = {}
+    candidates: dict[tuple[object, ...], HistoricalTargetMeasureEvidence] = {}
     for row in range(start, end + 1):
         for quantity_column in range(1, int(sheet.max_column or 0)):
             cost_column = quantity_column + 1
@@ -237,34 +246,80 @@ def _sheet_historical_candidates(
                 or not _total_cost_leaf(cost[-1].text)
                 or _unit_price(quantity_text)
                 or _unit_price(cost_text)
-                or not _historical(quantity_text + " " + cost_text)
             ):
                 continue
             common = [label for label in quantity if label.key in {item.key for item in cost}]
-            parents = [label for label in common if label.key[1] != label.key[3]]
-            if len(parents) != 1:
+            historical_parents = [
+                label
+                for label in common
+                if (
+                    label.key[1] != label.key[3]
+                    and label.key[1] <= quantity_column
+                    and label.key[3] >= cost_column
+                    and _historical(label.text)
+                )
+            ]
+            if len(historical_parents) != 1:
                 continue
-            suffix = tuple(
-                f"{get_column_letter(column)}{row_number}"
-                for row_number in range(1, int(sheet.max_row or 0) + 1)
-                for column in range(cost_column + 1, int(sheet.max_column or 0) + 1)
-                if sheet.cell(row_number, column).value is not None
-            )
-            if not suffix:
+            parent = historical_parents[0]
+            suffix = _suffix_evidence(sheet, cost_column)
+            if suffix is None:
                 continue
-            key = (sheet.title, quantity_column, cost_column, parents[0].key)
+            key = (sheet.title, quantity_column, cost_column, parent.key)
             candidates[key] = HistoricalTargetMeasureEvidence(
                 sheet.title,
                 quantity_column,
                 cost_column,
-                parents[0].key,
+                parent.key,
+                parent.text,
                 quantity[-1].key[0],
                 cost[-1].key[0],
                 str(sheet.cell(quantity[-1].key[0], quantity_column).value or ""),
                 str(sheet.cell(cost[-1].key[0], cost_column).value or ""),
-                suffix,
+                *suffix,
             )
     return tuple(candidates.values())
+
+
+def _suffix_evidence(sheet, cost_column: int) -> tuple[int, str, str, str, str] | None:
+    """Return bounded, value-free proof that content follows an insertion point.
+
+    ``Worksheet._cells`` is the materialized-cell index populated by the normal
+    planning reader.  Iterating it avoids allocating a ``max_row * max_column``
+    rectangle for sparse sheets.  A read-only worksheet deliberately has no
+    such index and is not a valid planning input; the caller already opens the
+    workbook in normal mode to preserve merged-header provenance.
+    """
+
+    cells = getattr(sheet, "_cells", None)
+    if not isinstance(cells, dict):
+        raise ReconciliationTargetMeasureError("TARGET_HISTORICAL_PAIR_MISSING")
+    coordinates: list[tuple[int, int]] = []
+    for (row, column), cell in cells.items():
+        if column <= cost_column or cell.value is None:
+            continue
+        if not 1 <= row <= _MAX_SUFFIX_ROW or not 1 <= column <= _MAX_SUFFIX_COLUMN:
+            raise ReconciliationTargetMeasureError("TARGET_HISTORICAL_PAIR_MISSING")
+        coordinates.append((row, column))
+        if len(coordinates) > _MAX_SUFFIX_CELLS:
+            raise ReconciliationTargetMeasureError("TARGET_HISTORICAL_PAIR_MISSING")
+    if not coordinates:
+        return None
+    coordinates.sort()
+    references = tuple(f"{get_column_letter(column)}{row}" for row, column in coordinates)
+    digest = hashlib.sha256("\n".join(references).encode()).hexdigest()
+    return (
+        len(references),
+        references[0],
+        references[-1],
+        max(references, key=lambda reference: _coordinate_key(reference)),
+        digest,
+    )
+
+
+def _coordinate_key(reference: str) -> tuple[int, int]:
+    column, row = coordinate_from_string(reference)
+    return row, column_index_from_string(column)
 
 
 def _header_cells(sheet, start: int, end: int, merged_ranges: tuple[str, ...]):
