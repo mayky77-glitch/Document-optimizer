@@ -12,7 +12,7 @@ updated: 2026-08-13
 - Path: `Document-optimizer-ready` under the project documents directory.
 - Branch: `main`.
 - Verified product HEAD: `7aa8d30e5abbd49b6d5b9e76b03122c0f447f51e`.
-- Published audit/knowledge commit: `ad9a667d5292e75d38be37c94b63fadf964e96a4`.
+- Published audit/knowledge commit: `dcd09b8bd85b8a519567afd517fe24ae04f9c4a5`.
 - Remote: local `origin/main` and remote `refs/heads/main` match verified HEAD.
 - Purpose: canonical production and audit copy for document reconciliation and drawing-card workflows.
 - Working tree: one unrelated untracked drawing-card UX specification; preserve and never stage it with reconciliation work.
