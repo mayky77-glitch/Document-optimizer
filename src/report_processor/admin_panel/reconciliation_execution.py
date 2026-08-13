@@ -8,7 +8,6 @@ from decimal import Decimal
 from hashlib import sha256
 
 from report_processor.calculation import calculate_matches
-from report_processor.identifiers import extract_document_index
 from report_processor.matching import (
     MatchCandidate,
     MatchResult,
@@ -69,14 +68,17 @@ class ReconciliationApplyResult:
 
 def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationReviewResult:
     try:
-        batch = _sources(job)
-    except AllReconciliationSourcesUnusableError as error:
-        return ReconciliationReviewResult(None, None, error.issues)
-    try:
         _schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
         catalog = _catalog(targets)
     except Exception:
-        return ReconciliationReviewResult(None, batch, batch.issues, True)
+        return ReconciliationReviewResult(None, None, (), True)
+    try:
+        target_identities = {
+            terminal_index(target.document_index_normalized) for target in targets
+        } - {None}
+        batch = _sources(job, target_identities) if target_identities else _sources(job)
+    except AllReconciliationSourcesUnusableError as error:
+        return ReconciliationReviewResult(None, None, error.issues)
     source_rows = _review_rows(batch.rows, targets, catalog, job)
     partition = partition_rows(source_rows)
     # Zero-activity rows remain internal source facts.  They must never reach
@@ -130,7 +132,11 @@ def apply_review(
     catalog = _catalog(targets)
     snapshot = decisions if decisions is not None else tuple(state.core_decisions())
     overrides = apply_overrides(state.rows.values(), state.groups.values(), snapshot)
-    source_rows = {_review_row_id(job, row.source_row_id): row for row in _sources(job).rows}
+    target_identities = {terminal_index(target.document_index_normalized) for target in targets} - {
+        None
+    }
+    source_batch = _sources(job, target_identities) if target_identities else _sources(job)
+    source_rows = {_review_row_id(job, row.source_row_id): row for row in source_batch.rows}
     matches = _selected_matches(state, overrides, catalog, job, source_rows)
     feedback = _feedback_records(state, snapshot)
     plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, snapshot)
@@ -181,11 +187,12 @@ def _catalog(targets) -> _Catalog:
     return _Catalog(labels, by_index)
 
 
-def _sources(job) -> ReconciliationSourceBatch:
+def _sources(job, target_identities: set[str] | None = None) -> ReconciliationSourceBatch:
     from .reconciliation_sources import (
         ReconciliationSourceDescriptor,
         descriptor_from_upload_basename,
         extract_reconciliation_sources,
+        resolve_descriptor_identity,
     )
 
     paths = job.sources or (job.source,)
@@ -195,6 +202,10 @@ def _sources(job) -> ReconciliationSourceBatch:
         if len(names) == len(paths)
         else tuple(ReconciliationSourceDescriptor(path.name) for path in paths)
     )
+    if target_identities is not None:
+        descriptors = tuple(
+            resolve_descriptor_identity(descriptor, target_identities) for descriptor in descriptors
+        )
     workbooks = tuple(
         (path, f"source:{index}:{job.source_digests[index]}", descriptor)
         for index, (path, descriptor) in enumerate(zip(paths, descriptors, strict=True))
@@ -394,8 +405,7 @@ def _apply_plan(
 def _source_index(filename: str) -> str | None:
     from .reconciliation_sources import document_index_from_basename
 
-    index = extract_document_index(filename).value
-    return index.main if index is not None else document_index_from_basename(filename)
+    return document_index_from_basename(filename)
 
 
 def _target_id(job, target) -> str:

@@ -7,6 +7,8 @@ from openpyxl import Workbook
 from report_processor.admin_panel.reconciliation_sources import (
     ReconciliationSourceDescriptor,
     _canonical_rows,
+    descriptor_from_upload_basename,
+    resolve_descriptor_identity,
 )
 
 
@@ -32,3 +34,12 @@ def test_canonical_rows_keep_the_actual_worksheet_title() -> None:
 
     workbook.close()
     assert rows[0].source_location.sheet_name == "КС-2 август"
+
+
+def test_source_identity_resolves_only_one_selected_target_intersection() -> None:
+    descriptor = descriptor_from_upload_basename("акт 1234 (0123).xlsx")
+
+    resolved = resolve_descriptor_identity(descriptor, {"0123"})
+
+    assert resolved.document_index == "0123"
+    assert resolve_descriptor_identity(descriptor, {"1234", "0123"}).document_index is None

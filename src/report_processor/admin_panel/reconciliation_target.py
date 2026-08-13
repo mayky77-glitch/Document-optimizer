@@ -13,7 +13,6 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
-from report_processor.identifiers import extract_document_index
 from report_processor.processing.adapters import _materialized
 from report_processor.schema import LogicalColumn, SheetType, analyze_workbook_schema
 from report_processor.target_report import (
@@ -27,6 +26,8 @@ from report_processor.target_report.ooxml import (
     read_sheet_lexemes,
 )
 from report_processor.target_report.reader import _cell_snapshot
+
+from .reconciliation_identity import terminal_identity
 
 _STAGE_RE = re.compile(r"этап\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
 
@@ -109,14 +110,8 @@ def category_id(label: str) -> str:
 
 
 def terminal_index(value: object) -> str | None:
-    parsed = extract_document_index(value, allow_loose=True)
-    index = parsed.value
-    if index is not None and len(index.main) == 4:
-        return index.main
-    text = str(value or "").strip()
-    if re.fullmatch(r"\d{4}", text) and not re.fullmatch(r"(?:19|20)\d{2}", text):
-        return text
-    return None
+    """Compatibility adapter for reconciliation terminal identities."""
+    return terminal_identity(value)
 
 
 def enumerate_reconciliation_stages(session) -> tuple[str, ...]:
