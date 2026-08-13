@@ -170,6 +170,58 @@ def test_unique_cumulative_candidate_outranks_direct_candidate(tmp_path: Path) -
     assert batch.selections[0].source_type == "ks6a"
 
 
+def test_two_cumulative_regions_in_one_sheet_fail_controlled_ambiguity(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    _cumulative_sheet(sheet)
+    sheet.append(())
+    _cumulative_sheet(sheet, "Вторая работа")
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
+
+
+def test_two_direct_regions_in_one_sheet_fail_controlled_ambiguity(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("1", "Первая", "м", "1", "10"),
+        (),
+        ("", "Описание работ", "Единица измерения", "Объём", "Сумма затрат"),
+        ("2", "Вторая", "м", "2", "20"),
+    ):
+        sheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
+
+
+def test_footer_formula_does_not_invalidate_eligible_source_rows(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("№", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"))
+    sheet.append(("1", "Работа", "м", "1", "10"))
+    sheet.append(("", "Итого", "", "=SUM(D2:D2)", "=SUM(E2:E2)"))
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert len(batch.rows) == 1
+
+
 def test_formula_metric_without_cache_is_controlled_source_issue(tmp_path: Path) -> None:
     path = tmp_path / "source.xlsx"
     workbook = Workbook()

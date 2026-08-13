@@ -151,7 +151,7 @@ def _extract_one(
     workbook = load_workbook(path, read_only=False, data_only=True)
     formulas = load_workbook(path, read_only=False, data_only=False)
     try:
-        candidates = []
+        candidates: list[tuple[str, str, tuple[NormalizedSourceRow, ...]]] = []
         for sheet in workbook.worksheets:
             for extractor, source_type in (
                 (_extract_ks6a_rows, "ks6a"),
@@ -182,35 +182,35 @@ def _extract_ks6a_rows(
     header_rows = tuple(
         sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 50), values_only=True)
     )
-    work_column = _role_column(header_rows, "work")
-    unit_column = _unit_column(header_rows)
-    cumulative_anchor = _role_column(header_rows, "cumulative")
-    if work_column is None or unit_column is None or cumulative_anchor is None:
-        return ()
-    quantity_column, cost_column, header_end = _metric_pair(header_rows, cumulative_anchor)
-    if quantity_column is None or cost_column is None:
-        return ()
-    return _canonical_rows(
-        sheet,
-        source_id,
-        descriptor,
-        source_type="ks6a",
-        start_row=_detail_start(
-            sheet,
-            formula_sheet,
-            header_end,
-            work_column,
-            unit_column,
-            quantity_column,
-            cost_column,
-        ),
-        work_column=work_column,
-        unit_column=unit_column,
-        quantity_column=quantity_column,
-        cost_column=cost_column,
-        cumulative=True,
-        formula_sheet=formula_sheet,
-    )
+    candidates = []
+    for work_column, unit_column, anchor in _layout_columns(header_rows, cumulative=True):
+        for quantity_column, cost_column, header_end in _metric_pairs_for_anchor(
+            header_rows, anchor
+        ):
+            rows = _canonical_rows(
+                sheet,
+                source_id,
+                descriptor,
+                source_type="ks6a",
+                start_row=_detail_start(
+                    sheet,
+                    formula_sheet,
+                    header_end,
+                    work_column,
+                    unit_column,
+                    quantity_column,
+                    cost_column,
+                ),
+                work_column=work_column,
+                unit_column=unit_column,
+                quantity_column=quantity_column,
+                cost_column=cost_column,
+                cumulative=True,
+                formula_sheet=formula_sheet,
+            )
+            if rows:
+                candidates.append(rows)
+    return _unique_layout_rows(candidates)
 
 
 def _extract_ks2_rows(
@@ -220,40 +220,57 @@ def _extract_ks2_rows(
     header_rows = tuple(
         sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 80), values_only=True)
     )
-    work_column = _role_column(header_rows, "work")
-    unit_column = _unit_column(header_rows)
-    if work_column is None or unit_column is None:
-        return ()
-    quantity_column, cost_column, metrics_header_row = _ks2_metric_pair(header_rows)
-    if quantity_column is None or cost_column is None:
-        return ()
-    header_end = max(
-        _role_header_row(header_rows, work_column, "work"),
-        _unit_header_row(header_rows, unit_column),
-        metrics_header_row,
-    )
-    data_start = _detail_start(
-        sheet,
-        formula_sheet,
-        header_end,
-        work_column,
-        unit_column,
-        quantity_column,
-        cost_column,
-    )
-    return _canonical_rows(
-        sheet,
-        source_id,
-        descriptor,
-        source_type="ks2",
-        start_row=data_start,
-        work_column=work_column,
-        unit_column=unit_column,
-        quantity_column=quantity_column,
-        cost_column=cost_column,
-        cumulative=False,
-        formula_sheet=formula_sheet,
-    )
+    candidates = []
+    for work_column, unit_column, _anchor in _layout_columns(header_rows, cumulative=False):
+        for quantity_column, cost_column, metric_row in _metric_pairs_for_row(header_rows):
+            header_end = max(
+                _role_header_row(header_rows, work_column, "work"),
+                _unit_header_row(header_rows, unit_column),
+                metric_row,
+            )
+            rows = _canonical_rows(
+                sheet,
+                source_id,
+                descriptor,
+                source_type="ks2",
+                start_row=_detail_start(
+                    sheet,
+                    formula_sheet,
+                    header_end,
+                    work_column,
+                    unit_column,
+                    quantity_column,
+                    cost_column,
+                ),
+                work_column=work_column,
+                unit_column=unit_column,
+                quantity_column=quantity_column,
+                cost_column=cost_column,
+                cumulative=False,
+                formula_sheet=formula_sheet,
+            )
+            if rows:
+                candidates.append(rows)
+    return _unique_layout_rows(candidates)
+
+
+def _layout_columns(rows, *, cumulative: bool) -> list[tuple[int, int, int | None]]:
+    work = _role_columns(rows, "work")
+    units = _unit_columns(rows)
+    anchors = _role_columns(rows, "cumulative") if cumulative else [None]
+    return [
+        (work_column, unit_column, anchor)
+        for work_column in work
+        for unit_column in units
+        for anchor in anchors
+        if work_column != unit_column
+    ]
+
+
+def _unique_layout_rows(candidates):
+    if len(candidates) > 1:
+        raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    return candidates[0] if candidates else ()
 
 
 def _column_with(rows: tuple[tuple[object, ...], ...], token: str) -> int | None:
@@ -285,13 +302,18 @@ def _role_text(value: str, role: str) -> bool:
 
 
 def _role_column(rows: tuple[tuple[object, ...], ...], role: str) -> int | None:
+    columns = _role_columns(rows, role)
+    return columns[0] if len(columns) == 1 else None
+
+
+def _role_columns(rows: tuple[tuple[object, ...], ...], role: str) -> list[int]:
     matches = [
         column
         for row_number, row in enumerate(rows, 1)
         for column in range(1, len(row) + 1)
         if _role_text(_header_path(rows, row_number, column), role)
     ]
-    return min(matches, default=None)
+    return sorted(set(matches))
 
 
 def _role_header_row(rows: tuple[tuple[object, ...], ...], column: int, role: str) -> int:
@@ -307,13 +329,18 @@ def _role_header_row(rows: tuple[tuple[object, ...], ...], column: int, role: st
 
 def _unit_column(rows: tuple[tuple[object, ...], ...]) -> int | None:
     """Find one semantic unit column across variable hierarchical headers."""
+    matches = _unit_columns(rows)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _unit_columns(rows: tuple[tuple[object, ...], ...]) -> list[int]:
     matches = [
         column
         for row_number, row in enumerate(rows, 1)
         for column in range(1, len(row) + 1)
         if _unit_text(_header_path(rows, row_number, column))
     ]
-    return min(matches, default=None)
+    return sorted(set(matches))
 
 
 def _unit_text(value: str) -> bool:
@@ -325,14 +352,20 @@ def _ks2_metric_pair(
     rows: tuple[tuple[object, ...], ...],
 ) -> tuple[int | None, int | None, int]:
     """Require one explicit quantity / total-cost pair; unit prices are ineligible."""
-    for row_number, row in enumerate(rows, 1):
-        pairs = _metric_pairs(row, 1, len(row))
-        if len(pairs) == 1:
-            quantity, cost = pairs[0]
-            return quantity, cost, row_number
-        if len(pairs) > 1:
-            raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    pairs = _metric_pairs_for_row(rows)
+    if len(pairs) == 1:
+        return pairs[0]
+    if len(pairs) > 1:
+        raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
     return None, None, 1
+
+
+def _metric_pairs_for_row(rows) -> list[tuple[int, int, int]]:
+    return [
+        (quantity, cost, row_number)
+        for row_number, row in enumerate(rows, 1)
+        for quantity, cost in _metric_pairs(row, 1, len(row))
+    ]
 
 
 def _token_header_row(rows: tuple[tuple[object, ...], ...], column: int, token: str) -> int:
@@ -352,16 +385,22 @@ def _unit_header_row(rows: tuple[tuple[object, ...], ...], column: int) -> int:
 def _metric_pair(
     rows: tuple[tuple[object, ...], ...], anchor: int
 ) -> tuple[int | None, int | None, int]:
+    candidates = _metric_pairs_for_anchor(rows, anchor)
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    return None, None, 1
+
+
+def _metric_pairs_for_anchor(rows, anchor: int) -> list[tuple[int, int, int]]:
+    candidates = []
     for row_number, _row in enumerate(rows, 1):
         if _role_text(_header_path(rows, row_number, anchor), "cumulative"):
             for leaf_row in range(row_number + 1, min(row_number + 5, len(rows)) + 1):
                 pairs = _metric_pairs(rows[leaf_row - 1], anchor, anchor + 5)
-                if len(pairs) == 1:
-                    quantity, cost = pairs[0]
-                    return quantity, cost, leaf_row
-                if len(pairs) > 1:
-                    raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
-    return None, None, 1
+                candidates.extend((quantity, cost, leaf_row) for quantity, cost in pairs)
+    return candidates
 
 
 def _detail_start(
@@ -445,19 +484,22 @@ def _canonical_rows(
         unit = _text_at(values, unit_column)
         quantity = _decimal(_value_at(values, quantity_column))
         cost = _decimal(_value_at(values, cost_column))
+        formulas_present = formula_sheet is not None and (
+            formula_sheet.cell(row_number, quantity_column).data_type == "f"
+            or formula_sheet.cell(row_number, cost_column).data_type == "f"
+        )
+        if (
+            not work_name
+            or not unit
+            or _HIERARCHY_VALUE_RE.fullmatch(unit) is not None
+            or (not formulas_present and (quantity is None or cost is None))
+        ):
+            continue
         if formula_sheet is not None:
             for column, cached in ((quantity_column, quantity), (cost_column, cost)):
                 formula_cell = formula_sheet.cell(row_number, column)
                 if formula_cell.data_type == "f" and cached is None:
                     raise FormulaCacheUnavailableError("FORMULA_CACHE_UNAVAILABLE")
-        if (
-            not work_name
-            or not unit
-            or _HIERARCHY_VALUE_RE.fullmatch(unit) is not None
-            or quantity is None
-            or cost is None
-        ):
-            continue
         location = SourceLocation(
             source_file_id=source_id,
             filename=descriptor.safe_basename,

@@ -11,6 +11,22 @@ from report_processor.admin_panel.reconciliation_target import (
 )
 
 
+class _Sheet:
+    def __init__(self, values):
+        self.max_row = len(values)
+        self._values = values
+
+    def cell(self, row, column):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(value=self._values[row - 1][column - 1])
+
+
+class _Session:
+    def __init__(self, values):
+        self.formula_workbook = type("Workbook", (), {"worksheets": (_Sheet(values),)})()
+
+
 def test_terminal_index_rejects_year_and_ambiguous_values() -> None:
     assert terminal_index("1234") == "1234"
     assert terminal_index("1234 2025") is None
@@ -27,3 +43,13 @@ def test_stage_resolution_discovers_exactly_one_stage_only() -> None:
         resolve_reconciliation_stage(("13.1", "13.2"), None)
     with pytest.raises(ReconciliationTargetScopeError, match="EMPTY"):
         resolve_reconciliation_stage((), None)
+
+
+def test_stage_enumeration_ignores_header_and_notes_without_index() -> None:
+    from report_processor.admin_panel.reconciliation_target import enumerate_reconciliation_stages
+
+    session = _Session(
+        (("", "", "Этап"), ("", "", "Примечание"), ("", "1234", "Этап 13.1. Работы"))
+    )
+
+    assert enumerate_reconciliation_stages(session) == ("13.1",)

@@ -117,9 +117,15 @@ def enumerate_reconciliation_stages(session) -> tuple[str, ...]:
     """Return canonical stage identities observed in the fixed target layout."""
     stages: set[str] = set()
     for sheet in session.formula_workbook.worksheets:
+        active_index = None
         for row_number in range(1, int(sheet.max_row or 0) + 1):
+            index_value = sheet.cell(row_number, 2).value
+            if index_value is not None:
+                active_index = terminal_index(index_value)
             value = sheet.cell(row_number, 3).value
             if value is None or not str(value).strip():
+                continue
+            if active_index is None:
                 continue
             match = _STAGE_RE.search(str(value).strip())
             stages.add(match.group(1) if match else str(value).strip())
