@@ -86,6 +86,8 @@ class ReconciliationFeedbackStore:
                 if existing is not None:
                     if existing[0] != payload_hash:
                         raise ValueError("RECONCILIATION_APPLY_CONFLICT")
+                    if precommit_validator is not None:
+                        precommit_validator()
                     connection.commit()
                     return False
                 next_sequence = int(

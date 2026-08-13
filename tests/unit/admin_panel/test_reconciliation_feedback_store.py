@@ -74,6 +74,27 @@ def test_commit_apply_is_exact_once_and_conflicting_key_fails_closed(tmp_path) -
         )
 
 
+def test_exact_replay_runs_validator_and_rolls_back_its_failure(tmp_path) -> None:
+    store = ReconciliationFeedbackStore(tmp_path)
+    store.commit_apply(target_digest="target", apply_key="key", payload_hash="payload", records=())
+    called = False
+
+    def reject_replay() -> None:
+        nonlocal called
+        called = True
+        raise RuntimeError("output changed")
+
+    with pytest.raises(RuntimeError, match="output changed"):
+        store.commit_apply(
+            target_digest="target",
+            apply_key="key",
+            payload_hash="payload",
+            records=(),
+            precommit_validator=reject_replay,
+        )
+    assert called is True
+
+
 def test_commit_apply_rolls_back_feedback_when_marker_insert_fails(tmp_path) -> None:
     store = ReconciliationFeedbackStore(tmp_path)
     with sqlite3.connect(store.path) as connection:
