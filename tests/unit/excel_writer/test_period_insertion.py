@@ -1,5 +1,6 @@
 """Synthetic direct-OOXML reporting-period insertion regressions."""
 
+import hashlib
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -12,6 +13,7 @@ from openpyxl.styles import PatternFill
 
 from report_processor.admin_panel import reconciliation_target_measure
 from report_processor.admin_panel.reconciliation_period import ReconciliationPeriodError
+from report_processor.excel_writer import period_insertion
 from report_processor.excel_writer.period_insertion import (
     _translate_formula,
     _verify_drawing_delta,
@@ -244,6 +246,50 @@ def test_independent_verifier_rejects_tampered_worksheet_delta(
 
     with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
         verify_period_insertion(source, output, plan)
+
+
+@pytest.mark.parametrize("invalid_package", ("source", "candidate"))
+def test_verifier_shared_formula_checks_are_independent_of_forward_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_package: str
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _add_shared_formula_group(source, "0", "A4:B4", "A1", ("A4", "B4"))
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    def fail_if_forward_parser_is_called(*_args, **_kwargs) -> None:
+        raise AssertionError("verifier used forward shared-formula parser")
+
+    monkeypatch.setattr(
+        period_insertion, "_shared_formula_topology", fail_if_forward_parser_is_called
+    )
+    verify_period_insertion(source, output, plan)
+
+    def corrupt_shared_follower(root: ET.Element) -> None:
+        formula = next(
+            cell.find(_Q("f")) for cell in root.iter(_Q("c")) if cell.attrib.get("r") == "B4"
+        )
+        assert formula is not None
+        formula.text = "A1"
+
+    if invalid_package == "candidate":
+        _replace_worksheet(output, corrupt_shared_follower)
+        candidate_plan = plan
+    else:
+        _replace_worksheet(source, corrupt_shared_follower)
+        candidate_plan = replace(
+            plan,
+            source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+            plan_digest="",
+        )
+        candidate_plan = replace(
+            candidate_plan,
+            plan_digest=hashlib.sha256(candidate_plan.canonical_bytes()).hexdigest(),
+        )
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
+        verify_period_insertion(source, output, candidate_plan)
 
 
 def _rewrite_zip_member(path: Path, member: str, mutate) -> None:
@@ -500,6 +546,7 @@ def test_right_comment_or_external_hyperlink_is_rejected(tmp_path: Path, kind: s
     "groups",
     (
         (("0", "A4", "A1", ("A4",)),),
+        (("000", "A4:B4", "A1", ("A4", "B4")),),
         (("0", "A4:B5", "SUM(A1:B1)", ("A4", "B4", "A5", "B5")),),
         (
             ("0", "A4:B4", "A1", ("A4", "B4")),
@@ -557,6 +604,9 @@ def test_shared_formula_calc_chain_keeps_left_members_and_shifts_right_entries(
         "duplicate_si",
         "mismatched_si",
         "negative_si",
+        "uint32_overflow",
+        "oversized_si",
+        "blank_anchor",
         "follower_text",
         "follower_ref",
         "array",
@@ -598,6 +648,12 @@ def test_invalid_shared_formula_groups_fail_closed_without_clobbering_output(
         _add_shared_formula_group(source, "0", "B4", "A1", ("B4",))
     elif case == "negative_si":
         _add_shared_formula_group(source, "-1", "A4", "A1", ("A4",))
+    elif case == "uint32_overflow":
+        _add_shared_formula_group(source, "4294967296", "A4", "A1", ("A4",))
+    elif case == "oversized_si":
+        _add_shared_formula_group(source, "9" * 512, "A4", "A1", ("A4",))
+    elif case == "blank_anchor":
+        _add_shared_formula_group(source, "0", "A4", "   ", ("A4",))
     elif case == "affected_ref":
         _add_shared_formula_group(source, "0", "M4:N4", "M1", ("M4", "N4"))
     elif case == "huge_ref":

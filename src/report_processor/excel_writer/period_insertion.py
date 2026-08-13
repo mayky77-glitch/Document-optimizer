@@ -201,7 +201,7 @@ def verify_period_insertion(
 
     source, output = Path(source_path), Path(output_path)
     _assert_digest(source, plan.source_sha256)
-    _validate_plan(source, plan)
+    _validate_plan(source, plan, rebuild=False)
     anchors = {item.sheet_name: item for item in plan.anchors}
     source_parts = dict(plan.worksheet_parts)
     try:
@@ -371,9 +371,9 @@ def _verify_sheet_delta(
 ) -> None:
     old, new = ET.fromstring(before), ET.fromstring(after)
     boundary = anchor.insertion_after_column
-    if _shared_formula_topology(
-        old, boundary, "PERIOD_INSERTION_DELTA_INVALID"
-    ) != _shared_formula_topology(new, boundary, "PERIOD_INSERTION_DELTA_INVALID"):
+    if _verify_shared_formula_topology(old, boundary) != _verify_shared_formula_topology(
+        new, boundary
+    ):
         raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
     parent = _historical_parent_xml_row(old, anchor)
     _verify_inserted_cells(old, new, anchor, parent, period)
@@ -854,14 +854,17 @@ def _affected_parts(
     return tuple(sorted(affected))
 
 
-def _validate_plan(source: Path, plan: ReconciliationPeriodInsertionPlan) -> None:
+def _validate_plan(
+    source: Path, plan: ReconciliationPeriodInsertionPlan, *, rebuild: bool = True
+) -> None:
     """Reject fabricated plans before a temporary output identity exists."""
 
     if plan.plan_digest != hashlib.sha256(plan.canonical_bytes()).hexdigest():
         raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
-    expected = build_period_insertion_plan(source, plan.period, dict(plan.selected_detail_rows))
-    if expected.canonical_bytes() != plan.canonical_bytes():
-        raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
+    if rebuild:
+        expected = build_period_insertion_plan(source, plan.period, dict(plan.selected_detail_rows))
+        if expected.canonical_bytes() != plan.canonical_bytes():
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
     parts = worksheet_parts(source)
     sheet_ids = _sheet_id_map(source)
     if tuple(parts.items()) != plan.worksheet_parts:
@@ -1067,10 +1070,13 @@ def _shared_formula_topology(
                 raise ReconciliationPeriodError(error_code)
             si = formula.attrib.get("si")
             coordinate = cell.attrib.get("r")
-            if si is None or not re.fullmatch(r"\d+", si) or coordinate is None:
+            if si is None or not si.isascii() or not si.isdecimal() or coordinate is None:
+                raise ReconciliationPeriodError(error_code)
+            canonical_si = si.lstrip("0") or "0"
+            if len(canonical_si) > 10 or (len(canonical_si) == 10 and canonical_si > "4294967295"):
                 raise ReconciliationPeriodError(error_code)
             column, row = coordinate_from_string(coordinate)
-            members_by_si.setdefault(int(si), []).append(
+            members_by_si.setdefault(int(canonical_si), []).append(
                 (coordinate, column_index_from_string(column), row, formula)
             )
         if direct_formula_count != len(formula_nodes):
@@ -1084,7 +1090,11 @@ def _shared_formula_topology(
                 raise ReconciliationPeriodError(error_code)
             anchor = anchors[0]
             anchor_formula = anchor[3]
-            if set(anchor_formula.attrib) != {"t", "si", "ref"} or not anchor_formula.text:
+            if (
+                set(anchor_formula.attrib) != {"t", "si", "ref"}
+                or anchor_formula.text is None
+                or not anchor_formula.text.strip()
+            ):
                 raise ReconciliationPeriodError(error_code)
             anchor_si = anchor_formula.attrib["si"]
             for member in members:
@@ -1152,6 +1162,179 @@ def _shared_formula_topology(
         raise
     except (TypeError, ValueError):
         raise ReconciliationPeriodError(error_code) from None
+
+
+def _verify_shared_formula_topology(
+    root: ET.Element, boundary: int
+) -> tuple[tuple[str, str, tuple[tuple[str, tuple[tuple[str, str], ...], str | None], ...]], ...]:
+    """Verifier-local shared-formula parser; never call the forward preflight helper."""
+
+    try:
+        groups: dict[int, list[tuple[str, int, int, ET.Element]]] = {}
+        direct_formula_count = 0
+        for cell in root.iter(_Q("c")):
+            formulas = cell.findall(_Q("f"))
+            direct_formula_count += len(formulas)
+            if len(formulas) > 1:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            if not formulas:
+                continue
+            formula = formulas[0]
+            if list(formula):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            formula_type = formula.attrib.get("t")
+            if formula_type not in {None, "shared"}:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            if formula_type is None:
+                if "si" in formula.attrib or "ref" in formula.attrib:
+                    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+                continue
+            si = formula.attrib.get("si")
+            coordinate = cell.attrib.get("r")
+            if (
+                set(formula.attrib) - {"t", "si", "ref"}
+                or si is None
+                or not si.isascii()
+                or not si.isdecimal()
+                or coordinate is None
+            ):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            canonical_si = si.lstrip("0") or "0"
+            if len(canonical_si) > 10 or (len(canonical_si) == 10 and canonical_si > "4294967295"):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            column, row = coordinate_from_string(coordinate)
+            groups.setdefault(int(canonical_si), []).append(
+                (coordinate, column_index_from_string(column), row, formula)
+            )
+        if direct_formula_count != sum(1 for _formula in root.iter(_Q("f"))):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+
+        topology = []
+        occupied: set[tuple[int, int]] = set()
+        for numeric_si, members in groups.items():
+            anchors = tuple(member for member in members if member[3].attrib.get("ref") is not None)
+            if len(anchors) != 1:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            _anchor_coordinate, anchor_column, anchor_row, anchor_formula = anchors[0]
+            anchor_si = anchor_formula.attrib.get("si")
+            anchor_text = anchor_formula.text
+            if (
+                set(anchor_formula.attrib) != {"t", "si", "ref"}
+                or anchor_si is None
+                or anchor_text is None
+                or not anchor_text.strip()
+            ):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            for _coordinate, _column, _row, formula in members:
+                if formula is anchor_formula:
+                    continue
+                if (
+                    set(formula.attrib) != {"t", "si"}
+                    or formula.attrib.get("si") != anchor_si
+                    or formula.text is not None
+                ):
+                    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+
+            reference = anchor_formula.attrib["ref"]
+            if not _A1_RANGE.fullmatch(reference):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            if ":" in reference:
+                first, last = reference.split(":", 1)
+            else:
+                first = last = reference
+            first_column, first_row = coordinate_from_string(first.replace("$", ""))
+            last_column, last_row = coordinate_from_string(last.replace("$", ""))
+            minimum_column = column_index_from_string(first_column)
+            maximum_column = column_index_from_string(last_column)
+            if minimum_column > maximum_column or first_row > last_row:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            coordinates = {(column, row) for _coord, column, row, _formula in members}
+            area = (maximum_column - minimum_column + 1) * (last_row - first_row + 1)
+            if (
+                (anchor_column, anchor_row) != (minimum_column, first_row)
+                or len(coordinates) != len(members)
+                or len(coordinates) != area
+                or any(
+                    column < minimum_column
+                    or column > maximum_column
+                    or row < first_row
+                    or row > last_row
+                    for column, row in coordinates
+                )
+                or maximum_column > boundary
+                or any(column > boundary for column, _row in coordinates)
+                or occupied.intersection(coordinates)
+                or not _verify_shared_formula_is_noop(anchor_text, boundary)
+            ):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            occupied.update(coordinates)
+            topology.append(
+                (
+                    str(numeric_si),
+                    reference,
+                    tuple(
+                        sorted(
+                            (
+                                coordinate,
+                                tuple(sorted(formula.attrib.items())),
+                                formula.text,
+                            )
+                            for coordinate, _column, _row, formula in members
+                        )
+                    ),
+                )
+            )
+        return tuple(sorted(topology))
+    except ReconciliationPeriodError:
+        raise
+    except (TypeError, ValueError):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID") from None
+
+
+def _verify_shared_formula_is_noop(value: str, boundary: int) -> bool:
+    """Verifier-local operand scan for an unchanged wholly-left shared anchor."""
+
+    if not value.strip() or "!" in value or "#" in value or "@" in value:
+        return False
+    unquoted = _strip_quoted(value)
+    if (
+        _UNSUPPORTED_FORMULA.search(unquoted)
+        or re.search(
+            r"(?<![A-Za-z0-9_.])\$?[A-Z]{1,3}:\$?[A-Z]{1,3}(?![A-Za-z0-9_.])", unquoted, re.I
+        )
+        or re.search(r"(?<![A-Za-z0-9_.])\$?\d+:\$?\d+(?![A-Za-z0-9_.])", unquoted)
+    ):
+        return False
+    index = 0
+    while index < len(value):
+        if value[index] == '"':
+            index += 1
+            while index < len(value):
+                if value[index] == '"':
+                    index += 2 if index + 1 < len(value) and value[index + 1] == '"' else 1
+                    break
+                index += 1
+            else:
+                return False
+            continue
+        match = _A1_TOKEN.match(value, index)
+        if match and _formula_token_boundary(value, match.start(), match.end()):
+            for operand in match.group(0).split(":"):
+                column, _row = coordinate_from_string(operand.replace("$", ""))
+                if column_index_from_string(column) > boundary:
+                    return False
+            index = match.end()
+            continue
+        index += 1
+    without_operands = _A1_TOKEN.sub("", unquoted)
+    for token in re.finditer(
+        r"(?<![A-Z0-9_])[A-Z_][A-Z0-9_.]*(?![A-Z0-9_])", without_operands, re.I
+    ):
+        if not without_operands[token.end() :].lstrip().startswith("(") and not re.fullmatch(
+            r"[A-Z]{1,3}", token.group(), re.I
+        ):
+            return False
+    return True
 
 
 def _validate_sheet_relationships(
