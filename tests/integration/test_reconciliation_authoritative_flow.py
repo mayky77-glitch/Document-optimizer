@@ -15,6 +15,7 @@ from report_processor.admin_panel.service import (
 from report_processor.calculation import calculate_matches
 from report_processor.matching import MatchResult, MatchStatus
 from report_processor.reconciliation_review import (
+    FeedbackRecord,
     ReviewAction,
     ReviewDecision,
     ReviewMode,
@@ -161,7 +162,50 @@ def test_feedback_failure_removes_written_output_and_never_marks_job_ready(
         service.apply_reconciliation(job.job_id)
 
     assert output.exists() is True
-    assert job.output is None and job.status == "failed"
+    assert job.output == output and job.status == "applying"
+    assert job.result_available is False
+
+
+@pytest.mark.parametrize("fault", ["before_commit", "after_commit"])
+def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    feedback = (FeedbackRecord("marker", None, ReviewAction.REJECT),)
+
+    def write_result(*_args):
+        output.write_bytes(b"result")
+        return output, feedback
+
+    monkeypatch.setattr("report_processor.admin_panel.service.apply_review", write_result)
+    if fault == "before_commit":
+        monkeypatch.setattr(
+            service.feedback_store,
+            "commit_apply",
+            lambda **_kwargs: (_ for _ in ()).throw(OSError("before commit")),
+        )
+    else:
+        original_save = service._job_store.save
+        calls = 0
+
+        def fail_ready_manifest(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise OSError("after commit")
+            return original_save(*args, **kwargs)
+
+        monkeypatch.setattr(service._job_store, "save", fail_ready_manifest)
+
+    with pytest.raises(OSError):
+        service.apply_reconciliation(job.job_id)
+    assert job.status == "applying"
+
+    restored = AdminPanelService(tmp_path).get_job(job.job_id)
+
+    assert restored.status == "ready"
+    records = AdminPanelService(tmp_path).feedback_store.records(job.target_digest)
+    assert [item.name_key for item in records] == ["marker"]
 
 
 def test_repeated_apply_keeps_verified_ready_result_unchanged(tmp_path, monkeypatch) -> None:
