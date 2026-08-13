@@ -53,3 +53,34 @@ def test_stage_enumeration_ignores_header_and_notes_without_index() -> None:
     )
 
     assert enumerate_reconciliation_stages(session) == ("13.1",)
+
+
+def test_structural_stage_discovery_keeps_printable_labels_and_requires_target_rows() -> None:
+    from report_processor.admin_panel.reconciliation_target import (
+        structurally_valid_reconciliation_stages,
+    )
+
+    session = _Session(
+        (
+            ("", "1234", "Секция (А)", "", ""),
+            ("", None, None, "1", "Работа А"),
+            ("", "1234", "Секция/Б", "1", "Работа Б"),
+            ("", "1234", "Только заголовок", "", ""),
+        )
+    )
+
+    assert structurally_valid_reconciliation_stages(session, maximum=64) == (
+        "Секция (А)",
+        "Секция/Б",
+    )
+
+
+def test_stage_validation_keeps_broad_printable_labels_without_locations() -> None:
+    from report_processor.admin_panel.reconciliation_uploads import validate_stage
+
+    assert validate_stage("Секция (А)") == "Секция (А)"
+    assert validate_stage("Секция/Б") == "Секция/Б"
+    with pytest.raises(ValueError):
+        validate_stage("/private/target.xlsx")
+    with pytest.raises(ValueError):
+        validate_stage("Лист1!A1")

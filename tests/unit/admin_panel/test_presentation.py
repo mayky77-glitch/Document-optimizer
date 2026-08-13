@@ -10,15 +10,23 @@ from report_processor.admin_panel.presentation import (
 def test_stage_selection_payload_exposes_only_safe_stage_values() -> None:
     payload = stage_selection_payload(
         "selection_required",
-        ("14.2", "13.1", "/private/target.xlsx", "Лист1!A1"),
+        ("14.2", "13.1", "Секция (А)", "Секция/Б", "/private/target.xlsx", "Лист1!A1"),
     )
 
     assert payload == {
         "error": "В отчёте найдено несколько этапов. Выберите нужный этап.",
         "code": "selection_required",
-        "stage_options": ["13.1", "14.2"],
+        "stage_options": ["13.1", "14.2", "Секция (А)", "Секция/Б"],
     }
     assert "private" not in repr(payload).casefold()
+
+
+def test_stage_selection_limit_is_a_controlled_repair_response() -> None:
+    payload = stage_selection_payload("selection_limit_exceeded")
+
+    assert payload["code"] == "selection_limit_exceeded"
+    assert payload["stage_options"] == []
+    assert "слишком много этапов" in payload["error"].casefold()
 
 
 def test_verification_payload_reports_a_safe_selected_stage() -> None:

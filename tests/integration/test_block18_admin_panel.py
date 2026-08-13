@@ -9,7 +9,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from report_processor.admin_panel import create_app
-from report_processor.admin_panel.service import TargetStageSelectionError
+from report_processor.admin_panel.service import AdminPanelService, TargetStageSelectionError
 
 
 class FakeAdminService:
@@ -200,6 +200,33 @@ def test_stage_selection_and_missing_stage_responses_are_controlled_and_private(
     assert missing.json()["code"] == "not_found"
     assert missing.json()["stage_options"] == []
     assert "download_url" not in missing.json() and "job_id" not in missing.json()
+
+
+def test_malformed_target_container_returns_controlled_not_found_without_a_job_directory(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "jobs"
+    service = AdminPanelService(workspace)
+    app = create_app(service=service, workspace_root=workspace)
+    directories_before = {path.name for path in workspace.iterdir() if path.is_dir()}
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/jobs",
+            files={
+                "source": _files()["source"],
+                "target": (
+                    "target.xlsx",
+                    b"PK\x03\x04malformed-target",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "not_found"
+    assert response.json()["stage_options"] == []
+    assert service.jobs == {}
+    assert {path.name for path in workspace.iterdir() if path.is_dir()} == directories_before
 
 
 def test_job_payload_uses_controlled_ids_and_never_leaks_private_paths(client) -> None:

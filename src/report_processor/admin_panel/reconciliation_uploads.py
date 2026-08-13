@@ -11,7 +11,6 @@ MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
 ALLOWED_SUFFIXES = frozenset({".xlsx", ".xlsm"})
 ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
-STAGE_PATTERN = re.compile(r"^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё._ -]{0,63}$")
 
 
 def validate_workbook_upload(name: str, content: bytes) -> None:
@@ -56,9 +55,25 @@ def validated_sources(
 
 
 def validate_stage(stage: object) -> str:
-    if not isinstance(stage, str) or not STAGE_PATTERN.fullmatch(stage.strip()):
+    if not is_safe_stage_text(stage):
         raise ValueError("invalid stage")
     return stage.strip()
+
+
+def is_safe_stage_text(stage: object) -> bool:
+    """Accept bounded printable stage labels while rejecting private locations."""
+
+    if not isinstance(stage, str):
+        return False
+    value = stage.strip()
+    return (
+        bool(value)
+        and len(value) <= 64
+        and all(character.isprintable() for character in value)
+        and "!" not in value
+        and not value.startswith(("/", "\\"))
+        and not re.match(r"^[A-Za-z]:[\\/]", value)
+    )
 
 
 def validate_mode(mode: object) -> str:
