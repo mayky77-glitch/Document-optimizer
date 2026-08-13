@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -194,3 +195,27 @@ def test_interrupted_apply_fails_closed_without_a_download(tmp_path: Path) -> No
     # deliberately invisible rather than being rerun or made downloadable.
     with pytest.raises(KeyError):
         recovered.get_job(job.job_id)
+
+
+def test_apply_manifest_never_contains_workbook_derived_feedback_values(tmp_path: Path) -> None:
+    service = _ready_service(tmp_path / "jobs")
+    job = _ready_job(service)
+    job.status = "applying"
+    job.output = job.directory / "result.xlsx"
+    job.output.write_bytes(b"result")
+    job.output_identity = (job.output.stat().st_dev, job.output.stat().st_ino)
+    job.output_digest = hashlib.sha256(job.output.read_bytes()).hexdigest()
+    job.apply_manifest = {
+        "output_path": "result.xlsx",
+        "output_digest": job.output_digest,
+        "output_identity": list(job.output_identity),
+        "apply_key": "a" * 64,
+        "payload_hash": "b" * 64,
+    }
+    service._persist_job(job)
+
+    text = json.dumps(service._job_store.load(job.job_id), ensure_ascii=False)
+
+    assert "feedback" not in text
+    assert "distinctive work" not in text
+    assert "distinctive-unit" not in text

@@ -5,6 +5,11 @@ from hashlib import sha256
 import pytest
 
 from fixtures.calculation.builders import calculation_rule_set, calculation_source_row, match_result
+from report_processor.admin_panel.reconciliation_execution import (
+    ReconciliationApplyResult,
+    _apply_plan,
+    _feedback_records,
+)
 from report_processor.admin_panel.reconciliation_state import ReconciliationReviewState
 from report_processor.admin_panel.reconciliation_target import _bindings, writer_calculations
 from report_processor.admin_panel.service import (
@@ -15,7 +20,6 @@ from report_processor.admin_panel.service import (
 from report_processor.calculation import calculate_matches
 from report_processor.matching import MatchResult, MatchStatus
 from report_processor.reconciliation_review import (
-    FeedbackRecord,
     ReviewAction,
     ReviewDecision,
     ReviewMode,
@@ -171,13 +175,30 @@ def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) 
     service, job, group_id = _review_job(tmp_path)
     _accept_group(job, group_id)
     output = job.directory / "result.xlsx"
-    feedback = (FeedbackRecord("marker", None, ReviewAction.REJECT),)
+    decisions = tuple(job.review_state.core_decisions())
+    feedback = _feedback_records(job.review_state, decisions)
 
     def write_result(*_args):
         output.write_bytes(b"result")
-        return output, feedback
+        from report_processor.business_rules import load_default_rule_set
+
+        apply_key, plan_hash = _apply_plan(
+            job,
+            job.review_state,
+            load_default_rule_set().rule_set.content_hash,
+            _feedback_records(job.review_state, decisions),
+            decisions,
+        )
+        return ReconciliationApplyResult(output, feedback, apply_key, plan_hash)
 
     monkeypatch.setattr("report_processor.admin_panel.service.apply_review", write_result)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.prepare_review",
+        lambda *_args: __import__(
+            "report_processor.admin_panel.reconciliation_execution",
+            fromlist=["ReconciliationReviewResult"],
+        ).ReconciliationReviewResult(state=job.review_state, source_batch=None),
+    )
     if fault == "before_commit":
         monkeypatch.setattr(
             service.feedback_store,
@@ -205,7 +226,54 @@ def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) 
 
     assert restored.status == "ready"
     records = AdminPanelService(tmp_path).feedback_store.records(job.target_digest)
-    assert [item.name_key for item in records] == ["marker"]
+    assert len(records) == len(feedback)
+
+
+def test_hostile_apply_hash_cannot_commit_feedback_or_publish_ready(tmp_path, monkeypatch) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    decisions = tuple(job.review_state.core_decisions())
+    feedback = _feedback_records(job.review_state, decisions)
+
+    def write_result(*_args):
+        output.write_bytes(b"result")
+        from report_processor.business_rules import load_default_rule_set
+
+        apply_key, plan_hash = _apply_plan(
+            job,
+            job.review_state,
+            load_default_rule_set().rule_set.content_hash,
+            feedback,
+            decisions,
+        )
+        return ReconciliationApplyResult(output, feedback, apply_key, plan_hash)
+
+    monkeypatch.setattr("report_processor.admin_panel.service.apply_review", write_result)
+    monkeypatch.setattr(
+        service.feedback_store,
+        "commit_apply",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("before commit")),
+    )
+    with pytest.raises(OSError):
+        service.apply_reconciliation(job.job_id)
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    manifest["apply"]["apply_key"] = "f" * 64
+    service._job_store.save(job.job_id, manifest)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.prepare_review",
+        lambda *_args: __import__(
+            "report_processor.admin_panel.reconciliation_execution",
+            fromlist=["ReconciliationReviewResult"],
+        ).ReconciliationReviewResult(state=job.review_state, source_batch=None),
+    )
+
+    recovered = AdminPanelService(tmp_path)
+
+    with pytest.raises(KeyError):
+        recovered.get_job(job.job_id)
+    assert recovered.feedback_store.records(job.target_digest) == ()
 
 
 def test_repeated_apply_keeps_verified_ready_result_unchanged(tmp_path, monkeypatch) -> None:

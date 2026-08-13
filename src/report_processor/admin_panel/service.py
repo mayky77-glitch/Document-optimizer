@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from report_processor.domain.exceptions import ReportProcessorError
-from report_processor.reconciliation_review import FeedbackRecord, ReviewAction, ReviewMode
 
 from .drawing_card_job_store import DrawingCardJobStore
 from .presentation import journal_payload, processing_presentation
@@ -309,7 +308,7 @@ class AdminPanelService:
                 job.output_identity = owned_output
                 job.output_digest = output_digest
                 job.apply_manifest = _apply_manifest(
-                    output, owned_output, output_digest, apply_key, payload_hash, feedback
+                    output, owned_output, output_digest, apply_key, payload_hash
                 )
                 # The exact replay plan is durable before touching SQLite.
                 self._persist_job(job)
@@ -599,11 +598,19 @@ class AdminPanelService:
         job.output_identity = plan["output_identity"]
         job.output_digest = plan["output_digest"]
         _verify_apply_artifacts(job, job.output, plan["output_identity"], plan["output_digest"])
+        recovered = prepare_review(job, self.feedback_store.records(job.target_digest))
+        self._apply_execution_result(job, recovered)
+        if job.status != "review_required" or job.review_state is None:
+            raise RuntimeError("reconciliation apply plan cannot be rebuilt")
+        decisions, feedback, apply_key, payload_hash = _rebuild_apply_plan(job, job.review_state)
+        del decisions
+        if apply_key != plan["apply_key"] or payload_hash != plan["payload_hash"]:
+            raise RuntimeError("reconciliation apply plan changed")
         self.feedback_store.commit_apply(
             target_digest=job.target_digest,
             apply_key=plan["apply_key"],
             payload_hash=plan["payload_hash"],
-            records=plan["feedback"],
+            records=feedback,
             precommit_validator=lambda: _verify_apply_artifacts(
                 job, job.output, plan["output_identity"], plan["output_digest"]
             ),
@@ -818,7 +825,6 @@ def _apply_manifest(
     output_digest: str,
     apply_key: str,
     payload_hash: str,
-    feedback: tuple[FeedbackRecord, ...],
 ) -> dict[str, object]:
     if not all(
         isinstance(value, str) and 1 <= len(value) <= 128 for value in (apply_key, payload_hash)
@@ -830,34 +836,18 @@ def _apply_manifest(
         "output_identity": list(identity),
         "apply_key": apply_key,
         "payload_hash": payload_hash,
-        "feedback": [_dump_feedback(item) for item in feedback],
-    }
-
-
-def _dump_feedback(item: FeedbackRecord) -> dict[str, object]:
-    return {
-        "name_key": item.name_key,
-        "unit_key": item.unit_key,
-        "action": item.action.value,
-        "target_category": item.target_category,
-        "mode": item.mode.value if item.mode else None,
-        "sequence": item.sequence,
     }
 
 
 def _load_apply_manifest(job: AdminJob, value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("reconciliation apply plan is missing")
-    required = ("output_path", "output_digest", "apply_key", "payload_hash", "feedback")
+    required = ("output_path", "output_digest", "apply_key", "payload_hash")
     if any(key not in value for key in required):
         raise ValueError("reconciliation apply plan is incomplete")
     output_path = value["output_path"]
     if output_path != "result.xlsx":
         raise ValueError("reconciliation apply output path is invalid")
-    feedback_raw = value["feedback"]
-    if not isinstance(feedback_raw, list) or len(feedback_raw) > MAX_MANUAL_DISCREPANCY_DECISIONS:
-        raise ValueError("reconciliation apply feedback is invalid")
-    feedback = tuple(_load_feedback(item) for item in feedback_raw)
     apply_key = value["apply_key"]
     payload_hash = value["payload_hash"]
     if not all(
@@ -870,40 +860,7 @@ def _load_apply_manifest(job: AdminJob, value: object) -> dict[str, object]:
         "output_identity": _manifest_identity(value.get("output_identity")),
         "apply_key": apply_key,
         "payload_hash": payload_hash,
-        "feedback": feedback,
     }
-
-
-def _load_feedback(value: object) -> FeedbackRecord:
-    if not isinstance(value, dict):
-        raise ValueError("reconciliation feedback record is invalid")
-    name_key = value.get("name_key")
-    unit_key = value.get("unit_key")
-    target_category = value.get("target_category")
-    sequence = value.get("sequence")
-    if (
-        not isinstance(name_key, str)
-        or len(name_key) > 200
-        or (unit_key is not None and (not isinstance(unit_key, str) or len(unit_key) > 200))
-        or (
-            target_category is not None
-            and (not isinstance(target_category, str) or len(target_category) > 200)
-        )
-        or not isinstance(sequence, int)
-        or not 0 <= sequence <= MAX_MANUAL_DISCREPANCY_DECISIONS
-    ):
-        raise ValueError("reconciliation feedback record is invalid")
-    try:
-        return FeedbackRecord(
-            name_key=name_key,
-            unit_key=unit_key,
-            action=ReviewAction(value.get("action")),
-            target_category=target_category,
-            mode=ReviewMode(value["mode"]) if value.get("mode") is not None else None,
-            sequence=sequence,
-        )
-    except (TypeError, ValueError) as error:
-        raise ValueError("reconciliation feedback record is invalid") from error
 
 
 def _verify_recovered_ready_job(job: AdminJob, manifest: dict[str, object]) -> None:
@@ -916,6 +873,30 @@ def _verify_recovered_ready_job(job: AdminJob, manifest: dict[str, object]) -> N
     _verify_output_facts(job.output, identity, expected_digest)
     job.output_identity = identity
     job.output_digest = expected_digest
+
+
+def _rebuild_apply_plan(job: AdminJob, state: ReconciliationReviewState):
+    """Derive the replay inputs from immutable uploads and autosaved decisions."""
+    from report_processor.business_rules import load_default_rule_set, load_rule_configuration
+
+    from .reconciliation_execution import _apply_plan, _feedback_records
+
+    validation = (
+        load_rule_configuration(job.rules_path)
+        if getattr(job, "rules_path", None)
+        else load_default_rule_set()
+    )
+    if not validation.valid or validation.rule_set is None:
+        raise RuntimeError("RULE_CONFIGURATION_INVALID")
+    decisions = tuple(state.core_decisions())
+    feedback = _feedback_records(state, decisions)
+    apply_key, plan_hash = _apply_plan(
+        job, state, validation.rule_set.content_hash, feedback, decisions
+    )
+    payload_hash = hashlib.sha256(
+        f"{plan_hash}:output-sha256:{job.output_digest}".encode()
+    ).hexdigest()
+    return decisions, feedback, apply_key, payload_hash
     if job.result_name is None:
         raise RuntimeError("reconciliation output name is missing")
 
