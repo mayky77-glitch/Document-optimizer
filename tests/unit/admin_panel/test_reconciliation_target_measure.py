@@ -200,6 +200,7 @@ def test_pairs_are_sheet_local_and_can_use_different_columns() -> None:
 def test_documentary_pair_is_a_separate_fail_closed_insertion_anchor() -> None:
     workbook, sheet = _workbook()
     _pair(sheet, 12, "Документальная отчетность за весь период")
+    sheet["N3"] = "suffix"
 
     (pair,) = discover_historical_target_measures(workbook, {sheet.title: 3})
 

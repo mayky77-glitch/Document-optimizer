@@ -65,6 +65,29 @@ class TargetMeasurePair:
 
 
 @dataclass(frozen=True, slots=True)
+class HistoricalTargetMeasureEvidence:
+    """Immutable structural proof for one documentary insertion anchor."""
+
+    sheet_name: str
+    quantity_column: int
+    cost_column: int
+    parent_span: tuple[int, int, int, int]
+    quantity_leaf_row: int
+    cost_leaf_row: int
+    quantity_leaf_label: str
+    cost_leaf_label: str
+    suffix_coordinates: tuple[str, ...]
+
+    @property
+    def quantity_letter(self) -> str:
+        return get_column_letter(self.quantity_column)
+
+    @property
+    def cost_letter(self) -> str:
+        return get_column_letter(self.cost_column)
+
+
+@dataclass(frozen=True, slots=True)
 class _Label:
     text: str
     key: tuple[int, int, int, int]
@@ -104,14 +127,14 @@ def discover_historical_target_measures(
     workbook,
     first_detail_rows: dict[str, int],
     merged_ranges_by_sheet: dict[str, tuple[str, ...]] | None = None,
-) -> tuple[TargetMeasurePair, ...]:
+) -> tuple[HistoricalTargetMeasureEvidence, ...]:
     """Return one documentary/historical adjacent measure pair per selected sheet.
 
     This is deliberately separate from the current-period reader: a pair is an
     insertion anchor only when its header path positively says it is historical.
     """
 
-    pairs: list[TargetMeasurePair] = []
+    pairs: list[HistoricalTargetMeasureEvidence] = []
     for sheet_name, first_detail_row in sorted(first_detail_rows.items()):
         candidates = _sheet_historical_candidates(
             workbook[sheet_name],
@@ -134,7 +157,7 @@ def _sheet_candidates(
     if end < start:
         return ()
     values, spans = _header_cells(sheet, start, end, merged_ranges)
-    candidates: dict[tuple[object, ...], TargetMeasurePair] = {}
+    candidates: dict[tuple[object, ...], HistoricalTargetMeasureEvidence] = {}
     for row in range(start, end + 1):
         for quantity_column in range(1, int(sheet.max_column or 0)):
             cost_column = quantity_column + 1
@@ -188,7 +211,7 @@ def _sheet_candidates(
 
 def _sheet_historical_candidates(
     sheet, first_detail_row: int, merged_ranges: tuple[str, ...]
-) -> tuple[TargetMeasurePair, ...]:
+) -> tuple[HistoricalTargetMeasureEvidence, ...]:
     end = max(0, first_detail_row - 1)
     start = max(1, end - _HEADER_ROWS + 1)
     if end < start:
@@ -217,9 +240,29 @@ def _sheet_historical_candidates(
                 or not _historical(quantity_text + " " + cost_text)
             ):
                 continue
-            key = (sheet.title, quantity_column, cost_column, quantity[-1].key, cost[-1].key)
-            candidates[key] = TargetMeasurePair(
-                sheet.title, quantity_column, cost_column, quantity_text, cost_text
+            common = [label for label in quantity if label.key in {item.key for item in cost}]
+            parents = [label for label in common if label.key[1] != label.key[3]]
+            if len(parents) != 1:
+                continue
+            suffix = tuple(
+                f"{get_column_letter(column)}{row_number}"
+                for row_number in range(1, int(sheet.max_row or 0) + 1)
+                for column in range(cost_column + 1, int(sheet.max_column or 0) + 1)
+                if sheet.cell(row_number, column).value is not None
+            )
+            if not suffix:
+                continue
+            key = (sheet.title, quantity_column, cost_column, parents[0].key)
+            candidates[key] = HistoricalTargetMeasureEvidence(
+                sheet.title,
+                quantity_column,
+                cost_column,
+                parents[0].key,
+                quantity[-1].key[0],
+                cost[-1].key[0],
+                str(sheet.cell(quantity[-1].key[0], quantity_column).value or ""),
+                str(sheet.cell(cost[-1].key[0], cost_column).value or ""),
+                suffix,
             )
     return tuple(candidates.values())
 

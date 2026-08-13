@@ -37,6 +37,28 @@ _UNSUPPORTED_PART = re.compile(
     r"(?:^|/)(?:tables|pivotTables|pivotCache|slicers|externalLinks|embeddings|controls|charts)/",
     re.IGNORECASE,
 )
+_YEAR_MONTH = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[-./]\s*(0?[1-9]|1[0-2])(?!\d)")
+_MONTH_YEAR = re.compile(r"(?<!\d)(0?[1-9]|1[0-2])\s*[-./]\s*((?:19|20)\d{2})(?!\d)")
+_RUSSIAN_MONTHS = {
+    name: index
+    for index, name in enumerate(
+        (
+            "январ",
+            "феврал",
+            "март",
+            "апрел",
+            "мая",
+            "июн",
+            "июл",
+            "август",
+            "сентябр",
+            "октябр",
+            "ноябр",
+            "декабр",
+        ),
+        start=1,
+    )
+}
 
 
 def build_period_insertion_plan(
@@ -52,6 +74,8 @@ def build_period_insertion_plan(
     )
     source = Path(source_path)
     _reject_package(source)
+    parts = worksheet_parts(source)
+    sheet_ids = _sheet_id_map(source)
     with source.open("rb") as stream:
         digest = hashlib.sha256(stream.read()).hexdigest()
     workbook = load_workbook(source, read_only=False, data_only=False, keep_links=True)
@@ -75,7 +99,13 @@ def build_period_insertion_plan(
             raise ReconciliationPeriodError("PERIOD_INSERTION_MIXED_STATE")
         if current:
             return ReconciliationPeriodInsertionPlan(
-                digest, reporting_period, (), tuple(worksheet_parts(source).items()), True
+                "ReconciliationPeriodInsertion-1.0",
+                digest,
+                reporting_period,
+                (),
+                tuple(parts.items()),
+                _affected_parts(source, ()),
+                True,
             )
         historical = discover_historical_target_measures(
             workbook, first_detail_rows, merged_ranges_by_sheet
@@ -83,17 +113,28 @@ def build_period_insertion_plan(
         anchors = tuple(
             ReconciliationSheetAnchor(
                 pair.sheet_name,
+                sheet_ids[pair.sheet_name],
+                parts[pair.sheet_name],
                 pair.quantity_column,
                 pair.cost_column,
                 first_detail_rows[pair.sheet_name],
+                pair.parent_span,
+                pair.quantity_leaf_row,
+                pair.cost_leaf_row,
+                pair.quantity_leaf_label,
+                pair.cost_leaf_label,
+                pair.suffix_coordinates,
             )
             for pair in historical
         )
-        for anchor in anchors:
-            _historical_parent_row(workbook[anchor.sheet_name], anchor)
         _reject_affected_comments(source, anchors)
         return ReconciliationPeriodInsertionPlan(
-            digest, reporting_period, anchors, tuple(worksheet_parts(source).items())
+            "ReconciliationPeriodInsertion-1.0",
+            digest,
+            reporting_period,
+            anchors,
+            tuple(parts.items()),
+            _affected_parts(source, anchors),
         )
     except ReconciliationPeriodError:
         raise
@@ -112,6 +153,7 @@ def prepare_period_insertion(
 
     source, output = Path(source_path), Path(output_path)
     _assert_digest(source, plan.source_sha256)
+    _validate_plan(source, plan)
     if plan.idempotent:
         raise ReconciliationPeriodError("PERIOD_INSERTION_IDEMPOTENT")
     try:
@@ -145,13 +187,14 @@ def verify_period_insertion(
 
     source, output = Path(source_path), Path(output_path)
     _assert_digest(source, plan.source_sha256)
+    _validate_plan(source, plan)
     anchors = {item.sheet_name: item for item in plan.anchors}
     source_parts = dict(plan.worksheet_parts)
     try:
         with zipfile.ZipFile(source) as before, zipfile.ZipFile(output) as after:
             if tuple(before.namelist()) != tuple(after.namelist()) or after.testzip() is not None:
                 raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
-            changed = set(source_parts.values()) | {"xl/workbook.xml", "xl/calcChain.xml"}
+            changed = set(plan.affected_parts)
             for info in before.infolist():
                 if info.filename not in changed and before.read(info.filename) != after.read(
                     info.filename
@@ -302,6 +345,54 @@ def _reject_package(source: Path) -> None:
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
 
 
+def _sheet_id_map(source: Path) -> dict[str, int]:
+    with zipfile.ZipFile(source) as archive:
+        root = ET.fromstring(archive.read("xl/workbook.xml"))
+    result = {}
+    for node in root.iter(_Q("sheet")):
+        name, sheet_id = node.attrib.get("name"), node.attrib.get("sheetId")
+        if not name or not sheet_id or not sheet_id.isdigit():
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+        result[name] = int(sheet_id)
+    return result
+
+
+def _affected_parts(
+    source: Path, anchors: tuple[ReconciliationSheetAnchor, ...]
+) -> tuple[str, ...]:
+    with zipfile.ZipFile(source) as archive:
+        names = set(archive.namelist())
+    affected = {"xl/workbook.xml", *(anchor.worksheet_part for anchor in anchors)}
+    if "xl/calcChain.xml" in names:
+        affected.add("xl/calcChain.xml")
+    return tuple(sorted(affected))
+
+
+def _validate_plan(source: Path, plan: ReconciliationPeriodInsertionPlan) -> None:
+    """Reject fabricated plans before a temporary output identity exists."""
+
+    if plan.plan_digest != hashlib.sha256(plan.canonical_bytes()).hexdigest():
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
+    parts = worksheet_parts(source)
+    sheet_ids = _sheet_id_map(source)
+    if tuple(parts.items()) != plan.worksheet_parts:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
+    if _affected_parts(source, plan.anchors) != plan.affected_parts:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
+    if len({anchor.sheet_name for anchor in plan.anchors}) != len(plan.anchors):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
+    for anchor in plan.anchors:
+        if (
+            parts.get(anchor.sheet_name) != anchor.worksheet_part
+            or sheet_ids.get(anchor.sheet_name) != anchor.sheet_id
+            or anchor.cost_column != anchor.quantity_column + 1
+            or anchor.parent_span[1] != anchor.quantity_column
+            or anchor.parent_span[3] != anchor.cost_column
+            or not anchor.suffix_coordinates
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
+
+
 def _reject_affected_comments(source: Path, anchors: tuple[ReconciliationSheetAnchor, ...]) -> None:
     """Allow comments left of their sheet boundary; VML visual anchors stay untouched."""
 
@@ -370,23 +461,38 @@ def _historical_parent_row(sheet, anchor: ReconciliationSheetAnchor) -> int:
 
 
 def _historical_parent_xml_row(root: ET.Element, anchor: ReconciliationSheetAnchor) -> int:
-    matches = []
+    parent = anchor.parent_span
     for node in root.iter(_Q("mergeCell")):
         ref = node.attrib.get("ref", "")
         try:
             left, top, right, bottom = range_boundaries(ref)
         except ValueError:
             continue
-        if left == anchor.quantity_column and right == anchor.cost_column and top == bottom - 0:
-            matches.append(top)
-    if len(matches) != 1:
+        if (top, left, bottom, right) == parent:
+            return top
+    if parent[1] != anchor.quantity_column or parent[3] != anchor.cost_column:
         raise ReconciliationPeriodError("PERIOD_INSERTION_ANCHOR_INVALID")
-    return matches[0]
+    raise ReconciliationPeriodError("PERIOD_INSERTION_ANCHOR_INVALID")
 
 
 def _pair_period_conflict(pair, period: ReportingPeriod) -> bool:
-    header = pair.quantity_header
-    return period.value not in header and period.label.casefold() not in header
+    quantity = _calendar_identities(pair.quantity_header)
+    cost = _calendar_identities(pair.cost_header)
+    evidence = quantity | cost
+    return bool(evidence and evidence != {(period.year, period.month)})
+
+
+def _calendar_identities(value: str) -> set[tuple[int, int]]:
+    identities = {(int(year), int(month)) for year, month in _YEAR_MONTH.findall(value)}
+    identities.update((int(year), int(month)) for month, year in _MONTH_YEAR.findall(value))
+    tokens = re.findall(r"\w+", value.casefold(), flags=re.UNICODE)
+    for index, token in enumerate(tokens[:-1]):
+        month = next(
+            (number for name, number in _RUSSIAN_MONTHS.items() if token.startswith(name)), None
+        )
+        if month is not None and re.fullmatch(r"(?:19|20)\d{2}", tokens[index + 1]):
+            identities.add((int(tokens[index + 1]), month))
+    return identities
 
 
 def _map_coordinate(coordinate: str, boundary: int) -> str:
