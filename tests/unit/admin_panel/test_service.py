@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from report_processor.admin_panel import service as admin_service
 from report_processor.admin_panel.service import MAX_MANUAL_DISCREPANCY_DECISIONS, AdminPanelService
 
 
@@ -112,6 +113,82 @@ def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path
     assert [item["decision"] for item in payload["decisions"]] == ["fit", "not_fit"]
     assert str(tmp_path) not in result_path.read_text(encoding="utf-8")
     assert payload["statement"].startswith("Решения оператора записаны отдельно")
+
+
+def test_omitted_stage_auto_selects_the_only_structurally_valid_target_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        admin_service,
+        "_structurally_valid_target_stages",
+        lambda _target, _digest: ("14.2",),
+    )
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _manual_result())
+
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage=None,
+    )
+
+    assert job.stage == "14.2"
+
+
+@pytest.mark.parametrize(
+    ("stages", "code"),
+    (((), "not_found"), (("13.1", "14.2"), "selection_required")),
+)
+def test_omitted_stage_stops_before_execution_when_selection_is_not_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stages: tuple[str, ...], code: str
+) -> None:
+    monkeypatch.setattr(
+        admin_service,
+        "_structurally_valid_target_stages",
+        lambda _target, _digest: stages,
+    )
+    executed = []
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda job: executed.append(job))
+
+    with pytest.raises(admin_service.TargetStageSelectionError) as error:
+        service.create_job(
+            source_name="source.xlsx",
+            source_content=b"PK\x03\x04source",
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04target",
+            stage=None,
+        )
+
+    assert error.value.code == code
+    expected_options = stages if code == "selection_required" else ()
+    assert error.value.stage_options == expected_options
+    assert executed == []
+    assert not [path for path in (tmp_path / "jobs").iterdir() if path.is_dir()]
+
+
+def test_explicit_missing_stage_stops_before_review_when_api_validation_is_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        admin_service,
+        "_structurally_valid_target_stages",
+        lambda _target, _digest: ("13.1",),
+    )
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _manual_result())
+
+    with pytest.raises(admin_service.TargetStageSelectionError) as error:
+        service.create_job(
+            source_name="source.xlsx",
+            source_content=b"PK\x03\x04source",
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04target",
+            stage="14.2",
+            validate_target_stage=True,
+        )
+
+    assert error.value.code == "not_found"
+    assert not [path for path in (tmp_path / "jobs").iterdir() if path.is_dir()]
 
 
 def test_suggestion_group_decision_is_atomic_and_replay_safe(tmp_path: Path) -> None:

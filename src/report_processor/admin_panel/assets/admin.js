@@ -4,6 +4,8 @@
   const form = document.querySelector("#job-form");
   const sourceFiles = document.querySelector("#sources");
   const targetFile = document.querySelector("#target");
+  const stageSelection = document.querySelector("#stage-selection");
+  const stage = document.querySelector("#stage");
   const sourceCount = document.querySelector("#source-count");
   const status = document.querySelector("#status");
   const reviewPanel = document.querySelector("#review-panel");
@@ -20,10 +22,36 @@
   const resultPanel = document.querySelector(".result-panel");
   const submit = form.querySelector('button[type="submit"]');
   const operation = form.querySelector('input[name="operation"]');
-  const workbookExtensions = new Set([".xlsx", ".xlsm"]);
+  const sourceWorkbookExtensions = new Set([".xlsx", ".xlsm"]);
+  const targetWorkbookExtensions = new Set([".xlsx"]);
   let currentJobId = "";
   let batchReview = null;
   let activeLearningReview = null;
+
+  const stageOptions = (payload) => Array.isArray(payload?.stage_options)
+    ? [...new Set(payload.stage_options.filter((value) => typeof value === "string" && value.trim()))]
+    : [];
+
+  const showStageSelection = (payload) => {
+    const options = stageOptions(payload);
+    if (!options.length) return false;
+    stage.replaceChildren(new Option("Выберите этап", ""));
+    options.forEach((value) => stage.append(new Option(value, value)));
+    stage.value = "";
+    stage.disabled = false;
+    stage.required = true;
+    stageSelection.hidden = false;
+    stage.focus({ preventScroll: true });
+    setStatus("Выберите этап из отчёта и повторите проверку. Загруженные файлы сохраняются в форме.");
+    return true;
+  };
+
+  const clearStageSelection = () => {
+    stageSelection.hidden = true;
+    stage.disabled = true;
+    stage.required = false;
+    stage.replaceChildren(new Option("Выберите этап", ""));
+  };
 
   const setProgress = (step) => {
     const order = ["files", "run", "result"];
@@ -53,9 +81,10 @@
     const sources = [...sourceFiles.files];
     if (!sources.length) return "Добавьте хотя бы один исходный документ.";
     if (sources.length > 32) return "Можно выбрать не больше 32 исходных документов. Уберите лишние файлы.";
-    if (sources.some((file) => !workbookExtensions.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx или .xlsm.";
+    if (sources.some((file) => !sourceWorkbookExtensions.has(fileExtension(file)))) return "В исходниках есть неподдерживаемый файл. Оставьте только Excel-файлы .xlsx или .xlsm.";
     if (!targetFile.files.length) return "Выберите один целевой отчёт.";
-    if (!workbookExtensions.has(fileExtension(targetFile.files[0]))) return "Целевой отчёт должен быть Excel-файлом .xlsx или .xlsm.";
+    if (!targetWorkbookExtensions.has(fileExtension(targetFile.files[0]))) return "Целевой отчёт должен быть Excel-файлом .xlsx.";
+    if (!stageSelection.hidden && !stage.value) return "Выберите этап из списка.";
     return "";
   };
 
@@ -74,8 +103,11 @@
     }
     if (!response.ok) {
       const error = new Error(typeof payload.error === "string" ? payload.error : "Сверка не выполнена. Проверьте документы и повторите действие.");
-      const controlledCode = payload?.code === "stale_state" ? "stale_state" : "";
+      const controlledCode = ["stale_state", "selection_required", "not_found"].includes(payload?.code)
+        ? payload.code
+        : "";
       if (controlledCode) error.code = controlledCode;
+      if (controlledCode === "selection_required") error.stage_options = stageOptions(payload);
       throw error;
     }
     return payload;
@@ -479,6 +511,7 @@
   };
 
   const renderJob = (payload) => {
+    clearStageSelection();
     currentJobId = typeof payload.job_id === "string" ? payload.job_id : currentJobId;
     if (renderVerification(payload)) return;
     reviewTitle.textContent = "Подтвердите соответствия";
@@ -497,6 +530,7 @@
   };
 
   sourceFiles.addEventListener("change", updateSourceCount);
+  targetFile.addEventListener("change", clearStageSelection);
 
   applyButton.addEventListener("click", async () => {
     if (!currentJobId) return;
@@ -525,10 +559,15 @@
       [...sourceFiles.files].forEach((file) => data.append("sources", file));
       data.append("target", targetFile.files[0]);
       data.append("operation", operation?.value || "verify");
+      if (!stageSelection.hidden && stage.value) data.append("stage", stage.value);
       renderJob(await requestJson("/api/jobs", { method: "POST", body: data }));
     } catch (requestError) {
-      setStatus(requestError.message, true);
-      setProgress("files");
+      if (requestError.code === "selection_required" && showStageSelection(requestError)) {
+        setProgress("files");
+      } else {
+        setStatus(requestError.message, true);
+        setProgress("files");
+      }
     } finally {
       submit.disabled = false;
     }

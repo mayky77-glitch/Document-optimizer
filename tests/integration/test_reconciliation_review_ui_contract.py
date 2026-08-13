@@ -38,6 +38,20 @@ def _workbook_bytes() -> bytes:
     return stream.getvalue()
 
 
+def _target_workbook_bytes() -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["B1"] = "1234"
+    sheet["C1"] = "Этап 13.1"
+    sheet["D1"] = "1"
+    sheet["E1"] = "Целевая работа"
+    sheet["F1"] = "шт"
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
+
+
 def test_authoritative_review_payload_and_local_responsive_controls(tmp_path: Path) -> None:
     service = AdminPanelService(tmp_path, execute=lambda _job: _review_result())
     app = create_app(service=service, workspace_root=tmp_path)
@@ -52,7 +66,7 @@ def test_authoritative_review_payload_and_local_responsive_controls(tmp_path: Pa
                 ),
                 "target": (
                     "target.xlsx",
-                    _workbook_bytes(),
+                    _target_workbook_bytes(),
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 ),
             },
@@ -90,6 +104,9 @@ def test_authoritative_review_payload_and_local_responsive_controls(tmp_path: Pa
     )
     assert 'document.createElement("details")' in javascript
     assert "member-override" in javascript and "renderMemberRow" in javascript
+    assert "showStageSelection" in javascript
+    assert "stageSelection.hidden" in javascript
+    assert "stage.focus({ preventScroll: true })" in javascript
     assert "http://" not in javascript + css and "https://" not in javascript + css
 
 

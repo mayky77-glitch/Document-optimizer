@@ -38,6 +38,7 @@ _ISSUE_PRESENTATION = {
 _DEFAULT_PRESENTATION = ("manual_review", "blue")
 _UNCHANGED_CODES = {"UNCHANGED_VALUE", "VALUE_UNCHANGED", "NO_VALUE_CHANGE"}
 _ABSOLUTE_PATH = re.compile(r"(?<![\w])(?:/[^\s,;]+|[A-Za-z]:\\[^\s,;]+)")
+_STAGE_OPTION = re.compile(r"^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё._ -]{0,63}$")
 
 
 def job_payload(job: object) -> dict[str, object]:
@@ -122,9 +123,36 @@ def _verification_payload(job: object) -> dict[str, object]:
             else None
         ),
     }
+    stage = _public_text(getattr(job, "stage", ""), 64)
+    if _STAGE_OPTION.fullmatch(stage):
+        payload["stage"] = stage
     if not completed:
         payload["source_issues"] = _source_issues(getattr(job, "source_issues", ()))
     return payload
+
+
+def stage_selection_payload(code: object, stage_options: object = ()) -> dict[str, object]:
+    """Project a stage repair outcome without workbook provenance."""
+
+    safe_code = str(code)
+    messages = {
+        "not_found": (
+            "В отчёте не найден этап с корректными строками. Проверьте отчёт и повторите загрузку."
+        ),
+        "selection_required": "В отчёте найдено несколько этапов. Выберите нужный этап.",
+    }
+    if safe_code not in messages:
+        raise ValueError("invalid stage selection code")
+    options = []
+    if safe_code == "selection_required" and isinstance(stage_options, (list, tuple)):
+        options = sorted(
+            {
+                value.strip()
+                for item in stage_options
+                if isinstance(item, str) and _STAGE_OPTION.fullmatch(value := item.strip())
+            }
+        )
+    return {"error": messages[safe_code], "code": safe_code, "stage_options": options}
 
 
 def _verification_count(value: object) -> int:

@@ -119,9 +119,10 @@ class AdminPanelService:
         sources: list[tuple[str, bytes]] | None = None,
         target_name: str,
         target_content: bytes,
-        stage: str,
+        stage: str | None,
         mode: str = "write",
         operation: str = "reconcile",
+        validate_target_stage: bool = False,
     ) -> AdminJob:
         upload_sources = validated_sources(sources, source_name, source_content)
         validate_workbook_upload(target_name, target_content)
@@ -130,7 +131,7 @@ class AdminPanelService:
             > MAX_UPLOAD_BYTES
         ):
             raise ValueError("combined upload is too large")
-        clean_stage = validate_stage(stage)
+        clean_stage = validate_stage(stage) if stage is not None else None
         clean_mode = validate_mode(mode)
         clean_operation = validate_operation(operation)
         job_id = secrets.token_urlsafe(18)
@@ -146,15 +147,21 @@ class AdminPanelService:
             for source, (_name, content) in zip(source_paths, upload_sources, strict=True):
                 _private_write(source, content)
             _private_write(target, target_content)
+            target_digest = _digest(target_content)
+            selected_stage = (
+                _resolve_target_stage(target, target_digest, clean_stage)
+                if validate_target_stage or clean_stage is None
+                else clean_stage
+            )
             job = AdminJob(
                 job_id=job_id,
                 directory=directory,
                 source=source_paths[0],
                 target=target,
-                stage=clean_stage,
+                stage=selected_stage,
                 mode=clean_mode,
                 source_digest=_digest(upload_sources[0][1]),
-                target_digest=_digest(target_content),
+                target_digest=target_digest,
                 sources=source_paths,
                 source_digests=tuple(_digest(content) for _name, content in upload_sources),
                 source_names=tuple(name for name, _content in upload_sources),
@@ -584,6 +591,53 @@ def validate_operation(operation: object) -> str:
     if not isinstance(operation, str) or operation not in {"reconcile", "verify"}:
         raise ValueError("invalid operation")
     return operation
+
+
+class TargetStageSelectionError(ValueError):
+    """A controlled stage-selection outcome safe to project to the API."""
+
+    def __init__(self, code: str, stage_options: tuple[str, ...] = ()) -> None:
+        super().__init__(code)
+        self.code = code
+        self.stage_options = stage_options
+
+
+def _resolve_target_stage(target: Path, digest: str, requested: str | None) -> str:
+    stages = _structurally_valid_target_stages(target, digest)
+    if requested is not None:
+        if requested in stages:
+            return requested
+        raise TargetStageSelectionError("not_found")
+    if len(stages) == 1:
+        return stages[0]
+    if not stages:
+        raise TargetStageSelectionError("not_found")
+    raise TargetStageSelectionError("selection_required", stages)
+
+
+def _structurally_valid_target_stages(target: Path, digest: str) -> tuple[str, ...]:
+    """Return only stages that the authoritative reader can turn into target rows."""
+
+    from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
+    from report_processor.processing.adapters import _materialized
+
+    from .reconciliation_target import enumerate_reconciliation_stages, read_reconciliation_target
+
+    try:
+        source = _materialized(target, f"target-stage-discovery:{digest}")
+        with open_dual_workbook(WorkbookOpenRequest(source)) as session:
+            discovered = enumerate_reconciliation_stages(session)
+    except (OSError, TypeError, ValueError, RuntimeError):
+        return ()
+    valid = []
+    for stage in discovered:
+        try:
+            _schema, rows = read_reconciliation_target(target, digest, stage)
+        except (OSError, TypeError, ValueError, RuntimeError):
+            continue
+        if rows:
+            valid.append(stage)
+    return tuple(sorted(set(valid)))
 
 
 def _verify_inputs(job: AdminJob) -> None:
