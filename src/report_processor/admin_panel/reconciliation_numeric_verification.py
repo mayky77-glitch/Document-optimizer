@@ -229,7 +229,14 @@ def _matches_target(calculation, mode: ReviewMode) -> bool:
 
 def _finite_target_value(cell) -> Decimal | None:
     value = getattr(cell, "value", None)
-    if not isinstance(value, Decimal) or not value.is_finite():
+    cache_state = str(getattr(cell, "cache_state", "")).upper()
+    status = str(getattr(cell, "status", "")).upper()
+    if (
+        cache_state not in {"NOT_FORMULA", "FORMULA_WITH_CACHED_VALUE"}
+        or status != "OK"
+        or not isinstance(value, Decimal)
+        or not value.is_finite()
+    ):
         return None
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 

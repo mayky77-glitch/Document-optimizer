@@ -260,7 +260,12 @@ def _numeric(cell):
 
     if cell is None:
         return None
-    return TargetNumericCell(cell.numeric_value, cell.raw_lexeme, "NOT_FORMULA", cell.status)
+    return TargetNumericCell(
+        cell.numeric_value,
+        cell.raw_lexeme,
+        cell.formula.cache_state if cell.formula is not None else "NOT_FORMULA",
+        cell.status,
+    )
 
 
 def _sha256(path: Path) -> str:

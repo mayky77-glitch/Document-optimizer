@@ -22,6 +22,7 @@ from report_processor.admin_panel.reconciliation_numeric_verification import (
     verify_numeric,
 )
 from report_processor.admin_panel.reconciliation_sources import ReconciliationSourceIssue
+from report_processor.admin_panel.reconciliation_target import _numeric
 from report_processor.admin_panel.reconciliation_verification import (
     VerificationTechnicalFailure,
     _write_artifact,
@@ -146,8 +147,8 @@ def test_safe_package_and_latest_authoritative_feedback_have_expected_precedence
 
 def test_numeric_comparison_uses_writer_scale_and_cost_only_omits_quantity() -> None:
     target = SimpleNamespace(
-        selected_quantity=SimpleNamespace(value=Decimal("999.999")),
-        selected_cost=SimpleNamespace(value=Decimal("2.695")),
+        selected_quantity=TargetNumericCell(Decimal("999.999"), "999.999", "NOT_FORMULA", "OK"),
+        selected_cost=TargetNumericCell(Decimal("2.695"), "2.695", "NOT_FORMULA", "OK"),
     )
     calculation = SimpleNamespace(target_row=target, quantity=Decimal("1.01"), cost=Decimal("2.70"))
 
@@ -188,6 +189,60 @@ def test_numeric_comparison_reads_target_numeric_cell_value() -> None:
         target_row=SimpleNamespace(
             selected_quantity=TargetNumericCell(Decimal("1.00"), "1", "NOT_FORMULA", "OK"),
             selected_cost=TargetNumericCell(Decimal("2.70"), "2.7", "NOT_FORMULA", "OK"),
+        ),
+        quantity=Decimal("1.00"),
+        cost=Decimal("2.70"),
+    )
+
+    assert _matches_target(calculation, ReviewMode.QUANTITY_COST) is True
+
+
+@pytest.mark.parametrize(
+    ("cache_state", "status"),
+    (
+        ("FORMULA_WITHOUT_CACHED_VALUE", "OK"),
+        ("CACHE_UNTRUSTED", "OK"),
+        ("FORMULA_WITH_CACHED_VALUE", "EXCEL_ERROR"),
+    ),
+)
+def test_formula_cache_and_error_target_values_are_technical_failures(
+    cache_state: str, status: str
+) -> None:
+    calculation = SimpleNamespace(
+        target_row=SimpleNamespace(
+            selected_quantity=TargetNumericCell(Decimal("1.00"), "1", "NOT_FORMULA", "OK"),
+            selected_cost=TargetNumericCell(Decimal("2.70"), "2.7", cache_state, status),
+        ),
+        quantity=Decimal("1.00"),
+        cost=Decimal("2.70"),
+    )
+
+    with pytest.raises(NumericVerificationFailure, match="TARGET_VALUE_UNAVAILABLE"):
+        _matches_target(calculation, ReviewMode.COST_ONLY)
+
+
+def test_target_numeric_adapter_preserves_formula_cache_state() -> None:
+    cell = SimpleNamespace(
+        numeric_value=Decimal("2.70"),
+        raw_lexeme="2.7",
+        formula=SimpleNamespace(cache_state="FORMULA_WITH_CACHED_VALUE"),
+        status="OK",
+    )
+
+    assert _numeric(cell) == TargetNumericCell(
+        Decimal("2.70"), "2.7", "FORMULA_WITH_CACHED_VALUE", "OK"
+    )
+
+
+def test_trusted_cached_formula_target_value_is_eligible() -> None:
+    calculation = SimpleNamespace(
+        target_row=SimpleNamespace(
+            selected_quantity=TargetNumericCell(
+                Decimal("1.00"), "1", "FORMULA_WITH_CACHED_VALUE", "OK"
+            ),
+            selected_cost=TargetNumericCell(
+                Decimal("2.70"), "2.7", "FORMULA_WITH_CACHED_VALUE", "OK"
+            ),
         ),
         quantity=Decimal("1.00"),
         cost=Decimal("2.70"),
