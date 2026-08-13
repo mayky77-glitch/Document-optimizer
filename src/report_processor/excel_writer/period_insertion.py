@@ -123,7 +123,6 @@ def build_period_insertion_plan(
             )
             for pair in historical
         )
-        _reject_affected_comments(source, anchors)
         _preflight_worksheets(source, anchors)
         return ReconciliationPeriodInsertionPlan(
             "ReconciliationPeriodInsertion-1.0",
@@ -220,9 +219,15 @@ def verify_period_insertion(
                     or info.compress_type != candidate_info.compress_type
                     or info.external_attr != candidate_info.external_attr
                     or info.create_system != candidate_info.create_system
+                    or info.create_version != candidate_info.create_version
+                    or info.extract_version != candidate_info.extract_version
+                    or info.reserved != candidate_info.reserved
                     or info.flag_bits != candidate_info.flag_bits
+                    or info.volume != candidate_info.volume
+                    or info.internal_attr != candidate_info.internal_attr
                     or info.extra != candidate_info.extra
                     or info.comment != candidate_info.comment
+                    or info.orig_filename != candidate_info.orig_filename
                 ):
                     raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
                 if info.filename not in changed and before.read(info.filename) != after.read(
@@ -639,14 +644,16 @@ def _verify_other_changed_parts(
             for left, right in zip(old_names, new_names, strict=True):
                 if left.attrib != right.attrib:
                     raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
-                # Re-run the allowed-name parser as an inverse-independent
-                # predicate; nonaffected names must remain byte-identical.
                 if left.text == right.text:
                     continue
                 if left.attrib.get("name") not in _PERMITTED_DEFINED_NAMES:
                     raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
-                if not _verify_defined_name_delta(left.text or "", right.text or "", anchors):
+                inverse = _inverse_defined_name_text(right.text or "", anchors)
+                if inverse != (left.text or ""):
                     raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+                right.text = inverse
+            if _semantic_xml(new_root) != _semantic_xml(old_root):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
         elif part == "xl/calcChain.xml":
             _verify_calc_chain_delta(
                 old,
@@ -655,35 +662,28 @@ def _verify_other_changed_parts(
                 anchors,
             )
         else:
-            _verify_drawing_delta(old, new, anchors)
+            _verify_drawing_delta(old, new, before, part, anchors)
 
 
-def _verify_defined_name_delta(
-    old: str, new: str, anchors: dict[str, ReconciliationSheetAnchor]
-) -> bool:
-    # Convert only the new side backward.  This parser deliberately accepts
-    # only the frozen subset and hence cannot bless arbitrary expression edits.
-    old_terms, new_terms = old.split(","), new.split(",")
-    if len(old_terms) != len(new_terms):
-        return False
-    for prior, later in zip(old_terms, new_terms, strict=True):
-        if "!" not in prior or "!" not in later:
-            return False
-        ps, pr = prior.rsplit("!", 1)
-        ns, nr = later.rsplit("!", 1)
-        if ps != ns:
-            return False
-        name = ps[1:-1].replace("''", "'") if ps.startswith("'") and ps.endswith("'") else ps
+def _inverse_defined_name_text(value: str, anchors: dict[str, ReconciliationSheetAnchor]) -> str:
+    """Invert only the narrow, already-whitelisted built-in name grammar."""
+    terms: list[str] = []
+    for term in value.split(","):
+        if "!" not in term:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+        sheet, reference = term.rsplit("!", 1)
+        name = (
+            sheet[1:-1].replace("''", "'")
+            if sheet.startswith("'") and sheet.endswith("'")
+            else sheet
+        )
         anchor = anchors.get(name)
-        if anchor is None:
-            if pr != nr:
-                return False
-            continue
-        if pr == nr:
-            continue
-        if _verify_inverse_reference(nr, anchor.insertion_after_column) != pr:
-            return False
-    return True
+        terms.append(
+            term
+            if anchor is None
+            else f"{sheet}!{_verify_inverse_reference(reference, anchor.insertion_after_column)}"
+        )
+    return ",".join(terms)
 
 
 def _verify_inverse_reference(value: str, boundary: int) -> str:
@@ -718,7 +718,8 @@ def _verify_calc_chain_delta(
     sheet_names: dict[int, str],
     anchors: dict[str, ReconciliationSheetAnchor],
 ) -> None:
-    left, right = list(ET.fromstring(old).iter(_Q("c"))), list(ET.fromstring(new).iter(_Q("c")))
+    old_root, new_root = ET.fromstring(old), ET.fromstring(new)
+    left, right = list(old_root.iter(_Q("c"))), list(new_root.iter(_Q("c")))
     if len(left) != len(right):
         raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
     sheet_index: int | None = None
@@ -732,37 +733,50 @@ def _verify_calc_chain_delta(
         anchor = anchors.get(sheet_names[sheet_index])
         expected = prior.attrib.get("r")
         actual = later.attrib.get("r")
-        if (
-            anchor is not None
-            and expected
-            and _cell_column(expected) > anchor.insertion_after_column
-        ):
-            expected = _verify_forward_coordinate(expected, anchor.insertion_after_column)
-        if expected != actual:
+        if not expected or not actual:
             raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+        if anchor is not None and _cell_column(expected) > anchor.insertion_after_column:
+            if _verify_inverse_coordinate(actual, anchor.insertion_after_column) != expected:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            later.attrib["r"] = expected
+        elif expected != actual:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+    if _semantic_xml(new_root) != _semantic_xml(old_root):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
 
 
 def _verify_drawing_delta(
-    old: bytes, new: bytes, anchors: dict[str, ReconciliationSheetAnchor]
+    old: bytes,
+    new: bytes,
+    archive: zipfile.ZipFile,
+    part: str,
+    anchors: dict[str, ReconciliationSheetAnchor],
 ) -> None:
-    # Drawing parts are owned by exactly one selected sheet; the strict anchor
-    # shapes were already frozen in preflight.  Find a unique boundary whose
-    # inverse makes every marker agree.
-    for anchor in anchors.values():
-        a, b = ET.fromstring(old), ET.fromstring(new)
-        left = [node.text for node in a.iter(_DX("col"))]
-        right = [node.text for node in b.iter(_DX("col"))]
-        if len(left) != len(right) or any(
-            value is None or not value.isdigit() for value in left + right
+    """Inverse only drawing marker columns owned by the frozen sheet anchor."""
+    anchor = _drawing_owner_from_archive(archive, part, anchors)
+    if anchor is None:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+    old_root, new_root = ET.fromstring(old), ET.fromstring(new)
+    left, right = list(old_root.iter(_DX("col"))), list(new_root.iter(_DX("col")))
+    if len(left) != len(right):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+    boundary = anchor.insertion_after_column - 1
+    for prior, later in zip(left, right, strict=True):
+        if (
+            prior.text is None
+            or later.text is None
+            or not prior.text.isdigit()
+            or not later.text.isdigit()
         ):
-            continue
-        expected = [
-            str(int(value) + 2 if int(value) > anchor.insertion_after_column - 1 else int(value))
-            for value in left
-        ]
-        if expected == right:
-            return
-    raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+        if int(prior.text) > boundary:
+            if int(later.text) - 2 != int(prior.text):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            later.text = prior.text
+        elif prior.text != later.text:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+    if _semantic_xml(new_root) != _semantic_xml(old_root):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
 
 
 def _reject_package(source: Path) -> None:
@@ -814,19 +828,21 @@ def _affected_parts(
         ):
             affected.add("xl/calcChain.xml")
         for anchor in anchors:
-            for target, relation_type in _part_relationships(archive, anchor.worksheet_part):
+            for _relation_id, target, relation_type, target_mode in _part_relationships(
+                archive, anchor.worksheet_part
+            ):
+                if target_mode == "External":
+                    # Validated against the worksheet hyperlink reference in
+                    # preflight.  It is never a ZIP member and never rewritten.
+                    continue
                 if relation_type.endswith("/drawing"):
-                    if target not in names:
+                    if target is None or target not in names:
                         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
                     drawing = archive.read(target)
                     _preflight_drawing(drawing, anchor.insertion_after_column)
                     if _drawing_is_affected(drawing, anchor.insertion_after_column):
                         affected.add(target)
-                elif (
-                    relation_type.endswith("/hyperlink")
-                    or relation_type.endswith("/comments")
-                    or relation_type.endswith("/vmlDrawing")
-                ):
+                elif relation_type.endswith(("/hyperlink", "/comments", "/vmlDrawing")):
                     continue
                 else:
                     raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
@@ -866,55 +882,36 @@ def _validate_plan(source: Path, plan: ReconciliationPeriodInsertionPlan) -> Non
             raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
 
 
-def _reject_affected_comments(source: Path, anchors: tuple[ReconciliationSheetAnchor, ...]) -> None:
-    """Allow comments left of their sheet boundary; VML visual anchors stay untouched."""
-
-    boundaries = {anchor.sheet_name: anchor.insertion_after_column for anchor in anchors}
-    parts = worksheet_parts(source)
-    try:
-        with zipfile.ZipFile(source) as archive:
-            for sheet_name, worksheet_part in parts.items():
-                boundary = boundaries.get(sheet_name)
-                if boundary is None:
-                    continue
-                rel = posixpath.join(
-                    posixpath.dirname(worksheet_part),
-                    "_rels",
-                    posixpath.basename(worksheet_part) + ".rels",
-                )
-                if rel not in archive.namelist():
-                    continue
-                for item in ET.fromstring(archive.read(rel)):
-                    if not item.attrib.get("Type", "").endswith("/comments"):
-                        continue
-                    target = posixpath.normpath(
-                        posixpath.join(
-                            posixpath.dirname(worksheet_part), item.attrib.get("Target", "")
-                        )
-                    ).lstrip("/")
-                    for comment in ET.fromstring(archive.read(target)).iter(_Q("comment")):
-                        reference = comment.attrib.get("ref")
-                        if reference and _cell_column(reference) > boundary:
-                            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
-    except ReconciliationPeriodError:
-        raise
-    except Exception as error:
-        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
-
-
-def _part_relationships(archive: zipfile.ZipFile, part: str) -> tuple[tuple[str, str], ...]:
+def _part_relationships(
+    archive: zipfile.ZipFile, part: str
+) -> tuple[tuple[str, str | None, str, str | None], ...]:
+    """Return a validated relationship inventory without path-normalising URLs."""
     rel = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
     if rel not in archive.namelist():
         return ()
-    result = []
+    result: list[tuple[str, str | None, str, str | None]] = []
     for node in ET.fromstring(archive.read(rel)):
-        target, relation_type = node.attrib.get("Target"), node.attrib.get("Type", "")
-        if not target or node.attrib.get("TargetMode") == "External":
+        identifier = node.attrib.get("Id")
+        target, relation_type, target_mode = (
+            node.attrib.get("Target"),
+            node.attrib.get("Type", ""),
+            node.attrib.get("TargetMode"),
+        )
+        if not identifier or not target:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        if target_mode == "External":
+            if not relation_type.endswith("/hyperlink"):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+            result.append((identifier, target, relation_type, target_mode))
+            continue
+        if target_mode is not None:
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
         result.append(
             (
+                identifier,
                 posixpath.normpath(posixpath.join(posixpath.dirname(part), target)).lstrip("/"),
                 relation_type,
+                None,
             )
         )
     return tuple(result)
@@ -924,13 +921,25 @@ def _drawing_owner(
     source: Path, drawing_part: str, anchors: dict[str, ReconciliationSheetAnchor]
 ) -> ReconciliationSheetAnchor | None:
     with zipfile.ZipFile(source) as archive:
-        for anchor in anchors.values():
-            if any(
-                target == drawing_part and kind.endswith("/drawing")
-                for target, kind in _part_relationships(archive, anchor.worksheet_part)
-            ):
-                return anchor
-    return None
+        return _drawing_owner_from_archive(archive, drawing_part, anchors)
+
+
+def _drawing_owner_from_archive(
+    archive: zipfile.ZipFile,
+    drawing_part: str,
+    anchors: dict[str, ReconciliationSheetAnchor],
+) -> ReconciliationSheetAnchor | None:
+    owners = [
+        anchor
+        for anchor in anchors.values()
+        if any(
+            target == drawing_part and kind.endswith("/drawing") and mode is None
+            for _identifier, target, kind, mode in _part_relationships(
+                archive, anchor.worksheet_part
+            )
+        )
+    ]
+    return owners[0] if len(owners) == 1 else None
 
 
 _XDR = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
@@ -983,6 +992,7 @@ def _preflight_worksheets(source: Path, anchors: tuple[ReconciliationSheetAnchor
                 root = ET.fromstring(archive.read(anchor.worksheet_part))
                 _reject_sheet_features(root, anchor.insertion_after_column)
                 _require_insertible_rows(root, anchor)
+                _validate_sheet_relationships(archive, anchor, root)
             _preflight_workbook(archive, anchors)
     except ReconciliationPeriodError:
         raise
@@ -991,10 +1001,7 @@ def _preflight_worksheets(source: Path, anchors: tuple[ReconciliationSheetAnchor
 
 
 def _reject_sheet_features(root: ET.Element, boundary: int) -> None:
-    rejected = {
-        _Q(name)
-        for name in ("dataValidations", "tableParts", "extLst", "legacyDrawing", "legacyDrawingHF")
-    }
+    rejected = {_Q(name) for name in ("dataValidations", "tableParts", "extLst", "legacyDrawingHF")}
     if any(node.tag in rejected for node in root.iter()):
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     for node in root.iter(_Q("mergeCell")):
@@ -1021,6 +1028,55 @@ def _reject_sheet_features(root: ET.Element, boundary: int) -> None:
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
         if formula is not None and formula.text:
             _translate_formula(formula.text, boundary)
+
+
+def _validate_sheet_relationships(
+    archive: zipfile.ZipFile, anchor: ReconciliationSheetAnchor, root: ET.Element
+) -> None:
+    """Permit only wholly-left comments/VML and external hyperlinks unchanged."""
+    rels = _part_relationships(archive, anchor.worksheet_part)
+    relationship_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    hyperlinks = {node.attrib.get(relationship_ns): node for node in root.iter(_Q("hyperlink"))}
+    for identifier, _target, kind, mode in rels:
+        if mode == "External":
+            hyperlink = hyperlinks.get(identifier)
+            if hyperlink is None or _range_touches_or_right(
+                hyperlink.attrib.get("ref", ""), anchor.insertion_after_column
+            ):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        elif kind.endswith("/hyperlink"):
+            # Internal hyperlinks are deliberately unsupported: their target
+            # semantics are not a package part and they can encode local refs.
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    legacy = list(root.iter(_Q("legacyDrawing")))
+    comment_rels = [
+        (identifier, target)
+        for identifier, target, kind, mode in rels
+        if kind.endswith("/comments") and mode is None
+    ]
+    vml_rels = [
+        (identifier, target)
+        for identifier, target, kind, mode in rels
+        if kind.endswith("/vmlDrawing") and mode is None
+    ]
+    if not legacy and not comment_rels and not vml_rels:
+        return
+    if len(legacy) != 1 or len(comment_rels) != 1 or len(vml_rels) != 1:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    legacy_id = legacy[0].attrib.get(relationship_ns)
+    if legacy_id != vml_rels[0][0] or comment_rels[0][1] is None or vml_rels[0][1] is None:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    comments_part, vml_part = comment_rels[0][1], vml_rels[0][1]
+    if comments_part not in archive.namelist() or vml_part not in archive.namelist():
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    try:
+        comments = ET.fromstring(archive.read(comments_part))
+    except ET.ParseError as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+    for comment in comments.iter(_Q("comment")):
+        reference = comment.attrib.get("ref")
+        if not reference or _range_touches_or_right(reference, anchor.insertion_after_column):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
 
 
 def _require_insertible_rows(root: ET.Element, anchor: ReconciliationSheetAnchor) -> None:
@@ -1143,6 +1199,13 @@ def _crosses_boundary(value: str, boundary: int) -> bool:
 def _translate_formula(formula: str, boundary: int) -> str:
     if _UNSUPPORTED_FORMULA.search(formula) or "!" in formula or "#" in formula or "@" in formula:
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    unquoted_source = _strip_quoted(formula)
+    if re.search(
+        r"(?<![A-Za-z0-9_.])\$?[A-Z]{1,3}:\$?[A-Z]{1,3}(?![A-Za-z0-9_.])",
+        unquoted_source,
+        re.I,
+    ) or re.search(r"(?<![A-Za-z0-9_.])\$?\d+:\$?\d+(?![A-Za-z0-9_.])", unquoted_source):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     result: list[str] = []
     index = 0
     while index < len(formula):
@@ -1188,8 +1251,10 @@ def _formula_token_boundary(value: str, start: int, end: int) -> bool:
     before = value[start - 1] if start else ""
     after = value[end] if end < len(value) else ""
     return (
-        before not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."
-        and after not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."
+        not before
+        or before not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."
+    ) and (
+        not after or after not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."
     )
 
 
