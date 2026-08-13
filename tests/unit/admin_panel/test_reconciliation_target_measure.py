@@ -48,6 +48,18 @@ def test_later_unmerged_same_month_pair_wins_over_historical_documentary_pair() 
     assert [(pair.quantity_letter, pair.cost_letter) for pair in pairs] == [("L", "M")]
 
 
+@pytest.mark.parametrize("month", ("Март", "Май"))
+def test_month_only_current_pair_wins_over_historical_pair(month: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 10, "Документальная отчетность за весь период")
+    sheet["L1"], sheet["M1"] = month, month
+    _pair(sheet, 12, None)
+
+    (pair,) = discover_target_measures(workbook, {sheet.title: 3})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
 def test_common_merged_current_parent_is_sufficient_without_calendar_month() -> None:
     workbook, sheet = _workbook()
     _pair(sheet, 12, "Отчетный период")
@@ -80,6 +92,48 @@ def test_unit_price_and_duplicate_physical_header_evidence_are_not_extra_candida
     sheet.merge_cells("M2:M3")
 
     (pair,) = discover_target_measures(workbook, {sheet.title: 4})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+@pytest.mark.parametrize(
+    ("quantity_header", "cost_header"),
+    (
+        ("Март Апрель Количество", "Март Апрель Стоимость"),
+        ("Март Количество", "Апрель Стоимость"),
+    ),
+)
+def test_multiple_month_mentions_are_not_an_unambiguous_period(
+    quantity_header: str, cost_header: str
+) -> None:
+    workbook, sheet = _workbook()
+    sheet["L1"], sheet["M1"] = quantity_header, cost_header
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 2})
+
+
+@pytest.mark.parametrize(
+    "scope", ("Отчетный период с начала строительства", "Отчетный период итого")
+)
+def test_cumulative_scope_conflicts_reject_otherwise_current_pair(scope: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, scope)
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+def test_total_cost_leaf_with_vsego_is_not_a_historical_conflict() -> None:
+    workbook, sheet = _workbook()
+    sheet["L1"], sheet["M1"] = "Май", "Май"
+    _pair(sheet, 12, None, cost="Стоимость всего")
+
+    (pair,) = discover_target_measures(workbook, {sheet.title: 3})
 
     assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
 

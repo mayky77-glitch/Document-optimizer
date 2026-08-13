@@ -23,6 +23,9 @@ from report_processor.admin_panel.reconciliation_numeric_verification import (
 )
 from report_processor.admin_panel.reconciliation_sources import ReconciliationSourceIssue
 from report_processor.admin_panel.reconciliation_target import _numeric
+from report_processor.admin_panel.reconciliation_target_measure import (
+    ReconciliationTargetMeasureError,
+)
 from report_processor.admin_panel.reconciliation_verification import (
     VerificationTechnicalFailure,
     _write_artifact,
@@ -440,6 +443,25 @@ def test_partial_source_input_is_a_technical_failure(tmp_path: Path, monkeypatch
         verify_reconciliation(job, ())
 
     assert len(raised.value.issues) == 1
+
+
+@pytest.mark.parametrize(
+    "code",
+    ("TARGET_CURRENT_PERIOD_PAIR_MISSING", "TARGET_CURRENT_PERIOD_PAIR_AMBIGUOUS"),
+)
+def test_numeric_verification_preserves_target_measure_error_codes(
+    tmp_path: Path, monkeypatch, code: str
+) -> None:
+    job = _job(tmp_path)
+    job.target, job.stage = tmp_path / "target.xlsx", "13.1"
+    review = _review(job, safe=True)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_numeric_verification.read_reconciliation_target",
+        lambda *_args: (_ for _ in ()).throw(ReconciliationTargetMeasureError(code)),
+    )
+
+    with pytest.raises(NumericVerificationFailure, match=code):
+        verify_numeric(job, review)
 
 
 def test_missing_target_measure_is_a_no_artifact_technical_failure(

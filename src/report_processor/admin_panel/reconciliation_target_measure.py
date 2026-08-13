@@ -10,19 +10,31 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import range_boundaries
 
 _HEADER_ROWS = 80
-_MONTHS = {
-    "январ": 1,
-    "феврал": 2,
+_RUSSIAN_MONTH_TOKENS = {
+    "январь": 1,
+    "января": 1,
+    "февраль": 2,
+    "февраля": 2,
     "март": 3,
-    "апрел": 4,
-    "ма": 5,
-    "июн": 6,
-    "июл": 7,
+    "марта": 3,
+    "апрель": 4,
+    "апреля": 4,
+    "май": 5,
+    "мая": 5,
+    "июнь": 6,
+    "июня": 6,
+    "июль": 7,
+    "июля": 7,
     "август": 8,
-    "сентябр": 9,
-    "октябр": 10,
-    "ноябр": 11,
-    "декабр": 12,
+    "августа": 8,
+    "сентябрь": 9,
+    "сентября": 9,
+    "октябрь": 10,
+    "октября": 10,
+    "ноябрь": 11,
+    "ноября": 11,
+    "декабрь": 12,
+    "декабря": 12,
 }
 _YEAR_MONTH = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[-./]\s*(0?[1-9]|1[0-2])(?!\d)")
 _MONTH_YEAR = re.compile(r"(?<!\d)(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|20)\d{2})(?!\d)")
@@ -124,11 +136,9 @@ def _sheet_candidates(
                 label for label in quantity if label.key in common and label.key[1] != label.key[3]
             )
             common_current = any(_current_scope(label.text) for label in common_labels)
-            quantity_periods = _periods(quantity_text)
-            cost_periods = _periods(cost_text)
-            same_period = (
-                len(quantity_periods) == len(cost_periods) == 1 and quantity_periods == cost_periods
-            )
+            quantity_periods = _period_mentions(quantity_text)
+            cost_periods = _period_mentions(cost_text)
+            same_period = _same_unambiguous_period(quantity_periods, cost_periods)
             if not common_current and not same_period:
                 continue
             key = (
@@ -211,24 +221,48 @@ def _unit_price(value: str) -> bool:
 
 def _historical(value: str) -> bool:
     tokens = set(value.split())
-    return any(
-        stem in value for stem in ("истор", "документ", "накоп", "нараст", "предыдущ", "прошл")
-    ) or bool({"весь", "всего", "итог"}.intersection(tokens))
+    return (
+        any(stem in value for stem in ("истор", "документ", "накоп", "нараст", "предыдущ", "прошл"))
+        or {"весь", "период"}.issubset(tokens)
+        or ({"с", "начала"}.issubset(tokens))
+        or any(token.startswith("итог") for token in tokens)
+    )
 
 
 def _current_scope(value: str) -> bool:
     return "период" in value and any(stem in value for stem in ("текущ", "отчетн", "отчётн"))
 
 
-def _periods(value: str) -> frozenset[str]:
-    result = {f"{year}-{int(month):02d}" for year, month in _YEAR_MONTH.findall(value)}
-    result.update(f"{year}-{int(month):02d}" for month, year in _MONTH_YEAR.findall(value))
-    result.update(f"{year}-{int(month):02d}" for month, year in _DATE.findall(value))
-    for stem, month in _MONTHS.items():
-        match = re.search(rf"\b{stem}\w*\s+((?:19|20)\d{{2}})\b", value)
-        if match:
-            result.add(f"{match.group(1)}-{month:02d}")
+def _period_mentions(value: str) -> frozenset[tuple[int, int | None]]:
+    result = {(int(month), int(year)) for year, month in _YEAR_MONTH.findall(value)}
+    result.update((int(month), int(year)) for month, year in _MONTH_YEAR.findall(value))
+    result.update((int(month), int(year)) for month, year in _DATE.findall(value))
+    tokens = re.findall(r"\w+", value, flags=re.UNICODE)
+    for index, token in enumerate(tokens):
+        month = _RUSSIAN_MONTH_TOKENS.get(token)
+        if month is None:
+            continue
+        next_token = tokens[index + 1] if index + 1 < len(tokens) else ""
+        year = int(next_token) if _year(next_token) else None
+        result.add((month, year))
     return frozenset(result)
+
+
+def _same_unambiguous_period(
+    quantity_periods: frozenset[tuple[int, int | None]],
+    cost_periods: frozenset[tuple[int, int | None]],
+) -> bool:
+    if len(quantity_periods) != 1 or len(cost_periods) != 1:
+        return False
+    ((quantity_month, quantity_year),) = quantity_periods
+    ((cost_month, cost_year),) = cost_periods
+    return quantity_month == cost_month and (
+        quantity_year is None or cost_year is None or quantity_year == cost_year
+    )
+
+
+def _year(value: str) -> bool:
+    return bool(re.fullmatch(r"(?:19|20)\d{2}", value))
 
 
 def _text(value: object | None) -> str:

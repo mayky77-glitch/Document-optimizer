@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from decimal import Decimal
 from hashlib import sha256
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
+from fixtures.calculation.builders import calculation_rule_set, calculation_source_row, match_result
 from report_processor.admin_panel.reconciliation_target import (
     ReconciliationTargetInputError,
     ReconciliationTargetScopeError,
@@ -14,8 +17,13 @@ from report_processor.admin_panel.reconciliation_target import (
     read_reconciliation_target,
     resolve_reconciliation_stage,
     terminal_index,
+    writer_calculations,
 )
-from report_processor.schema import LogicalColumn
+from report_processor.calculation import calculate_matches
+from report_processor.excel_writer import write_target_report
+from report_processor.quality_control import WriteDecision
+from report_processor.schema import LogicalColumn, SheetType
+from report_processor.target_report import TargetWorksheetSnapshot
 
 
 class _Sheet:
@@ -143,3 +151,76 @@ def test_reader_uses_discovered_cells_for_target_snapshot_provenance(tmp_path) -
     ]
     assert row.cell_for(LogicalColumn.CURRENT_PERIOD_QUANTITY).coordinate == "L3"
     assert row.cell_for(LogicalColumn.CURRENT_PERIOD_COST).coordinate == "M3"
+
+
+def test_writer_updates_only_structurally_discovered_current_measure_cells(tmp_path) -> None:
+    target = tmp_path / "target.xlsx"
+    output = tmp_path / "result.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["J1"], sheet["K1"] = "Документальная отчетность", "Документальная отчетность"
+    sheet["J2"], sheet["K2"] = "Количество", "Стоимость"
+    sheet.merge_cells("L1:M1")
+    sheet["L1"] = "Отчетный период"
+    sheet["L2"], sheet["M2"] = "Количество", "Стоимость"
+    sheet["N1"] = "Нарратив"
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"], sheet["F3"] = (
+        "1234",
+        "Этап 13.1",
+        "1",
+        "Монтаж",
+        "м",
+    )
+    sheet["J3"], sheet["K3"], sheet["L3"], sheet["M3"], sheet["N3"] = (99, 88, 0, 0, "text")
+    sheet["L3"].number_format = sheet["M3"].number_format = "0.00"
+    workbook.save(target)
+    workbook.close()
+
+    schema, (target_row,) = read_reconciliation_target(
+        target, sha256(target.read_bytes()).hexdigest(), "13.1"
+    )
+    schema = replace(
+        schema,
+        status="OK",
+        diagnostics=(),
+        worksheets=(
+            TargetWorksheetSnapshot(
+                "Отчёт", SheetType.ADDITIONAL_REPORT, None, ("L1:M1",), None, (), None, False
+            ),
+        ),
+    )
+    target_row = replace(target_row, writable=True)
+    source = calculation_source_row(quantity=Decimal("12.2"), cost=Decimal("3500000"))
+    (calculation,) = calculate_matches((match_result(source),), calculation_rule_set())
+    calculation = calculation.__class__(
+        calculation.calculation_id,
+        calculation.target_row_id,
+        calculation.match_result_id,
+        target_row,
+        calculation.status,
+        calculation.quantity,
+        calculation.cost_before_coefficient,
+        calculation.coefficient,
+        calculation.cost,
+        calculation.category_totals,
+        calculation.trace,
+        calculation.warnings,
+        calculation.explanation,
+    )
+
+    write_target_report(
+        target,
+        output,
+        WriteDecision.ALLOW_WRITE,
+        (writer_calculations((calculation,))[0],),
+        schema,
+    )
+
+    written = load_workbook(output, data_only=True)
+    try:
+        sheet = written["Отчёт"]
+        assert (sheet["J3"].value, sheet["K3"].value, sheet["N3"].value) == (99, 88, "text")
+        assert (sheet["L3"].value, sheet["M3"].value) == (12.2, 3.5)
+    finally:
+        written.close()
