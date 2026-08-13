@@ -116,10 +116,11 @@ def test_hierarchical_cumulative_header_keeps_first_detail_row(tmp_path: Path) -
     path = tmp_path / "source.xlsx"
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(("", "Наименование", "Единица", "Выполнено", "", ""))
+    sheet.append(("", "Наименование", "Единица", "Выполнено за весь период", "", ""))
     sheet.append(("", "работ и этапов", "измерения", "за весь период", "", ""))
     sheet.append(("№", "", "", "Количество", "Общая стоимость", ""))
     sheet.append(("1", "Первая работа", "м", "1.25", "1250.50", ""))
+    sheet.merge_cells("D1:E2")
     workbook.save(path)
     workbook.close()
 
@@ -130,10 +131,13 @@ def test_hierarchical_cumulative_header_keeps_first_detail_row(tmp_path: Path) -
 
 
 def _cumulative_sheet(sheet, name: str = "Работа") -> None:
-    sheet.append(("", "Описание", "Единица", "Освоено", "", ""))
+    sheet.append(("", "Описание", "Единица", "Освоено нарастающим итогом", "", ""))
     sheet.append(("", "строительных работ", "измерения", "нарастающим итогом", "", ""))
     sheet.append(("№", "", "", "Объём", "Сумма затрат", ""))
     sheet.append(("1", name, "м", "1.25", "1250.50", ""))
+    sheet.merge_cells(
+        start_row=sheet.max_row - 3, start_column=4, end_row=sheet.max_row - 2, end_column=5
+    )
 
 
 def test_two_viable_cumulative_sheets_fail_controlled_ambiguity(tmp_path: Path) -> None:
