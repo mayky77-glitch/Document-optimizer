@@ -47,14 +47,14 @@ the target.
 
 ## Active real-layout boundary
 
-The current source reader now fails ambiguous instead of silently selecting a wrong layout, but its
-header ancestry is still column-local and its cumulative leaf window is positional. On the
-representative originals this produces false ambiguity. Full dotted target identifiers are also
-not yet accepted by the terminal-identity helper.
+Wave 1 now builds reconciliation-local merged-header regions, binds adjacent quantity/total-cost
+leaves to the exact nominated parent and resolves bounded filename candidates by one selected-stage
+terminal intersection. Broad work-header stems nominate candidates, while structural overlap and
+equal coherent candidates fail closed; no narrow phrase ranking was introduced.
 
 The clean target and desired reference prove that J/K are historical documentary totals and remain
 unchanged. The reference inserts the current reporting-period quantity/cost pair in L/M and shifts
 the narrative block. Therefore positional J/K writing is superseded by structural
 [[../DECISIONS#DO-019: числовая пара цели определяется структурой, а не адресом (2026-08-13)|DO-019]].
 See [[../tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]] and
-[[../errors/reconciliation-accuracy-findings|RA-019—RA-021]].
+[[../errors/reconciliation-accuracy-findings|RA-021]].

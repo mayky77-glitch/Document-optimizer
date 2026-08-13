@@ -27,6 +27,9 @@ links:
 
 # Reconciliation real-layout Gate 0
 
+Wave 1 is accepted at ORDA integration `3364bb3` and published in `main` at `fe3d5ee`. Wave 2
+starts from that published checkpoint.
+
 The lifecycle baseline is `1754 passed, 25 skipped`. Twelve immutable sources, one clean target and
 one desired reference were inspected independently. The clean/reference shape is 180 rows and
 15→17 columns: J/K stay unchanged, one reporting-period pair appears in L/M, and the narrative

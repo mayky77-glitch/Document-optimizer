@@ -22,6 +22,10 @@ updated: 2026-08-13
   [[DECISIONS#DO-019: числовая пара цели определяется структурой, а не адресом (2026-08-13)|DO-019]].
   [[tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]] freezes the remaining structural
   source, target-oracle and period-insertion waves.
+- [[tasks/reconciliation-real-layout-source-identity|Structural source/identity Wave 1]] is
+  accepted and published at `fe3d5ee`: exact merged-parent binding, broad structural work-header
+  nomination and unique 3/4-digit source-to-stage identity are enforced without positional or
+  narrow-phrase fallback.
 
 ## Completed context
 
@@ -36,6 +40,6 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Publish the lifecycle checkpoint and real-layout planning SHA, then run the structural
-source/terminal-identity card. Target-oracle and period-insertion cards start only from exact
-accepted predecessors.
+Freeze and execute the structural target-measure card from published `fe3d5ee`. Verification must
+return a technical no-artifact result when the current-period pair is absent; period insertion is a
+later dependency wave.

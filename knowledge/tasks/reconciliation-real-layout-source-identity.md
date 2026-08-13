@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: accepted
 card_id: reconciliation-real-layout-source-identity
 version: 1
 work_id: reconciliation-real-layout-v1
@@ -8,7 +8,10 @@ task_id: source-identity
 purpose: Select one real cumulative source layout and terminal document identity from structural evidence without guessing.
 role: developer
 route: P4 -> developer / gpt-5.6-terra / high; reason: multi-file structural parser with private-XLSX counterexamples and consequential financial identity.
-launch_status: planned
+launch_status: completed
+accepted_feature_sha: 1860741e5cf0bb9e38e01a55a1376a876c9c85b8
+accepted_integration_sha: 3364bb387506a586343fc1a29bf46712ae13bd0a
+published_main_sha: fe3d5eee01077c6130dd67b5f300d20fb316f276
 card_path: knowledge/tasks/reconciliation-real-layout-source-identity.md
 card_commit_sha_source: exact real-layout planning SHA supplied by launch envelope
 base_sha_source: exact real-layout planning SHA
@@ -68,3 +71,10 @@ This wave must not change the approved arithmetic or start target-column inserti
 downstream numeric compatibility, but carry explicit direct/cumulative measure provenance so the next
 wave can remove positional/semantic aliasing deliberately. Do not add narrow normalization, unit
 conversion, filename disclosure or a silent fallback.
+
+## Acceptance
+
+Accepted after `37 passed, 1` explicit private-data skip, Ruff/format/diff gates and independent
+P6 merge review. The source reader binds metric leaves to the exact nominated merged parent,
+structurally excludes work/unit candidates inside that metric scope and resolves bounded source
+identities only through one selected-stage intersection.

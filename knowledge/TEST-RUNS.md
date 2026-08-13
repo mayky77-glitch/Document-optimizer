@@ -11,18 +11,16 @@ updated: 2026-08-13
 
 Keep only the two latest completed runs relevant to active work.
 
-## 2026-08-13 — lifecycle release and test portfolio
+## 2026-08-13 — structural source/identity Wave 1
 
-- Accepted lifecycle integration: `c8da7108b5c0dd228d5ef5eb1fee2568cdcca3b8`.
-- Full command: `uv run --extra dev pytest -q`.
-- Result: `1754 passed, 25 skipped in 29.74s`.
-- Lifecycle focused release: `70 passed`; Ruff, format and diff checks passed.
-- Exact-once apply binds immutable inputs, one output inode/digest/mode, canonical decisions and
-  one SQLite marker. Restart rebuilds replay from uploads plus the atomic decision snapshot;
-  manifests contain no workbook-derived work/unit values.
-- No useless tests were found. Two 1,001-row DuckDB tests protect different APIs; a shared
-  read-only session seed cuts their combined setup by roughly 3–7 seconds without weakening the
-  1000/1001 boundary.
+- Feature `1860741e5cf0bb9e38e01a55a1376a876c9c85b8`; accepted ORDA integration `3364bb3`;
+  published `main` checkpoint `fe3d5ee`.
+- Focused command is the exact source/target/execution/real-data profile frozen in
+  [[tasks/reconciliation-real-layout-source-identity|the task card]].
+- Result after feature, integration and canonical-main merge: `37 passed, 1 skipped`; the skip is
+  the explicit private-corpus test. Ruff, format and diff checks passed.
+- Independent P6 review returned merge yes with no blockers and separately reproduced exact merge
+  binding, broad work-role selection and unique three-digit parenthetical stage intersection.
 
 ## 2026-08-13 — real target/reference shadow
 

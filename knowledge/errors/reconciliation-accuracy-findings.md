@@ -71,9 +71,11 @@ members are duplicated, but the original bytes are not changed.
 
 | ID | Severity | Boundary | Deterministic result |
 | --- | --- | --- | --- |
-| RA-019 | high | merged source header graph | the representative cumulative sources produce false ambiguity because ancestry is column-local and leaf pairing uses a bounded positional window |
-| RA-020 | high | terminal document identity | a valid full dotted target identifier is rejected; source basenames with one primary plus parenthetical candidates cannot be resolved by unique stage intersection |
 | RA-021 | critical decision gate | target numeric measure | current verification/write treats J/K as current period although clean/reference comparison shows J/K unchanged and a new period pair inserted later |
+
+RA-019 and RA-020 are closed at published checkpoint `fe3d5ee`: exact merged-parent binding,
+semantic detail start, broad structural work nomination and unique bounded source/stage identity
+all passed focused regressions and independent P6 review.
 
 RA-019 must build ancestry from actual merged spans, bind adjacent quantity/total-cost leaves under
 one parent region and deduplicate physically identical candidates. Broad semantic stems may produce
