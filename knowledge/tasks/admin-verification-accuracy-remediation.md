@@ -48,9 +48,10 @@ After those decisions, use dependency waves:
   and independent P6 acceptance.
 
 Use [[../research/propextract-methods-2026-08-13|PropExtract]] only as a methodology reference:
-exact-or-ambiguous identity, field-level provenance, order-independent consensus, narrow
-normalization, staged workbook delta allowlists and permutation tests. Its code is not licensed for
-copying and its PDF/OCR/domain rules are not this feature's contract.
+exact-or-ambiguous identity, field-level provenance, order-independent consensus, staged workbook
+delta allowlists and permutation tests. Do not adopt its narrow comparison normalization: source
+header recognition stays universal across variable hierarchical multi-row wording. Its code is not
+licensed for copying and its PDF/OCR/domain rules are not this feature's contract.
 
 Acceptance requires zero silent row loss, no false clean result, no false red rows in the frozen
 layout regression, source/target digest preservation, a downloadable real-workbook artifact and

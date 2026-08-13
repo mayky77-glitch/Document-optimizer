@@ -94,10 +94,11 @@ Production cannot currently return that real red workbook because RA-015 fails f
 instead of cumulative values to target J/K. Thus RA-001 is critical for reconcile and high for
 verify.
 
-Safe remediation: evaluate structural candidates, accept normalized work-header aliases, bind
-quantity/total-cost leaves to the cumulative anchor, find the first detail row semantically, and
-fail controlled ambiguity rather than silently fall back. Regression must assert cumulative
-precedence, the exact canonical set and no number-row ingestion.
+Safe remediation: evaluate structural candidates with universal support for variable hierarchical
+multi-row work headers, bind quantity/total-cost leaves to the cumulative anchor, find the first
+detail row semantically, and fail controlled ambiguity rather than silently fall back. Do not use a
+narrow closed phrase allowlist. Regression must assert cumulative precedence, the exact canonical
+set and no number-row ingestion.
 
 ## RA-015/018 — verification publication is not real-workbook safe
 

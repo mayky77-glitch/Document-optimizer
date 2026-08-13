@@ -88,8 +88,13 @@ Decimal-арифметике или verified target output режима `reconci
 
 Публичный проект PropExtract можно использовать при анализе `operation=verify` как внешний
 сравнительный источник методик: exact-or-ambiguous identity, field-level provenance,
-order-independent consensus, narrow normalization, staged workbook validation и adversarial
-permutation tests. Его предметные RNS/PDF/OCR-правила не переносятся автоматически.
+order-independent consensus, staged workbook validation и adversarial permutation tests. Его
+предметные RNS/PDF/OCR-правила не переносятся автоматически.
+
+Узкая нормализация PropExtract явно не принимается. Поиск заголовков источника остаётся максимально
+универсальным и учитывает вариативные иерархические многострочные формулировки; закрытый список фраз
+не должен отклонять корректную структуру. Неоднозначность обрабатывается fail-closed по структурным
+доказательствам, а не по отсутствию строки в узком словаре.
 
 На проверенном commit отсутствует верхнеуровневая лицензия приложения, поэтому код, тесты и
 fixtures не копируются. Любое code reuse требует отдельного разрешения правообладателя/лицензии;
