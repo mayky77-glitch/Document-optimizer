@@ -24,6 +24,7 @@ from report_processor.admin_panel.reconciliation_period import (
 )
 from report_processor.admin_panel.reconciliation_target_measure import (
     ReconciliationTargetMeasureError,
+    calendar_identities,
     discover_historical_target_measures,
     discover_target_measures,
 )
@@ -37,28 +38,6 @@ _UNSUPPORTED_PART = re.compile(
     r"(?:^|/)(?:tables|pivotTables|pivotCache|slicers|externalLinks|embeddings|controls|charts)/",
     re.IGNORECASE,
 )
-_YEAR_MONTH = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[-./]\s*(0?[1-9]|1[0-2])(?!\d)")
-_MONTH_YEAR = re.compile(r"(?<!\d)(0?[1-9]|1[0-2])\s*[-./]\s*((?:19|20)\d{2})(?!\d)")
-_RUSSIAN_MONTHS = {
-    name: index
-    for index, name in enumerate(
-        (
-            "январ",
-            "феврал",
-            "март",
-            "апрел",
-            "мая",
-            "июн",
-            "июл",
-            "август",
-            "сентябр",
-            "октябр",
-            "ноябр",
-            "декабр",
-        ),
-        start=1,
-    )
-}
 
 
 def build_period_insertion_plan(
@@ -105,6 +84,7 @@ def build_period_insertion_plan(
                 (),
                 tuple(parts.items()),
                 _affected_parts(source, ()),
+                tuple(sorted(first_detail_rows.items())),
                 True,
             )
         historical = discover_historical_target_measures(
@@ -128,6 +108,7 @@ def build_period_insertion_plan(
             for pair in historical
         )
         _reject_affected_comments(source, anchors)
+        _preflight_worksheets(source, anchors)
         return ReconciliationPeriodInsertionPlan(
             "ReconciliationPeriodInsertion-1.0",
             digest,
@@ -135,6 +116,7 @@ def build_period_insertion_plan(
             anchors,
             tuple(parts.items()),
             _affected_parts(source, anchors),
+            tuple(sorted(first_detail_rows.items())),
         )
     except ReconciliationPeriodError:
         raise
@@ -373,6 +355,9 @@ def _validate_plan(source: Path, plan: ReconciliationPeriodInsertionPlan) -> Non
 
     if plan.plan_digest != hashlib.sha256(plan.canonical_bytes()).hexdigest():
         raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
+    expected = build_period_insertion_plan(source, plan.period, dict(plan.selected_detail_rows))
+    if expected.canonical_bytes() != plan.canonical_bytes():
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
     parts = worksheet_parts(source)
     sheet_ids = _sheet_id_map(source)
     if tuple(parts.items()) != plan.worksheet_parts:
@@ -429,6 +414,22 @@ def _reject_affected_comments(source: Path, anchors: tuple[ReconciliationSheetAn
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
 
 
+def _preflight_worksheets(source: Path, anchors: tuple[ReconciliationSheetAnchor, ...]) -> None:
+    """Parse every changing sheet and reject unsupported coordinates before temp creation."""
+
+    try:
+        with zipfile.ZipFile(source) as archive:
+            for anchor in anchors:
+                _reject_sheet_features(
+                    ET.fromstring(archive.read(anchor.worksheet_part)),
+                    anchor.insertion_after_column,
+                )
+    except ReconciliationPeriodError:
+        raise
+    except Exception as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+
+
 def _reject_sheet_features(root: ET.Element, boundary: int) -> None:
     rejected = {_Q(name) for name in ("dataValidations", "tableParts", "drawing", "extLst")}
     if any(node.tag in rejected for node in root.iter()):
@@ -476,23 +477,10 @@ def _historical_parent_xml_row(root: ET.Element, anchor: ReconciliationSheetAnch
 
 
 def _pair_period_conflict(pair, period: ReportingPeriod) -> bool:
-    quantity = _calendar_identities(pair.quantity_header)
-    cost = _calendar_identities(pair.cost_header)
+    quantity = calendar_identities(pair.quantity_header)
+    cost = calendar_identities(pair.cost_header)
     evidence = quantity | cost
-    return bool(evidence and evidence != {(period.year, period.month)})
-
-
-def _calendar_identities(value: str) -> set[tuple[int, int]]:
-    identities = {(int(year), int(month)) for year, month in _YEAR_MONTH.findall(value)}
-    identities.update((int(year), int(month)) for month, year in _MONTH_YEAR.findall(value))
-    tokens = re.findall(r"\w+", value.casefold(), flags=re.UNICODE)
-    for index, token in enumerate(tokens[:-1]):
-        month = next(
-            (number for name, number in _RUSSIAN_MONTHS.items() if token.startswith(name)), None
-        )
-        if month is not None and re.fullmatch(r"(?:19|20)\d{2}", tokens[index + 1]):
-            identities.add((int(tokens[index + 1]), month))
-    return identities
+    return any(month != period.month or year not in {None, period.year} for month, year in evidence)
 
 
 def _map_coordinate(coordinate: str, boundary: int) -> str:

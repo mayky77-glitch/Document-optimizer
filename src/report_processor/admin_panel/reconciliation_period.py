@@ -85,6 +85,7 @@ class ReconciliationPeriodInsertionPlan:
     anchors: tuple[ReconciliationSheetAnchor, ...]
     worksheet_parts: tuple[tuple[str, str], ...]
     affected_parts: tuple[str, ...]
+    selected_detail_rows: tuple[tuple[str, int], ...]
     idempotent: bool = False
     plan_digest: str = ""
 
@@ -122,6 +123,7 @@ class ReconciliationPeriodInsertionPlan:
             "idempotent": self.idempotent,
             "period": self.period.value,
             "source_sha256": self.source_sha256,
+            "selected_detail_rows": sorted(self.selected_detail_rows),
             "worksheet_parts": sorted(self.worksheet_parts),
         }
         return json.dumps(

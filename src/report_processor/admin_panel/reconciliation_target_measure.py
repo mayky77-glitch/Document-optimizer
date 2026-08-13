@@ -357,6 +357,12 @@ def _period_mentions(value: str) -> frozenset[tuple[int, int | None]]:
     return frozenset(result)
 
 
+def calendar_identities(value: str) -> frozenset[tuple[int, int | None]]:
+    """Authoritative broad calendar evidence used by target and insertion planning."""
+
+    return _period_mentions(_text(value))
+
+
 def _same_unambiguous_period(
     quantity_periods: frozenset[tuple[int, int | None]],
     cost_periods: frozenset[tuple[int, int | None]],
