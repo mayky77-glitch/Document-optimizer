@@ -73,3 +73,34 @@ def test_macro_enabled_target_is_rejected_on_no_selected_publish_path(tmp_path) 
 
     with pytest.raises(ReconciliationTargetInputError, match=r"Целевой отчёт \.xlsm"):
         publish_unchanged_target(target, tmp_path / "result.xlsx", "digest")
+
+
+def test_structural_stage_discovery_keeps_printable_labels_and_requires_target_rows() -> None:
+    from report_processor.admin_panel.reconciliation_target import (
+        structurally_valid_reconciliation_stages,
+    )
+
+    session = _Session(
+        (
+            ("", "1234", "Секция (А)", "", ""),
+            ("", None, None, "1", "Работа А"),
+            ("", "1234", "Секция/Б", "1", "Работа Б"),
+            ("", "1234", "Только заголовок", "", ""),
+        )
+    )
+
+    assert structurally_valid_reconciliation_stages(session, maximum=64) == (
+        "Секция (А)",
+        "Секция/Б",
+    )
+
+
+def test_stage_validation_keeps_broad_printable_labels_without_locations() -> None:
+    from report_processor.admin_panel.reconciliation_uploads import validate_stage
+
+    assert validate_stage("Секция (А)") == "Секция (А)"
+    assert validate_stage("Секция/Б") == "Секция/Б"
+    with pytest.raises(ValueError):
+        validate_stage("/private/target.xlsx")
+    with pytest.raises(ValueError):
+        validate_stage("Лист1!A1")

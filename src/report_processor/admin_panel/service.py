@@ -11,12 +11,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from report_processor.domain.exceptions import ReportProcessorError
+
 from .presentation import journal_payload, processing_presentation
 from .reconciliation_execution import ReconciliationReviewResult, apply_review, prepare_review
 from .reconciliation_feedback_store import ReconciliationFeedbackStore
 from .reconciliation_state import ReconciliationReviewState
 from .reconciliation_uploads import digest as _digest
 from .reconciliation_uploads import (
+    is_safe_stage_text,
     validate_mode,
     validate_stage,
     validate_workbook_upload,
@@ -27,6 +30,7 @@ MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 MAX_SOURCES = 32
 MAX_RETAINED_TERMINAL_JOBS = 64
 MAX_MANUAL_DISCREPANCY_DECISIONS = 5_000
+MAX_STAGE_OPTIONS = 64
 LOGGER = logging.getLogger(__name__)
 
 
@@ -173,7 +177,7 @@ class AdminPanelService:
             result = self.run(job_id)
             self._prune_terminal_jobs()
             return result
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError, ReportProcessorError):
             if registered:
                 self.jobs.pop(job_id, None)
             shutil.rmtree(directory, ignore_errors=True)
@@ -612,6 +616,8 @@ def _resolve_target_stage(target: Path, digest: str, requested: str | None) -> s
         return stages[0]
     if not stages:
         raise TargetStageSelectionError("not_found")
+    if len(stages) > MAX_STAGE_OPTIONS:
+        raise TargetStageSelectionError("selection_limit_exceeded")
     raise TargetStageSelectionError("selection_required", stages)
 
 
@@ -621,23 +627,17 @@ def _structurally_valid_target_stages(target: Path, digest: str) -> tuple[str, .
     from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
     from report_processor.processing.adapters import _materialized
 
-    from .reconciliation_target import enumerate_reconciliation_stages, read_reconciliation_target
+    from .reconciliation_target import structurally_valid_reconciliation_stages
 
     try:
         source = _materialized(target, f"target-stage-discovery:{digest}")
         with open_dual_workbook(WorkbookOpenRequest(source)) as session:
-            discovered = enumerate_reconciliation_stages(session)
-    except (OSError, TypeError, ValueError, RuntimeError):
+            discovered = structurally_valid_reconciliation_stages(
+                session, maximum=MAX_STAGE_OPTIONS
+            )
+    except (OSError, TypeError, ValueError, RuntimeError, ReportProcessorError):
         return ()
-    valid = []
-    for stage in discovered:
-        try:
-            _schema, rows = read_reconciliation_target(target, digest, stage)
-        except (OSError, TypeError, ValueError, RuntimeError):
-            continue
-        if rows:
-            valid.append(stage)
-    return tuple(sorted(set(valid)))
+    return tuple(stage for stage in discovered if is_safe_stage_text(stage))
 
 
 def _verify_inputs(job: AdminJob) -> None:

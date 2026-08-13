@@ -2,6 +2,7 @@ import gc
 import hashlib
 import json
 import tracemalloc
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +10,8 @@ import pytest
 
 from report_processor.admin_panel import service as admin_service
 from report_processor.admin_panel.service import MAX_MANUAL_DISCREPANCY_DECISIONS, AdminPanelService
+from report_processor.domain.exceptions import UnsupportedExcelFormatError
+from report_processor.domain.statuses import StatusCode
 
 
 def _manual_result():
@@ -188,6 +191,74 @@ def test_explicit_missing_stage_stops_before_review_when_api_validation_is_reque
         )
 
     assert error.value.code == "not_found"
+    assert not [path for path in (tmp_path / "jobs").iterdir() if path.is_dir()]
+
+
+def test_workbook_domain_errors_become_not_found_and_remove_unregistered_job_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_open(_request):
+        raise UnsupportedExcelFormatError(StatusCode.UNSUPPORTED_EXCEL_FORMAT, "private detail")
+
+    monkeypatch.setattr("report_processor.excel.open_dual_workbook", fail_open)
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _manual_result())
+
+    with pytest.raises(admin_service.TargetStageSelectionError, match="not_found") as error:
+        service.create_job(
+            source_name="source.xlsx",
+            source_content=b"PK\x03\x04source",
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04malformed",
+            stage=None,
+        )
+
+    assert error.value.code == "not_found"
+    assert not [path for path in (tmp_path / "jobs").iterdir() if path.is_dir()]
+
+
+def test_structural_stage_discovery_opens_the_workbook_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened = []
+    discovered = []
+    monkeypatch.setattr(
+        "report_processor.excel.open_dual_workbook",
+        lambda request: opened.append(request) or nullcontext(object()),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_target.structurally_valid_reconciliation_stages",
+        lambda session, *, maximum: discovered.append((session, maximum)) or ("Секция (А)",),
+    )
+    target = tmp_path / "target.xlsx"
+    target.write_bytes(b"PK\x03\x04target")
+
+    stages = admin_service._structurally_valid_target_stages(target, "digest")
+
+    assert stages == ("Секция (А)",)
+    assert len(opened) == len(discovered) == 1
+
+
+def test_stage_selection_limits_an_overlarge_ambiguous_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        admin_service,
+        "_structurally_valid_target_stages",
+        lambda _target, _digest: tuple(f"Этап {index}" for index in range(65)),
+    )
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _manual_result())
+
+    with pytest.raises(admin_service.TargetStageSelectionError) as error:
+        service.create_job(
+            source_name="source.xlsx",
+            source_content=b"PK\x03\x04source",
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04target",
+            stage=None,
+        )
+
+    assert error.value.code == "selection_limit_exceeded"
+    assert error.value.stage_options == ()
     assert not [path for path in (tmp_path / "jobs").iterdir() if path.is_dir()]
 
 

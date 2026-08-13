@@ -138,6 +138,41 @@ def enumerate_reconciliation_stages(session) -> tuple[str, ...]:
     return tuple(sorted(stages))
 
 
+def structurally_valid_reconciliation_stages(session, *, maximum: int) -> tuple[str, ...]:
+    """Find stages with at least one target row in one workbook pass.
+
+    The criteria mirror ``_rows`` without retaining sheet names, row numbers,
+    or other provenance.  ``maximum + 1`` lets callers detect an overlarge
+    ambiguous selection without scanning or opening the workbook per stage.
+    """
+
+    if not isinstance(maximum, int) or maximum < 1:
+        raise ValueError("maximum must be positive")
+    stages: set[str] = set()
+    for sheet in session.formula_workbook.worksheets:
+        active_index = active_stage = None
+        for row_number in range(1, int(sheet.max_row or 0) + 1):
+            index_value = sheet.cell(row_number, 2).value
+            if index_value is not None:
+                active_index = terminal_index(index_value)
+            raw_stage = sheet.cell(row_number, 3).value
+            if raw_stage is not None and str(raw_stage).strip():
+                stage_name = str(raw_stage).strip()
+                stage_match = _STAGE_RE.search(stage_name)
+                active_stage = stage_match.group(1) if stage_match else stage_name
+            if (
+                active_stage is None
+                or active_index is None
+                or sheet.cell(row_number, 4).value is None
+                or not sheet.cell(row_number, 5).value
+            ):
+                continue
+            stages.add(active_stage)
+            if len(stages) > maximum:
+                return tuple(sorted(stages))
+    return tuple(sorted(stages))
+
+
 def resolve_reconciliation_stage(stages: tuple[str, ...], requested: str | None) -> str:
     """Resolve only explicit existing stage or exactly one discovered stage."""
     if requested is not None:
