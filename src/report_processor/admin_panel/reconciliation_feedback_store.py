@@ -86,8 +86,6 @@ class ReconciliationFeedbackStore:
                 if existing is not None:
                     if existing[0] != payload_hash:
                         raise ValueError("RECONCILIATION_APPLY_CONFLICT")
-                    if precommit_validator is not None:
-                        precommit_validator()
                     connection.commit()
                     return False
                 next_sequence = int(
@@ -97,8 +95,6 @@ class ReconciliationFeedbackStore:
                         (target_digest,),
                     ).fetchone()[0]
                 )
-                if precommit_validator is not None:
-                    precommit_validator()
                 for record in records:
                     next_sequence += 1
                     connection.execute(
@@ -120,6 +116,8 @@ class ReconciliationFeedbackStore:
                     (apply_key, target_digest, payload_hash) VALUES (?, ?, ?)""",
                     (apply_key, target_digest, payload_hash),
                 )
+                if precommit_validator is not None:
+                    precommit_validator()
                 connection.commit()
                 return True
             except BaseException:

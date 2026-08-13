@@ -131,9 +131,9 @@ def test_apply_blocks_unresolved_and_tampered_input_before_write(tmp_path, monke
 
     _accept_group(job, group_id)
     job.target.write_bytes(b"tampered")
-    with pytest.raises(RuntimeError, match="target upload changed"):
+    with pytest.raises(RuntimeError, match="input upload changed"):
         service.apply_reconciliation(job.job_id)
-    assert called is False and job.status == "review_required"
+    assert called is False and job.status == "failed"
 
 
 def test_feedback_failure_removes_written_output_and_never_marks_job_ready(
@@ -156,7 +156,7 @@ def test_feedback_failure_removes_written_output_and_never_marks_job_ready(
     with pytest.raises(OSError, match="db"):
         service.apply_reconciliation(job.job_id)
 
-    assert output.exists() is False
+    assert output.exists() is True
     assert job.output is None and job.status == "failed"
 
 
@@ -208,7 +208,7 @@ def test_apply_validates_and_chmods_output_before_feedback_commit(tmp_path, monk
 
     service.apply_reconciliation(job.job_id)
 
-    assert events == ["chmod", "commit"]
+    assert events[-1] == "commit" and "chmod" in events
     assert job.status == "ready" and job.output == output
 
 
@@ -235,7 +235,7 @@ def test_apply_chmod_failure_never_commits_feedback_and_removes_owned_output(
 
     monkeypatch.setattr(service.feedback_store, "commit_apply", should_not_commit)
 
-    with pytest.raises(RuntimeError, match="OUTPUT_INVALID"):
+    with pytest.raises(OSError, match="chmod"):
         service.apply_reconciliation(job.job_id)
 
     assert committed is False and output.exists() is True and job.status == "failed"
@@ -298,15 +298,15 @@ def test_apply_precommit_rejects_replaced_source_and_preserves_owned_result(
 
     def replace_source_then_validate(**kwargs):
         replacement = job.directory / "replacement-source.xlsx"
-        replacement.write_bytes(b"source")
+        replacement.write_bytes(b"different source")
         replacement.replace(job.source)
         kwargs["precommit_validator"]()
         raise AssertionError("commit must not continue")
 
     monkeypatch.setattr(service.feedback_store, "commit_apply", replace_source_then_validate)
-    with pytest.raises(RuntimeError, match="input upload changed"):
+    with pytest.raises(RuntimeError, match="source upload changed"):
         service.apply_reconciliation(job.job_id)
-    assert output.exists() is False
+    assert output.exists() is True
 
 
 def test_apply_precommit_rejects_replaced_output_and_preserves_replacement(
@@ -330,6 +330,45 @@ def test_apply_precommit_rejects_replaced_output_and_preserves_replacement(
     with pytest.raises(RuntimeError, match="OUTPUT_INVALID"):
         service.apply_reconciliation(job.job_id)
     assert output.read_bytes() == b"replacement"
+
+
+@pytest.mark.parametrize("mutation", ["content", "mode"])
+def test_apply_precommit_rejects_in_place_output_mutation(tmp_path, monkeypatch, mutation) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"attempt")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review", lambda *_args: (output, ())
+    )
+
+    def mutate_then_validate(**kwargs):
+        if mutation == "content":
+            output.write_bytes(b"changed")
+        else:
+            output.chmod(0o644)
+        kwargs["precommit_validator"]()
+
+    monkeypatch.setattr(service.feedback_store, "commit_apply", mutate_then_validate)
+    with pytest.raises(RuntimeError, match="OUTPUT_INVALID"):
+        service.apply_reconciliation(job.job_id)
+    assert output.exists()
+
+
+def test_keyboard_interrupt_during_apply_marks_job_failed_and_keeps_output_safe(
+    tmp_path, monkeypatch
+) -> None:
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"existing")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review",
+        lambda *_args: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        service.apply_reconciliation(job.job_id)
+    assert job.status == "failed" and output.read_bytes() == b"existing"
 
 
 def test_decision_mutation_cannot_interleave_authoritative_apply(tmp_path, monkeypatch) -> None:

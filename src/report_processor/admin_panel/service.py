@@ -10,7 +10,7 @@ import shutil
 import stat
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from report_processor.domain.exceptions import ReportProcessorError
@@ -65,6 +65,7 @@ class AdminJob:
     verification_message: str | None = None
     checked_row_count: int = 0
     failed_row_count: int = 0
+    reconciliation_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     @property
     def result_available(self) -> bool:
@@ -111,7 +112,6 @@ class AdminPanelService:
         self.workspace_root = Path(workspace_root)
         self.execute = execute
         self.jobs: dict[str, AdminJob] = {}
-        self._reconciliation_locks: dict[str, threading.RLock] = {}
         if self.workspace_root.is_symlink():
             raise ValueError("workspace root cannot be a symlink")
         self.workspace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -231,22 +231,25 @@ class AdminPanelService:
         return self.get_job(job_id)
 
     def put_reconciliation_group(self, job_id: str, group_id: str, decision) -> AdminJob:
-        with self._reconciliation_lock(job_id):
-            job = self._review_job(job_id)
-            job.review_state.put_group(group_id, decision)
-            return job
+        return self._mutate_reconciliation(job_id, "put_group", group_id, decision)
 
     def put_reconciliation_row(self, job_id: str, row_id: str, decision) -> AdminJob:
-        with self._reconciliation_lock(job_id):
-            job = self._review_job(job_id)
-            job.review_state.put_row(row_id, decision)
-            return job
+        return self._mutate_reconciliation(job_id, "put_row", row_id, decision)
 
     def delete_reconciliation_row(self, job_id: str, row_id: str, version: str) -> AdminJob:
-        with self._reconciliation_lock(job_id):
-            job = self._review_job(job_id)
-            job.review_state.delete_row(row_id, version)
-            return job
+        return self._mutate_reconciliation(job_id, "delete_row", row_id, version)
+
+    def put_reconciliation_package(self, job_id: str, package_id: str, decision) -> AdminJob:
+        return self._mutate_reconciliation(job_id, "put_package", package_id, decision)
+
+    def put_reconciliation_family(self, job_id: str, family_id: str, decision) -> AdminJob:
+        return self._mutate_reconciliation(job_id, "put_family", family_id, decision)
+
+    def accept_reconciliation_safe_packages(self, job_id: str, packages) -> AdminJob:
+        return self._mutate_reconciliation(job_id, "accept_safe_packages", packages)
+
+    def undo_reconciliation(self, job_id: str) -> AdminJob:
+        return self._mutate_reconciliation(job_id, "undo")
 
     def apply_reconciliation(self, job_id: str) -> AdminJob:
         with self._reconciliation_lock(job_id):
@@ -259,12 +262,12 @@ class AdminPanelService:
             job = self._review_job(job_id)
             if job.review_state.unresolved_row_ids():
                 raise ValueError("authoritative review is incomplete")
-            inputs = _capture_input_snapshot(job)
             decisions = tuple(job.review_state.core_decisions())
             job.status = "running"
             owned_output: tuple[int, int] | None = None
             try:
-                applied = apply_review(job, job.review_state, decisions)
+                apply_job = _materialize_apply_snapshot(job)
+                applied = apply_review(apply_job, job.review_state, decisions)
                 output, feedback = applied
                 owned_output, output_digest = _validate_owned_apply_output(job, output)
                 apply_key = getattr(applied, "apply_key", None)
@@ -285,19 +288,25 @@ class AdminPanelService:
                     payload_hash=payload_hash,
                     records=feedback,
                     precommit_validator=lambda: _verify_apply_artifacts(
-                        job, inputs, output, owned_output
+                        job, output, owned_output, output_digest
                     ),
                 )
                 # No fallible I/O after the SQLite commit point.
                 job.output, job.result_name, job.status = output, "optimized-report.xlsx", "ready"
-            except (OSError, TypeError, ValueError, RuntimeError):
+            except BaseException:
                 _remove_partial_output(job, owned_output)
                 job.status, job.errors = "failed", ("PROCESSING_FAILED",)
                 raise
             return job
 
     def _reconciliation_lock(self, job_id: str) -> threading.RLock:
-        return self._reconciliation_locks.setdefault(job_id, threading.RLock())
+        return self.get_job(job_id).reconciliation_lock
+
+    def _mutate_reconciliation(self, job_id: str, method: str, *args) -> AdminJob:
+        with self._reconciliation_lock(job_id):
+            job = self._review_job(job_id)
+            getattr(job.review_state, method)(*args)
+            return job
 
     def _review_job(self, job_id: str) -> AdminJob:
         job = self.get_job(job_id)
@@ -695,6 +704,48 @@ def _capture_input_snapshot(job: AdminJob) -> tuple[tuple[Path, str, tuple[int, 
     return tuple(snapshot)
 
 
+def _materialize_apply_snapshot(job: AdminJob) -> AdminJob:
+    """Bind authoritative readers to private immutable copies, not mutable uploads."""
+    sources = job.sources or (job.source,)
+    digests = job.source_digests or (job.source_digest,)
+    snapshots: list[Path] = []
+    for index, (source, digest) in enumerate(zip(sources, digests, strict=True), 1):
+        destination = job.directory / f"apply-input-source-{index:02d}{source.suffix.casefold()}"
+        _copy_verified_snapshot(source, destination, digest)
+        snapshots.append(destination)
+    target = job.directory / f"apply-input-target{job.target.suffix.casefold()}"
+    _copy_verified_snapshot(job.target, target, job.target_digest)
+    return replace(job, source=snapshots[0], sources=tuple(snapshots), target=target)
+
+
+def _copy_verified_snapshot(source: Path, destination: Path, expected_digest: str) -> None:
+    source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    destination_fd: int | None = None
+    digest = hashlib.sha256()
+    try:
+        info = os.fstat(source_fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError("input upload is not a regular file")
+        destination_fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        while chunk := os.read(source_fd, 1024 * 1024):
+            digest.update(chunk)
+            os.write(destination_fd, chunk)
+        os.fsync(destination_fd)
+        os.fchmod(destination_fd, 0o600)
+        if digest.hexdigest() != expected_digest:
+            raise RuntimeError("input upload changed during snapshot")
+    except BaseException:
+        if destination_fd is not None:
+            os.close(destination_fd)
+            destination_fd = None
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(source_fd)
+        if destination_fd is not None:
+            os.close(destination_fd)
+
+
 def _file_digest(path: Path) -> str:
     _identity, digest = _file_identity_and_digest(path)
     return digest
@@ -749,17 +800,29 @@ def _file_identity_and_digest_with_mode(path: Path) -> tuple[tuple[int, int], st
 
 def _verify_apply_artifacts(
     job: AdminJob,
-    inputs: tuple[tuple[Path, str, tuple[int, int]], ...],
     output: Path,
     output_identity: tuple[int, int],
+    output_digest: str,
 ) -> None:
-    for path, expected_digest, expected_identity in inputs:
-        identity, digest = _file_identity_and_digest(path)
-        if identity != expected_identity or digest != expected_digest:
-            raise RuntimeError("input upload changed during authoritative apply")
-    identity, _digest = _file_identity_and_digest(output)
-    if identity != output_identity:
+    _verify_inputs(job)
+    identity, digest, mode = _current_output_facts(output)
+    if identity != output_identity or digest != output_digest or mode != 0o600:
         raise RuntimeError("RECONCILIATION_OUTPUT_INVALID")
+
+
+def _current_output_facts(path: Path) -> tuple[tuple[int, int], str, int]:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    digest = hashlib.sha256()
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError("RECONCILIATION_OUTPUT_INVALID")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return (info.st_dev, info.st_ino), digest.hexdigest(), stat.S_IMODE(info.st_mode)
+    finally:
+        os.close(descriptor)
 
 
 def _digest_apply_fallback(
@@ -788,14 +851,10 @@ def _digest_apply_fallback(
 
 
 def _remove_partial_output(job: AdminJob, owned_identity: tuple[int, int] | None = None) -> None:
-    candidate = job.directory / "result.xlsx"
-    if owned_identity is not None:
-        try:
-            current = candidate.stat()
-        except FileNotFoundError:
-            pass
-        else:
-            if (current.st_dev, current.st_ino) == owned_identity:
-                candidate.unlink(missing_ok=True)
+    # POSIX has no unlink-by-file-descriptor. A stat/unlink sequence can erase a
+    # concurrent replacement, so terminal private job cleanup intentionally
+    # retains the path. It is inaccessible as a failed result and removed only
+    # with the job directory's controlled retention lifecycle.
+    del owned_identity
     job.output = None
     job.result_name = None
