@@ -78,7 +78,9 @@ members are duplicated, but the original bytes are not changed.
 RA-019 must build ancestry from actual merged spans, bind adjacent quantity/total-cost leaves under
 one parent region and deduplicate physically identical candidates. Broad semantic stems may produce
 candidates, but never a best guess: equal coherent candidates remain a controlled ambiguity. This
-is structural recognition, not a narrow wording allowlist.
+is structural recognition, not a narrow wording allowlist. The representative corpus contains
+1,196 formula cells with empty cache projections among more than 1.8 million formulas; cache failure
+is therefore evaluated only after a row is structurally eligible, never as a workbook-wide veto.
 
 RA-020 requires one shared terminal identity contract. It accepts an unambiguous bare four-digit
 index or the final three/four-digit component of a full dotted identifier while preserving leading

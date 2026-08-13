@@ -27,7 +27,9 @@ Keep only the two latest completed runs relevant to active work.
 ## 2026-08-13 — real target/reference shadow
 
 - Twelve original sources, one clean target and one desired reference were inspected from immutable
-  copies; every input hash stayed unchanged and every formula cell had a cached value.
+  copies; every input hash stayed unchanged. OOXML contains 1,820,820 formula cells and a `<v>`
+  node for each, but 1,196 caches are empty. Only a formula in an otherwise eligible reconciliation
+  metric row is a controlled failure; blanket workbook-level rejection would be inaccurate.
 - Clean/reference comparison: 180 rows in both; width 15→17; J/K unchanged; one adjacent
   reporting-period pair appears in L/M; the narrative block shifts two columns right; only the
   selected stage gains period values.
