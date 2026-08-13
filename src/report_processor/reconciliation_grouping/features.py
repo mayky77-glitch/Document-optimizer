@@ -72,11 +72,16 @@ def normalize_text(value: str | None) -> str:
 
 
 def unit_family(unit: str | None) -> UnitFamily:
-    normalized = normalize_text(unit).replace(" ", "")
+    normalized = normalize_unit(unit)
     for family, aliases in _UNIT_ALIASES.items():
         if normalized in aliases:
             return family
     return UnitFamily.UNKNOWN
+
+
+def normalize_unit(unit: str | None) -> str:
+    """Return the exact normalized unit token used for conservative comparison."""
+    return normalize_text(unit).replace(" ", "")
 
 
 def extract_features(

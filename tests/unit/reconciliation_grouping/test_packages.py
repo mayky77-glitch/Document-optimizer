@@ -33,6 +33,7 @@ def _row(
     row_id: str,
     name: str,
     *,
+    unit: str = "м",
     quantity: str = "1",
     cost: str = "2",
     category: str | None = "Кабельные работы",
@@ -40,7 +41,7 @@ def _row(
     return ReviewRow(
         row_id=row_id,
         display_name=name,
-        unit="м",
+        unit=unit,
         quantity=Decimal(quantity),
         cost=Decimal(cost),
         proposed_category=category,
@@ -143,6 +144,49 @@ def test_cross_boundary_categories_and_modes_remain_independently_safe() -> None
     assert not result.exceptions
     assert len(result.packages) == 2
     assert all(package.safe for package in result.packages)
+
+
+def test_quantity_cost_requires_recognized_exact_units_without_conversion() -> None:
+    meters = _row("row-m", "Монтаж силового кабеля", unit="м")
+    kilometers = _row("row-km", "Монтаж силового кабеля", unit="км")
+    unknown = _row("row-unknown", "Монтаж силового кабеля", unit="условная единица")
+    groups = (
+        _group("group-m", meters),
+        _group("group-km", kilometers),
+        _group("group-unknown", unknown),
+    )
+
+    result = _build((meters, kilometers, unknown), groups)
+
+    assert {exception.reason for exception in result.exceptions} >= {
+        "quantity_cost_unit_mismatch",
+        "quantity_cost_unit_unrecognized",
+    }
+    assert not any(package.safe for package in result.packages)
+
+
+def test_cost_only_packages_remain_explicitly_eligible_with_different_exact_units() -> None:
+    meters = _row("row-m", "Монтаж силового кабеля", unit="м")
+    kilometers = _row("row-km", "Монтаж силового кабеля", unit="км")
+    groups = (_group("group-m", meters), _group("group-km", kilometers))
+
+    result = _build(
+        (meters, kilometers),
+        groups,
+        modes={"group-m": ReviewMode.COST_ONLY, "group-km": ReviewMode.COST_ONLY},
+    )
+
+    assert not result.exceptions
+    assert len(result.packages) == 1
+    assert result.packages[0].safe is True
+
+
+def test_dangling_negative_feedback_endpoint_is_rejected_after_group_materialization() -> None:
+    row = _row("row-a", "Монтаж силового кабеля")
+    group = _group("group-a", row)
+
+    with pytest.raises(ValueError, match="unknown materialized group"):
+        _build((row,), (group,), negative_pairs=(("group-a", "removed-group"),))
 
 
 def test_package_without_a_proposed_category_is_never_mass_acceptable() -> None:

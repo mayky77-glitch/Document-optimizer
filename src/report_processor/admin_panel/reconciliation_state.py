@@ -108,6 +108,7 @@ class ReconciliationReviewState:
         self._validate_batch_decision(decision, package.member_group_ids)
         self._capture_undo()
         self.package_decisions[package_id] = replace(decision, version=package.version)
+        self._refresh_decision_versions()
         self._changed("Решение для пакета сохранено.")
 
     def put_family(self, family_id: str, decision: BatchReviewDecision) -> None:
@@ -115,6 +116,7 @@ class ReconciliationReviewState:
         self._validate_batch_decision(decision, family.member_group_ids)
         self._capture_undo()
         self.family_decisions[family_id] = replace(decision, version=family.version)
+        self._refresh_decision_versions()
         self._changed("Решение для семейства сохранено.")
 
     def accept_safe_packages(self, packages: Sequence[tuple[str, str]]) -> None:
@@ -136,6 +138,7 @@ class ReconciliationReviewState:
             self._validate_batch_decision(decisions[package.package_id], package.member_group_ids)
         self._capture_undo()
         self.package_decisions.update(decisions)
+        self._refresh_decision_versions()
         self._changed("Безопасные пакеты приняты.")
 
     def put_group(self, group_id: str, decision: ReviewDecision) -> None:
@@ -143,6 +146,7 @@ class ReconciliationReviewState:
         self.validate_decision(decision, group_id=group.group_id)
         self._capture_undo()
         self.group_decisions[group_id] = replace(decision, group_id=group_id, row_id=None)
+        self._refresh_decision_versions()
         self._changed("Решение для группы сохранено.")
 
     def put_row(self, row_id: str, decision: ReviewDecision) -> None:
@@ -150,12 +154,14 @@ class ReconciliationReviewState:
         self.validate_decision(decision, row_id=row_id)
         self._capture_undo()
         self.row_decisions[row_id] = replace(decision, group_id=None, row_id=row_id)
+        self._refresh_decision_versions()
         self._changed("Решение для строки сохранено.")
 
     def delete_row(self, row_id: str, version: str) -> None:
         self._row_group(row_id, version)
         self._capture_undo()
         self.row_decisions.pop(row_id, None)
+        self._refresh_decision_versions()
         self._changed("Решение для строки отменено.")
 
     def undo(self) -> None:
@@ -167,6 +173,7 @@ class ReconciliationReviewState:
         self.group_decisions = previous.groups
         self.row_decisions = previous.rows
         self._undo = None
+        self._refresh_decision_versions()
         self._changed("Последнее решение отменено.")
 
     def restore(
@@ -177,7 +184,11 @@ class ReconciliationReviewState:
         group_decisions: Mapping[str, ReviewDecision],
         row_decisions: Mapping[str, ReviewDecision],
     ) -> None:
-        """Restore an already fingerprint-checked private snapshot without creating undo history."""
+        """Atomically restore a fingerprint-checked private decision snapshot."""
+        prospective_packages = dict(package_decisions)
+        prospective_families = dict(family_decisions)
+        prospective_groups = dict(group_decisions)
+        prospective_rows = dict(row_decisions)
         for package_id, decision in package_decisions.items():
             package = self._package(package_id, decision.version)
             self._validate_batch_decision(decision, package.member_group_ids)
@@ -185,15 +196,29 @@ class ReconciliationReviewState:
             family = self._family(family_id, decision.version)
             self._validate_batch_decision(decision, family.member_group_ids)
         for group_id, decision in group_decisions.items():
-            self._group(group_id, decision.version)
+            self._group(
+                group_id,
+                decision.version,
+                packages=prospective_packages,
+                families=prospective_families,
+                groups=prospective_groups,
+                rows=prospective_rows,
+            )
             self.validate_decision(decision, group_id=group_id)
         for row_id, decision in row_decisions.items():
-            self._row_group(row_id, decision.version)
+            self._row_group(
+                row_id,
+                decision.version,
+                packages=prospective_packages,
+                families=prospective_families,
+                groups=prospective_groups,
+                rows=prospective_rows,
+            )
             self.validate_decision(decision, row_id=row_id)
-        self.package_decisions = dict(package_decisions)
-        self.family_decisions = dict(family_decisions)
-        self.group_decisions = dict(group_decisions)
-        self.row_decisions = dict(row_decisions)
+        self.package_decisions = prospective_packages
+        self.family_decisions = prospective_families
+        self.group_decisions = prospective_groups
+        self.row_decisions = prospective_rows
         self.last_action = "Решения восстановлены."
 
     def effective_decisions(self) -> tuple[ReviewDecision, ...]:
@@ -272,17 +297,27 @@ class ReconciliationReviewState:
                 group_id=group_id,
             )
 
-    def _group(self, group_id: str, version: str | None) -> ReviewGroup:
+    def _group(
+        self,
+        group_id: str,
+        version: str | None,
+        **decision_maps: Mapping[str, BatchReviewDecision | ReviewDecision],
+    ) -> ReviewGroup:
         group = self.groups.get(group_id)
-        if group is None or version != self._version(group):
+        if group is None or version != self._version(group, **decision_maps):
             raise ValueError("review version is stale")
         return group
 
-    def _row_group(self, row_id: str, version: str | None) -> ReviewGroup:
+    def _row_group(
+        self,
+        row_id: str,
+        version: str | None,
+        **decision_maps: Mapping[str, BatchReviewDecision | ReviewDecision],
+    ) -> ReviewGroup:
         if row_id not in self.rows:
             raise ValueError("unknown review row")
         group = next((item for item in self.groups.values() if row_id in item.member_ids), None)
-        if group is None or version != self._version(group):
+        if group is None or version != self._version(group, **decision_maps):
             raise ValueError("review version is stale")
         return group
 
@@ -371,21 +406,43 @@ class ReconciliationReviewState:
             dict(self.row_decisions),
         )
 
+    def _refresh_decision_versions(self) -> None:
+        """Keep persisted group and row versions bound to the complete current snapshot."""
+        self.group_decisions = {
+            group_id: replace(decision, version=self._version(self.groups[group_id]))
+            for group_id, decision in self.group_decisions.items()
+        }
+        self.row_decisions = {
+            row_id: replace(decision, version=self._version(self._row_group_for_id(row_id)))
+            for row_id, decision in self.row_decisions.items()
+        }
+
     def _changed(self, message: str) -> None:
         self.last_action = message
         if self._autosave is not None:
             self._autosave(self)
 
-    def _version(self, group: ReviewGroup) -> str:
+    def _row_group_for_id(self, row_id: str) -> ReviewGroup:
+        return next(group for group in self.groups.values() if row_id in group.member_ids)
+
+    def _version(
+        self,
+        group: ReviewGroup,
+        *,
+        packages: Mapping[str, BatchReviewDecision | ReviewDecision] | None = None,
+        families: Mapping[str, BatchReviewDecision | ReviewDecision] | None = None,
+        groups: Mapping[str, BatchReviewDecision | ReviewDecision] | None = None,
+        rows: Mapping[str, BatchReviewDecision | ReviewDecision] | None = None,
+    ) -> str:
         payload = {
             "contract": "ReconciliationBatchDecision-1.0",
             "fingerprint": self.version_fingerprint,
             "group": group.group_id,
             "members": group.member_ids,
-            "packages": _batch_decisions(self.package_decisions),
-            "families": _batch_decisions(self.family_decisions),
-            "groups": _decisions(self.group_decisions),
-            "rows": _decisions(self.row_decisions),
+            "packages": _batch_decisions(self.package_decisions if packages is None else packages),
+            "families": _batch_decisions(self.family_decisions if families is None else families),
+            "groups": _decisions(self.group_decisions if groups is None else groups),
+            "rows": _decisions(self.row_decisions if rows is None else rows),
         }
         return _digest(payload)
 

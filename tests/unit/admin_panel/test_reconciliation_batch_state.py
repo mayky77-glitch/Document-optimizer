@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -149,6 +150,93 @@ def test_autosave_restore_and_mass_accept_match_sequential_decision(tmp_path) ->
     )
 
     assert restored.core_decisions() == mass.core_decisions() == sequential.core_decisions()
+
+
+def test_restart_restores_all_decision_scopes_atomically_and_order_independently(tmp_path) -> None:
+    saved = _state()
+    package = saved.grouping.packages[0]
+    family = saved.grouping.families[0]
+    group = next(iter(saved.groups.values()))
+    row_id = group.member_ids[0]
+    saved.put_package(
+        package.package_id,
+        BatchReviewDecision(
+            ReviewAction.ACCEPT, ReviewMode.QUANTITY_COST, "target-1", package.version
+        ),
+    )
+    saved.put_family(
+        family.family_id,
+        BatchReviewDecision(ReviewAction.REJECT, version=family.version),
+    )
+    saved.put_group(
+        group.group_id,
+        ReviewDecision(
+            ReviewAction.ACCEPT,
+            ReviewMode.COST_ONLY,
+            "target-2",
+            group_id=group.group_id,
+            version=saved.group_snapshot()[0].version,
+        ),
+    )
+    saved.put_row(
+        row_id,
+        ReviewDecision(
+            ReviewAction.REJECT,
+            row_id=row_id,
+            version=saved.group_snapshot()[0].version,
+        ),
+    )
+    store = ReconciliationBatchStore(tmp_path)
+    store.save(saved)
+
+    restored = _state()
+    assert store.restore(restored) is True
+    assert restored.core_decisions() == saved.core_decisions()
+
+    permuted = _state()
+    permuted.restore(
+        package_decisions=dict(reversed(tuple(saved.package_decisions.items()))),
+        family_decisions=dict(reversed(tuple(saved.family_decisions.items()))),
+        group_decisions=dict(reversed(tuple(saved.group_decisions.items()))),
+        row_decisions=dict(reversed(tuple(saved.row_decisions.items()))),
+    )
+    assert permuted.core_decisions() == saved.core_decisions()
+
+
+def test_stale_restart_snapshot_does_not_partially_mutate_state() -> None:
+    saved = _state()
+    package = saved.grouping.packages[0]
+    group = next(iter(saved.groups.values()))
+    saved.put_package(
+        package.package_id,
+        BatchReviewDecision(
+            ReviewAction.ACCEPT, ReviewMode.QUANTITY_COST, "target-1", package.version
+        ),
+    )
+    saved.put_group(
+        group.group_id,
+        ReviewDecision(
+            ReviewAction.REJECT,
+            group_id=group.group_id,
+            version=saved.group_snapshot()[0].version,
+        ),
+    )
+    stale_groups = {
+        group.group_id: replace(saved.group_decisions[group.group_id], version="stale-version")
+    }
+    target = _state()
+    original = target.core_decisions()
+
+    with pytest.raises(ValueError, match="stale"):
+        target.restore(
+            package_decisions=saved.package_decisions,
+            family_decisions=saved.family_decisions,
+            group_decisions=stale_groups,
+            row_decisions=saved.row_decisions,
+        )
+
+    assert target.core_decisions() == original
+    assert target.package_decisions == {}
 
 
 def test_package_decisions_become_reusable_feedback_only_after_expansion() -> None:
