@@ -103,9 +103,11 @@
     }
     if (!response.ok) {
       const error = new Error(typeof payload.error === "string" ? payload.error : "Сверка не выполнена. Проверьте документы и повторите действие.");
-      const controlledCode = ["stale_state", "selection_required", "not_found"].includes(payload?.code)
-        ? payload.code
-        : "";
+      const controlledCode = payload?.code === "stale_state"
+        ? "stale_state"
+        : ["selection_required", "not_found", "selection_limit_exceeded"].includes(payload?.code)
+          ? payload.code
+          : "";
       if (controlledCode) error.code = controlledCode;
       if (controlledCode === "selection_required") error.stage_options = stageOptions(payload);
       throw error;

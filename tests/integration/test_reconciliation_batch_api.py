@@ -53,6 +53,20 @@ def _workbook_bytes() -> bytes:
     return stream.getvalue()
 
 
+def _target_workbook_bytes() -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["B1"] = "1234"
+    sheet["C1"] = "Этап 13.1"
+    sheet["D1"] = "1"
+    sheet["E1"] = "Целевая работа"
+    sheet["F1"] = "шт"
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
+
+
 def test_package_routes_mass_accept_undo_and_private_payload(tmp_path: Path) -> None:
     service = AdminPanelService(tmp_path, execute=lambda _job: _result())
     app = create_app(service=service, workspace_root=tmp_path)
@@ -61,7 +75,7 @@ def test_package_routes_mass_accept_undo_and_private_payload(tmp_path: Path) -> 
             "/api/jobs",
             files={
                 "sources": ("source.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
-                "target": ("target.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+                "target": ("target.xlsx", _target_workbook_bytes(), "application/vnd.ms-excel"),
             },
         )
         payload = created.json()
@@ -93,7 +107,7 @@ def test_package_route_accepts_an_explicit_alternative_category(tmp_path: Path) 
             "/api/jobs",
             files={
                 "sources": ("source.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
-                "target": ("target.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+                "target": ("target.xlsx", _target_workbook_bytes(), "application/vnd.ms-excel"),
             },
         ).json()
         package = created["review_packages"][0]
@@ -123,7 +137,7 @@ def test_package_and_family_routes_require_versions_without_mutation(tmp_path: P
             "/api/jobs",
             files={
                 "sources": ("source.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
-                "target": ("target.xlsx", _workbook_bytes(), "application/vnd.ms-excel"),
+                "target": ("target.xlsx", _target_workbook_bytes(), "application/vnd.ms-excel"),
             },
         ).json()
         package = created["review_packages"][0]
