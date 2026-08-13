@@ -37,7 +37,7 @@ def test_canonical_rows_keep_the_actual_worksheet_title() -> None:
 
 
 def test_source_identity_resolves_only_one_selected_target_intersection() -> None:
-    descriptor = descriptor_from_upload_basename("акт 1234 (0123).xlsx")
+    descriptor = descriptor_from_upload_basename("source-1234 (0123).xlsx")
 
     resolved = resolve_descriptor_identity(descriptor, {"0123"})
 

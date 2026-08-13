@@ -111,6 +111,7 @@ class ReconciliationSourceBatch:
     rows: tuple[NormalizedSourceRow, ...]
     issues: tuple[ReconciliationSourceIssue, ...]
     selections: tuple[ReconciliationSourceSelection, ...]
+    terminal_identities: tuple[tuple[str, str], ...] = ()
 
 
 class AllReconciliationSourcesUnusableError(ValueError):
@@ -130,6 +131,7 @@ def extract_reconciliation_sources(
     rows: list[NormalizedSourceRow] = []
     issues: list[ReconciliationSourceIssue] = []
     selections: list[ReconciliationSourceSelection] = []
+    identities: list[tuple[str, str]] = []
     for path, source_id, descriptor in workbooks:
         if require_document_index and not _has_usable_document_index(descriptor):
             issues.append(_issue("DOCUMENT_INDEX_MISSING", descriptor))
@@ -150,6 +152,8 @@ def extract_reconciliation_sources(
             continue
         source_type, normalized = selected
         rows.extend(normalized)
+        if descriptor.document_index is not None:
+            identities.append((source_id, descriptor.document_index))
         selections.append(
             ReconciliationSourceSelection(
                 safe_basename=descriptor.safe_basename,
@@ -157,7 +161,9 @@ def extract_reconciliation_sources(
                 usable_row_count=len(normalized),
             )
         )
-    batch = ReconciliationSourceBatch(tuple(rows), tuple(issues), tuple(selections))
+    batch = ReconciliationSourceBatch(
+        tuple(rows), tuple(issues), tuple(selections), tuple(sorted(identities))
+    )
     if not batch.rows:
         raise AllReconciliationSourcesUnusableError(batch.issues)
     return batch
@@ -226,13 +232,18 @@ def _extract_ks6a_rows(
                 formula_sheet=formula_sheet,
             )
             if rows:
-                parent_left, _parent_right = header_rows.parent_span(header_end - 1, anchor)
+                span = _parent_span_for_anchor(header_rows, anchor)
+                if span is None:
+                    continue
+                parent_top, parent_left, _parent_bottom, parent_right = span
                 candidates.append(
                     (
                         (
                             work_column,
                             unit_column,
+                            parent_top,
                             parent_left,
+                            parent_right,
                             quantity_column,
                             cost_column,
                             header_end,
@@ -353,7 +364,7 @@ def _header_path(rows: tuple[tuple[object, ...], ...], row_number: int, column: 
 
 def _role_text(value: str, role: str) -> bool:
     if role == "work":
-        return any(stem in value for stem in ("наименован", "описан", "вид работ", "работ"))
+        return any(stem in value for stem in ("наименован", "описан", "вид работ"))
     if role == "cumulative":
         return ("выполн" in value or "освоен" in value) and (
             "весь" in value or "нараст" in value or "итог" in value
@@ -461,15 +472,21 @@ def _metric_pairs_for_anchor(header, anchor: int) -> list[tuple[int, int, int]]:
     candidates = []
     for row_number, _row in enumerate(rows, 1):
         if _role_text(_header_path(rows, row_number, anchor), "cumulative"):
-            start, end = (
-                header.parent_span(row_number, anchor)
-                if isinstance(header, _HeaderGraph) and (row_number, anchor) in header.spans
-                else (anchor, anchor + 5)
-            )
+            span = _parent_span_for_anchor(header, anchor)
+            if span is None:
+                continue
+            _top, start, _bottom, end = span
             for leaf_row in range(row_number + 1, min(row_number + 5, len(rows)) + 1):
                 pairs = _metric_pairs(rows[leaf_row - 1], start, end)
                 candidates.extend((quantity, cost, leaf_row) for quantity, cost in pairs)
     return candidates
+
+
+def _parent_span_for_anchor(header, anchor: int) -> tuple[int, int, int, int] | None:
+    if not isinstance(header, _HeaderGraph):
+        return None
+    spans = {span for (row, column), span in header.spans.items() if column == anchor}
+    return next(iter(spans)) if len(spans) == 1 else None
 
 
 def _detail_start(
@@ -553,15 +570,20 @@ def _canonical_rows(
         unit = _text_at(values, unit_column)
         quantity = _decimal(_value_at(values, quantity_column))
         cost = _decimal(_value_at(values, cost_column))
-        formulas_present = formula_sheet is not None and (
-            formula_sheet.cell(row_number, quantity_column).data_type == "f"
-            or formula_sheet.cell(row_number, cost_column).data_type == "f"
+        quantity_formula = (
+            formula_sheet is not None
+            and formula_sheet.cell(row_number, quantity_column).data_type == "f"
+        )
+        cost_formula = (
+            formula_sheet is not None
+            and formula_sheet.cell(row_number, cost_column).data_type == "f"
         )
         if (
             not work_name
             or not unit
             or _HIERARCHY_VALUE_RE.fullmatch(unit) is not None
-            or (not formulas_present and (quantity is None or cost is None))
+            or (quantity is None and not quantity_formula)
+            or (cost is None and not cost_formula)
         ):
             continue
         if formula_sheet is not None:

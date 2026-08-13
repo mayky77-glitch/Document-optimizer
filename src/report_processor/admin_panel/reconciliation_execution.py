@@ -79,7 +79,8 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         batch = _sources(job, target_identities) if target_identities else _sources(job)
     except AllReconciliationSourcesUnusableError as error:
         return ReconciliationReviewResult(None, None, error.issues)
-    source_rows = _review_rows(batch.rows, targets, catalog, job)
+    identities = getattr(batch, "terminal_identities", ())
+    source_rows = _review_rows(batch.rows, targets, catalog, job, identities)
     partition = partition_rows(source_rows)
     # Zero-activity rows remain internal source facts.  They must never reach
     # grouping, feedback or an operator decision surface.
@@ -88,7 +89,9 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
     grouping = build_reconciliation_packages(
         source_rows,
         groups,
-        category_availability=_group_category_availability(groups, batch.rows, catalog, job),
+        category_availability=_group_category_availability(
+            groups, batch.rows, catalog, job, identities
+        ),
         version_context=PackageVersionContext(
             _normalized_source_digests(job.source_digests),
             job.target_digest,
@@ -102,7 +105,7 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         categories={key: value for key, value in catalog.labels.items()},
         source_digests=job.source_digests,
         target_digest=job.target_digest,
-        available_categories=_available_categories(batch.rows, catalog, job),
+        available_categories=_available_categories(batch.rows, catalog, job, identities),
         grouping=grouping,
     )
     semantic_assist = run_local_semantic_assist(grouping)
@@ -137,7 +140,14 @@ def apply_review(
     }
     source_batch = _sources(job, target_identities) if target_identities else _sources(job)
     source_rows = {_review_row_id(job, row.source_row_id): row for row in source_batch.rows}
-    matches = _selected_matches(state, overrides, catalog, job, source_rows)
+    matches = _selected_matches(
+        state,
+        overrides,
+        catalog,
+        job,
+        source_rows,
+        getattr(source_batch, "terminal_identities", ()),
+    )
     feedback = _feedback_records(state, snapshot)
     plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, snapshot)
     calculations = calculate_matches(
@@ -207,13 +217,13 @@ def _sources(job, target_identities: set[str] | None = None) -> ReconciliationSo
             resolve_descriptor_identity(descriptor, target_identities) for descriptor in descriptors
         )
     workbooks = tuple(
-        (path, f"source:{index}:{job.source_digests[index]}", descriptor)
+        (path, f"source:{job.source_digests[index]}", descriptor)
         for index, (path, descriptor) in enumerate(zip(paths, descriptors, strict=True))
     )
     return extract_reconciliation_sources(workbooks, require_document_index=True)
 
 
-def _review_rows(rows, targets, catalog: _Catalog, job) -> tuple[ReviewRow, ...]:
+def _review_rows(rows, targets, catalog: _Catalog, job, identities=()) -> tuple[ReviewRow, ...]:
     from report_processor.business_rules import load_default_rule_set, load_rule_configuration
 
     validation = (
@@ -237,7 +247,7 @@ def _review_rows(rows, targets, catalog: _Catalog, job) -> tuple[ReviewRow, ...]
         for candidate in match.candidates:
             if (
                 not candidate.blockers
-                and _source_index(candidate.source_row.source_filename) == target_index
+                and dict(identities).get(candidate.source_row.source_file_id) == target_index
             ):
                 proposals.setdefault(candidate.source_row_id, set()).add(category)
     return tuple(
@@ -258,20 +268,22 @@ def _unique(values: set[str], catalog: _Catalog) -> str | None:
     return next(iter(eligible)) if len(eligible) == 1 else None
 
 
-def _available_categories(rows, catalog: _Catalog, job) -> dict[str, frozenset[str]]:
+def _available_categories(rows, catalog: _Catalog, job, identities=()) -> dict[str, frozenset[str]]:
     by_index: dict[str, set[str]] = {}
     for index, category in catalog.targets:
         by_index.setdefault(index, set()).add(category)
     return {
         _review_row_id(job, row.source_row_id): frozenset(
-            by_index.get(_source_index(row.source_filename) or "", set())
+            by_index.get(dict(identities).get(row.source_file_id, ""), set())
         )
         for row in rows
     }
 
 
-def _group_category_availability(groups, rows, catalog: _Catalog, job) -> dict[str, frozenset[str]]:
-    available = _available_categories(rows, catalog, job)
+def _group_category_availability(
+    groups, rows, catalog: _Catalog, job, identities=()
+) -> dict[str, frozenset[str]]:
+    available = _available_categories(rows, catalog, job, identities)
     return {
         group.group_id: frozenset.intersection(
             *(available.get(row_id, frozenset()) for row_id in group.member_ids)
@@ -298,7 +310,7 @@ def _normalized_source_digests(values) -> tuple[str, ...]:
     return normalized
 
 
-def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows):
+def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows, identities=()):
     buckets: dict[str, tuple[object, list[MatchCandidate]]] = {}
     reserved_identities: set[tuple[str, str, int]] = set()
     for row_id, override in sorted(overrides.items()):
@@ -309,7 +321,7 @@ def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows):
         if identity in reserved_identities:
             raise ValueError("DUPLICATE_SOURCE_IDENTITY")
         reserved_identities.add(identity)
-        index = _source_index(source.source_filename)
+        index = dict(identities).get(source.source_file_id)
         target = catalog.targets.get((index or "", override.target_category))
         if target is None:
             raise ValueError("SELECTED_CATEGORY_UNAVAILABLE")
@@ -346,7 +358,7 @@ def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows):
 
 def _physical_source_identity(source) -> tuple[str, str, int]:
     location = source.source_location
-    digest = str(location.source_file_id).split(":", 2)[-1]
+    digest = str(location.source_file_id).rsplit(":", 1)[-1]
     row = location.row_number
     if (
         not digest
@@ -402,12 +414,6 @@ def _apply_plan(
     return _hash("apply-key", payload), payload_hash
 
 
-def _source_index(filename: str) -> str | None:
-    from .reconciliation_sources import document_index_from_basename
-
-    return document_index_from_basename(filename)
-
-
 def _target_id(job, target) -> str:
     return _hash(
         "target",
@@ -425,7 +431,7 @@ def _review_row_id(job, source_row_id: str) -> str:
         + _hash(
             "ReconciliationReviewRow-1.0",
             job.target_digest,
-            *job.source_digests,
+            *_normalized_source_digests(job.source_digests),
             source_row_id,
         )[:32]
     )
