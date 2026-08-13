@@ -7,7 +7,11 @@ import pytest
 from fixtures.calculation.builders import calculation_rule_set, calculation_source_row, match_result
 from report_processor.admin_panel.reconciliation_state import ReconciliationReviewState
 from report_processor.admin_panel.reconciliation_target import _bindings, writer_calculations
-from report_processor.admin_panel.service import AdminJob, AdminPanelService
+from report_processor.admin_panel.service import (
+    AdminJob,
+    AdminPanelService,
+    _copy_verified_snapshot,
+)
 from report_processor.calculation import calculate_matches
 from report_processor.matching import MatchResult, MatchStatus
 from report_processor.reconciliation_review import (
@@ -369,6 +373,23 @@ def test_keyboard_interrupt_during_apply_marks_job_failed_and_keeps_output_safe(
     with pytest.raises(KeyboardInterrupt):
         service.apply_reconciliation(job.job_id)
     assert job.status == "failed" and output.read_bytes() == b"existing"
+
+
+def test_failed_snapshot_copy_keeps_concurrent_replacement(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(b"source")
+    destination = tmp_path / "private-snapshot.xlsx"
+
+    def replace_then_fail(_descriptor, _content):
+        replacement = tmp_path / "replacement.xlsx"
+        replacement.write_bytes(b"replacement")
+        replacement.replace(destination)
+        raise OSError("write")
+
+    monkeypatch.setattr("report_processor.admin_panel.service.os.write", replace_then_fail)
+    with pytest.raises(OSError, match="write"):
+        _copy_verified_snapshot(source, destination, sha256(source.read_bytes()).hexdigest())
+    assert destination.read_bytes() == b"replacement"
 
 
 def test_decision_mutation_cannot_interleave_authoritative_apply(tmp_path, monkeypatch) -> None:

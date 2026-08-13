@@ -738,7 +738,9 @@ def _copy_verified_snapshot(source: Path, destination: Path, expected_digest: st
         if destination_fd is not None:
             os.close(destination_fd)
             destination_fd = None
-        destination.unlink(missing_ok=True)
+        # Never unlink by pathname here: an attacker can replace it between
+        # our failed write and cleanup. The uniquely named private snapshot is
+        # not returned to readers and expires with the job directory.
         raise
     finally:
         os.close(source_fd)
