@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 from report_processor.reconciliation_review import FeedbackRecord, ReviewAction, ReviewMode
@@ -68,6 +69,7 @@ class ReconciliationFeedbackStore:
         apply_key: str,
         payload_hash: str,
         records: tuple[FeedbackRecord, ...],
+        precommit_validator: Callable[[], None] | None = None,
     ) -> bool:
         """Atomically append feedback and record one immutable authoritative apply.
 
@@ -84,6 +86,8 @@ class ReconciliationFeedbackStore:
                 if existing is not None:
                     if existing[0] != payload_hash:
                         raise ValueError("RECONCILIATION_APPLY_CONFLICT")
+                    if precommit_validator is not None:
+                        precommit_validator()
                     connection.commit()
                     return False
                 next_sequence = int(
@@ -114,6 +118,8 @@ class ReconciliationFeedbackStore:
                     (apply_key, target_digest, payload_hash) VALUES (?, ?, ?)""",
                     (apply_key, target_digest, payload_hash),
                 )
+                if precommit_validator is not None:
+                    precommit_validator()
                 connection.commit()
                 return True
             except BaseException:
