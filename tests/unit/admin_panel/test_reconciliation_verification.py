@@ -205,6 +205,22 @@ def test_cost_only_does_not_require_source_or_target_unit() -> None:
     _validate_units(overrides, source_rows, catalog, SimpleNamespace())
 
 
+@pytest.mark.parametrize(("target_unit", "fails"), (("п.м.", False), ("км", True)))
+def test_quantity_unit_comparison_uses_calculation_canonical_tokens(
+    target_unit: str, fails: bool
+) -> None:
+    target = SimpleNamespace(unit=target_unit)
+    overrides = {"row": AppliedOverride("row", "category:target", True, True, ReviewAction.ACCEPT)}
+    source_rows = {"row": SimpleNamespace(source_filename="source-1234.xlsx", unit="м")}
+    catalog = _Catalog({"category:target": "Target"}, {("1234", "category:target"): target})
+
+    if fails:
+        with pytest.raises(NumericVerificationFailure, match="UNIT_MISMATCH"):
+            _validate_units(overrides, source_rows, catalog, SimpleNamespace())
+    else:
+        _validate_units(overrides, source_rows, catalog, SimpleNamespace())
+
+
 def test_explicit_rejection_wins_over_safe_package_authorization() -> None:
     row = ReviewRow("row", "Монтаж", "м", Decimal("1"), Decimal("1"))
     (group,) = build_review_groups((row,))

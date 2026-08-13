@@ -5,12 +5,13 @@ from __future__ import annotations
 from decimal import ROUND_HALF_UP, Decimal
 
 from report_processor.calculation import CalculationError, calculate_matches
+from report_processor.normalization.models import TypoDictionaries
+from report_processor.normalization.normalizers import normalize_unit
 from report_processor.reconciliation_review import (
     AppliedOverride,
     ReviewAction,
     ReviewDecision,
     ReviewMode,
-    normalize_unit,
 )
 
 from .reconciliation_execution import _catalog, _review_row_id, _selected_matches
@@ -188,14 +189,15 @@ def _candidate_inclusions(overrides, matches) -> dict[str, tuple[bool, bool]]:
 
 
 def _validate_units(overrides, source_rows, catalog, job) -> None:
+    dictionaries = TypoDictionaries()
     for row_id, override in overrides.items():
         if not override.include_quantity:
             continue
         source = source_rows[row_id]
         index = _source_index(source.source_filename)
         target = catalog.targets.get((index or "", override.target_category or ""))
-        source_unit = normalize_unit(source.unit)
-        target_unit = normalize_unit(target.unit) if target is not None else None
+        source_unit = normalize_unit(source.unit, dictionaries)
+        target_unit = normalize_unit(target.unit, dictionaries) if target is not None else None
         if target is None or source_unit is None or target_unit is None:
             raise NumericVerificationFailure("VERIFICATION_UNIT_UNAVAILABLE")
         if source_unit != target_unit:
