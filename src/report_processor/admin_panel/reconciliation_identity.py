@@ -7,6 +7,7 @@ from pathlib import Path
 
 _YEAR_RE = re.compile(r"(?:19|20)\d{2}\Z")
 _BARE_RE = re.compile(r"\d{4}\Z")
+_SOURCE_PART_RE = re.compile(r"\d{3,4}\Z")
 _FULL_RE = re.compile(r"[\w-]+(?:\.[\w-]+)*\.(\d{3,4})\Z", re.UNICODE)
 _PARENTHETICAL_RE = re.compile(r"\(([^()]*)\)")
 _PRIMARY_RE = re.compile(r"(?:^|[-_])(\d{4})(?=$|[-_\s(])")
@@ -47,10 +48,18 @@ def source_basename_identities(safe_basename: str) -> tuple[str, ...]:
         )
     for contents in _PARENTHETICAL_RE.findall(stem):
         for part in contents.split(","):
-            candidate = terminal_identity(part.strip())
+            candidate = _source_part_identity(part.strip())
             if candidate is not None:
                 values.append(candidate)
     return tuple(dict.fromkeys(values))
+
+
+def _source_part_identity(value: str) -> str | None:
+    """Accept an exact bounded filename candidate without weakening target cells."""
+
+    if _SOURCE_PART_RE.fullmatch(value) and _YEAR_RE.fullmatch(value) is None:
+        return value
+    return terminal_identity(value)
 
 
 def resolve_source_identity(

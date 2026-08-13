@@ -207,9 +207,15 @@ def _extract_ks6a_rows(
     header_rows = _header_graph(sheet, maximum=50)
     candidates = []
     for work_column, unit_column, anchor in _layout_columns(header_rows, cumulative=True):
-        for quantity_column, cost_column, header_end in _metric_pairs_for_anchor(
+        for quantity_column, cost_column, header_end, parent_span in _metric_regions_for_anchor(
             header_rows, anchor
         ):
+            parent_top, parent_left, _parent_bottom, parent_right = parent_span
+            if (
+                parent_left <= work_column <= parent_right
+                or parent_left <= unit_column <= parent_right
+            ):
+                continue
             rows = _canonical_rows(
                 sheet,
                 source_id,
@@ -232,10 +238,6 @@ def _extract_ks6a_rows(
                 formula_sheet=formula_sheet,
             )
             if rows:
-                span = _parent_span_for_anchor(header_rows, anchor)
-                if span is None:
-                    continue
-                parent_top, parent_left, _parent_bottom, parent_right = span
                 candidates.append(
                     (
                         (
@@ -262,6 +264,11 @@ def _extract_ks2_rows(
     candidates = []
     for work_column, unit_column, _anchor in _layout_columns(header_rows, cumulative=False):
         for quantity_column, cost_column, metric_row in _metric_pairs_for_row(header_rows):
+            if work_column in (quantity_column, cost_column) or unit_column in (
+                quantity_column,
+                cost_column,
+            ):
+                continue
             header_end = max(
                 _role_header_row(header_rows, work_column, "work"),
                 _unit_header_row(header_rows, unit_column),
@@ -364,7 +371,7 @@ def _header_path(rows: tuple[tuple[object, ...], ...], row_number: int, column: 
 
 def _role_text(value: str, role: str) -> bool:
     if role == "work":
-        return any(stem in value for stem in ("наименован", "описан", "вид работ"))
+        return any(stem in value for stem in ("наименован", "описан", "работ"))
     if role == "cumulative":
         return ("выполн" in value or "освоен" in value) and (
             "весь" in value or "нараст" in value or "итог" in value
@@ -468,25 +475,68 @@ def _metric_pair(
 
 
 def _metric_pairs_for_anchor(header, anchor: int) -> list[tuple[int, int, int]]:
+    return [
+        (quantity, cost, leaf_row)
+        for quantity, cost, leaf_row, _span in _metric_regions_for_anchor(header, anchor)
+    ]
+
+
+def _metric_regions_for_anchor(
+    header, anchor: int
+) -> list[tuple[int, int, int, tuple[int, int, int, int]]]:
+    """Bind leaves to the exact cumulative header cell that nominated them."""
+
     rows = _rows(header)
-    candidates = []
+    candidates: dict[
+        tuple[int, int, int, tuple[int, int, int, int]],
+        tuple[int, int, int, tuple[int, int, int, int]],
+    ] = {}
     for row_number, _row in enumerate(rows, 1):
-        if _role_text(_header_path(rows, row_number, anchor), "cumulative"):
-            span = _parent_span_for_anchor(header, anchor)
-            if span is None:
-                continue
-            _top, start, _bottom, end = span
-            for leaf_row in range(row_number + 1, min(row_number + 5, len(rows)) + 1):
-                pairs = _metric_pairs(rows[leaf_row - 1], start, end)
-                candidates.extend((quantity, cost, leaf_row) for quantity, cost in pairs)
-    return candidates
+        path = _header_path(rows, row_number, anchor)
+        if not _role_text(path, "cumulative"):
+            continue
+        local = _text_at(rows[row_number - 1], anchor)
+        previous = _header_path(rows, row_number - 1, anchor) if row_number > 1 else ""
+        if not _role_text(local, "cumulative") and _role_text(previous, "cumulative"):
+            continue
+
+        exact_span = None
+        if isinstance(header, _HeaderGraph):
+            exact_span = header.spans.get((row_number, anchor))
+        if exact_span is not None and exact_span[3] > exact_span[1]:
+            top, start, bottom, end = exact_span
+            pairs = _nearest_metric_pairs(rows, bottom + 1, start, end, anchor)
+            regions = [
+                (quantity, cost, leaf_row, (top, start, bottom, end))
+                for quantity, cost, leaf_row in pairs
+            ]
+        else:
+            pairs = _nearest_metric_pairs(rows, row_number + 1, 1, len(_row), anchor)
+            regions = [
+                (quantity, cost, leaf_row, (row_number, quantity, row_number, cost))
+                for quantity, cost, leaf_row in pairs
+                if quantity <= anchor <= cost
+            ]
+        candidates.update((region, region) for region in regions)
+    return list(candidates.values())
 
 
-def _parent_span_for_anchor(header, anchor: int) -> tuple[int, int, int, int] | None:
-    if not isinstance(header, _HeaderGraph):
-        return None
-    spans = {span for (row, column), span in header.spans.items() if column == anchor}
-    return next(iter(spans)) if len(spans) == 1 else None
+def _nearest_metric_pairs(
+    rows: tuple[tuple[object, ...], ...],
+    first_row: int,
+    start: int,
+    end: int,
+    anchor: int,
+) -> list[tuple[int, int, int]]:
+    """Return the nearest explicit adjacent leaves before another cumulative region."""
+
+    for leaf_row in range(first_row, len(rows) + 1):
+        if _role_text(_text_at(rows[leaf_row - 1], anchor), "cumulative"):
+            break
+        pairs = _metric_pairs(rows[leaf_row - 1], start, end)
+        if pairs:
+            return [(quantity, cost, leaf_row) for quantity, cost in pairs]
+    return []
 
 
 def _detail_start(
@@ -675,7 +725,7 @@ def _issue(code: str, descriptor: ReconciliationSourceDescriptor) -> Reconciliat
         return ReconciliationSourceIssue(
             code=code,
             safe_basename=descriptor.safe_basename,
-            comment="В имени файла не найден четырёхзначный индекс документа.",
+            comment="В имени файла не найден точный трёх- или четырёхзначный индекс документа.",
             repair_hint=(
                 "Добавьте один индекс из целевого отчёта, например «1234», "
                 "в имя файла и загрузите его снова."
@@ -717,4 +767,4 @@ def _issue(code: str, descriptor: ReconciliationSourceDescriptor) -> Reconciliat
 
 def _has_usable_document_index(descriptor: ReconciliationSourceDescriptor) -> bool:
     raw = descriptor.document_index or ""
-    return re.fullmatch(r"\d{4}", raw) is not None
+    return re.fullmatch(r"\d{3,4}", raw) is not None
