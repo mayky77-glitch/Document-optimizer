@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,12 @@ from openpyxl import Workbook, load_workbook
 from report_processor.admin_panel.app import _result_media_type, _safe_download_name
 from report_processor.admin_panel.presentation import job_payload
 from report_processor.admin_panel.reconciliation_execution import _review_row_id
+from report_processor.admin_panel.reconciliation_numeric_verification import (
+    NumericVerificationFailure,
+    _authorizations,
+    _matches_target,
+    _reject_duplicate_source_identities,
+)
 from report_processor.admin_panel.reconciliation_sources import ReconciliationSourceIssue
 from report_processor.admin_panel.reconciliation_verification import (
     VerificationTechnicalFailure,
@@ -19,7 +26,13 @@ from report_processor.admin_panel.reconciliation_verification import (
 )
 from report_processor.admin_panel.service import AdminPanelService
 from report_processor.excel_writer import ExcelWriterSafetyError
-from report_processor.reconciliation_review import ReviewAction, ReviewRow, build_review_groups
+from report_processor.reconciliation_review import (
+    ReviewAction,
+    ReviewDecision,
+    ReviewMode,
+    ReviewRow,
+    build_review_groups,
+)
 
 
 def _job(tmp_path: Path) -> SimpleNamespace:
@@ -83,6 +96,10 @@ def test_safe_package_passes_without_an_artifact(tmp_path: Path, monkeypatch) ->
         "report_processor.admin_panel.reconciliation_verification.prepare_review",
         lambda *_args: _review(job, safe=True),
     )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.verify_numeric",
+        lambda *_args: (frozenset(), 1),
+    )
 
     result = verify_reconciliation(job, ())
 
@@ -105,6 +122,13 @@ def test_safe_package_and_latest_authoritative_feedback_have_expected_precedence
         lambda *_args: _review(job, safe=safe, action=action),
     )
     monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.verify_numeric",
+        lambda *_args: (
+            frozenset() if expected_failed == 0 else frozenset({_review_row_id(job, "source-row")}),
+            1,
+        ),
+    )
+    monkeypatch.setattr(
         "report_processor.admin_panel.reconciliation_verification._write_artifact",
         lambda *_args: (tmp_path / "verification.xlsx", "Проверено_source.xlsx"),
     )
@@ -113,6 +137,60 @@ def test_safe_package_and_latest_authoritative_feedback_have_expected_precedence
 
     assert result.failed_row_count == expected_failed
     assert result.verification_status == ("failed" if expected_failed else "passed")
+
+
+def test_numeric_comparison_uses_writer_scale_and_cost_only_omits_quantity() -> None:
+    target = SimpleNamespace(
+        selected_quantity=SimpleNamespace(value=Decimal("999.999")),
+        selected_cost=SimpleNamespace(value=Decimal("2.695")),
+    )
+    calculation = SimpleNamespace(target_row=target, quantity=Decimal("1.01"), cost=Decimal("2.70"))
+
+    assert _matches_target(calculation, ReviewMode.COST_ONLY) is True
+    assert _matches_target(calculation, ReviewMode.QUANTITY_COST) is False
+
+
+def test_numeric_comparison_requires_finite_target_value() -> None:
+    calculation = SimpleNamespace(
+        target_row=SimpleNamespace(
+            selected_quantity=SimpleNamespace(value=Decimal("1.00")),
+            selected_cost=SimpleNamespace(value=Decimal("NaN")),
+        ),
+        quantity=Decimal("1.00"),
+        cost=Decimal("1.00"),
+    )
+
+    with pytest.raises(NumericVerificationFailure, match="TARGET_VALUE_UNAVAILABLE"):
+        _matches_target(calculation, ReviewMode.COST_ONLY)
+
+
+def test_explicit_rejection_wins_over_safe_package_authorization() -> None:
+    row = ReviewRow("row", "Монтаж", "м", Decimal("1"), Decimal("1"))
+    (group,) = build_review_groups((row,))
+    rejected = ReviewDecision(ReviewAction.REJECT, group_id=group.group_id)
+    state = SimpleNamespace(
+        rows={row.row_id: row},
+        groups={group.group_id: group},
+        grouping=SimpleNamespace(
+            packages=(
+                SimpleNamespace(
+                    safe=True,
+                    package_key=("category:target", "quantity_cost"),
+                    member_group_ids=(group.group_id,),
+                ),
+            )
+        ),
+        effective_decisions=lambda: (rejected,),
+    )
+
+    assert _authorizations(state)[row.row_id] is rejected
+
+
+def test_duplicate_physical_source_identity_is_technical_failure() -> None:
+    row = SimpleNamespace(source_filename="source.xlsx", source_sheet="Sheet", source_row_number=7)
+
+    with pytest.raises(NumericVerificationFailure, match="SOURCE_IDENTITY_AMBIGUOUS"):
+        _reject_duplicate_source_identities((row, row))
 
 
 def test_partial_source_input_is_a_technical_failure(tmp_path: Path, monkeypatch) -> None:
