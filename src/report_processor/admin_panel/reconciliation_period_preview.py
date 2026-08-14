@@ -35,9 +35,6 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
     """Build one read-only historical-period projection without transforming target bytes."""
 
     _validate_reconciliation_target_type(Path(path))
-    reporting_period = (
-        period if isinstance(period, ReportingPeriod) else ReportingPeriod.parse(period)
-    )
     source_path = Path(path)
     if _sha256(source_path) != digest:
         raise ValueError("RECONCILIATION_TARGET_CHANGED")
@@ -50,6 +47,8 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
             _enumerate_stages(session.formula_workbook, roles), stage
         )
         detail_rows = _first_detail_rows(session.formula_workbook, selected_stage, roles)
+        if not detail_rows:
+            raise ValueError("RECONCILIATION_TARGET_STAGE_EMPTY")
         merged_ranges = {
             sheet_name: read_sheet_structure(session.source.local_path, sheet_name).merged_ranges
             for sheet_name in detail_rows
@@ -61,9 +60,14 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         except ReconciliationTargetMeasureError as error:
             if str(error) != "TARGET_CURRENT_PERIOD_PAIR_MISSING":
                 raise
+            reporting_period = (
+                period if isinstance(period, ReportingPeriod) else ReportingPeriod.parse(period)
+            )
             plan = build_period_insertion_plan(
                 source_path, reporting_period, detail_rows, merged_ranges
             )
+            if plan.source_sha256 != digest:
+                raise ValueError("RECONCILIATION_TARGET_CHANGED") from None
             if plan.idempotent or not plan.anchors:
                 raise ValueError("RECONCILIATION_TARGET_PREVIEW_INVALID") from None
             report = generic.read_target_report(
@@ -74,6 +78,8 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
             identity = ReconciliationTargetIdentity(
                 digest, selected_stage, reporting_period, plan.plan_digest
             )
+            if _sha256(source_path) != digest:
+                raise ValueError("RECONCILIATION_TARGET_CHANGED") from None
             return ReconciliationTargetPreview(schema, rows, reporting_period, plan, identity)
         report = generic.read_target_report(
             session, workbook_schema, TargetReportReadRequest(selected_stage=selected_stage)
@@ -81,6 +87,8 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         rows = tuple(_rows(session, selected_stage, measure_pairs, roles))
         schema = replace(report.schema, column_bindings=_bindings(roles, measure_pairs))
         identity = ReconciliationTargetIdentity(digest, selected_stage)
+        if _sha256(source_path) != digest:
+            raise ValueError("RECONCILIATION_TARGET_CHANGED")
         return ReconciliationTargetPreview(schema, rows, None, None, identity)
 
 

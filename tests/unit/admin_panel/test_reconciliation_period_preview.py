@@ -5,8 +5,9 @@ from __future__ import annotations
 from hashlib import sha256
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
+from report_processor.admin_panel import reconciliation_period_preview
 from report_processor.admin_panel.reconciliation_period import ReportingPeriod
 from report_processor.admin_panel.reconciliation_period_preview import (  # type: ignore[import-not-found]
     preview_reconciliation_target,
@@ -14,8 +15,13 @@ from report_processor.admin_panel.reconciliation_period_preview import (  # type
 from report_processor.admin_panel.reconciliation_target import (
     ReconciliationTargetIdentity,
     ReconciliationTargetScopeError,
+    read_reconciliation_target,
 )
 from report_processor.schema import LogicalColumn
+
+
+def _digest(value: str) -> str:
+    return sha256(value.encode()).hexdigest()
 
 
 def _target(path, *, second_sheet: bool = False, current: bool = False) -> None:
@@ -91,6 +97,53 @@ def test_historical_preview_maps_each_sheet_to_its_own_anchor(tmp_path) -> None:
         ("Отчёт 1", "O3"),
         ("Отчёт 2", "O3"),
     ]
+    assert [
+        binding.logical_column
+        for binding in preview.schema.column_bindings
+        if binding.logical_column
+        in {
+            LogicalColumn.DOCUMENT_INDEX,
+            LogicalColumn.STAGE,
+            LogicalColumn.ROW_NUMBER,
+            LogicalColumn.WORK_NAME,
+            LogicalColumn.UNIT,
+        }
+    ].count(LogicalColumn.DOCUMENT_INDEX) == 1
+
+
+def test_partial_unrelated_sheet_is_ignored_but_heterogeneous_participant_fails(tmp_path) -> None:
+    target = tmp_path / "historical.xlsx"
+    _target(target, second_sheet=True)
+    workbook = load_workbook(target)
+    unrelated = workbook.create_sheet("Примечания")
+    unrelated["A1"] = "Индекс документа"
+    workbook.save(target)
+    workbook.close()
+
+    preview_reconciliation_target(
+        target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+    )
+
+    workbook = load_workbook(target)
+    workbook["Отчёт 2"].insert_cols(1)
+    workbook.save(target)
+    workbook.close()
+    with pytest.raises(ReconciliationTargetScopeError, match="BASE_ROLE_HETEROGENEOUS"):
+        preview_reconciliation_target(
+            target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+        )
+
+
+def test_blank_unit_summary_is_not_semantic_detail(tmp_path) -> None:
+    target = tmp_path / "current.xlsx"
+    _target(target, current=True)
+    workbook = load_workbook(target)
+    workbook["Отчёт 1"]["G3"] = ""
+    workbook.save(target)
+    workbook.close()
+
+    with pytest.raises(ReconciliationTargetScopeError, match="STAGE_EMPTY"):
+        read_reconciliation_target(target, sha256(target.read_bytes()).hexdigest(), "13.1")
 
 
 def test_existing_current_pair_keeps_strict_physical_target_identity(tmp_path) -> None:
@@ -98,7 +151,7 @@ def test_existing_current_pair_keeps_strict_physical_target_identity(tmp_path) -
     _target(target, current=True)
     digest = sha256(target.read_bytes()).hexdigest()
 
-    preview = preview_reconciliation_target(target, digest, "13.1", "2026-08")
+    preview = preview_reconciliation_target(target, digest, "13.1", None)
 
     assert preview.period is None
     assert preview.plan is None
@@ -107,30 +160,40 @@ def test_existing_current_pair_keeps_strict_physical_target_identity(tmp_path) -
 
 
 def test_target_identity_is_canonical_and_period_plan_bound() -> None:
-    first = ReconciliationTargetIdentity("original", "13.1", "2026-08", "plan")
+    original, plan, changed = _digest("original"), _digest("plan"), _digest("changed")
+    first = ReconciliationTargetIdentity(original, "13.1", "2026-08", plan)
 
     assert (
         first.target_identity_digest
-        == ReconciliationTargetIdentity(
-            "original", "13.1", "2026-08", "plan"
-        ).target_identity_digest
+        == ReconciliationTargetIdentity(original, "13.1", "2026-08", plan).target_identity_digest
     )
     assert (
         first.target_identity_digest
-        != ReconciliationTargetIdentity(
-            "original", "13.1", "2026-09", "plan"
-        ).target_identity_digest
+        != ReconciliationTargetIdentity(original, "13.1", "2026-09", plan).target_identity_digest
     )
     assert (
         first.target_identity_digest
-        != ReconciliationTargetIdentity("changed", "13.1", "2026-08", "plan").target_identity_digest
+        != ReconciliationTargetIdentity(changed, "13.1", "2026-08", plan).target_identity_digest
     )
     assert (
         first.target_identity_digest
-        != ReconciliationTargetIdentity(
-            "original", "13.2", "2026-08", "plan"
-        ).target_identity_digest
+        != ReconciliationTargetIdentity(original, "13.2", "2026-08", plan).target_identity_digest
     )
+
+
+@pytest.mark.parametrize(
+    ("original", "period", "plan"),
+    (
+        ("A" * 64, None, None),
+        (_digest("original"), None, _digest("plan")),
+        (_digest("original"), "2026-08", None),
+    ),
+)
+def test_target_identity_rejects_noncanonical_digest_or_unpaired_period(
+    original, period, plan
+) -> None:
+    with pytest.raises(ValueError, match="TARGET_IDENTITY_INVALID"):
+        ReconciliationTargetIdentity(original, "13.1", period, plan)
 
 
 def test_missing_or_tied_base_roles_fail_closed(tmp_path) -> None:
@@ -154,8 +217,6 @@ def test_missing_or_tied_base_roles_fail_closed(tmp_path) -> None:
         )
 
     _target(target)
-    from openpyxl import load_workbook
-
     workbook = load_workbook(target)
     workbook["Отчёт 1"]["H1"] = "Единица измерения"
     workbook.save(target)
@@ -164,3 +225,22 @@ def test_missing_or_tied_base_roles_fail_closed(tmp_path) -> None:
         preview_reconciliation_target(
             target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
         )
+
+
+def test_preview_rejects_target_mutated_during_planning(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "historical.xlsx"
+    _target(target)
+    digest = sha256(target.read_bytes()).hexdigest()
+    planner = reconciliation_period_preview.build_period_insertion_plan
+
+    def mutate_after_plan(*args, **kwargs):
+        plan = planner(*args, **kwargs)
+        target.write_bytes(target.read_bytes() + b"changed")
+        return plan
+
+    monkeypatch.setattr(
+        reconciliation_period_preview, "build_period_insertion_plan", mutate_after_plan
+    )
+
+    with pytest.raises(ValueError, match="RECONCILIATION_TARGET_CHANGED"):
+        preview_reconciliation_target(target, digest, "13.1", "2026-08")

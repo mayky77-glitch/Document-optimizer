@@ -12,7 +12,7 @@ from report_processor.reconciliation_review import (
 )
 
 
-def _state() -> tuple[ReconciliationReviewState, str, str]:
+def _state(identity: str | None = None) -> tuple[ReconciliationReviewState, str, str]:
     rows = {
         row_id: ReviewRow(row_id, "Монтаж трубы", "м", Decimal("1"), Decimal("2"))
         for row_id in ("source-a:1", "source-b:1")
@@ -24,6 +24,7 @@ def _state() -> tuple[ReconciliationReviewState, str, str]:
         categories={"target-1": "Цель 1", "target-2": "Цель 2"},
         source_digests=("source-a", "source-b"),
         target_digest="target",
+        target_identity_digest=identity,
     )
     return state, group.group_id, group.member_ids[0]
 
@@ -43,12 +44,19 @@ def _accept_group(state: ReconciliationReviewState, group_id: str) -> str:
     return version
 
 
-def test_version_fingerprint_binds_immutable_target_identity() -> None:
-    first, _, _ = _state()
-    second, _, _ = _state()
-    second.target_identity_digest = "different-target-identity"
+def test_version_fingerprint_binds_immutable_target_identity(tmp_path) -> None:
+    from report_processor.admin_panel.reconciliation_batch_store import ReconciliationBatchStore
+
+    first, _, _ = _state("identity-a")
+    second, _, _ = _state("identity-b")
 
     assert first.version_fingerprint != second.version_fingerprint
+    with pytest.raises(AttributeError, match="immutable"):
+        first.target_identity_digest = "identity-b"
+
+    store = ReconciliationBatchStore(tmp_path)
+    store.save(first)
+    assert store.restore(second) is False
 
 
 def test_stale_group_and_row_writes_leave_state_unmodified() -> None:

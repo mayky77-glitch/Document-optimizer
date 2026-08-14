@@ -71,6 +71,11 @@ class ReconciliationReviewState:
     _undo: _DecisionSnapshot | None = None
     _autosave: Callable[[ReconciliationReviewState], None] | None = None
 
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "target_identity_digest" and hasattr(self, name):
+            raise AttributeError("target identity is immutable")
+        object.__setattr__(self, name, value)
+
     def set_autosave(self, callback: Callable[[ReconciliationReviewState], None]) -> None:
         self._autosave = callback
 

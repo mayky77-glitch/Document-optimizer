@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from decimal import Decimal
 from hashlib import sha256
+from types import SimpleNamespace
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -26,6 +27,36 @@ from report_processor.schema import LogicalColumn, SheetType
 from report_processor.target_report import TargetWorksheetSnapshot
 
 
+class _SparseSheet:
+    title = "Отчёт"
+    max_row = 1_000_000
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self._cells = {
+            (1, 2): SimpleNamespace(value="Индекс документа"),
+            (1, 3): SimpleNamespace(value="Номер этапа"),
+            (1, 4): SimpleNamespace(value="Номер п/п"),
+            (1, 5): SimpleNamespace(value="Наименование работ"),
+            (1, 6): SimpleNamespace(value="Единица измерения"),
+            (3, 2): SimpleNamespace(value="1234"),
+            (3, 3): SimpleNamespace(value="Этап 13.1"),
+            (3, 4): SimpleNamespace(value="1"),
+            (3, 5): SimpleNamespace(value="Монтаж"),
+            (3, 6): SimpleNamespace(value="м"),
+            (4, 2): SimpleNamespace(value="5678"),
+            (4, 3): SimpleNamespace(value="Этап 13.2"),
+            (4, 4): SimpleNamespace(value="2"),
+            (4, 5): SimpleNamespace(value="Монтаж 2"),
+            (4, 6): SimpleNamespace(value="м"),
+            (1_000_000, 99): SimpleNamespace(value="нерелевантно"),
+        }
+
+    def cell(self, row, column):
+        self.calls += 1
+        return self._cells.get((row, column), SimpleNamespace(value=None))
+
+
 def test_terminal_index_rejects_year_and_ambiguous_values() -> None:
     assert terminal_index("1234") == "1234"
     assert terminal_index("10.02.0123") == "0123"
@@ -44,6 +75,26 @@ def test_stage_resolution_discovers_exactly_one_stage_only() -> None:
         resolve_reconciliation_stage(("13.1", "13.2"), None)
     with pytest.raises(ReconciliationTargetScopeError, match="EMPTY"):
         resolve_reconciliation_stage((), None)
+
+
+def test_stage_discovery_scans_only_sparse_role_rows_and_stops_at_maximum() -> None:
+    from report_processor.admin_panel.reconciliation_target import _valid_stages
+
+    sheet = _SparseSheet()
+    columns = {
+        logical: SimpleNamespace(column_index=index, column_letter=letter, header_text="")
+        for logical, index, letter in (
+            (LogicalColumn.DOCUMENT_INDEX, 2, "B"),
+            (LogicalColumn.STAGE, 3, "C"),
+            (LogicalColumn.ROW_NUMBER, 4, "D"),
+            (LogicalColumn.WORK_NAME, 5, "E"),
+            (LogicalColumn.UNIT, 6, "F"),
+        )
+    }
+    workbook = SimpleNamespace(worksheets=(sheet,))
+
+    assert _valid_stages(workbook, {sheet.title: columns}, maximum=1) == ("13.1", "13.2")
+    assert sheet.calls == 15
 
 
 @pytest.mark.parametrize("stage", ("13.1", None), ids=("selected", "no-selected"))
