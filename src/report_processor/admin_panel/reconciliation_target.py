@@ -9,9 +9,13 @@ import re
 import shutil
 import tempfile
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
+from xml.etree import ElementTree as ET
+
+from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.processing.adapters import _materialized
@@ -49,6 +53,9 @@ _BASE_ROLES = (
     LogicalColumn.UNIT,
 )
 _CORE_ROLES = _BASE_ROLES[:3]
+_MAX_ROLE_SCAN_ROWS = 100_000
+_MAX_ROLE_SCAN_CELLS = 500_000
+_MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +89,7 @@ class ReconciliationTargetIdentity:
                 ReportingPeriod.parse(period_value)
             except ValueError as error:
                 raise ValueError("RECONCILIATION_TARGET_IDENTITY_INVALID") from error
+            object.__setattr__(self, "period", period_value)
         if self.plan_digest is not None and (
             not isinstance(self.plan_digest, str) or not _SHA256_RE.fullmatch(self.plan_digest)
         ):
@@ -104,6 +112,10 @@ class ReconciliationTargetIdentity:
     @property
     def target_identity_digest(self) -> str:
         return hashlib.sha256(self.canonical_bytes()).hexdigest()
+
+    @property
+    def reporting_period(self) -> str | None:
+        return self.period
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,18 +367,25 @@ def _base_roles(workbook_schema) -> dict[str, dict[LogicalColumn, object]]:
             worksheet.headers, SheetType.ADDITIONAL_REPORT, DEFAULT_COLUMN_ALIASES
         )
         by_role = {item.logical_column: item for item in resolutions}
-        if not all(
-            by_role.get(role) is not None
+        bound_roles = {
+            role
+            for role in _BASE_ROLES
+            if by_role.get(role) is not None
             and by_role[role].status == "OK"
             and by_role[role].column_index is not None
             and by_role[role].column_letter is not None
-            for role in _CORE_ROLES
-        ):
+        }
+        core_count = len(bound_roles.intersection(_CORE_ROLES))
+        if not (core_count >= 2 or (core_count >= 1 and len(bound_roles) >= 3)):
             continue
         resolved: dict[LogicalColumn, object] = {}
         for role in _BASE_ROLES:
             resolution = by_role.get(role)
-            if resolution is None or resolution.status == "COLUMN_NOT_FOUND":
+            if (
+                resolution is None
+                or resolution.status == "COLUMN_NOT_FOUND"
+                or (resolution.status != "OK" and "PHYSICAL_COLUMN_CONFLICT" in resolution.warnings)
+            ):
                 raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_BASE_ROLE_MISSING")
             if (
                 resolution.status != "OK"
@@ -407,11 +426,86 @@ def _enumerate_stages(workbook, roles) -> tuple[str, ...]:
 def _role_rows(sheet, columns) -> tuple[int, ...] | range:
     """Visit only materialized cells relevant to structural role evidence."""
 
+    cached = getattr(sheet, "_reconciliation_role_rows", None)
+    if cached is not None:
+        return cached
     cells = getattr(sheet, "_cells", None)
     if isinstance(cells, dict):
         role_columns = {item.column_index for item in columns.values()}
-        return tuple(sorted({row for row, column in cells if column in role_columns}))
-    return range(1, int(sheet.max_row or 0) + 1)
+        rows = tuple(sorted({row for row, column in cells if column in role_columns}))
+        with suppress(AttributeError, TypeError):
+            sheet._reconciliation_role_rows = rows
+        return rows
+    role_columns = {item.column_index for item in columns.values()}
+    archive = getattr(getattr(sheet, "parent", None), "_archive", None)
+    worksheet_path = getattr(sheet, "_worksheet_path", None)
+    if archive is None or not isinstance(worksheet_path, str):
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_UNSUPPORTED")
+    rows, inspected = _ooxml_role_rows(archive, worksheet_path, role_columns)
+    with suppress(AttributeError, TypeError):
+        sheet._reconciliation_role_rows = rows
+        sheet._reconciliation_role_scan = inspected
+    return rows
+
+
+def _ooxml_role_rows(
+    archive, worksheet_path: str, role_columns: set[int]
+) -> tuple[tuple[int, ...], tuple[int, int]]:
+    rows: list[int] = []
+    inspected_rows = inspected_cells = 0
+    previous_row = 0
+    try:
+        stream = archive.open(worksheet_path)
+    except (KeyError, OSError) as error:
+        raise ReconciliationTargetScopeError(
+            "RECONCILIATION_TARGET_ROLE_SCAN_UNSUPPORTED"
+        ) from error
+    with stream:
+        for _event, element in ET.iterparse(stream, events=("end",)):
+            if element.tag != f"{_MAIN_NS}row":
+                continue
+            inspected_rows += 1
+            if inspected_rows > _MAX_ROLE_SCAN_ROWS:
+                raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_LIMIT")
+            row_number = _ooxml_row_number(element.attrib.get("r"), previous_row)
+            previous_row = row_number
+            previous_column = 0
+            has_role = False
+            for cell in element:
+                if cell.tag != f"{_MAIN_NS}c":
+                    continue
+                inspected_cells += 1
+                if inspected_cells > _MAX_ROLE_SCAN_CELLS:
+                    raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_LIMIT")
+                column = _ooxml_cell_column(cell.attrib.get("r"), row_number, previous_column)
+                previous_column = column
+                has_role = has_role or column in role_columns
+            if has_role:
+                rows.append(row_number)
+            element.clear()
+    return tuple(rows), (inspected_rows, inspected_cells)
+
+
+def _ooxml_row_number(reference: str | None, previous_row: int) -> int:
+    if not isinstance(reference, str) or not reference.isdecimal():
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_INVALID")
+    row_number = int(reference)
+    if not 1 <= row_number <= 1_048_576 or row_number <= previous_row:
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_INVALID")
+    return row_number
+
+
+def _ooxml_cell_column(reference: str | None, row_number: int, previous_column: int) -> int:
+    if not isinstance(reference, str):
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_INVALID")
+    try:
+        column_letter, cell_row = coordinate_from_string(reference)
+        column = column_index_from_string(column_letter)
+    except ValueError as error:
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_INVALID") from error
+    if cell_row != row_number or not 1 <= column <= 16_384 or column <= previous_column:
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_INVALID")
+    return column
 
 
 def _carried_role_values(sheet, row_number, columns, active_index, active_stage):

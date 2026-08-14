@@ -21,7 +21,9 @@ from report_processor.admin_panel.reconciliation_target import (
     writer_calculations,
 )
 from report_processor.calculation import calculate_matches
+from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.excel_writer import write_target_report
+from report_processor.processing.adapters import _materialized
 from report_processor.quality_control import WriteDecision
 from report_processor.schema import LogicalColumn, SheetType
 from report_processor.target_report import TargetWorksheetSnapshot
@@ -95,6 +97,47 @@ def test_stage_discovery_scans_only_sparse_role_rows_and_stops_at_maximum() -> N
 
     assert _valid_stages(workbook, {sheet.title: columns}, maximum=1) == ("13.1", "13.2")
     assert sheet.calls == 15
+
+
+def test_read_only_sparse_role_scan_ignores_inflated_dimension(tmp_path) -> None:
+    from report_processor.admin_panel.reconciliation_target import _role_rows
+
+    target = tmp_path / "sparse.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["B1"], sheet["C1"], sheet["D1"], sheet["E1"], sheet["F1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"], sheet["F3"] = (
+        "1234",
+        "Этап 13.1",
+        "1",
+        "Монтаж",
+        "м",
+    )
+    sheet["A999999"] = "хвост"
+    workbook.save(target)
+    workbook.close()
+    columns = {
+        logical: SimpleNamespace(column_index=index)
+        for logical, index in (
+            (LogicalColumn.DOCUMENT_INDEX, 2),
+            (LogicalColumn.STAGE, 3),
+            (LogicalColumn.ROW_NUMBER, 4),
+            (LogicalColumn.WORK_NAME, 5),
+            (LogicalColumn.UNIT, 6),
+        )
+    }
+
+    source = _materialized(target, "target:sparse")
+    with open_dual_workbook(WorkbookOpenRequest(source)) as session:
+        worksheet = session.formula_workbook.active
+        assert _role_rows(worksheet, columns) == (1, 3)
+        assert worksheet._reconciliation_role_scan == (3, 11)
 
 
 @pytest.mark.parametrize("stage", ("13.1", None), ids=("selected", "no-selected"))

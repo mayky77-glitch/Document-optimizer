@@ -116,7 +116,7 @@ def test_partial_unrelated_sheet_is_ignored_but_heterogeneous_participant_fails(
     _target(target, second_sheet=True)
     workbook = load_workbook(target)
     unrelated = workbook.create_sheet("Примечания")
-    unrelated["A1"] = "Индекс документа"
+    unrelated["A1"] = "Наименование работ"
     workbook.save(target)
     workbook.close()
 
@@ -129,6 +129,21 @@ def test_partial_unrelated_sheet_is_ignored_but_heterogeneous_participant_fails(
     workbook.save(target)
     workbook.close()
     with pytest.raises(ReconciliationTargetScopeError, match="BASE_ROLE_HETEROGENEOUS"):
+        preview_reconciliation_target(
+            target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+        )
+
+
+@pytest.mark.parametrize("header", ("C1", "D1", "E1", "F1", "G1"))
+def test_participating_sheet_missing_any_base_role_fails_closed(tmp_path, header) -> None:
+    target = tmp_path / "historical.xlsx"
+    _target(target, second_sheet=True)
+    workbook = load_workbook(target)
+    workbook["Отчёт 2"][header] = None
+    workbook.save(target)
+    workbook.close()
+
+    with pytest.raises(ReconciliationTargetScopeError, match="BASE_ROLE_MISSING"):
         preview_reconciliation_target(
             target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
         )
@@ -194,6 +209,19 @@ def test_target_identity_rejects_noncanonical_digest_or_unpaired_period(
 ) -> None:
     with pytest.raises(ValueError, match="TARGET_IDENTITY_INVALID"):
         ReconciliationTargetIdentity(original, "13.1", period, plan)
+
+
+def test_target_identity_canonicalizes_mutable_reporting_period() -> None:
+    class MutablePeriod:
+        value = "2026-08"
+
+    source = MutablePeriod()
+    identity = ReconciliationTargetIdentity(_digest("original"), "13.1", source, _digest("plan"))
+    expected = identity.target_identity_digest
+    source.value = "2026-09"
+
+    assert identity.reporting_period == "2026-08"
+    assert identity.target_identity_digest == expected
 
 
 def test_missing_or_tied_base_roles_fail_closed(tmp_path) -> None:

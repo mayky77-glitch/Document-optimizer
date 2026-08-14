@@ -76,6 +76,11 @@ class ReconciliationReviewState:
             raise AttributeError("target identity is immutable")
         object.__setattr__(self, name, value)
 
+    def __delattr__(self, name: str) -> None:
+        if name == "target_identity_digest":
+            raise AttributeError("target identity is immutable")
+        object.__delattr__(self, name)
+
     def set_autosave(self, callback: Callable[[ReconciliationReviewState], None]) -> None:
         self._autosave = callback
 

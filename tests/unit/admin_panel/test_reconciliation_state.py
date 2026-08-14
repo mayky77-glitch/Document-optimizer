@@ -53,6 +53,8 @@ def test_version_fingerprint_binds_immutable_target_identity(tmp_path) -> None:
     assert first.version_fingerprint != second.version_fingerprint
     with pytest.raises(AttributeError, match="immutable"):
         first.target_identity_digest = "identity-b"
+    with pytest.raises(AttributeError, match="immutable"):
+        del first.target_identity_digest
 
     store = ReconciliationBatchStore(tmp_path)
     store.save(first)
