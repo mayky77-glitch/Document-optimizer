@@ -188,6 +188,73 @@ def test_ready_manifest_without_result_name_is_not_recovered(tmp_path: Path) -> 
         recovered.get_job(job.job_id)
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        {"unexpected": "field"},
+        {"status": "READY"},
+        {"operation": "reconciliation"},
+        {"result_name": None},
+        {"result_name": "../result.xlsx"},
+        {
+            "output_path": None,
+            "output_digest": None,
+            "output_identity": None,
+            "result_name": None,
+        },
+    ),
+)
+def test_recovery_rejects_noncanonical_manifest_envelope(
+    tmp_path: Path, mutation: dict[str, object]
+) -> None:
+    service = _ready_service(tmp_path / "jobs")
+    job = _ready_job(service)
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    manifest.update(mutation)
+    (job.directory / "job-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(KeyError):
+        AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        {"checked_row_count": True},
+        {"failed_row_count": True},
+        {"checked_row_count": 0, "failed_row_count": 1},
+        {"checked_row_count": 1, "failed_row_count": 1},
+        {"verification_status": "pass"},
+        {"verification_status": "failed", "checked_row_count": 1, "failed_row_count": 1},
+        {"verification_message": None},
+    ),
+)
+def test_recovery_rejects_noncanonical_verification_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: dict[str, object]
+) -> None:
+    service = AdminPanelService(tmp_path / "jobs")
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.verify_reconciliation",
+        lambda *_args: VerificationResult("passed", "verified", 1, 0),
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=_upload("source"),
+        target_name="target.xlsx",
+        target_content=_upload("target"),
+        stage="13.1",
+        operation="verify",
+    )
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    manifest.update(mutation)
+    (job.directory / "job-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(KeyError):
+        AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
+
+
 def test_v1_manifest_is_invalidated_before_recovery(tmp_path: Path) -> None:
     service = _ready_service(tmp_path / "jobs")
     job = _ready_job(service)

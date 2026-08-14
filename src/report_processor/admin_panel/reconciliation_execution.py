@@ -194,7 +194,7 @@ def apply_review(
         raise ValueError("RULE_CONFIGURATION_INVALID")
     snapshot = decisions if decisions is not None else tuple(state.core_decisions())
     feedback = _feedback_records(state, snapshot)
-    plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, snapshot)
+    base_plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, snapshot)
     schema, targets, identity, preview = _apply_target_projection(job)
     catalog, matches, selected = _calculate_selected(
         job, state, snapshot, rule_set.rule_set, targets
@@ -202,6 +202,14 @@ def apply_review(
     catalog_digest = _catalog_digest(catalog, identity)
     calculation_digest = calculation_semantic_digest(selected)
     actionable = any(item.quantity is not None or item.cost is not None for item in selected)
+    plan = _finalize_apply_plan(
+        base_plan,
+        target_identity_digest=identity,
+        catalog_digest=catalog_digest,
+        calculation_digest=calculation_digest,
+        rules_hash=rule_set.rule_set.content_hash,
+        actionable=actionable,
+    )
     if not actionable:
         publish_unchanged_target(job.target, job.directory / "result.xlsx", job.target_digest)
         return ReconciliationApplyResult(
@@ -271,21 +279,30 @@ def rebuild_apply_evidence(
     if not rule_set.valid or rule_set.rule_set is None:
         raise RuntimeError("RULE_CONFIGURATION_INVALID")
     feedback = _feedback_records(state, decisions)
-    apply_key, plan_hash = _apply_plan(
-        job, state, rule_set.rule_set.content_hash, feedback, decisions
-    )
+    base_plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, decisions)
     _schema, targets, identity, _preview = _apply_target_projection(job)
     catalog, _matches, selected = _calculate_selected(
         job, state, decisions, rule_set.rule_set, targets
     )
+    catalog_digest = _catalog_digest(catalog, identity)
+    calculation_digest = calculation_semantic_digest(selected)
+    actionable = any(item.quantity is not None or item.cost is not None for item in selected)
+    apply_key, plan_hash = _finalize_apply_plan(
+        base_plan,
+        target_identity_digest=identity,
+        catalog_digest=catalog_digest,
+        calculation_digest=calculation_digest,
+        rules_hash=rule_set.rule_set.content_hash,
+        actionable=actionable,
+    )
     return {
         "apply_key": apply_key,
         "plan_hash": plan_hash,
-        "catalog_digest": _catalog_digest(catalog, identity),
+        "catalog_digest": catalog_digest,
         "target_identity_digest": identity,
-        "calculation_digest": calculation_semantic_digest(selected),
+        "calculation_digest": calculation_digest,
         "rules_hash": rule_set.rule_set.content_hash,
-        "actionable": any(item.quantity is not None or item.cost is not None for item in selected),
+        "actionable": actionable,
         "feedback": feedback,
     }
 
@@ -647,6 +664,30 @@ def _apply_plan(
     }
     payload_hash = _hash("apply-payload", payload)
     return _hash("apply-key", payload), payload_hash
+
+
+def _finalize_apply_plan(
+    base_plan: tuple[str, str],
+    *,
+    target_identity_digest: str,
+    catalog_digest: str,
+    calculation_digest: str,
+    rules_hash: str,
+    actionable: bool,
+) -> tuple[str, str]:
+    """Bind exact-once identifiers to the final calculation semantics."""
+    base_apply_key, base_plan_hash = base_plan
+    binding = {
+        "contract": "ReconciliationApplyCalculatedIntegrity-1.0",
+        "base_apply_key": base_apply_key,
+        "base_plan_hash": base_plan_hash,
+        "target_identity_digest": target_identity_digest,
+        "catalog_digest": catalog_digest,
+        "calculation_digest": calculation_digest,
+        "rules_hash": rules_hash,
+        "actionable": actionable,
+    }
+    return _hash("calculated-apply-key", binding), _hash("calculated-plan-hash", binding)
 
 
 def _target_id(job, target) -> str:

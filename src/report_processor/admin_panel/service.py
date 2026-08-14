@@ -325,6 +325,8 @@ class AdminPanelService:
                     f"{plan_hash}:output-sha256:{output_digest}".encode()
                 ).hexdigest()
                 evidence = _apply_evidence(apply_job, job.review_state, decisions, applied)
+                if evidence["actionable"] is False and output_digest != job.target_digest:
+                    raise RuntimeError("RECONCILIATION_UNCHANGED_OUTPUT_INVALID")
                 job.output = output
                 job.result_name = "optimized-report.xlsx"
                 job.output_identity = owned_output
@@ -572,6 +574,8 @@ class AdminPanelService:
             "updated_at": datetime.now(UTC).isoformat(),
         }
         if job.output is not None:
+            if not _safe_artifact_name(job.result_name):
+                raise ValueError("reconciliation output name is invalid")
             payload["output_path"] = _job_relative_path(job, job.output)
             if job.output_identity is None or job.output_digest is None:
                 identity, output_digest, _mode = _current_output_facts(job.output)
@@ -638,14 +642,20 @@ class AdminPanelService:
         job.output_identity = plan["output_identity"]
         job.output_digest = plan["output_digest"]
         _verify_apply_artifacts(job, job.output, plan["output_identity"], plan["output_digest"])
+        if evidence["actionable"] is False and plan["output_digest"] != job.target_digest:
+            raise RuntimeError("reconciliation unchanged output changed")
         recovered = _prepare_job_review(job, self.feedback_store.records(job.target_digest))
         self._apply_execution_result(job, recovered)
         if job.status != "review_required" or job.review_state is None:
             raise RuntimeError("reconciliation apply plan cannot be rebuilt")
         _validate_apply_identity(job, job.review_state)
-        decisions = evidence["decisions"]
-        current_decisions = _dump_review_decisions(job.review_state.core_decisions())
-        if current_decisions != _dump_review_decisions(decisions):
+        decisions = _resolve_replay_decisions(
+            evidence["decisions"], job.review_state, evidence["target_identity_digest"]
+        )
+        current_decisions = _dump_replay_decisions(
+            job.review_state.core_decisions(), evidence["target_identity_digest"]
+        )
+        if current_decisions != list(evidence["decisions"]):
             raise RuntimeError("reconciliation apply decisions changed")
         apply_job = _materialize_apply_snapshot(job)
         rebuilt = rebuild_apply_evidence(apply_job, job.review_state, decisions)
@@ -759,6 +769,16 @@ def _job_relative_path(job: AdminJob, path: Path) -> str:
     return resolved_path.relative_to(resolved_directory).as_posix()
 
 
+def _safe_artifact_name(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 255
+        and value == Path(value).name
+        and "/" not in value
+        and "\\" not in value
+    )
+
+
 def _prepare_job_review(job: AdminJob, feedback):
     """Select the period path only for a canonical period-bearing reconciliation job."""
     if job.reporting_period is None:
@@ -794,6 +814,39 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
     if status not in _RECOVERABLE_MANIFEST_STATUSES:
         raise ValueError("reconciliation manifest status is unsupported")
     operation = validate_operation(manifest["operation"])
+    allowed_keys = {
+        "contract",
+        "status",
+        "operation",
+        "mode",
+        "stage",
+        "source_paths",
+        "source_digests",
+        "source_names",
+        "target_path",
+        "target_digest",
+        "target_name",
+        "reporting_period",
+        "target_identity_digest",
+        "updated_at",
+        "output_path",
+        "output_digest",
+        "output_identity",
+        "result_name",
+    }
+    if operation == "verify":
+        allowed_keys.update(
+            {
+                "verification_status",
+                "verification_message",
+                "checked_row_count",
+                "failed_row_count",
+            }
+        )
+    if status == "applying":
+        allowed_keys.add("apply")
+    if set(manifest) - allowed_keys:
+        raise ValueError("reconciliation manifest fields are unsupported")
     reporting_period = _validate_reporting_period(manifest.get("reporting_period"))
     if operation == "verify" and reporting_period is not None:
         raise ValueError("REPORTING_PERIOD_UNSUPPORTED_FOR_VERIFY")
@@ -815,16 +868,22 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
         or any(not isinstance(item, str) or not item for item in names)
     ):
         raise ValueError("reconciliation manifest source names are invalid")
-    source_names = tuple(Path(item).name for item in names)
+    if any(not _safe_artifact_name(item) for item in names):
+        raise ValueError("reconciliation manifest source names are invalid")
+    source_names = tuple(names)
+    if not _safe_artifact_name(manifest["target_name"]):
+        raise ValueError("reconciliation manifest target name is invalid")
     output = None
     output_keys = ("output_path", "output_digest", "output_identity", "result_name")
-    if any(key in manifest for key in output_keys) and not all(
-        key in manifest for key in output_keys
-    ):
-        raise ValueError("reconciliation manifest output is incomplete")
-    output_path = manifest.get("output_path")
-    if output_path is not None:
-        output = _manifest_path(directory, output_path)
+    present_output_keys = {key for key in output_keys if key in manifest}
+    if present_output_keys:
+        if present_output_keys != set(output_keys) or any(
+            manifest[key] is None for key in output_keys
+        ):
+            raise ValueError("reconciliation manifest output is incomplete")
+        if not _safe_artifact_name(manifest["result_name"]):
+            raise ValueError("reconciliation manifest output name is invalid")
+        output = _manifest_path(directory, manifest["output_path"])
     output_identity = _manifest_identity(manifest.get("output_identity")) if output else None
     output_digest = _manifest_digest(manifest.get("output_digest")) if output else None
     has_apply = "apply" in manifest
@@ -873,9 +932,7 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
         output=output,
         output_identity=output_identity,
         output_digest=output_digest,
-        result_name=(
-            str(manifest["result_name"]) if isinstance(manifest.get("result_name"), str) else None
-        ),
+        result_name=manifest["result_name"] if output is not None else None,
         verification_status=(
             str(manifest["verification_status"])
             if isinstance(manifest.get("verification_status"), str)
@@ -987,6 +1044,12 @@ def _validate_apply_identity(job: AdminJob, state: ReconciliationReviewState) ->
 
 
 def _validate_verification_metadata(job: AdminJob) -> None:
+    if (
+        type(job.checked_row_count) is not int
+        or type(job.failed_row_count) is not int
+        or not 0 <= job.failed_row_count <= job.checked_row_count <= 10_000_000
+    ):
+        raise ValueError("reconciliation verification manifest is invalid")
     if job.status in {"pending", "running", "failed"}:
         if (
             job.verification_status is not None
@@ -1008,12 +1071,8 @@ def _validate_verification_metadata(job: AdminJob) -> None:
         raise ValueError("reconciliation verification manifest is invalid")
 
 
-def _manifest_count(value: object) -> int:
-    return value if isinstance(value, int) and 0 <= value <= 10_000_000 else 0
-
-
 def _strict_manifest_count(value: object) -> int:
-    if not isinstance(value, int) or not 0 <= value <= 10_000_000:
+    if type(value) is not int or not 0 <= value <= 10_000_000:
         raise ValueError("reconciliation verification manifest is invalid")
     return value
 
@@ -1022,7 +1081,7 @@ def _manifest_identity(value: object) -> tuple[int, int]:
     if (
         not isinstance(value, list)
         or len(value) != 2
-        or any(not isinstance(item, int) or item < 0 for item in value)
+        or any(type(item) is not int or item < 0 for item in value)
     ):
         raise ValueError("reconciliation manifest output identity is invalid")
     return value[0], value[1]
@@ -1095,7 +1154,9 @@ def _apply_evidence(
             "calculation_digest": hashlib.sha256(b"legacy-calculation").hexdigest(),
             "rules_hash": hashlib.sha256(b"legacy-rules").hexdigest(),
             "actionable": True,
-            "decisions": _dump_review_decisions(decisions),
+            "decisions": _dump_replay_decisions(
+                decisions, job.target_identity_digest or job.target_digest
+            ),
             "input_snapshots": _apply_snapshot_names(job),
             "legacy_injected": True,
         }
@@ -1116,7 +1177,7 @@ def _apply_evidence(
         "calculation_digest": rebuilt["calculation_digest"],
         "rules_hash": rebuilt["rules_hash"],
         "actionable": rebuilt["actionable"],
-        "decisions": _dump_review_decisions(decisions),
+        "decisions": _dump_replay_decisions(decisions, rebuilt["target_identity_digest"]),
         "input_snapshots": _apply_snapshot_names(job),
     }
 
@@ -1141,7 +1202,7 @@ def _load_apply_evidence(value: object) -> dict[str, object]:
         raise ValueError("reconciliation apply evidence is invalid")
     if not isinstance(value.get("actionable"), bool):
         raise ValueError("reconciliation apply evidence is invalid")
-    decisions = _load_review_decisions(value.get("decisions"))
+    decisions = _load_replay_decisions(value.get("decisions"))
     snapshots = value.get("input_snapshots")
     if (
         not isinstance(snapshots, list)
@@ -1160,14 +1221,31 @@ def _load_apply_evidence(value: object) -> dict[str, object]:
     }
 
 
-def _dump_review_decisions(decisions) -> list[dict[str, str | None]]:
+def _replay_category_token(target_identity_digest: str, category: str) -> str:
+    _manifest_digest(target_identity_digest)
+    if not isinstance(category, str) or not category:
+        raise ValueError("reconciliation apply category is invalid")
+    payload = (
+        b"ReconciliationReplayCategory-1.0\0"
+        + target_identity_digest.encode("ascii")
+        + b"\0"
+        + category.encode("utf-8")
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _dump_replay_decisions(decisions, target_identity_digest: str) -> list[dict[str, str | None]]:
     return [
         {
             "action": decision.action.value,
             "group_id": decision.group_id,
             "mode": decision.mode.value if decision.mode else None,
             "row_id": decision.row_id,
-            "target_category": decision.target_category,
+            "target_category_token": (
+                _replay_category_token(target_identity_digest, decision.target_category)
+                if decision.target_category is not None
+                else None
+            ),
             "version": decision.version,
         }
         for decision in sorted(
@@ -1176,19 +1254,19 @@ def _dump_review_decisions(decisions) -> list[dict[str, str | None]]:
     ]
 
 
-def _load_review_decisions(value: object):
-    from report_processor.reconciliation_review import ReviewAction, ReviewDecision, ReviewMode
+def _load_replay_decisions(value: object) -> tuple[dict[str, str | None], ...]:
+    from report_processor.reconciliation_review import ReviewAction, ReviewMode
 
     if not isinstance(value, list) or len(value) > MAX_MANUAL_DISCREPANCY_DECISIONS:
         raise ValueError("reconciliation apply decisions are invalid")
-    decisions = []
+    decisions: list[dict[str, str | None]] = []
     for record in value:
         if not isinstance(record, dict) or set(record) != {
             "action",
             "group_id",
             "mode",
             "row_id",
-            "target_category",
+            "target_category_token",
             "version",
         }:
             raise ValueError("reconciliation apply decisions are invalid")
@@ -1197,19 +1275,66 @@ def _load_review_decisions(value: object):
             mode = ReviewMode(record["mode"]) if record["mode"] is not None else None
         except (TypeError, ValueError) as error:
             raise ValueError("reconciliation apply decisions are invalid") from error
-        values = ("group_id", "row_id", "target_category", "version")
-        if any(record[item] is not None and not isinstance(record[item], str) for item in values):
+        values = ("group_id", "row_id", "version")
+        if any(
+            record[item] is not None
+            and (not isinstance(record[item], str) or not 1 <= len(record[item]) <= 128)
+            for item in values
+        ):
+            raise ValueError("reconciliation apply decisions are invalid")
+        token = record["target_category_token"]
+        if token is not None:
+            token = _manifest_digest(token)
+        if action is ReviewAction.ACCEPT:
+            if mode is None or token is None:
+                raise ValueError("reconciliation apply decisions are invalid")
+        elif mode is not None or token is not None:
             raise ValueError("reconciliation apply decisions are invalid")
         decisions.append(
-            ReviewDecision(
-                action,
-                mode,
-                record["target_category"],
-                group_id=record["group_id"],
-                row_id=record["row_id"],
-                version=record["version"],
-            )
+            {
+                "action": action.value,
+                "mode": mode.value if mode is not None else None,
+                "target_category_token": token,
+                "group_id": record["group_id"],
+                "row_id": record["row_id"],
+                "version": record["version"],
+            }
         )
+    return tuple(decisions)
+
+
+def _resolve_replay_decisions(
+    records: tuple[dict[str, str | None], ...],
+    state: ReconciliationReviewState,
+    target_identity_digest: str,
+):
+    from report_processor.reconciliation_review import ReviewAction, ReviewDecision, ReviewMode
+
+    categories_by_token: dict[str, str] = {}
+    for category in state.categories:
+        token = _replay_category_token(target_identity_digest, category)
+        if token in categories_by_token:
+            raise RuntimeError("reconciliation apply category token is ambiguous")
+        categories_by_token[token] = category
+    decisions = []
+    for record in records:
+        token = record["target_category_token"]
+        category = None if token is None else categories_by_token.get(token)
+        if token is not None and category is None:
+            raise RuntimeError("reconciliation apply category token changed")
+        try:
+            decisions.append(
+                ReviewDecision(
+                    ReviewAction(record["action"]),
+                    ReviewMode(record["mode"]) if record["mode"] is not None else None,
+                    category,
+                    group_id=record["group_id"],
+                    row_id=record["row_id"],
+                    version=record["version"],
+                )
+            )
+        except (TypeError, ValueError) as error:
+            raise RuntimeError("reconciliation apply decisions changed") from error
     return tuple(decisions)
 
 
@@ -1240,26 +1365,12 @@ def _verify_recovered_ready_job(job: AdminJob, manifest: dict[str, object]) -> N
 
 def _rebuild_apply_plan(job: AdminJob, state: ReconciliationReviewState):
     """Derive the replay inputs from immutable uploads and autosaved decisions."""
-    from report_processor.business_rules import load_default_rule_set, load_rule_configuration
-
-    from .reconciliation_execution import _apply_plan, _feedback_records
-
-    validation = (
-        load_rule_configuration(job.rules_path)
-        if getattr(job, "rules_path", None)
-        else load_default_rule_set()
-    )
-    if not validation.valid or validation.rule_set is None:
-        raise RuntimeError("RULE_CONFIGURATION_INVALID")
     decisions = tuple(state.core_decisions())
-    feedback = _feedback_records(state, decisions)
-    apply_key, plan_hash = _apply_plan(
-        job, state, validation.rule_set.content_hash, feedback, decisions
-    )
+    rebuilt = rebuild_apply_evidence(job, state, decisions)
     payload_hash = hashlib.sha256(
-        f"{plan_hash}:output-sha256:{job.output_digest}".encode()
+        f"{rebuilt['plan_hash']}:output-sha256:{job.output_digest}".encode()
     ).hexdigest()
-    return decisions, feedback, apply_key, payload_hash
+    return decisions, rebuilt["feedback"], rebuilt["apply_key"], payload_hash
 
 
 def _apply_verification_result(job: AdminJob, result) -> None:

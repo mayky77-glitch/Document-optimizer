@@ -10,6 +10,7 @@ from report_processor.admin_panel.reconciliation_execution import (
     _Catalog,
     _catalog,
     _feedback_records,
+    _finalize_apply_plan,
     _normalized_source_digests,
     _review_row_id,
     _selected_matches,
@@ -106,6 +107,25 @@ def test_calculation_semantic_digest_binds_calculation_identity_and_order() -> N
     assert calculation_semantic_digest((first,)) != calculation_semantic_digest(
         (SimpleNamespace(**{**first.__dict__, "calculation_id": "calculation-drift"}),)
     )
+
+
+def test_final_apply_plan_binds_calculation_identity_drift() -> None:
+    facts = {
+        "target_identity_digest": "c" * 64,
+        "catalog_digest": "d" * 64,
+        "rules_hash": "e" * 64,
+        "actionable": True,
+    }
+
+    original = _finalize_apply_plan(("a" * 64, "b" * 64), calculation_digest="f" * 64, **facts)
+    drifted = _finalize_apply_plan(("a" * 64, "b" * 64), calculation_digest="0" * 64, **facts)
+
+    assert drifted[0] != original[0]
+    assert drifted[1] != original[1]
+    output_digest = "1" * 64
+    original_payload = sha256(f"{original[1]}:output-sha256:{output_digest}".encode()).hexdigest()
+    drifted_payload = sha256(f"{drifted[1]}:output-sha256:{output_digest}".encode()).hexdigest()
+    assert drifted_payload != original_payload
 
 
 def test_catalog_rejects_duplicate_document_index_and_category() -> None:
