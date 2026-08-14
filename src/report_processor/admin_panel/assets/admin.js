@@ -4,6 +4,9 @@
   const form = document.querySelector("#job-form");
   const sourceFiles = document.querySelector("#sources");
   const targetFile = document.querySelector("#target");
+  const operation = document.querySelector("#operation");
+  const reportingPeriodField = document.querySelector("#reporting-period-field");
+  const reportingPeriod = document.querySelector("#reporting-period");
   const stageSelection = document.querySelector("#stage-selection");
   const stage = document.querySelector("#stage");
   const sourceCount = document.querySelector("#source-count");
@@ -21,7 +24,6 @@
   const resultHint = document.querySelector("#result-hint");
   const resultPanel = document.querySelector(".result-panel");
   const submit = form.querySelector('button[type="submit"]');
-  const operation = form.querySelector('input[name="operation"]');
   const sourceWorkbookExtensions = new Set([".xlsx", ".xlsm"]);
   const targetWorkbookExtensions = new Set([".xlsx"]);
   let currentJobId = "";
@@ -29,7 +31,7 @@
   let activeLearningReview = null;
 
   const stageOptions = (payload) => Array.isArray(payload?.stage_options)
-    ? [...new Set(payload.stage_options.filter((value) => typeof value === "string" && value.trim()))]
+    ? payload.stage_options.filter((value) => typeof value === "string")
     : [];
 
   const showStageSelection = (payload) => {
@@ -51,6 +53,15 @@
     stage.disabled = true;
     stage.required = false;
     stage.replaceChildren(new Option("Выберите этап", ""));
+  };
+
+  const syncOperationFields = () => {
+    const isReconciliation = operation?.value === "reconcile";
+    reportingPeriodField.hidden = !isReconciliation;
+    reportingPeriod.disabled = !isReconciliation;
+    if (!isReconciliation) reportingPeriod.value = "";
+    submit.textContent = isReconciliation ? "Сверить документы" : "Проверить документы";
+    clearStageSelection();
   };
 
   const setProgress = (step) => {
@@ -463,8 +474,7 @@
   };
 
   const renderVerification = (payload) => {
-    const isVerification = payload.operation === "verify"
-      || typeof payload.verification_status === "string";
+    const isVerification = payload.operation === "verify";
     if (!isVerification) return false;
     batchReview?.destroy();
     batchReview = null;
@@ -533,6 +543,8 @@
 
   sourceFiles.addEventListener("change", updateSourceCount);
   targetFile.addEventListener("change", clearStageSelection);
+  operation.addEventListener("change", syncOperationFields);
+  syncOperationFields();
 
   applyButton.addEventListener("click", async () => {
     if (!currentJobId) return;
@@ -560,7 +572,10 @@
       const data = new FormData();
       [...sourceFiles.files].forEach((file) => data.append("sources", file));
       data.append("target", targetFile.files[0]);
-      data.append("operation", operation?.value || "verify");
+      data.append("operation", operation.value);
+      if (operation.value === "reconcile" && reportingPeriod.value) {
+        data.append("reporting_period", reportingPeriod.value);
+      }
       if (!stageSelection.hidden && stage.value) data.append("stage", stage.value);
       renderJob(await requestJson("/api/jobs", { method: "POST", body: data }));
     } catch (requestError) {

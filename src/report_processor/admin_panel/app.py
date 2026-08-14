@@ -197,7 +197,7 @@ def create_app(
             _validate_content_length(request.headers.get("content-length"))
             async with request.form(
                 max_files=ADMIN_MAX_SOURCES + 1,
-                max_fields=3,
+                max_fields=4,
                 max_part_size=MAX_UPLOAD_BYTES + 1,
             ) as form:
                 source_uploads = list(form.getlist("sources"))
@@ -224,7 +224,16 @@ def create_app(
                 stage = validate_stage(stage_value) if stage_value is not None else None
                 mode = validate_mode(form.get("mode", "write"))
                 operation = validate_operation(form.get("operation", "reconcile"))
-                operation_kwargs = {"operation": operation} if operation != "reconcile" else {}
+                reporting_period = form.get("reporting_period")
+                # Keep the submitted value intact.  The service is the single
+                # owner of period parsing, but reject a crafted verification
+                # request before any upload can create a job.
+                if operation == "verify" and reporting_period not in (None, ""):
+                    raise ValueError("REPORTING_PERIOD_UNSUPPORTED_FOR_VERIFY")
+                operation_kwargs = {
+                    "operation": operation,
+                    "reporting_period": reporting_period,
+                }
                 if legacy_source:
                     job = panel.create_job(
                         source_name=sources[0][0],
