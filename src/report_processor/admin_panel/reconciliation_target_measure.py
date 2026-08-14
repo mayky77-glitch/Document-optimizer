@@ -129,10 +129,11 @@ def discover_target_measures(
 
     pairs: list[TargetMeasurePair] = []
     for sheet_name, first_detail_row in sorted(first_detail_rows.items()):
-        window = (header_windows or {}).get(sheet_name) or bounded_header_window(
+        window = _bound_header_window(
             workbook[sheet_name],
             first_detail_row,
             (merged_ranges_by_sheet or {}).get(sheet_name, ()),
+            (header_windows or {}).get(sheet_name),
         )
         candidates = _sheet_candidates(
             workbook[sheet_name],
@@ -164,10 +165,11 @@ def discover_historical_target_measures(
 
     pairs: list[HistoricalTargetMeasureEvidence] = []
     for sheet_name, first_detail_row in sorted(first_detail_rows.items()):
-        window = (header_windows or {}).get(sheet_name) or bounded_header_window(
+        window = _bound_header_window(
             workbook[sheet_name],
             first_detail_row,
             (merged_ranges_by_sheet or {}).get(sheet_name, ()),
+            (header_windows or {}).get(sheet_name),
         )
         candidates = _sheet_historical_candidates(
             workbook[sheet_name],
@@ -232,9 +234,29 @@ def bounded_header_window(
     return BoundedHeaderWindow(start, end, tuple(sorted(columns)))
 
 
+def _bound_header_window(
+    sheet,
+    first_detail_row: int,
+    merged_ranges: tuple[str, ...],
+    supplied: BoundedHeaderWindow | None,
+) -> BoundedHeaderWindow:
+    derived = bounded_header_window(sheet, first_detail_row, merged_ranges)
+    if supplied is not None and supplied != derived:
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    _validate_header_work_budget(derived)
+    return derived
+
+
+def _validate_header_work_budget(window: BoundedHeaderWindow) -> None:
+    depth = window.end_row - window.start_row + 1
+    candidate_count = sum(column + 1 in window.columns for column in window.columns)
+    work = depth * (len(window.columns) + 2 * candidate_count)
+    if depth < 1 or work > _MAX_HEADER_WINDOW_CELLS:
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+
+
 def _header_merged_ranges(sheet, merged_ranges, start, end):
-    ranges = getattr(getattr(sheet, "merged_cells", None), "ranges", ())
-    ranges = ranges or tuple(merged_ranges)
+    ranges = tuple(merged_ranges) or getattr(getattr(sheet, "merged_cells", None), "ranges", ())
     result = []
     for merged in ranges:
         try:
@@ -258,7 +280,7 @@ def _sheet_candidates(
     window: BoundedHeaderWindow,
 ) -> tuple[TargetMeasurePair, ...]:
     start, end = _validated_window(window, first_detail_row)
-    values, spans = _header_cells(sheet, window, merged_ranges)
+    _values, paths = _header_paths(sheet, window, merged_ranges)
     columns = frozenset(window.columns)
     candidates: dict[tuple[object, ...], HistoricalTargetMeasureEvidence] = {}
     for row in range(start, end + 1):
@@ -266,8 +288,8 @@ def _sheet_candidates(
             cost_column = quantity_column + 1
             if cost_column not in columns:
                 continue
-            quantity = _labels(values, spans, start, row, quantity_column)
-            cost = _labels(values, spans, start, row, cost_column)
+            quantity = paths[row, quantity_column]
+            cost = paths[row, cost_column]
             if (
                 not quantity
                 or not cost
@@ -321,7 +343,7 @@ def _sheet_historical_candidates(
     window: BoundedHeaderWindow,
 ) -> tuple[HistoricalTargetMeasureEvidence, ...]:
     start, end = _validated_window(window, first_detail_row)
-    values, spans = _header_cells(sheet, window, merged_ranges)
+    _values, paths = _header_paths(sheet, window, merged_ranges)
     columns = frozenset(window.columns)
     candidates: dict[tuple[object, ...], HistoricalTargetMeasureEvidence] = {}
     for row in range(start, end + 1):
@@ -329,8 +351,8 @@ def _sheet_historical_candidates(
             cost_column = quantity_column + 1
             if cost_column not in columns:
                 continue
-            quantity = _labels(values, spans, start, row, quantity_column)
-            cost = _labels(values, spans, start, row, cost_column)
+            quantity = paths[row, quantity_column]
+            cost = paths[row, cost_column]
             if (
                 not quantity
                 or not cost
@@ -443,6 +465,23 @@ def _validated_window(window: BoundedHeaderWindow, first_detail_row: int) -> tup
 
 def _values_by_column(window: BoundedHeaderWindow) -> frozenset[int]:
     return frozenset(window.columns)
+
+
+def _header_paths(sheet, window: BoundedHeaderWindow, merged_ranges: tuple[str, ...]):
+    values, spans = _header_cells(sheet, window, merged_ranges)
+    paths: dict[tuple[int, int], tuple[_Label, ...]] = {}
+    for column in window.columns:
+        labels: list[_Label] = []
+        seen: set[tuple[int, int, int, int]] = set()
+        for row in range(window.start_row, window.end_row + 1):
+            value = values.get((row, column))
+            text = _text(value)
+            key = spans.get((row, column), (row, column, row, column))
+            if text and key not in seen:
+                seen.add(key)
+                labels.append(_Label(text, key))
+            paths[row, column] = tuple(labels)
+    return values, paths
 
 
 def _header_cells(sheet, window: BoundedHeaderWindow, merged_ranges: tuple[str, ...]):

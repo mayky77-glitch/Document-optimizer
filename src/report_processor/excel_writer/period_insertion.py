@@ -51,6 +51,87 @@ _PERMITTED_DEFINED_NAMES = {
     "_xlnm._FilterDatabase",
 }
 _XMLNS = re.compile(rb"\s(xmlns(?::[A-Za-z_][\w.-]*)?=\"[^\"]+\")")
+_MAX_ROWS = 1_048_576
+_MAX_COLUMNS = 16_384
+
+
+def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]]:
+    """Validate unnormalised OOXML merge topology before opening a workbook."""
+
+    parts = worksheet_parts(source)
+    requested = tuple(sheet_names)
+    if any(name not in parts for name in requested):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    try:
+        with zipfile.ZipFile(source) as archive:
+            return {name: _raw_sheet_merges(archive.read(parts[name])) for name in requested}
+    except ReconciliationPeriodError:
+        raise
+    except Exception as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+
+
+def _raw_sheet_merges(payload: bytes) -> tuple[str, ...]:
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+    containers = root.findall(_Q("mergeCells"))
+    if not containers:
+        return ()
+    if len(containers) != 1:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    container = containers[0]
+    count = container.attrib.get("count")
+    if count is None or not count.isdecimal():
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    references: list[tuple[str, tuple[int, int, int, int]]] = []
+    for child in container:
+        if child.tag != _Q("mergeCell") or set(child.attrib) != {"ref"}:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+        reference = child.attrib["ref"]
+        try:
+            left, top, right, bottom = range_boundaries(reference)
+        except ValueError as error:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+        canonical = f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
+        if (
+            reference != canonical
+            or (left == right and top == bottom)
+            or not 1 <= left <= right <= _MAX_COLUMNS
+            or not 1 <= top <= bottom <= _MAX_ROWS
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+        if any(
+            not (
+                right < existing_left
+                or existing_right < left
+                or bottom < existing_top
+                or existing_bottom < top
+            )
+            for _existing, (
+                existing_left,
+                existing_top,
+                existing_right,
+                existing_bottom,
+            ) in references
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+        references.append((reference, (left, top, right, bottom)))
+    if int(count) != len(references):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    return tuple(reference for reference, _bounds in references)
+
+
+def _validated_header_merges(
+    source: Path,
+    sheet_names,
+    supplied: dict[str, tuple[str, ...]] | None,
+) -> dict[str, tuple[str, ...]]:
+    raw = _raw_merge_inventory(source, sheet_names)
+    if supplied is not None and any(tuple(supplied.get(name, ())) != raw[name] for name in raw):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_ANCHOR_INVALID")
+    return raw
 
 
 def build_period_insertion_plan(
@@ -66,13 +147,14 @@ def build_period_insertion_plan(
     )
     source = Path(source_path)
     _reject_package(source)
+    raw_merges = _validated_header_merges(source, first_detail_rows, merged_ranges_by_sheet)
     parts = worksheet_parts(source)
     sheet_ids = _sheet_id_map(source)
     with source.open("rb") as stream:
         digest = hashlib.sha256(stream.read()).hexdigest()
     workbook = load_workbook(source, read_only=False, data_only=False, keep_links=True)
     try:
-        header_windows = bounded_header_windows(workbook, first_detail_rows, merged_ranges_by_sheet)
+        header_windows = bounded_header_windows(workbook, first_detail_rows, raw_merges)
         current: set[str] = set()
         missing: set[str] = set()
         for sheet_name, detail_row in first_detail_rows.items():
@@ -80,7 +162,7 @@ def build_period_insertion_plan(
                 pair = discover_target_measures(
                     workbook,
                     {sheet_name: detail_row},
-                    merged_ranges_by_sheet,
+                    raw_merges,
                     {sheet_name: header_windows[sheet_name]},
                 )
             except ReconciliationTargetMeasureError as error:
@@ -105,7 +187,7 @@ def build_period_insertion_plan(
                 True,
             )
         historical = discover_historical_target_measures(
-            workbook, first_detail_rows, merged_ranges_by_sheet, header_windows
+            workbook, first_detail_rows, raw_merges, header_windows
         )
         anchors = tuple(
             ReconciliationSheetAnchor(
@@ -157,6 +239,7 @@ def prepare_period_insertion(
     source, output = Path(source_path), Path(output_path)
     _assert_digest(source, plan.source_sha256)
     _validate_plan(source, plan)
+    _raw_merge_inventory(source, (anchor.sheet_name for anchor in plan.anchors))
     if plan.idempotent:
         raise ReconciliationPeriodError("PERIOD_INSERTION_IDEMPOTENT")
     try:
@@ -207,6 +290,8 @@ def verify_period_insertion(
     source, output = Path(source_path), Path(output_path)
     _assert_digest(source, plan.source_sha256)
     _validate_plan(source, plan)
+    _raw_merge_inventory(source, (anchor.sheet_name for anchor in plan.anchors))
+    _raw_merge_inventory(output, (anchor.sheet_name for anchor in plan.anchors))
     anchors = {item.sheet_name: item for item in plan.anchors}
     source_parts = dict(plan.worksheet_parts)
     try:

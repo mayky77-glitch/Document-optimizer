@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import zipfile
 from contextlib import contextmanager
 from hashlib import sha256
+from xml.etree import ElementTree as ET
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -306,6 +308,28 @@ def test_preview_rejects_target_mutated_during_planning(tmp_path, monkeypatch) -
 
     with pytest.raises(ValueError, match="RECONCILIATION_TARGET_CHANGED"):
         preview_reconciliation_target(target, digest, "13.1", "2026-08")
+
+
+def test_preview_rejects_duplicate_raw_merge_inventory(tmp_path) -> None:
+    target = tmp_path / "historical.xlsx"
+    _target(target)
+    with zipfile.ZipFile(target) as archive:
+        members = {item.filename: archive.read(item.filename) for item in archive.infolist()}
+    namespace = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    root = ET.fromstring(members["xl/worksheets/sheet1.xml"])
+    merges = root.find(f"{namespace}mergeCells")
+    assert merges is not None
+    merges.attrib["count"] = str(len(merges) + 1)
+    ET.SubElement(merges, f"{namespace}mergeCell", {"ref": "L1:M1"})
+    members["xl/worksheets/sheet1.xml"] = ET.tostring(root)
+    with zipfile.ZipFile(target, "w") as archive:
+        for name, payload in members.items():
+            archive.writestr(name, payload)
+
+    with pytest.raises(ValueError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        preview_reconciliation_target(
+            target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+        )
 
 
 def _many_row_target(path, *, current: bool) -> None:
