@@ -2,8 +2,8 @@
 type: orda_task
 status: frozen
 card_id: reconciliation-writer-namespace-v3
-version: 3
-work_id: reconciliation-writer-namespace-v3
+version: 3.1
+work_id: reconciliation-writer-namespace-v3a
 task_id: writer-namespace-v3
 purpose: Finish namespace-safe writing with a compact immutable index and same-handle ZIP admission.
 role: developer
