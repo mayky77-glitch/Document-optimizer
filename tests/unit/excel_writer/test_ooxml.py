@@ -214,6 +214,18 @@ def test_self_closing_value_expansion_preserves_opening_attributes() -> None:
     assert b'<v custom="keep">4</v>' in updated
 
 
+def test_formula_materialization_preserves_self_closing_value_attributes() -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row><c r="D1"><f>1</f><v custom="keep"/></c>'
+        b"</row></sheetData></worksheet>"
+    )
+
+    updated = materialize_formula_cells(xml, {"D1": "4"})
+
+    assert b'<v custom="keep">4</v>' in updated
+
+
 def test_request_local_index_scans_once_for_many_inspections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

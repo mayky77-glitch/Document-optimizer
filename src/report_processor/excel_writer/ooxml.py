@@ -428,7 +428,10 @@ def materialize_formula_cells(xml: bytes, values: Mapping[str, str]) -> bytes:
         if value.self_closing:
             value_start = value.start - element.start
             value_end = value.end - element.start
-            value_replacement = b"<" + value.qname + b">" + replacement + b"</" + value.qname + b">"
+            opening = xml[value.start : value.opening_end]
+            value_replacement = (
+                opening.rstrip()[:-2] + b">" + replacement + b"</" + value.qname + b">"
+            )
         else:
             value_start = value.content_start - element.start
             value_end = value.content_end - element.start
