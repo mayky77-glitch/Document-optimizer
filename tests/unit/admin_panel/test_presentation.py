@@ -45,7 +45,48 @@ def test_verification_payload_reports_a_safe_selected_stage() -> None:
     payload = job_payload(job)
 
     assert payload["stage"] == "14.2"
+    assert payload["operation"] == "verify"
+    assert "reporting_period" not in payload
     assert "sheets" not in repr(payload) and "coordinates" not in repr(payload)
+
+
+def test_reconciliation_payload_exposes_only_canonical_reporting_period() -> None:
+    payload = job_payload(
+        {
+            "job_id": "job-1",
+            "stage": "14.2",
+            "status": "ready",
+            "summary": {},
+            "discrepancies": [],
+            "suggestions": [],
+            "decisions": [],
+            "download_url": None,
+            "reporting_period": "2026-08",
+        }
+    )
+
+    assert payload["operation"] == "reconcile"
+    assert payload["reporting_period"] == "2026-08"
+    assert set(payload).isdisjoint({"paths", "digests", "sheets", "coordinates", "formulas"})
+
+
+def test_reconciliation_payload_does_not_present_noncanonical_period() -> None:
+    job = SimpleNamespace(
+        job_id="job-1",
+        operation="reconcile",
+        reporting_period=" 2026-08",
+        stage="14.2",
+        mode="write",
+        status="ready",
+        summary={},
+        discrepancies=[],
+        suggestions=[],
+        decisions=[],
+        result_available=False,
+        source_issues=(),
+    )
+
+    assert job_payload(job)["reporting_period"] is None
 
 
 def test_rag_candidates_are_separate_named_manual_decisions() -> None:

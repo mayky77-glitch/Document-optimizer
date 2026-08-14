@@ -56,24 +56,28 @@ class FakeAdminService:
     def create_job(
         self,
         *,
-        source_name: str,
-        source_content: bytes,
+        source_name: str | None = None,
+        source_content: bytes | None = None,
+        sources: list[tuple[str, bytes]] | None = None,
         target_name: str,
         target_content: bytes,
         stage: str | None,
         mode: str,
         operation: str = "reconcile",
+        reporting_period: str | None = None,
         validate_target_stage: bool = False,
     ) -> Mapping[str, object]:
         self.create_calls.append(
             {
                 "source_name": source_name,
                 "source_content": source_content,
+                "sources": sources,
                 "target_name": target_name,
                 "target_content": target_content,
                 "stage": stage,
                 "mode": mode,
                 "operation": operation,
+                "reporting_period": reporting_period,
                 "validate_target_stage": validate_target_stage,
             }
         )
@@ -174,6 +178,58 @@ def test_omitted_stage_and_explicit_stage_mode_map_to_service_without_legacy_sid
         ("14.2", "dry-run"),
     ]
     assert all(call["validate_target_stage"] is True for call in service.create_calls)
+
+
+def test_reconcile_period_is_forwarded_exactly_and_verify_period_is_rejected_before_creation(
+    client,
+) -> None:
+    test_client, service, _ = client
+
+    created = test_client.post("/api/jobs", files=_files(), data={"reporting_period": "2026-08"})
+
+    assert created.status_code == 201
+    assert service.create_calls[-1]["operation"] == "reconcile"
+    assert service.create_calls[-1]["reporting_period"] == "2026-08"
+
+    rejected = test_client.post(
+        "/api/jobs",
+        files=_files(),
+        data={"operation": "verify", "reporting_period": "2026-08"},
+    )
+
+    assert rejected.status_code == 400
+    assert len(service.create_calls) == 1
+
+
+def test_period_is_forwarded_for_multi_source_upload_path(client) -> None:
+    test_client, service, _ = client
+    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    created = test_client.post(
+        "/api/jobs",
+        files=[
+            ("sources", ("source-1.xlsx", b"PK\x03\x04one", content_type)),
+            ("sources", ("source-2.xlsx", b"PK\x03\x04two", content_type)),
+            ("target", ("target.xlsx", b"PK\x03\x04target", content_type)),
+        ],
+        data={"reporting_period": "2026-08"},
+    )
+
+    assert created.status_code == 201
+    assert service.create_calls[-1]["sources"] == [
+        ("source-1.xlsx", b"PK\x03\x04one"),
+        ("source-2.xlsx", b"PK\x03\x04two"),
+    ]
+    assert service.create_calls[-1]["reporting_period"] == "2026-08"
+
+
+def test_period_whitespace_is_forwarded_without_http_normalization(client) -> None:
+    test_client, service, _ = client
+
+    created = test_client.post("/api/jobs", files=_files(), data={"reporting_period": " 2026-08"})
+
+    assert created.status_code == 201
+    assert service.create_calls[-1]["reporting_period"] == " 2026-08"
 
 
 def test_stage_selection_and_missing_stage_responses_are_controlled_and_private(client) -> None:

@@ -39,11 +39,12 @@ _ISSUE_PRESENTATION = {
 _DEFAULT_PRESENTATION = ("manual_review", "blue")
 _UNCHANGED_CODES = {"UNCHANGED_VALUE", "VALUE_UNCHANGED", "NO_VALUE_CHANGE"}
 _ABSOLUTE_PATH = re.compile(r"(?<![\w])(?:/[^\s,;]+|[A-Za-z]:\\[^\s,;]+)")
+_REPORTING_PERIOD = re.compile(r"\A\d{4}-(?:0[1-9]|1[0-2])\Z")
 
 
 def job_payload(job: object) -> dict[str, object]:
     """Serialize only frozen, client-facing fields from a job or fake mapping."""
-    if getattr(job, "operation", None) == "verify":
+    if _job_value(job, "operation") == "verify":
         return _verification_payload(job)
     review_state = getattr(job, "review_state", None)
     if review_state is not None:
@@ -57,6 +58,8 @@ def job_payload(job: object) -> dict[str, object]:
         )
         output: dict[str, object] = {
             "job_id": job_id,
+            "operation": "reconcile",
+            "reporting_period": _reporting_period(job.get("reporting_period")),
             "stage": _required_text(job.get("stage"), "stage"),
             "status": _required_text(job.get("status"), "status"),
             "summary": _public_mapping(job.get("summary")),
@@ -78,6 +81,8 @@ def job_payload(job: object) -> dict[str, object]:
     decisions = _public_records(getattr(job, "decisions", ()))
     return {
         "job_id": job_id,
+        "operation": "reconcile",
+        "reporting_period": _reporting_period(getattr(job, "reporting_period", None)),
         "stage": _required_text(getattr(job, "stage", None), "stage"),
         "mode": _public_text(getattr(job, "mode", "")),
         "status": _required_text(getattr(job, "status", None), "status"),
@@ -99,35 +104,35 @@ def job_payload(job: object) -> dict[str, object]:
 def _verification_payload(job: object) -> dict[str, object]:
     """Expose verification totals only; workbook provenance remains private."""
 
-    status = _required_text(getattr(job, "status", None), "status")
-    verification_status = getattr(job, "verification_status", None)
+    status = _required_text(_job_value(job, "status"), "status")
+    verification_status = _job_value(job, "verification_status")
     completed = status == "ready" and verification_status in {"passed", "failed"}
     message = (
-        _public_text(getattr(job, "verification_message", ""), 240)
+        _public_text(_job_value(job, "verification_message", ""), 240)
         if completed
         else "Не удалось завершить проверку документов."
     )
     payload = {
-        "job_id": _required_text(getattr(job, "job_id", None), "job_id"),
+        "job_id": _required_text(_job_value(job, "job_id"), "job_id"),
         "operation": "verify",
         "status": status,
         "verification_status": verification_status if completed else None,
         "message": message,
-        "checked_row_count": _verification_count(getattr(job, "checked_row_count", 0)),
-        "failed_row_count": _verification_count(getattr(job, "failed_row_count", 0)),
+        "checked_row_count": _verification_count(_job_value(job, "checked_row_count", 0)),
+        "failed_row_count": _verification_count(_job_value(job, "failed_row_count", 0)),
         "download_url": (
-            f"/api/jobs/{job.job_id}/result"
+            f"/api/jobs/{_job_value(job, 'job_id')}/result"
             if completed
             and verification_status == "failed"
-            and bool(getattr(job, "result_available", False))
+            and bool(_job_value(job, "result_available", False))
             else None
         ),
     }
-    stage = _public_text(getattr(job, "stage", ""), 64)
+    stage = _public_text(_job_value(job, "stage", ""), 64)
     if is_safe_stage_text(stage):
         payload["stage"] = stage
     if not completed:
-        payload["source_issues"] = _source_issues(getattr(job, "source_issues", ()))
+        payload["source_issues"] = _source_issues(_job_value(job, "source_issues", ()))
     return payload
 
 
@@ -180,6 +185,8 @@ def _authoritative_review_payload(job: object, state: object) -> dict[str, objec
         )
     payload = {
         "job_id": _required_text(getattr(job, "job_id", None), "job_id"),
+        "operation": "reconcile",
+        "reporting_period": _reporting_period(getattr(job, "reporting_period", None)),
         "status": _required_text(getattr(job, "status", None), "status"),
         "review_groups": groups,
         "review_categories": [
@@ -197,6 +204,17 @@ def _authoritative_review_payload(job: object, state: object) -> dict[str, objec
     # controls.  New consumers use the complete package schema below.
     payload.update(reconciliation_batch_payload(state))
     return payload
+
+
+def _job_value(job: object, name: str, default: object = None) -> object:
+    if isinstance(job, Mapping):
+        return job.get(name, default)
+    return getattr(job, name, default)
+
+
+def _reporting_period(value: object) -> str | None:
+    """Return only the service's already-canonical period representation."""
+    return value if isinstance(value, str) and _REPORTING_PERIOD.fullmatch(value) else None
 
 
 def _source_issues(values: object) -> list[dict[str, object]]:
