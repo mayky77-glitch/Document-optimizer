@@ -269,19 +269,89 @@ def test_v1_manifest_is_invalidated_before_recovery(tmp_path: Path) -> None:
         recovered.get_job(job.job_id)
 
 
-def test_interrupted_apply_fails_closed_without_a_download(tmp_path: Path) -> None:
-    service = _ready_service(tmp_path / "jobs")
-    job = _ready_job(service)
-    assert job.output is not None
+def test_interrupted_apply_fails_closed_without_a_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "jobs"
+    service = AdminPanelService(
+        workspace,
+        execute=lambda _job: ReconciliationReviewResult(state=object(), source_batch=None),
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=_upload("source"),
+        target_name="target.xlsx",
+        target_content=_upload("target"),
+        stage="13.1",
+    )
+    assert job.status == "review_required" and job.output is None
     job.status = "applying"
     service._persist_job(job)
+    orphan = job.directory / "result.xlsx"
+    orphan.write_bytes(b"writer completed before the replay plan was durable")
+    orphan.chmod(0o600)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review",
+        lambda *_args: pytest.fail("recovery must not retry the writer"),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.prepare_review",
+        lambda *_args: pytest.fail("pre-evidence recovery must not rebuild review"),
+    )
 
-    recovered = AdminPanelService(tmp_path / "jobs")
+    recovered = AdminPanelService(workspace)
 
-    # An old/incomplete applying record has no immutable replay plan and is
-    # deliberately invisible rather than being rerun or made downloadable.
+    restored = recovered.get_job(job.job_id)
+    assert restored.status == "failed" and restored.output is None
     with pytest.raises(KeyError):
-        recovered.get_job(job.job_id)
+        recovered.get_result(job.job_id)
+    assert orphan.read_bytes() == b"writer completed before the replay plan was durable"
+
+
+@pytest.mark.parametrize("partial", ["output", "apply"])
+def test_applying_manifest_rejects_partial_evidence_envelopes(tmp_path: Path, partial: str) -> None:
+    workspace = tmp_path / "jobs"
+    service = AdminPanelService(
+        workspace,
+        execute=lambda _job: ReconciliationReviewResult(state=object(), source_batch=None),
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=_upload("source"),
+        target_name="target.xlsx",
+        target_content=_upload("target"),
+        stage="13.1",
+    )
+    job.status = "applying"
+    service._persist_job(job)
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    if partial == "output":
+        output = job.directory / "result.xlsx"
+        output.write_bytes(b"partial")
+        output.chmod(0o600)
+        job.output = output
+        job.result_name = "optimized-report.xlsx"
+        with pytest.raises(ValueError, match="status artifacts"):
+            service._persist_job(job)
+        job.output = None
+        job.result_name = None
+        manifest.update(
+            output_path=output.name,
+            output_digest=hashlib.sha256(output.read_bytes()).hexdigest(),
+            output_identity=[output.stat().st_dev, output.stat().st_ino],
+            result_name="optimized-report.xlsx",
+        )
+    else:
+        job.apply_manifest = {}
+        with pytest.raises(ValueError, match="status artifacts"):
+            service._persist_job(job)
+        job.apply_manifest = None
+        manifest["apply"] = {}
+    (job.directory / "job-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(KeyError):
+        AdminPanelService(workspace).get_job(job.job_id)
 
 
 def test_apply_manifest_never_contains_workbook_derived_feedback_values(tmp_path: Path) -> None:
@@ -298,6 +368,16 @@ def test_apply_manifest_never_contains_workbook_derived_feedback_values(tmp_path
         "output_identity": list(job.output_identity),
         "apply_key": "a" * 64,
         "payload_hash": "b" * 64,
+        "evidence": {
+            "contract": "ReconciliationApplyReplay-2.0",
+            "catalog_digest": "c" * 64,
+            "target_identity_digest": job.target_identity_digest,
+            "calculation_digest": "d" * 64,
+            "rules_hash": "e" * 64,
+            "actionable": True,
+            "decisions": [],
+            "input_snapshots": ["apply-input-source-01.xlsx", "apply-input-target.xlsx"],
+        },
     }
     service._persist_job(job)
 
@@ -306,3 +386,41 @@ def test_apply_manifest_never_contains_workbook_derived_feedback_values(tmp_path
     assert "feedback" not in text
     assert "distinctive work" not in text
     assert "distinctive-unit" not in text
+
+
+def test_review_required_manifest_rejects_self_consistent_forged_output(tmp_path: Path) -> None:
+    workspace = tmp_path / "jobs"
+    service = AdminPanelService(
+        workspace,
+        execute=lambda _job: ReconciliationReviewResult(state=object(), source_batch=None),
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=_upload("source"),
+        target_name="target.xlsx",
+        target_content=_upload("target"),
+        stage="13.1",
+    )
+    assert job.status == "review_required"
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"forged but internally self-consistent")
+    output.chmod(0o600)
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    manifest.update(
+        output_path=output.name,
+        output_digest=hashlib.sha256(output.read_bytes()).hexdigest(),
+        output_identity=[output.stat().st_dev, output.stat().st_ino],
+        result_name="optimized-report.xlsx",
+    )
+    (job.directory / "job-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    job.output = output
+    job.result_name = "optimized-report.xlsx"
+    assert job.result_available is False
+
+    recovered = AdminPanelService(workspace)
+
+    with pytest.raises(KeyError):
+        recovered.get_job(job.job_id)
+    with pytest.raises(KeyError):
+        recovered.get_result(job.job_id)

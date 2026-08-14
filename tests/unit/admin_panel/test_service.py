@@ -79,6 +79,16 @@ def _manual_discrepancy_result():
     )
 
 
+def _blocked_result():
+    return SimpleNamespace(
+        artifacts={"quality_report": SimpleNamespace(summary={}, issues=())},
+        state="BLOCKED",
+        exit_code=3,
+        warnings=(),
+        errors=(),
+    )
+
+
 def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
     tmp_path: Path,
 ) -> None:
@@ -210,6 +220,48 @@ def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path
     assert [item["decision"] for item in payload["decisions"]] == ["fit", "not_fit"]
     assert str(tmp_path) not in result_path.read_text(encoding="utf-8")
     assert payload["statement"].startswith("Решения оператора записаны отдельно")
+
+
+def test_generic_blocked_job_keeps_private_journal_available_in_process(tmp_path: Path) -> None:
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _blocked_result())
+
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+    )
+
+    assert job.status == "blocked" and job.result_available is True
+    output, name = service.get_result(job.job_id)
+    assert name == "review-journal.json" and output.is_file()
+
+
+def test_generic_manual_output_promotes_to_ready_after_decisions(tmp_path: Path) -> None:
+    expected = b"precomputed generic result"
+
+    def execute(job):
+        (job.directory / "result.xlsx").write_bytes(expected)
+        return _manual_result()
+
+    service = AdminPanelService(tmp_path / "jobs", execute=execute)
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+    )
+    assert job.status == "review_required" and job.output is not None
+    assert job.result_available is False
+    first, second = (item["suggestion_id"] for item in job.suggestions)
+
+    service.record_decision(job_id=job.job_id, suggestion_id=first, decision="fit")
+    service.record_decision(job_id=job.job_id, suggestion_id=second, decision="not_fit")
+
+    output, _name = service.get_result(job.job_id)
+    assert job.status == "ready" and output.read_bytes() == expected
 
 
 def test_omitted_stage_auto_selects_the_only_structurally_valid_target_stage(
