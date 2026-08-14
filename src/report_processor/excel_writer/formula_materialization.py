@@ -11,12 +11,12 @@ from pathlib import Path
 
 from .exceptions import ExcelWriterAtomicError
 from .ooxml import (
+    MaterializedFormulaPackage,
     admitted_zipfile,
     formula_coordinates,
     materialize_formula_package,
     numeric_formula_values,
     read_archive_part,
-    verify_materialized_package,
     worksheet_part_map,
 )
 
@@ -25,44 +25,56 @@ _RECALCULATION_TIMEOUT_SECONDS = 120
 
 def recalculate_and_materialize(
     path: Path, source_descriptor: int | None = None
-) -> tuple[int, int]:
+) -> MaterializedFormulaPackage:
     """Recalculate a private copy, then replace all formulas with numeric literals."""
 
-    source = source_descriptor if source_descriptor is not None else path
-    authoritative_parts = worksheet_part_map(
-        source, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED"
-    )
-    coordinates_by_part = _formula_coordinates(source, authoritative_parts)
-    with tempfile.TemporaryDirectory(prefix="excel-writer-recalc-") as directory:
-        workspace = Path(directory)
-        profile = workspace / "profile"
-        output_directory = workspace / "output"
-        input_path = workspace / path.name
-        profile.mkdir()
-        output_directory.mkdir()
-        if source_descriptor is None:
-            shutil.copy2(path, input_path)
-        else:
-            _copy_descriptor(source_descriptor, input_path)
-        _run_libreoffice(input_path, output_directory, profile)
-        recalculated = output_directory / path.name
-        if not recalculated.is_file():
-            raise ExcelWriterAtomicError(
-                "FORMULA_RECALCULATION_FAILED", "LibreOffice produced no XLSX"
-            )
-        values_by_part = _recalculated_values(
-            recalculated, authoritative_parts, coordinates_by_part
+    try:
+        source = source_descriptor if source_descriptor is not None else path
+        authoritative_parts = worksheet_part_map(
+            source, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED"
         )
-    materialized_identity = materialize_formula_package(
-        path,
-        authoritative_parts,
-        values_by_part,
-        source_descriptor=source_descriptor,
-    )
-    # The replacement is still held open by materialize_formula_package only
-    # during the replace; reopen its verified private pathname here.
-    verify_materialized_package(path, values_by_part)
-    return materialized_identity
+        coordinates_by_part = _formula_coordinates(source, authoritative_parts)
+        with tempfile.TemporaryDirectory(prefix="excel-writer-recalc-") as directory:
+            workspace = Path(directory)
+            profile = workspace / "profile"
+            output_directory = workspace / "output"
+            input_path = workspace / path.name
+            profile.mkdir()
+            output_directory.mkdir()
+            if source_descriptor is None:
+                shutil.copy2(path, input_path)
+            else:
+                _copy_descriptor(source_descriptor, input_path)
+            _run_libreoffice(input_path, output_directory, profile)
+            recalculated = output_directory / path.name
+            if not recalculated.is_file():
+                raise ExcelWriterAtomicError(
+                    "FORMULA_RECALCULATION_FAILED", "LibreOffice produced no XLSX"
+                )
+            values_by_part = _recalculated_values(
+                recalculated, authoritative_parts, coordinates_by_part
+            )
+        materialized = materialize_formula_package(
+            path,
+            authoritative_parts,
+            values_by_part,
+            source_descriptor=source_descriptor,
+        )
+        # ``materialize_formula_package`` validates using its owned result fd;
+        # pass that fd through so the engine can adopt it without reopening.
+        return materialized
+    except ExcelWriterAtomicError as error:
+        if error.code == "FORMULA_RECALCULATION_UNAVAILABLE":
+            raise
+        if error.code == "FORMULA_RECALCULATION_FAILED":
+            raise
+        raise ExcelWriterAtomicError(
+            "FORMULA_RECALCULATION_FAILED", "formula processing failed"
+        ) from error
+    except Exception as error:
+        raise ExcelWriterAtomicError(
+            "FORMULA_RECALCULATION_FAILED", "formula processing failed"
+        ) from error
 
 
 def _formula_coordinates(path: Path | int, parts: dict[str, str]) -> dict[str, tuple[str, ...]]:
@@ -83,7 +95,9 @@ def _formula_coordinates(path: Path | int, parts: dict[str, str]) -> dict[str, t
                 for part in parts.values()
             }
     except (OSError, zipfile.BadZipFile, KeyError) as error:
-        raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", str(error)) from error
+        raise ExcelWriterAtomicError(
+            "FORMULA_RECALCULATION_FAILED", "formula package could not be read"
+        ) from error
 
 
 def _recalculated_values(
@@ -116,7 +130,9 @@ def _recalculated_values(
     except ExcelWriterAtomicError:
         raise
     except (OSError, zipfile.BadZipFile, KeyError) as error:
-        raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", str(error)) from error
+        raise ExcelWriterAtomicError(
+            "FORMULA_RECALCULATION_FAILED", "recalculated package could not be read"
+        ) from error
     return values_by_part
 
 
@@ -125,6 +141,7 @@ def _copy_descriptor(descriptor: int, destination: Path) -> None:
 
     stream = os.fdopen(os.dup(descriptor), "rb")
     try:
+        stream.seek(0)
         with destination.open("xb") as target:
             shutil.copyfileobj(stream, target, length=1_048_576)
             target.flush()
@@ -160,7 +177,8 @@ def _run_libreoffice(input_path: Path, output_directory: Path, profile: Path) ->
             "FORMULA_RECALCULATION_FAILED", "LibreOffice timed out"
         ) from error
     except OSError as error:
-        raise ExcelWriterAtomicError("FORMULA_RECALCULATION_UNAVAILABLE", str(error)) from error
+        raise ExcelWriterAtomicError(
+            "FORMULA_RECALCULATION_UNAVAILABLE", "LibreOffice is unavailable"
+        ) from error
     if result.returncode:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", detail or "LibreOffice failed")
+        raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", "LibreOffice failed")

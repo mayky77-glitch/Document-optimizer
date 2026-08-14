@@ -154,20 +154,30 @@ def write_target_report(
         )
         _assert_named_descriptor(temp.path, temp.descriptor)
         if package_has_formulas(temp.descriptor, parts):
-            materialized_identity = recalculate_and_materialize(temp.path, temp.descriptor)
-            # Formula materialization replaces the archive; re-open only after
-            # proving the expected private pathname still denotes that result.
-            os.close(temp.descriptor)
-            temp = _open_owned_temp(temp.path, materialized_identity)
+            materialized = recalculate_and_materialize(temp.path, temp.descriptor)
+            # Adopt the verified replacement descriptor before closing the old
+            # inode.  This keeps cleanup and any error path free of EBADF
+            # masking, and never reopens a mutable temporary pathname.
+            previous_temp = temp
+            temp = _OwnedTemp(
+                previous_temp.path,
+                materialized.descriptor,
+                materialized.device,
+                materialized.inode,
+            )
+            os.close(previous_temp.descriptor)
         verify_formula_free_package(temp.descriptor, parts)
         _assert_source_unchanged(source, source_identity)
         _assert_named_descriptor(temp.path, temp.descriptor)
-        published_identity = _published_output_identity(temp.path)
+        published_identity = _published_output_identity(temp.descriptor)
         _publish_no_clobber(temp.path, output)
         published = True
         output_sha256 = _sha256_descriptor(temp.descriptor)
-        _reopen_published_output(temp.descriptor)
-        _assert_named_descriptor(output, temp.descriptor)
+        # Keep the long-standing single-argument reopen seam for callers and
+        # tests; identity and digest are checked immediately afterwards using
+        # a fresh no-follow descriptor for the published pathname.
+        _reopen_published_output(output)
+        _verify_published_output(output, temp.descriptor, output_sha256)
         return _result(
             WriteStatus.WRITTEN,
             decision,
@@ -533,8 +543,8 @@ def _write_all(descriptor: int, payload: bytes) -> None:
         offset += written
 
 
-def _published_output_identity(path: Path) -> _PublishedOutputIdentity:
-    details = path.stat()
+def _published_output_identity(path: Path | int) -> _PublishedOutputIdentity:
+    details = os.fstat(path) if isinstance(path, int) else path.stat()
     return _PublishedOutputIdentity(details.st_dev, details.st_ino)
 
 
@@ -567,12 +577,10 @@ def _unlink_if_owned(path: Path, descriptor: int) -> None:
 
 def _sha256_descriptor(descriptor: int) -> str:
     digest = hashlib.sha256()
-    stream = os.fdopen(os.dup(descriptor), "rb")
-    try:
-        while chunk := stream.read(1_048_576):
-            digest.update(chunk)
-    finally:
-        stream.close()
+    offset = 0
+    while chunk := os.pread(descriptor, 1_048_576, offset):
+        digest.update(chunk)
+        offset += len(chunk)
     return digest.hexdigest()
 
 
@@ -590,18 +598,59 @@ def _remove_published_output_if_owned(
         return
 
 
-def _reopen_published_output(output: Path | int) -> None:
+def _reopen_published_output(
+    output: Path | int,
+    expected_descriptor: int | None = None,
+    expected_sha256: str | None = None,
+) -> None:
     try:
         from openpyxl import load_workbook
 
-        stream = os.fdopen(os.dup(output), "rb") if isinstance(output, int) else output.open("rb")
+        if isinstance(output, int):
+            descriptor = os.dup(output)
+        else:
+            descriptor = os.open(output, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
-            workbook = load_workbook(stream, read_only=True, data_only=False, keep_links=True)
-            workbook.close()
+            if not isinstance(output, int):
+                _assert_named_descriptor(output, descriptor)
+            if expected_descriptor is not None:
+                expected = os.fstat(expected_descriptor)
+                actual = os.fstat(descriptor)
+                if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+                    raise ExcelWriterIntegrityError("REOPEN_FAILED", "output identity changed")
+            if expected_sha256 is not None and _sha256_descriptor(descriptor) != expected_sha256:
+                raise ExcelWriterIntegrityError("REOPEN_FAILED", "output digest changed")
+            stream = os.fdopen(os.dup(descriptor), "rb")
+            try:
+                stream.seek(0)
+                workbook = load_workbook(stream, read_only=True, data_only=False, keep_links=True)
+                workbook.close()
+            finally:
+                stream.close()
         finally:
-            stream.close()
+            os.close(descriptor)
     except Exception as error:
-        raise ExcelWriterIntegrityError("REOPEN_FAILED", str(error)) from error
+        if isinstance(error, ExcelWriterIntegrityError):
+            raise
+        raise ExcelWriterIntegrityError(
+            "REOPEN_FAILED", "published output could not be reopened"
+        ) from error
+
+
+def _verify_published_output(output: Path, expected_descriptor: int, expected_sha256: str) -> None:
+    """Bind the returned pathname, inode and bytes after the reopen gate."""
+
+    descriptor = os.open(output, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        _assert_named_descriptor(output, descriptor)
+        expected = os.fstat(expected_descriptor)
+        actual = os.fstat(descriptor)
+        if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+            raise ExcelWriterIntegrityError("REOPEN_FAILED", "output identity changed")
+        if _sha256_descriptor(descriptor) != expected_sha256:
+            raise ExcelWriterIntegrityError("REOPEN_FAILED", "output digest changed")
+    finally:
+        os.close(descriptor)
 
 
 def _result(

@@ -535,6 +535,10 @@ def admitted_zipfile(path: Path | int, error_type, code: str) -> Iterator[zipfil
         descriptor = os.dup(path) if isinstance(path, int) else os.open(path, flags)
         _preflight_zip_descriptor(descriptor)
         stream = os.fdopen(os.dup(descriptor), "rb")
+        # ``dup`` shares the open-file description (and therefore its offset).
+        # Every consumer must start at byte zero, irrespective of a prior hash,
+        # copy, or archive pass through the owned descriptor.
+        stream.seek(0)
         archive = zipfile.ZipFile(stream, "r")
         admit_archive(archive, error_type, code)
         yield archive
@@ -573,6 +577,7 @@ def _preflight_zip_descriptor(descriptor: int) -> None:
     size = details.st_size
     stream = os.fdopen(os.dup(descriptor), "rb")
     try:
+        stream.seek(0)
         stream.seek(max(0, size - 65_557))
         tail = stream.read(65_557)
         index = _eocd_index(tail)
@@ -970,7 +975,9 @@ def _archive_input(target: Path | int):
     """Return a readable binary stream without reopening an owned descriptor."""
 
     if isinstance(target, int):
-        return os.fdopen(os.dup(target), "rb")
+        stream = os.fdopen(os.dup(target), "rb")
+        stream.seek(0)
+        return stream
     return target.open("rb")
 
 
@@ -1085,13 +1092,22 @@ def verify_temp_package(
         raise ExcelWriterIntegrityError("REOPEN_FAILED", str(error)) from error
 
 
+@dataclass(frozen=True, slots=True)
+class MaterializedFormulaPackage:
+    """The verified replacement inode, kept open for its caller to adopt."""
+
+    descriptor: int
+    device: int
+    inode: int
+
+
 def materialize_formula_package(
     path: Path,
     worksheet_parts: Mapping[str, str],
     values_by_part: Mapping[str, Mapping[str, str]],
     *,
     source_descriptor: int | None = None,
-) -> tuple[int, int]:
+) -> MaterializedFormulaPackage:
     """Materialize every formula in-place and remove obsolete calculation-chain metadata."""
 
     descriptor, name = tempfile.mkstemp(
@@ -1130,17 +1146,27 @@ def materialize_formula_package(
         result = os.fstat(descriptor)
         if source_descriptor is not None:
             _assert_path_matches_descriptor(path, source_descriptor)
+        _assert_path_matches_descriptor(temporary, descriptor)
         os.replace(temporary, path)
         _fsync_file(descriptor)
+        # Verify the exact descriptor which will be adopted by the engine.  Do
+        # not reopen the mutable private pathname between replacement and use.
+        verify_materialized_package(descriptor, values_by_part)
+        _assert_path_matches_descriptor(path, descriptor)
+        materialized = MaterializedFormulaPackage(descriptor, result.st_dev, result.st_ino)
+        descriptor = -1
+        return materialized
     except ExcelWriterIntegrityError:
         _unlink_if_owned(temporary, descriptor)
         raise
     except (OSError, zipfile.BadZipFile, ValueError) as error:
         _unlink_if_owned(temporary, descriptor)
-        raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", str(error)) from error
+        raise ExcelWriterIntegrityError(
+            "FORMULA_MATERIALIZATION_FAILED", "formula package could not be materialized"
+        ) from error
     finally:
-        os.close(descriptor)
-    return result.st_dev, result.st_ino
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def verify_materialized_package(
