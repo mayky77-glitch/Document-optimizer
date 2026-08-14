@@ -3,8 +3,8 @@ type: map
 tags:
   - knowledge/map
   - status/in-progress
-last_verified: 2026-08-13
-updated: 2026-08-13
+last_verified: 2026-08-15
+updated: 2026-08-15
 ---
 
 # Active work
@@ -26,7 +26,8 @@ paths. Active replacement: first
 [[../tasks/reconciliation-period-preview-complete|combined bounded preview]], then
 [[../tasks/reconciliation-period-apply-service-v2|transactional apply/service recovery]], then a
 namespace compatibility through
-[[../tasks/reconciliation-writer-namespace-v3|the immutable bounded writer bridge]], then
+[[../tasks/reconciliation-writer-namespace-v3|the immutable bounded writer bridge]] is accepted at
+feature `d71b7f4` / main integration `fee01c4`. Active next:
 [[../tasks/reconciliation-period-ui|the explicit period API/UI wave]], then one low-load release
 shadow.
 

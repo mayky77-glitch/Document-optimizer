@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: accepted
 card_id: reconciliation-writer-namespace-v3
 version: 3.1
 work_id: reconciliation-writer-namespace-v3a
@@ -8,7 +8,11 @@ task_id: writer-namespace-v3
 purpose: Finish namespace-safe writing with a compact immutable index and same-handle ZIP admission.
 role: developer
 route: P5 -> developer / inherited runtime; reason: byte-offset XML parsing, archive safety and writer hot path.
-launch_status: ready
+launch_status: accepted
+accepted_feature_sha: d71b7f43c72493ef7c77de9a278f27ad453274da
+accepted_orda_integration_sha: 206fcbbb1d3a0e9b90d8a0c1ae341c0f6a7c0ddb
+published_main_integration_sha: fee01c420bc3a838a34cb38490b4741c8a51e14f
+accepted_at: 2026-08-15
 card_path: knowledge/tasks/reconciliation-writer-namespace-v3.md
 card_commit_sha_source: exact planning commit containing this card
 base_sha_source: 2b616c3220961e9c0c1e9cba119836fce4f8cd7d
@@ -43,6 +47,12 @@ acceptance_commands:
 ---
 
 # Namespace-aware writer v3: immutable, single-scan and resource-bounded
+
+Accepted. Dual independent review returned `MERGE YES` for feature `d71b7f4`; the exact frozen
+profile passed `159` tests on both the feature and main-based integration. The implementation binds
+raw ZIP admission and later consumption to one descriptor, keeps source/candidate identities
+through publication, rejects non-UTF-8 worksheet bytes and unsafe/ambiguous XML topology, and
+preserves operation-specific controlled errors without workbook-derived details.
 
 Continue from generated seed `251808c`, but do not integrate it directly. Retain the accepted
 namespace-aware exact-QName edits, DTD/entity rejection, foreign-namespace isolation, formula value

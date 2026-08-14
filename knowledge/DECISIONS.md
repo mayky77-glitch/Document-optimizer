@@ -2,8 +2,8 @@
 type: decisions
 tags:
   - knowledge/decision
-last_verified: 2026-08-13
-updated: 2026-08-13
+last_verified: 2026-08-15
+updated: 2026-08-15
 ---
 
 # Decisions
@@ -229,3 +229,19 @@ Manifest v3 хранит период и ограниченные target/plan/ca
 Связанные карточки: [[tasks/reconciliation-period-apply]],
 [[tasks/reconciliation-period-preview]], [[tasks/reconciliation-period-preview-complete]],
 [[tasks/reconciliation-period-apply-service-v2]].
+
+## DO-023: XLSX writer доверяет дескрипторам, а не повторно открытым путям (2026-08-15)
+
+После первого безопасного открытия исходная книга, приватный кандидат, формульный результат и
+публикуемый отчёт связываются с `fd + dev/inode + digest`. ZIP central directory проверяется на том
+же descriptor, из которого затем читает `ZipFile`; повторное открытие изменяемого pathname не
+является доказательством целостности. Все descriptor-чтения позиционно независимы и начинаются с
+нулевого offset.
+
+Байтовый XML-редактор принимает только UTF-8/UTF8 SpreadsheetML, точную namespace-иерархию и
+однозначные `c/f/v`; UTF-16/32, DTD/entities, foreign lookalikes, дубли и выход за ресурсные лимиты
+завершаются управляемой ошибкой до изменения байтов. Публикация остаётся no-clobber и удаляет
+только inode, созданный текущей попыткой; `BaseException` не оставляет приватную книгу.
+
+Решение принято в [[tasks/reconciliation-writer-namespace-v3]] и опубликовано через main
+integration `fee01c4` после двойного независимого `MERGE YES`.

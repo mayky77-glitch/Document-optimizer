@@ -3,15 +3,16 @@ type: current-copy
 tags:
   - knowledge/component
   - domain/document-processing
-last_verified: 2026-08-13
-updated: 2026-08-13
+last_verified: 2026-08-15
+updated: 2026-08-15
 ---
 
 # Canonical copy
 
 - Path: `Document-optimizer-ready` under the project documents directory.
 - Branch: `main`.
-- Local and remote product checkpoint: `90e7a73aa156897c60fc507a420ff805e0ba4474`.
+- Product checkpoint: `fee01c420bc3a838a34cb38490b4741c8a51e14f`; this note accompanies
+  its publication on `main`.
 - Purpose: canonical production and audit copy for document reconciliation and drawing-card workflows.
 - Working tree: one unrelated untracked drawing-card UX specification; preserve and never stage it with reconciliation work.
 
@@ -24,4 +25,7 @@ Direct period-insertion OOXML is accepted through ORDA integration `f236291` and
 `main` at `991002a` after `56 passed`, Ruff, format, diff and independent P6 review. The next
 bounded compatibility card is accepted through integration `2e28152` and published at `90e7a73`
 after `86 passed` and independent adversarial P6.
+The namespace-safe writer bridge is accepted through feature `d71b7f4`, ORDA integration
+`206fcbb` and main integration `fee01c4` after a `159 passed` frozen profile and independent ordinary
+plus security `MERGE YES` reviews.
 Source spreadsheets, generated reports and audit helpers remain outside Git.

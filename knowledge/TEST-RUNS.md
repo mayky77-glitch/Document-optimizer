@@ -3,13 +3,26 @@ type: test-runs
 tags:
   - knowledge/component
   - domain/document-processing
-last_verified: 2026-08-13
-updated: 2026-08-13
+last_verified: 2026-08-15
+updated: 2026-08-15
 ---
 
 # Test runs
 
 Keep only the two latest completed runs relevant to active work.
+
+## 2026-08-15 — namespace-aware writer v3 accepted
+
+- Feature `d71b7f43c72493ef7c77de9a278f27ad453274da`, ORDA integration `206fcbb` and
+  main integration `fee01c4` passed the exact low-load frozen profile: `159 passed` in about two
+  seconds on both feature and main-based integration; Ruff check/format and `git diff --check`
+  passed.
+- Independent ordinary and security reviews returned `MERGE YES`. Regressions cover exact output
+  SHA, descriptor reads from offset zero, formula result adoption, post-replace `BaseException`
+  cleanup, raced no-clobber links, strict UTF-8 worksheet bytes, ZIP/ZIP64 boundaries, DTD/entities,
+  duplicate cells/children, custom worksheet size limits and controlled error-code preservation.
+- No private workbook or full suite was used in this bounded wave. Those remain deferred to the
+  single final release shadow after API/UI wiring.
 
 ## 2026-08-14 — wholly-left shared formulas accepted
 
@@ -22,23 +35,6 @@ Keep only the two latest completed runs relevant to active work.
   cell remains valid and failed preflight preserves a pre-existing output sentinel.
 - No private workbook or full suite was used in the feature task. The final real shadow remains
   deferred until apply/service/API wiring is complete.
-
-## 2026-08-13 — direct OOXML period insertion accepted
-
-- Final feature `07401099c25898eef14ad6fcf2703040391dbdb9`, ORDA integration `f236291` and
-  published main checkpoint `991002a` passed the exact low-load profile: `56 passed` in `0.32s`
-  on canonical main; Ruff check, Ruff format and `git diff --check` passed.
-- Independent P6 re-ran the prior adversarial cases. Whole-tree inverse verification rejected
-  unrelated workbook, calcChain, drawing, worksheet and ZIP-metadata changes. Doubled-quote A1
-  formulas translated correctly; whole-row/column, dynamic, cross-sheet and unsupported formulas
-  failed closed. Wholly-left comments/VML/external hyperlinks remained byte-identical, while
-  affected variants were rejected.
-- Publication performs every fallible proof before the final hard-link. A pre-existing sentinel
-  survives, pre-link failure publishes nothing and post-link best-effort cleanup cannot turn a
-  valid published result into a reported failure.
-- Full and private runs were deliberately deferred to the final release shadow to limit system
-  load. The actual clean target still needs the separate wholly-left shared-formula compatibility
-  gate before it is an eligible end-to-end insertion input.
 
 ## Knowledge validation
 

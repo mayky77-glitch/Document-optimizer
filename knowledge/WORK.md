@@ -4,8 +4,8 @@ tags:
   - knowledge/component
   - domain/document-processing
   - status/in-progress
-last_verified: 2026-08-13
-updated: 2026-08-13
+last_verified: 2026-08-15
+updated: 2026-08-15
 ---
 
 # Work
@@ -43,6 +43,11 @@ updated: 2026-08-13
   unchanged groups wholly left are preserved; uint32/blank IDs, duplicate physical cells,
   incomplete/affected topology, array and data-table groups fail closed under an independent
   verifier-local parser.
+- [[tasks/reconciliation-writer-namespace-v3|Namespace-aware writer v3]] is accepted through
+  feature `d71b7f4`, ORDA integration `206fcbb` and main integration `fee01c4`. The final frozen
+  profile passed `159` tests twice plus Ruff/format/diff gates; ordinary and security reviewers both
+  returned `MERGE YES`. ZIP admission, worksheet byte indexing, formula materialization, result
+  hashing and no-clobber publication now remain descriptor/inode-bound through success and cleanup.
 
 ## Completed context
 
@@ -57,10 +62,7 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Implement [[tasks/reconciliation-period-preview-complete|the combined bounded preview card]]. The
-earlier six-file scope produced checkpoint `88bb456` and 122 focused passes, but independent P6
-proved that historical planning still inherited a rectangular `max_column` scan from the shared
-detector. The replacement card owns that shared boundary explicitly rather than hiding it with a
-monkeypatch. Then run [[tasks/reconciliation-period-apply-service-v2|transactional apply/recovery]].
-Verification stays strict/no-write; API/UI wiring remains separate. Run the private release shadow
-and full suite only once after the complete write path is integrated.
+Implement [[tasks/reconciliation-period-ui|the explicit reporting-period API/UI wave]]. Preview,
+transactional apply/recovery and the namespace-safe writer bridge are already accepted. Verification
+must remain strict/no-write; period is accepted only for reconcile. Then run the private release
+shadow and full suite once.

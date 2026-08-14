@@ -6,8 +6,8 @@ tags:
   - domain/document-processing
   - capability/admin-panel
   - risk/high
-last_verified: 2026-08-13
-updated: 2026-08-13
+last_verified: 2026-08-15
+updated: 2026-08-15
 source_paths:
   - src/report_processor/admin_panel/reconciliation_*
   - src/report_processor/reconciliation_grouping
@@ -216,6 +216,16 @@ input error before row verdicts are produced.
 - RA-013: reject negative-pair endpoints absent from the materialized group set or remove the inert API.
 
 ## Verified positive boundaries
+
+### Namespace-safe writer closure (2026-08-15)
+
+The historical insertion bridge exposed a lexical mismatch between prefixed SpreadsheetML and the
+writer's former unprefixed regexes. The accepted v3 writer replaces that path with a compact
+namespace-aware byte-span index and binds package admission, candidate verification, formula
+materialization, hashing and publication to owned descriptors. Exact SHA reporting, formula copy
+from offset zero, UTF-8-only byte edits, ZIP/ZIP64 bounds and ownership-safe cleanup now have direct
+regressions. Feature `d71b7f4` and main integration `fee01c4` passed dual independent review and the
+`159 passed` frozen profile.
 
 - Representative source and target inputs remained byte-identical through every audit run.
 - One independently traced unaffected cumulative row preserved formula caches and exact Decimal
