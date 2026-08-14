@@ -55,6 +55,22 @@
               <small id="target-help">Один Excel-файл .xlsx, относительно которого проверяются исходные строки.</small>
             </label>
           </div>
+          <fieldset class="file-field" aria-describedby="operation-help">
+            <legend>Режим работы</legend>
+            <label for="operation">
+              <span>Что нужно выполнить <em>обязательно</em></span>
+              <select id="operation" name="operation">
+                <option value="verify" selected>Проверить документы</option>
+                <option value="reconcile">Сверить документы</option>
+              </select>
+            </label>
+            <small id="operation-help">Проверка покажет ошибки в документах. Сверка подготовит результат для дальнейшего разбора.</small>
+          </fieldset>
+          <label id="reporting-period-field" class="file-field" for="reporting-period" hidden>
+            <span>Отчётный период <em>необязательно</em></span>
+            <input id="reporting-period" name="reporting_period" type="month" disabled aria-describedby="reporting-period-help">
+            <small id="reporting-period-help">Укажите месяц только для сверки. Для проверки документов период не применяется.</small>
+          </label>
           <fieldset id="stage-selection" class="file-field" aria-describedby="stage-selection-help" hidden>
             <legend>Этап для проверки</legend>
             <label for="stage">
@@ -65,7 +81,6 @@
             </label>
             <small id="stage-selection-help">В отчёте найдено несколько этапов. Выберите один и повторите проверку с теми же файлами.</small>
           </fieldset>
-          <input name="operation" type="hidden" value="verify">
           <button class="primary" type="submit">Проверить документы</button>
         </form>
         <p id="status" class="status" role="status" aria-live="polite">Оригиналы не изменяются: проверка работает только с приватными локальными копиями.</p>
