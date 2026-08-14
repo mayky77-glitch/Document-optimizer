@@ -119,7 +119,11 @@ def test_namespace_qualified_cells_preserve_their_exact_qnames(prefix: bytes) ->
         + prefix
         + b"worksheet "
         + declaration
-        + b'><sheetData><row r="1"><'
+        + b"><"
+        + prefix
+        + b"sheetData><"
+        + prefix
+        + b'row r="1"><'
         + prefix
         + b'c r="D1"/><'
         + prefix
@@ -131,7 +135,11 @@ def test_namespace_qualified_cells_preserve_their_exact_qnames(prefix: bytes) ->
         + prefix
         + b"v/></"
         + prefix
-        + b"c></row></sheetData></"
+        + b"c></"
+        + prefix
+        + b"row></"
+        + prefix
+        + b"sheetData></"
         + prefix
         + b"worksheet>"
     )
@@ -188,7 +196,7 @@ def test_duplicate_spreadsheet_value_nodes_fail_closed() -> None:
         b"</row></sheetData></worksheet>"
     )
 
-    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_LEXEME_MISMATCH"):
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
         inspect_cell(xml, "D1")
 
 

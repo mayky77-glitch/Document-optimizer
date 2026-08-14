@@ -10,12 +10,11 @@ from pathlib import Path
 
 from .exceptions import ExcelWriterAtomicError
 from .ooxml import (
-    admit_archive,
+    admitted_zipfile,
     formula_coordinates,
     materialize_formula_package,
     numeric_formula_values,
     read_archive_part,
-    validate_xlsx_source,
     verify_materialized_package,
     worksheet_part_map,
 )
@@ -51,13 +50,17 @@ def recalculate_and_materialize(path: Path) -> None:
 
 def _formula_coordinates(path: Path, parts: dict[str, str]) -> dict[str, tuple[str, ...]]:
     try:
-        validate_xlsx_source(path, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED")
-        with zipfile.ZipFile(path) as package:
-            admit_archive(package, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED")
+        with admitted_zipfile(
+            path, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED"
+        ) as package:
             return {
                 part: formula_coordinates(
                     read_archive_part(
-                        package, part, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED"
+                        package,
+                        part,
+                        ExcelWriterAtomicError,
+                        "FORMULA_RECALCULATION_FAILED",
+                        worksheet=True,
                     )
                 )
                 for part in parts.values()
@@ -74,9 +77,9 @@ def _recalculated_values(
     recalculated_parts = worksheet_part_map(recalculated)
     values_by_part: dict[str, dict[str, str]] = {}
     try:
-        validate_xlsx_source(recalculated, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED")
-        with zipfile.ZipFile(recalculated) as package:
-            admit_archive(package, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED")
+        with admitted_zipfile(
+            recalculated, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED"
+        ) as package:
             for sheet_name, authoritative_part in authoritative_parts.items():
                 recalculated_part = recalculated_parts.get(sheet_name)
                 if recalculated_part is None:
@@ -87,6 +90,7 @@ def _recalculated_values(
                         recalculated_part,
                         ExcelWriterAtomicError,
                         "FORMULA_RECALCULATION_FAILED",
+                        worksheet=True,
                     ),
                     coordinates_by_part[authoritative_part],
                 )

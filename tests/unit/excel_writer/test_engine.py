@@ -126,8 +126,8 @@ def test_swap_use_restore_of_source_path_cannot_change_snapshot_output(
     workbook.close()
     original_write = engine._write_temp_package
 
-    def swap_during_write(snapshot: Path, *args, **kwargs) -> None:
-        assert snapshot.name.startswith(".excel-writer-source-")
+    def swap_during_write(snapshot: int, *args, **kwargs) -> None:
+        assert isinstance(snapshot, int)
         os.replace(source, parked)
         os.replace(alternate, source)
         try:

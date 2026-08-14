@@ -31,7 +31,7 @@ from .formula_materialization import recalculate_and_materialize
 from .models import EXCEL_WRITER_CONTRACT_VERSION, WriteResult, WriteStatus, WrittenCell
 from .ooxml import (
     WorksheetIndex,
-    admit_archive,
+    admitted_zipfile,
     inspect_index_cell,
     package_has_formulas,
     read_archive_part,
@@ -78,6 +78,13 @@ class _PublishedOutputIdentity:
     inode: int
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceSnapshot:
+    path: Path
+    descriptor: int
+    identity: _SourceIdentity
+
+
 def write_target_report(
     source_path: str | Path,
     output_path: str | Path,
@@ -90,7 +97,8 @@ def write_target_report(
     source = Path(source_path)
     output = Path(output_path)
     _validate_public_inputs(source, output, decision, target_schema)
-    snapshot_path, source_identity = _snapshot_source(source, output.parent)
+    snapshot = _snapshot_source(source, output.parent)
+    snapshot_path, source_identity = snapshot.path, snapshot.identity
     temp_path: Path | None = None
     published = False
     published_identity: _PublishedOutputIdentity | None = None
@@ -112,15 +120,28 @@ def write_target_report(
         if output.exists():
             raise ExcelWriterSafetyError("OUTPUT_EXISTS", str(output))
         calculations = _validated_calculations(calculation_results)
-        reject_unsupported_package(snapshot_path)
-        parts = worksheet_part_map(snapshot_path)
-        written_cells = _build_write_plan(snapshot_path, calculations, target_schema, parts)
+        reject_unsupported_package(snapshot.descriptor)
+        parts = worksheet_part_map(snapshot.descriptor)
+        written_cells = _build_write_plan(snapshot.descriptor, calculations, target_schema, parts)
         if not written_cells:
             raise ExcelWriterInputError("EMPTY_WRITE_SET", "no non-None calculated values")
         changes_by_part = _changes_by_part(written_cells, parts)
         temp_path = _temp_path(output)
-        _write_temp_package(snapshot_path, temp_path, changes_by_part, remove_calc_chain=True)
-        _verify_temp_package(snapshot_path, temp_path, changes_by_part, remove_calc_chain=True)
+        worksheet_parts = frozenset(parts.values())
+        _write_temp_package(
+            snapshot.descriptor,
+            temp_path,
+            changes_by_part,
+            remove_calc_chain=True,
+            worksheet_parts=worksheet_parts,
+        )
+        _verify_temp_package(
+            snapshot.descriptor,
+            temp_path,
+            changes_by_part,
+            remove_calc_chain=True,
+            worksheet_parts=worksheet_parts,
+        )
         if package_has_formulas(temp_path, parts):
             recalculate_and_materialize(temp_path)
         verify_formula_free_package(temp_path, parts)
@@ -154,6 +175,7 @@ def write_target_report(
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
+        os.close(snapshot.descriptor)
         snapshot_path.unlink(missing_ok=True)
 
 
@@ -223,7 +245,7 @@ def _validated_calculations(values: Iterable[CalculationResult]) -> tuple[Calcul
 
 
 def _build_write_plan(
-    source: Path,
+    source: Path | int,
     calculations: tuple[CalculationResult, ...],
     schema: TargetReportSchema,
     parts: dict[str, str],
@@ -237,9 +259,7 @@ def _build_write_plan(
     seen_coordinates: set[tuple[str, str]] = set()
     plan: list[WrittenCell] = []
     try:
-        validate_xlsx_source(source, ExcelWriterIntegrityError, "TARGET_CELL_MISSING")
-        with zipfile.ZipFile(source) as archive:
-            admit_archive(archive, ExcelWriterIntegrityError, "TARGET_CELL_MISSING")
+        with admitted_zipfile(source, ExcelWriterIntegrityError, "TARGET_CELL_MISSING") as archive:
             for calculation in calculations:
                 row = calculation.target_row
                 if not row.writable:
@@ -250,7 +270,11 @@ def _build_write_plan(
                     raise ExcelWriterIntegrityError("TARGET_SHEET_MISSING", row.sheet_name)
                 if part not in source_xml:
                     source_xml[part] = read_archive_part(
-                        archive, part, ExcelWriterIntegrityError, "TARGET_CELL_MISSING"
+                        archive,
+                        part,
+                        ExcelWriterIntegrityError,
+                        "TARGET_CELL_MISSING",
+                        worksheet=True,
                     )
                     source_indexes[part] = worksheet_index(source_xml[part])
                 for logical_column, attribute in _ALLOWED_COLUMNS:
@@ -391,7 +415,7 @@ def _source_identity(path: Path) -> _SourceIdentity:
         os.close(descriptor)
 
 
-def _snapshot_source(source: Path, directory: Path) -> tuple[Path, _SourceIdentity]:
+def _snapshot_source(source: Path, directory: Path) -> _SourceSnapshot:
     """Capture one verified source fd before any hash or ZIP operation."""
 
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -423,8 +447,9 @@ def _snapshot_source(source: Path, directory: Path) -> tuple[Path, _SourceIdenti
         ) or copied != details.st_size:
             raise ExcelWriterIntegrityError("SOURCE_CHANGED_DURING_WRITE", str(source))
         os.fsync(snapshot_descriptor)
-        return (
+        return _SourceSnapshot(
             Path(snapshot_name),
+            snapshot_descriptor,
             _SourceIdentity(
                 final_details.st_dev,
                 final_details.st_ino,
@@ -436,10 +461,13 @@ def _snapshot_source(source: Path, directory: Path) -> tuple[Path, _SourceIdenti
     except BaseException:
         if snapshot_name:
             Path(snapshot_name).unlink(missing_ok=True)
+        if snapshot_descriptor >= 0:
+            os.close(snapshot_descriptor)
+            snapshot_descriptor = -1
         raise
     finally:
         os.close(descriptor)
-        if snapshot_descriptor >= 0:
+        if snapshot_descriptor >= 0 and not snapshot_name:
             os.close(snapshot_descriptor)
 
 

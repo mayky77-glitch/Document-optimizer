@@ -8,7 +8,8 @@ import re
 import stat
 import struct
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -38,6 +39,7 @@ _CALC_CHAIN_CONTENT_TYPE = re.compile(
 _A1 = re.compile(r"([A-Z]{1,3})([1-9][0-9]{0,6})\Z")
 _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_UNSAFE_XML_DECLARATION = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +161,11 @@ def _scan_worksheet(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> Work
             if (
                 not stack
                 or stack[0][0] != _SPREADSHEETML_NS + "}worksheet"
-                or [item[0].rsplit("}", 1)[-1] for item in stack[1:]] != ["sheetData", "row"]
+                or [item[0] for item in stack[1:]]
+                != [
+                    _SPREADSHEETML_NS + "}sheetData",
+                    _SPREADSHEETML_NS + "}row",
+                ]
             ):
                 raise _RejectedWorksheetXml()
             if open_cells:
@@ -383,6 +389,15 @@ def _child(
     )
 
 
+def _require_unambiguous_cell(index: WorksheetIndex, coordinate: str, error_code: str) -> _CellSpan:
+    element = index.cells.get(coordinate)
+    if element is None or coordinate in index.duplicate_coordinates:
+        raise ExcelWriterIntegrityError(error_code, "ambiguous worksheet cell")
+    if _cell_fields(element)[-1] & (_DUPLICATE_FORMULA | _DUPLICATE_VALUE):
+        raise ExcelWriterIntegrityError(error_code, "ambiguous worksheet cell")
+    return element
+
+
 def _closing_start(xml: bytes, end: int) -> int:
     start = xml.rfind(b"<", 0, end)
     if start < 0:
@@ -393,15 +408,8 @@ def _closing_start(xml: bytes, end: int) -> int:
 def inspect_index_cell(
     index: WorksheetIndex, coordinate: str, error_code: str = "TARGET_CELL_MISSING"
 ) -> tuple[bytes, str | None, bool, bool, str | None]:
-    element = index.cells.get(coordinate)
-    if element is None or coordinate in index.duplicate_coordinates:
-        detail = (
-            f"duplicate XML cell {coordinate}"
-            if coordinate in index.duplicate_coordinates
-            else coordinate
-        )
-        raise ExcelWriterIntegrityError(error_code, detail)
-    value = _child(index, element, "v", "TARGET_CELL_LEXEME_MISMATCH")
+    element = _require_unambiguous_cell(index, coordinate, error_code)
+    value = _child(index, element, "v", error_code)
     if value is not None and value.has_children:
         raise ExcelWriterIntegrityError(error_code, coordinate)
     try:
@@ -470,9 +478,9 @@ _CALC_CHAIN_RELATIONSHIP = re.compile(
 
 def reject_unsupported_package(source_path: Path) -> None:
     try:
-        _preflight_zip(source_path, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE")
-        with zipfile.ZipFile(source_path) as archive:
-            admit_archive(archive, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE")
+        with admitted_zipfile(
+            source_path, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE"
+        ) as archive:
             if archive.testzip() is not None:
                 raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "corrupt archive entry")
     except ExcelWriterSafetyError:
@@ -515,77 +523,110 @@ def _validate_input_file_size(path: Path, error_type, code: str) -> None:
         raise error_type(code, "package admission failed")
 
 
+@contextmanager
+def admitted_zipfile(path: Path | int, error_type, code: str) -> Iterator[zipfile.ZipFile]:
+    """Open one no-follow descriptor, preflight it, and consume that exact inode."""
+    descriptor = -1
+    stream = None
+    archive = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.dup(path) if isinstance(path, int) else os.open(path, flags)
+        _preflight_zip_descriptor(descriptor)
+        stream = os.fdopen(os.dup(descriptor), "rb")
+        archive = zipfile.ZipFile(stream, "r")
+        admit_archive(archive, error_type, code)
+        yield archive
+    except (ExcelWriterAtomicError, ExcelWriterIntegrityError, ExcelWriterSafetyError):
+        raise
+    except (OSError, ValueError, struct.error, zipfile.BadZipFile) as error:
+        raise error_type(code, "package admission failed") from error
+    finally:
+        if archive is not None:
+            archive.close()
+        if stream is not None:
+            stream.close()
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _preflight_zip(path: Path, error_type, code: str) -> None:
     """Bound central-directory work before ``ZipFile`` allocates ``ZipInfo`` objects."""
 
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
-        stream = None
         try:
-            details = os.fstat(descriptor)
-            if not stat.S_ISREG(details.st_mode) or details.st_size > _MAX_INPUT_FILE_BYTES:
-                raise ValueError("invalid package file")
-            size = details.st_size
-            stream = os.fdopen(descriptor, "rb", closefd=False)
-            stream.seek(max(0, size - 65_557))
-            tail = stream.read(65_557)
-            index = _eocd_index(tail)
-            if index is None:
-                raise ValueError("missing EOCD")
-            record = struct.unpack_from("<4s4H2LH", tail, index)
-            (
-                disk,
-                directory_disk,
-                entries_on_disk,
-                entries,
-                directory_size,
-                directory_offset,
-                _comment_length,
-            ) = record[1:]
-            if disk or directory_disk or entries_on_disk != entries:
-                raise ValueError("multi-disk ZIP")
-            eocd_offset = size - len(tail) + index
-            if entries == 0xFFFF or directory_size == 0xFFFFFFFF or directory_offset == 0xFFFFFFFF:
-                locator = eocd_offset - 20
-                if locator < 0:
-                    raise ValueError("missing ZIP64 locator")
-                stream.seek(locator)
-                locator_record = _read_exact(stream, 20)
-                signature, _disk, zip64_offset, total_disks = struct.unpack(
-                    "<4sLQL", locator_record
-                )
-                if signature != b"PK\x06\x07" or total_disks != 1:
-                    raise ValueError("invalid ZIP64 locator")
-                if zip64_offset < 0 or zip64_offset + 56 > size:
-                    raise ValueError("invalid ZIP64 offset")
-                stream.seek(zip64_offset)
-                header = _read_exact(stream, 56)
-                values = struct.unpack("<4sQHHLLQQQQ", header)
-                if (
-                    values[0] != b"PK\x06\x06"
-                    or values[1] < 44
-                    or values[4]
-                    or values[5]
-                    or values[6] != values[7]
-                ):
-                    raise ValueError("invalid ZIP64 EOCD")
-                entries, directory_size, directory_offset = values[7:10]
-            if (
-                entries > _MAX_ARCHIVE_ENTRIES
-                or directory_size > _MAX_CENTRAL_DIRECTORY_BYTES
-                or directory_offset + directory_size > eocd_offset
-            ):
-                raise ValueError("central directory exceeds limit")
-            stream.seek(directory_offset)
-            directory = _read_exact(stream, directory_size)
-            _validate_raw_central_directory(directory, entries)
+            _preflight_zip_descriptor(descriptor)
         finally:
-            if stream is not None:
-                stream.close()
             os.close(descriptor)
     except (OSError, ValueError, struct.error) as error:
         raise error_type(code, "package admission failed") from error
+
+
+def _preflight_zip_descriptor(descriptor: int) -> None:
+    """Raw EOCD/ZIP64 admission on an already-open regular-file descriptor."""
+    details = os.fstat(descriptor)
+    if not stat.S_ISREG(details.st_mode) or details.st_size > _MAX_INPUT_FILE_BYTES:
+        raise ValueError("invalid package file")
+    size = details.st_size
+    stream = os.fdopen(os.dup(descriptor), "rb")
+    try:
+        stream.seek(max(0, size - 65_557))
+        tail = stream.read(65_557)
+        index = _eocd_index(tail)
+        if index is None:
+            raise ValueError("missing EOCD")
+        record = struct.unpack_from("<4s4H2LH", tail, index)
+        (
+            disk,
+            directory_disk,
+            entries_on_disk,
+            entries,
+            directory_size,
+            directory_offset,
+            _comment_length,
+        ) = record[1:]
+        if disk or directory_disk or entries_on_disk != entries:
+            raise ValueError("multi-disk ZIP")
+        eocd_offset = size - len(tail) + index
+        central_end = eocd_offset
+        if entries == 0xFFFF or directory_size == 0xFFFFFFFF or directory_offset == 0xFFFFFFFF:
+            locator = eocd_offset - 20
+            if locator < 0:
+                raise ValueError("missing ZIP64 locator")
+            stream.seek(locator)
+            locator_record = _read_exact(stream, 20)
+            signature, _disk, zip64_offset, total_disks = struct.unpack("<4sLQL", locator_record)
+            if signature != b"PK\x06\x07" or total_disks != 1:
+                raise ValueError("invalid ZIP64 locator")
+            if zip64_offset < 0 or zip64_offset + 56 > size:
+                raise ValueError("invalid ZIP64 offset")
+            stream.seek(zip64_offset)
+            header = _read_exact(stream, 56)
+            values = struct.unpack("<4sQHHLLQQQQ", header)
+            if (
+                values[0] != b"PK\x06\x06"
+                or values[1] < 44
+                or zip64_offset + 12 + values[1] != locator
+                or values[4]
+                or values[5]
+                or values[6] != values[7]
+            ):
+                raise ValueError("invalid ZIP64 EOCD")
+            entries, directory_size, directory_offset = values[7:10]
+            central_end = zip64_offset
+        if (
+            entries > _MAX_ARCHIVE_ENTRIES
+            or directory_size > _MAX_CENTRAL_DIRECTORY_BYTES
+            or directory_offset + directory_size != central_end
+        ):
+            raise ValueError("central directory exceeds limit")
+        stream.seek(directory_offset)
+        directory = _read_exact(stream, directory_size)
+        _validate_raw_central_directory(directory, entries)
+    finally:
+        stream.close()
 
 
 def _eocd_index(tail: bytes) -> int | None:
@@ -639,38 +680,44 @@ def validate_xlsx_source(path: Path, error_type, code: str) -> None:
     _preflight_zip(path, error_type, code)
 
 
-def read_archive_part(archive: zipfile.ZipFile, name: str, error_type, code: str) -> bytes:
+def read_archive_part(
+    archive: zipfile.ZipFile, name: str, error_type, code: str, *, worksheet: bool = False
+) -> bytes:
     """Read a previously admitted member, applying the worksheet-specific ceiling first."""
 
     try:
         info = archive.getinfo(name)
     except KeyError as error:
         raise error_type(code, "package member missing") from error
-    if name.startswith("xl/worksheets/") and info.file_size > _MAX_WORKSHEET_XML_BYTES:
+    if worksheet and info.file_size > _MAX_WORKSHEET_XML_BYTES:
         raise error_type(code, "worksheet XML exceeds limit")
     return archive.read(info)
 
 
-def worksheet_part_map(source_path: Path) -> dict[str, str]:
+def worksheet_part_map(source_path: Path | int) -> dict[str, str]:
     try:
-        _preflight_zip(source_path, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE")
-        with zipfile.ZipFile(source_path, "r") as archive:
-            admit_archive(archive, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE")
-            workbook = ElementTree.fromstring(
+        with admitted_zipfile(
+            source_path, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE"
+        ) as archive:
+            workbook = _safe_xml_root(
                 read_archive_part(
                     archive, "xl/workbook.xml", ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE"
-                )
+                ),
+                ExcelWriterSafetyError,
+                "INVALID_XLSX_PACKAGE",
             )
-            relationships = ElementTree.fromstring(
+            relationships = _safe_xml_root(
                 read_archive_part(
                     archive,
                     "xl/_rels/workbook.xml.rels",
                     ExcelWriterSafetyError,
                     "INVALID_XLSX_PACKAGE",
-                )
+                ),
+                ExcelWriterSafetyError,
+                "INVALID_XLSX_PACKAGE",
             )
     except (OSError, zipfile.BadZipFile, KeyError, ValueError) as error:
-        raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", str(error)) from error
+        raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "package metadata invalid") from error
     targets = {
         item.attrib["Id"]: item.attrib["Target"]
         for item in relationships.findall(f"{{{_PKG_REL_NS}}}Relationship")
@@ -687,6 +734,45 @@ def worksheet_part_map(source_path: Path) -> dict[str, str]:
         if name and target:
             parts[name] = posixpath.normpath(posixpath.join("xl", target)).lstrip("/")
     return parts
+
+
+def _safe_xml_root(payload: bytes, error_type, code: str) -> ElementTree.Element:
+    """Reject entity-bearing metadata before a semantic XML parser observes it."""
+    if _UNSAFE_XML_DECLARATION.search(payload):
+        raise error_type(code, "package metadata invalid")
+    parser = expat.ParserCreate(namespace_separator="}")
+    depth = 0
+    events = 0
+
+    def start(_name: str, _attributes: dict[str, str]) -> None:
+        nonlocal depth, events
+        depth += 1
+        events += 1
+        if depth > _MAX_XML_DEPTH or events > _MAX_WORKSHEET_EVENTS:
+            raise _RejectedWorksheetXml()
+
+    def end(_name: str) -> None:
+        nonlocal depth, events
+        depth -= 1
+        events += 1
+        if depth < 0 or events > _MAX_WORKSHEET_EVENTS:
+            raise _RejectedWorksheetXml()
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.StartDoctypeDeclHandler = lambda *_args: (_ for _ in ()).throw(_RejectedWorksheetXml())
+    parser.EntityDeclHandler = lambda *_args: (_ for _ in ()).throw(_RejectedWorksheetXml())
+    try:
+        parser.Parse(payload, True)
+        return ElementTree.fromstring(payload)
+    except (
+        ElementTree.ParseError,
+        UnicodeDecodeError,
+        ValueError,
+        expat.ExpatError,
+        _RejectedWorksheetXml,
+    ) as error:
+        raise error_type(code, "package metadata invalid") from error
 
 
 def inspect_cell(xml: bytes, coordinate: str) -> tuple[bytes, str | None, bool, bool, str | None]:
@@ -715,6 +801,8 @@ def _replace_index_cell_values(
     requested = dict(changes)
     if len(requested) != len(changes):
         raise ExcelWriterIntegrityError(error_code, "duplicate requested cell")
+    for coordinate in requested:
+        _require_unambiguous_cell(index, coordinate, error_code)
     pieces: list[bytes] = []
     cursor = 0
     changed: set[str] = set()
@@ -783,7 +871,12 @@ def formula_coordinates(xml: bytes) -> tuple[str, ...]:
     index = worksheet_index(xml, "FORMULA_MATERIALIZATION_FAILED")
     if index.has_unreferenced_formula:
         raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "formula without ref")
+    if index.duplicate_coordinates:
+        raise ExcelWriterIntegrityError(
+            "FORMULA_MATERIALIZATION_FAILED", "ambiguous worksheet cell"
+        )
     for reference, cell in index.cells.items():
+        _require_unambiguous_cell(index, reference, "FORMULA_MATERIALIZATION_FAILED")
         if _child(index, cell, "f", "FORMULA_MATERIALIZATION_FAILED") is None:
             continue
         coordinates.append(reference)
@@ -798,6 +891,8 @@ def numeric_formula_values(xml: bytes, coordinates: tuple[str, ...]) -> dict[str
     requested = set(coordinates)
     values: dict[str, str] = {}
     index = worksheet_index(xml, "FORMULA_RESULT_NOT_NUMERIC")
+    for coordinate in requested:
+        _require_unambiguous_cell(index, coordinate, "FORMULA_RESULT_NOT_NUMERIC")
     for coordinate, cell in index.cells.items():
         if coordinate not in requested:
             continue
@@ -816,7 +911,12 @@ def materialize_formula_cells(xml: bytes, values: Mapping[str, str]) -> bytes:
     index = worksheet_index(xml, "FORMULA_MATERIALIZATION_FAILED")
     if index.has_unreferenced_formula:
         raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "formula without ref")
+    if index.duplicate_coordinates:
+        raise ExcelWriterIntegrityError(
+            "FORMULA_MATERIALIZATION_FAILED", "ambiguous worksheet cell"
+        )
     for coordinate, element in index.cells.items():
+        _require_unambiguous_cell(index, coordinate, "FORMULA_MATERIALIZATION_FAILED")
         formula = _child(index, element, "f", "FORMULA_MATERIALIZATION_FAILED")
         if formula is None:
             continue
@@ -863,22 +963,27 @@ def write_temp_package(
     changes_by_part: Mapping[str, tuple[tuple[str, str], ...]],
     *,
     remove_calc_chain: bool = False,
+    worksheet_parts: frozenset[str] = frozenset(),
 ) -> None:
     """Copy every archive part and replace only requested worksheet cell lexemes."""
 
     try:
-        _preflight_zip(source_path, ExcelWriterAtomicError, "ATOMIC_PUBLISH_FAILED")
         with (
-            zipfile.ZipFile(source_path, "r") as source,
+            admitted_zipfile(
+                source_path, ExcelWriterAtomicError, "ATOMIC_PUBLISH_FAILED"
+            ) as source,
             zipfile.ZipFile(temp_path, "w", allowZip64=True) as output,
         ):
-            admit_archive(source, ExcelWriterAtomicError, "ATOMIC_PUBLISH_FAILED")
             output.comment = source.comment
             for info in source.infolist():
                 if remove_calc_chain and info.filename == "xl/calcChain.xml":
                     continue
                 payload = read_archive_part(
-                    source, info.filename, ExcelWriterAtomicError, "ATOMIC_PUBLISH_FAILED"
+                    source,
+                    info.filename,
+                    ExcelWriterAtomicError,
+                    "ATOMIC_PUBLISH_FAILED",
+                    worksheet=info.filename in worksheet_parts,
                 )
                 changes = changes_by_part.get(info.filename, ())
                 if changes:
@@ -901,15 +1006,19 @@ def verify_temp_package(
     changes_by_part: Mapping[str, tuple[tuple[str, str], ...]],
     *,
     remove_calc_chain: bool = False,
+    worksheet_parts: frozenset[str] = frozenset(),
 ) -> None:
     """Verify values and prove every unaffected part has the original bytes."""
 
     try:
-        _preflight_zip(source_path, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED")
-        _preflight_zip(temp_path, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED")
-        with zipfile.ZipFile(source_path) as source, zipfile.ZipFile(temp_path) as output:
-            admit_archive(source, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED")
-            admit_archive(output, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED")
+        with (
+            admitted_zipfile(
+                source_path, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED"
+            ) as source,
+            admitted_zipfile(
+                temp_path, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED"
+            ) as output,
+        ):
             source_names = tuple(source.namelist())
             expected_names = tuple(
                 name for name in source_names if not remove_calc_chain or name != "xl/calcChain.xml"
@@ -923,10 +1032,18 @@ def verify_temp_package(
                 if remove_calc_chain and name == "xl/calcChain.xml":
                     continue
                 original = read_archive_part(
-                    source, name, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED"
+                    source,
+                    name,
+                    ExcelWriterIntegrityError,
+                    "PRESERVATION_CHECK_FAILED",
+                    worksheet=name in worksheet_parts,
                 )
                 updated = read_archive_part(
-                    output, name, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED"
+                    output,
+                    name,
+                    ExcelWriterIntegrityError,
+                    "PRESERVATION_CHECK_FAILED",
+                    worksheet=name in worksheet_parts,
                 )
                 expected = original
                 changes = changes_by_part.get(name, ())
@@ -959,12 +1076,12 @@ def materialize_formula_package(
 
     temporary = path.with_suffix(".materializing.xlsx")
     try:
-        _preflight_zip(path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
         with (
-            zipfile.ZipFile(path, "r") as source,
+            admitted_zipfile(
+                path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED"
+            ) as source,
             zipfile.ZipFile(temporary, "w", allowZip64=True) as output,
         ):
-            admit_archive(source, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
             output.comment = source.comment
             for info in source.infolist():
                 if info.filename == "xl/calcChain.xml":
@@ -999,15 +1116,19 @@ def verify_materialized_package(
     """Prove that all worksheet formulas became the expected numeric values."""
 
     try:
-        _preflight_zip(path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
-        with zipfile.ZipFile(path) as package:
-            admit_archive(package, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
+        with admitted_zipfile(
+            path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED"
+        ) as package:
             names = tuple(package.namelist())
             if "xl/calcChain.xml" in names or package.testzip() is not None:
                 raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "calcChain")
             for part, values in values_by_part.items():
                 xml = read_archive_part(
-                    package, part, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED"
+                    package,
+                    part,
+                    ExcelWriterIntegrityError,
+                    "FORMULA_MATERIALIZATION_FAILED",
+                    worksheet=True,
                 )
                 if formula_count(xml):
                     raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", part)
@@ -1030,13 +1151,17 @@ def package_has_formulas(path: Path, worksheet_parts: Mapping[str, str]) -> bool
     """Return whether any final worksheet still contains a formula element."""
 
     try:
-        _preflight_zip(path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
-        with zipfile.ZipFile(path) as package:
-            admit_archive(package, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
+        with admitted_zipfile(
+            path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED"
+        ) as package:
             return any(
                 formula_count(
                     read_archive_part(
-                        package, part, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED"
+                        package,
+                        part,
+                        ExcelWriterIntegrityError,
+                        "FORMULA_MATERIALIZATION_FAILED",
+                        worksheet=True,
                     )
                 )
                 for part in worksheet_parts.values()
@@ -1049,16 +1174,20 @@ def verify_formula_free_package(path: Path, worksheet_parts: Mapping[str, str]) 
     """Verify formula-free worksheets and the absence of stale calcChain metadata."""
 
     try:
-        _preflight_zip(path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
-        with zipfile.ZipFile(path) as package:
-            admit_archive(package, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
+        with admitted_zipfile(
+            path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED"
+        ) as package:
             names = tuple(package.namelist())
             if "xl/calcChain.xml" in names or package.testzip() is not None:
                 raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "calcChain")
             if any(
                 formula_count(
                     read_archive_part(
-                        package, part, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED"
+                        package,
+                        part,
+                        ExcelWriterIntegrityError,
+                        "FORMULA_MATERIALIZATION_FAILED",
+                        worksheet=True,
                     )
                 )
                 for part in worksheet_parts.values()
