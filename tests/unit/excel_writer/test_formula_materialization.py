@@ -18,6 +18,7 @@ from report_processor.excel_writer import (
     ExcelWriterAtomicError,
     ExcelWriterIntegrityError,
     WriteStatus,
+    ooxml,
     write_target_report,
 )
 from report_processor.excel_writer import formula_materialization as materializer
@@ -196,3 +197,41 @@ def test_formula_package_resource_error_is_remapped_to_recalculation_failure(
     monkeypatch.setattr(materializer, "worksheet_part_map", reject_resource)
     with pytest.raises(ExcelWriterAtomicError, match="FORMULA_RECALCULATION_FAILED"):
         materializer.recalculate_and_materialize(path)
+
+
+def test_failed_post_replace_formula_verification_removes_owned_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "formula.xlsx"
+    _workbook(path, formula=False)
+    parts = ooxml.worksheet_part_map(path)
+
+    def fail_verification(*_args: object, **_kwargs: object) -> None:
+        raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "injected")
+
+    monkeypatch.setattr(ooxml, "verify_materialized_package", fail_verification)
+    with pytest.raises(ExcelWriterIntegrityError, match="FORMULA_MATERIALIZATION_FAILED"):
+        ooxml.materialize_formula_package(path, parts, {})
+
+    assert not path.exists()
+    assert not tuple(tmp_path.glob(".excel-writer-materializing-*.xlsx"))
+
+
+def test_failed_post_replace_formula_verification_preserves_a_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "formula.xlsx"
+    replacement = tmp_path / "replacement.xlsx"
+    _workbook(path, formula=False)
+    replacement.write_bytes(b"replacement")
+    parts = ooxml.worksheet_part_map(path)
+
+    def replace_then_fail(*_args: object, **_kwargs: object) -> None:
+        replacement.replace(path)
+        raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "injected")
+
+    monkeypatch.setattr(ooxml, "verify_materialized_package", replace_then_fail)
+    with pytest.raises(ExcelWriterIntegrityError, match="FORMULA_MATERIALIZATION_FAILED"):
+        ooxml.materialize_formula_package(path, parts, {})
+
+    assert path.read_bytes() == b"replacement"

@@ -88,8 +88,10 @@ def test_reopen_failure_never_removes_output_replaced_during_publication(
 
     publish = engine._publish_no_clobber
 
-    def publish_then_replace(temporary: Path, destination: Path) -> None:
-        publish(temporary, destination)
+    def publish_then_replace(
+        temporary: Path, destination: Path, expected_descriptor: int | None = None
+    ) -> None:
+        publish(temporary, destination, expected_descriptor)
         os.replace(replacement, destination)
 
     def fail_reopen(_path: Path) -> None:

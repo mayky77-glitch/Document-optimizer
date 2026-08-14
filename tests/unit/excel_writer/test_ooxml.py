@@ -12,7 +12,12 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from openpyxl import Workbook
 
-from report_processor.excel_writer import ExcelWriterIntegrityError, ExcelWriterSafetyError, ooxml
+from report_processor.excel_writer import (
+    ExcelWriterAtomicError,
+    ExcelWriterIntegrityError,
+    ExcelWriterSafetyError,
+    ooxml,
+)
 from report_processor.excel_writer.ooxml import (
     formula_count,
     inspect_cell,
@@ -80,6 +85,28 @@ def test_publish_no_clobber_keeps_existing_output_and_removes_temp(tmp_path: Pat
 
     assert output_path.read_bytes() == b"existing"
     assert not temp_path.exists()
+
+
+def test_publish_no_clobber_rejects_a_source_inode_swapped_during_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_path = tmp_path / ".candidate.xlsx.tmp"
+    replacement = tmp_path / "replacement.xlsx"
+    output_path = tmp_path / "published.xlsx"
+    temp_path.write_bytes(b"owned")
+    replacement.write_bytes(b"replacement")
+    real_link = ooxml.os.link
+
+    def swap_then_link(source: Path, destination: Path, **kwargs: object) -> None:
+        replacement.replace(source)
+        real_link(source, destination, **kwargs)
+
+    monkeypatch.setattr(ooxml.os, "link", swap_then_link)
+    with pytest.raises(ExcelWriterAtomicError, match="ATOMIC_PUBLISH_FAILED"):
+        publish_no_clobber(temp_path, output_path)
+
+    assert temp_path.read_bytes() == b"replacement"
+    assert output_path.read_bytes() == b"replacement"
 
 
 def test_formula_cells_become_numeric_literals_including_shared_formula_cells() -> None:
@@ -408,6 +435,40 @@ def test_raw_central_directory_must_end_exactly_at_eocd_before_zipfile(
         ooxml.reject_unsupported_package(archive_path)
 
 
+def test_zip64_locator_must_start_on_disk_zero(tmp_path: Path) -> None:
+    archive_path = tmp_path / "zip64-multidisk.xlsx"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("entry", b"payload")
+    payload = bytearray(archive_path.read_bytes())
+    eocd = payload.rfind(b"PK\x05\x06")
+    entries = struct.unpack_from("<H", payload, eocd + 10)[0]
+    directory_size = struct.unpack_from("<L", payload, eocd + 12)[0]
+    directory_offset = struct.unpack_from("<L", payload, eocd + 16)[0]
+    zip64_eocd = struct.pack(
+        "<4sQHHLLQQQQ",
+        b"PK\x06\x06",
+        44,
+        45,
+        45,
+        0,
+        0,
+        entries,
+        entries,
+        directory_size,
+        directory_offset,
+    )
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 1, eocd, 1)
+    struct.pack_into("<H", payload, eocd + 8, 0xFFFF)
+    struct.pack_into("<H", payload, eocd + 10, 0xFFFF)
+    struct.pack_into("<L", payload, eocd + 12, 0xFFFFFFFF)
+    struct.pack_into("<L", payload, eocd + 16, 0xFFFFFFFF)
+    payload[eocd:eocd] = zip64_eocd + locator
+    archive_path.write_bytes(payload)
+
+    with pytest.raises(ExcelWriterSafetyError, match="INVALID_XLSX_PACKAGE"):
+        ooxml.reject_unsupported_package(archive_path)
+
+
 def test_semantic_worksheet_size_limit_is_checked_before_custom_part_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -466,6 +527,27 @@ def test_dtd_rejection_preserves_the_callers_error_code() -> None:
 
     with pytest.raises(ExcelWriterIntegrityError, match="PRESERVATION_CHECK_FAILED"):
         worksheet_index(dtd, "PRESERVATION_CHECK_FAILED")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        (
+            '<?xml version="1.0" encoding="UTF-16"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/'
+            'spreadsheetml/2006/main"><sheetData><row><c r="D1"><v>1</v></c>'
+            "</row></sheetData></worksheet>"
+        ).encode("utf-16"),
+        (
+            '<worksheet xmlns="http://schemas.openxmlformats.org/'
+            'spreadsheetml/2006/main"><sheetData><row><c r="D1"><v>1</v></c>'
+            "</row></sheetData></worksheet>"
+        ).encode("utf-16-be"),
+    ),
+)
+def test_non_utf8_worksheet_bytes_are_rejected_before_byte_splicing(payload: bytes) -> None:
+    with pytest.raises(ExcelWriterIntegrityError, match="worksheet encoding unsupported"):
+        replace_cell_value(payload, "D1", "2")
 
 
 @pytest.mark.parametrize(

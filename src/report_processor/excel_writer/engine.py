@@ -170,7 +170,7 @@ def write_target_report(
         _assert_source_unchanged(source, source_identity)
         _assert_named_descriptor(temp.path, temp.descriptor)
         published_identity = _published_output_identity(temp.descriptor)
-        _publish_no_clobber(temp.path, output)
+        _publish_no_clobber(temp.path, output, temp.descriptor)
         published = True
         output_sha256 = _sha256_descriptor(temp.descriptor)
         # Keep the long-standing single-argument reopen seam for callers and

@@ -129,6 +129,11 @@ def _scan_worksheet(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> Work
 
     if len(xml) > _MAX_WORKSHEET_XML_BYTES:
         raise ExcelWriterIntegrityError(error_code, "worksheet XML exceeds limit")
+    if (
+        xml.startswith((b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff", b"\xff\xfe\x00\x00"))
+        or b"\x00" in xml[:200]
+    ):
+        raise ExcelWriterIntegrityError(error_code, "worksheet encoding unsupported")
     declaration = re.match(rb"<\?xml[^>]*encoding=[\"']([^\"']+)", xml[:200], re.I)
     if declaration is not None and declaration.group(1).lower() not in {b"utf-8", b"utf8"}:
         raise ExcelWriterIntegrityError(error_code, "worksheet encoding unsupported")
@@ -604,7 +609,7 @@ def _preflight_zip_descriptor(descriptor: int) -> None:
             stream.seek(locator)
             locator_record = _read_exact(stream, 20)
             signature, _disk, zip64_offset, total_disks = struct.unpack("<4sLQL", locator_record)
-            if signature != b"PK\x06\x07" or total_disks != 1:
+            if signature != b"PK\x06\x07" or _disk != 0 or total_disks != 1:
                 raise ValueError("invalid ZIP64 locator")
             if zip64_offset < 0 or zip64_offset + 56 > size:
                 raise ValueError("invalid ZIP64 offset")
@@ -1115,6 +1120,7 @@ def materialize_formula_package(
     )
     temporary = Path(name)
     os.fchmod(descriptor, 0o600)
+    replaced = False
     try:
         with (
             admitted_zipfile(
@@ -1148,6 +1154,7 @@ def materialize_formula_package(
             _assert_path_matches_descriptor(path, source_descriptor)
         _assert_path_matches_descriptor(temporary, descriptor)
         os.replace(temporary, path)
+        replaced = True
         _fsync_file(descriptor)
         # Verify the exact descriptor which will be adopted by the engine.  Do
         # not reopen the mutable private pathname between replacement and use.
@@ -1157,10 +1164,10 @@ def materialize_formula_package(
         descriptor = -1
         return materialized
     except ExcelWriterIntegrityError:
-        _unlink_if_owned(temporary, descriptor)
+        _unlink_if_owned(path if replaced else temporary, descriptor)
         raise
     except (OSError, zipfile.BadZipFile, ValueError) as error:
-        _unlink_if_owned(temporary, descriptor)
+        _unlink_if_owned(path if replaced else temporary, descriptor)
         raise ExcelWriterIntegrityError(
             "FORMULA_MATERIALIZATION_FAILED", "formula package could not be materialized"
         ) from error
@@ -1286,14 +1293,34 @@ def _finite_numeric_lexeme(index: WorksheetIndex, cell: _CellSpan, coordinate: s
     return decimal_text
 
 
-def publish_no_clobber(temp_path: Path, output_path: Path) -> None:
+def publish_no_clobber(
+    temp_path: Path, output_path: Path, expected_descriptor: int | None = None
+) -> None:
     """Link a private archive into place without deleting a raced replacement."""
 
-    descriptor = os.open(temp_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = (
+        os.dup(expected_descriptor)
+        if expected_descriptor is not None
+        else os.open(temp_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    )
     linked = False
     try:
-        os.link(temp_path, output_path)
+        opened = os.fstat(descriptor)
+        named = os.lstat(temp_path)
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
+            named.st_dev,
+            named.st_ino,
+        ):
+            raise ExcelWriterAtomicError(
+                "ATOMIC_PUBLISH_FAILED", "temporary output identity changed"
+            )
+        os.link(temp_path, output_path, follow_symlinks=False)
         linked = True
+        published = os.lstat(output_path)
+        if (published.st_dev, published.st_ino) != (opened.st_dev, opened.st_ino):
+            raise ExcelWriterAtomicError(
+                "ATOMIC_PUBLISH_FAILED", "published output identity changed"
+            )
         _unlink_if_owned(temp_path, descriptor)
         _fsync_directory(output_path.parent)
     except FileExistsError as error:
