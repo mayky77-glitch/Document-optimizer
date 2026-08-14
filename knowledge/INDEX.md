@@ -42,10 +42,12 @@ Use this index as the entry point. Read only the relevant map, component card, a
   source/target measure discovery and reference-compatible period insertion.
 - [[tasks/reconciliation-target-measure-gate0|Target-measure Gate 0]] — accepted structural target
   oracle checkpoint published at `959e3b9`.
-- [[tasks/reconciliation-period-insertion-gate0|Period-insertion Gate 0]] — direct-OOXML core
-  accepted; wholly-left shared-formula support and dependent preview/apply waves remain.
-- [[tasks/reconciliation-period-shared-formulas|Shared-formula preservation]] — active bounded
-  follow-up for unchanged formula groups wholly left of the insertion boundary.
+- [[tasks/reconciliation-period-insertion-gate0|Period-insertion Gate 0]] — direct-OOXML and
+  shared-formula compatibility accepted; preview/apply waves remain.
+- [[tasks/reconciliation-period-apply|Period preview/apply Gate 0]] — active structural preview,
+  transactional apply and restart-safe evidence waves.
+- [[tasks/reconciliation-period-shared-formulas|Shared-formula preservation]] — accepted bounded
+  support for unchanged formula groups wholly left of the insertion boundary.
 - [[research/propextract-methods-2026-08-13|PropExtract methods]] — external commit-pinned methodology comparison; no code reuse.
 - [[tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]] — accepted package-review implementation and evidence.
 - [[tasks/excel-pdf-wave10-final|Excel-PDF reconciliation Wave 10]] — accepted local package CLI, bounded OCR and privacy gates.

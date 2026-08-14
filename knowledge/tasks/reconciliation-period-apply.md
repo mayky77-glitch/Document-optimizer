@@ -1,73 +1,68 @@
 ---
-type: orda_task
+type: orchestration
 status: frozen
-card_id: reconciliation-period-apply
-version: 1
-work_id: reconciliation-period-insertion-v1
-task_id: period-apply
-purpose: Use virtual future target cells for review and insert the period only after actionable calculations exist.
-role: developer
-route: P4 -> developer / gpt-5.6-terra / high; reason: cross-path review, calculation, writer and exact-replay identity integration.
-launch_status: blocked-on-period-ooxml
-card_path: knowledge/tasks/reconciliation-period-apply.md
-card_commit_sha_source: exact period-insertion planning SHA supplied by launch envelope
-base_sha_source: accepted period-ooxml integration SHA
-branch: codex/reconciliation-period-apply
-branch_base_sha_source: accepted period-ooxml integration SHA
-write_scope:
-  - src/report_processor/admin_panel/reconciliation_period.py
-  - src/report_processor/admin_panel/reconciliation_target.py
-  - src/report_processor/admin_panel/reconciliation_execution.py
-  - src/report_processor/admin_panel/reconciliation_numeric_verification.py
-  - src/report_processor/admin_panel/reconciliation_verification.py
-  - tests/unit/admin_panel/test_reconciliation_period.py
-  - tests/unit/admin_panel/test_reconciliation_target.py
-  - tests/unit/admin_panel/test_reconciliation_execution.py
-  - tests/unit/admin_panel/test_reconciliation_verification.py
-  - tests/integration/test_reconciliation_authoritative_flow.py
-forbidden_paths:
-  - src/report_processor/admin_panel/service.py
-  - src/report_processor/admin_panel/app.py
-  - src/report_processor/admin_panel/presentation.py
-  - src/report_processor/admin_panel/reconciliation_review_routes.py
-  - src/report_processor/admin_panel/assets
-  - src/report_processor/admin_panel/reconciliation_sources.py
-  - src/report_processor/calculation
-  - src/report_processor/excel_writer/engine.py
-  - src/report_processor/excel_writer/formula_materialization.py
-  - knowledge
-  - docs
-contract_versions:
-  input: ReconciliationPeriodInsertion-1.0+ReconciliationTargetMeasure-2.0
-  output: ReconciliationTargetInsertionPreview-1.0+ReconciliationApplyIntegrity-3.0
-acceptance_commands:
-  - uv run --extra dev pytest -q tests/unit/admin_panel/test_reconciliation_period.py tests/unit/admin_panel/test_reconciliation_target.py tests/unit/admin_panel/test_reconciliation_execution.py tests/unit/admin_panel/test_reconciliation_verification.py tests/integration/test_reconciliation_authoritative_flow.py
-  - uv run --extra dev ruff check src/report_processor/admin_panel/reconciliation_period.py src/report_processor/admin_panel/reconciliation_target.py src/report_processor/admin_panel/reconciliation_execution.py src/report_processor/admin_panel/reconciliation_numeric_verification.py src/report_processor/admin_panel/reconciliation_verification.py tests/unit/admin_panel/test_reconciliation_period.py tests/unit/admin_panel/test_reconciliation_target.py tests/unit/admin_panel/test_reconciliation_execution.py tests/unit/admin_panel/test_reconciliation_verification.py tests/integration/test_reconciliation_authoritative_flow.py
-  - uv run --extra dev ruff format --check src/report_processor/admin_panel/reconciliation_period.py src/report_processor/admin_panel/reconciliation_target.py src/report_processor/admin_panel/reconciliation_execution.py src/report_processor/admin_panel/reconciliation_numeric_verification.py src/report_processor/admin_panel/reconciliation_verification.py tests/unit/admin_panel/test_reconciliation_period.py tests/unit/admin_panel/test_reconciliation_target.py tests/unit/admin_panel/test_reconciliation_execution.py tests/unit/admin_panel/test_reconciliation_verification.py tests/integration/test_reconciliation_authoritative_flow.py
-  - git diff --check
+work_id: reconciliation-period-apply-v2
+objective: Preview and apply one reporting period with strict verification and restart-safe evidence.
+project_root: /Users/x/Documents/Сооотношение документов/Document-optimizer-ready
+planning_parent_sha: 90e7a73aa156897c60fc507a420ff805e0ba4474
+published_base_sha_source: exact planning commit containing this manifest and both task cards
+wave: 1
+max_parallel: 1
+max_spawns: 3
+max_retries: 1
+merge_method: merge-no-ff
+shared_paths_owner: integration
+data_classification: restricted
+created_at: 2026-08-14T13:00:00+08:00
+tags:
+  - task/implementation
+  - status/in-progress
+  - domain/document-processing
+  - capability/admin-panel
+  - risk/high
+links:
+  - "[[reconciliation-period-preview|Target preview]]"
+  - "[[reconciliation-period-apply-service|Apply and recovery]]"
+  - "[[reconciliation-period-insertion-gate0|Parent Gate 0]]"
+  - "[[../errors/reconciliation-accuracy-findings|RA-021]]"
 ---
 
-# Period preview and apply integration
+# Period preview/apply Gate 0
 
-When strict target reading reports only `TARGET_CURRENT_PERIOD_PAIR_MISSING`, reconciliation with
-an explicit period may build non-writable virtual target rows at the plan's future coordinates.
-All work/index/unit/category facts remain from the immutable original target. Preview catalog,
-package, target and apply identities include period plus plan digest so decisions from another
-period or topology cannot replay.
+Published dependency is `main@90e7a73`: direct OOXML insertion and bounded wholly-left shared
+formulas are accepted. CodeGraph confirmed that the prior single-task card was unsafe because it
+forbade `service.py`; reporting period and replay evidence cannot survive restart without the job
+manifest. This corrected plan has two sequential tasks and no API/UI changes.
 
-Apply takes one immutable decision snapshot, rebuilds the preview and calculates normally. If no
-calculated item contains a quantity or cost value, publish the original target byte-for-byte and do
-not call the transformer. Otherwise prepare one private target, strict-read it, require its detected
-pair/catalog/target IDs to equal the preview, rebuild matches and calculations from the same
-decisions, and require a canonical semantic calculation digest match before invoking the existing
-verified cell writer. The original target and source uploads remain unchanged.
+[[reconciliation-period-preview|Wave A]] owns structural target selection, historical-target
+preview, virtual future cells and target identity. [[reconciliation-period-apply-service|Wave B]]
+owns calculation/apply/recovery and begins only from accepted Wave A integration. `verify` stays on
+the strict physical target reader and may never import or call the planner, preview or transformer.
 
-`verify` continues to call only the strict reader; no planner, preview or transformer import may be
-reachable from that operation. Missing/ambiguous/unsupported insertion remains a technical
-no-artifact error. Prepared paths and plan details stay private. Owned temporary cleanup is
-inode-safe; failed prepared copies are never served.
+## Shared contracts
 
-Regressions cover preview ID stability, changed period/plan replay rejection, restart snapshot
-invalidation, zero-action byte identity/no temp, selected insert+reread+recalculate+write, semantic
-drift rejection, source/target mutation, existing-pair idempotence, mixed-sheet failure, exact
-technical codes and proof that verification never invokes insertion.
+- `ReconciliationTargetSelection-1.0`: target base fields bind through logical schema roles and
+  hierarchical headers; ambiguity fails closed without fixed A–F columns or phrase ranking.
+- `ReconciliationTargetInsertionPreview-1.0`: non-writable virtual quantity/cost cells use each
+  plan anchor's future adjacent coordinates; all other row facts come from the immutable target.
+- `ReconciliationTargetIdentity-1.0`: digest of original target SHA, selected stage, nullable
+  canonical period and nullable plan digest. Catalog/package/state/target/apply identities consume it.
+- `ReconciliationCalculationSemantics-1.0`: canonical sorted JSON of calculation ID, target row ID,
+  status and writer-adapted quantity/cost exact Decimal strings/null.
+- `ReconciliationApplyIntegrity-3.0`, `AdminReconciliationJobManifest-3.0` and
+  `ReconciliationApplyReplay-2.0`: period, plan, target identity and calculation digests are durable
+  replay evidence; manifests contain no workbook values, formulas, sheets or coordinates.
+
+## Release sequence
+
+Apply freezes decisions and immutable input snapshots, computes preview calculations, and treats
+zero as actionable while null/null is not. No actionable value publishes the original target
+byte-for-byte and never creates a prepared workbook. An actionable missing-pair path transforms one
+private snapshot, strict-rereads it, rebuilds catalog/matches/calculations and requires identical
+target IDs plus semantic calculation digest before the existing writer. Existing physical period
+pair is idempotent; mixed or unsupported topology fails closed.
+
+Recovery reconstructs period-aware review and calculation evidence without transformer/writer,
+matches all manifest digests, then exact-replays the SQLite commit. Old v2 manifests are
+intentionally rejected. API/UI reporting-period input and final private/full release shadow remain
+the next separate wave.

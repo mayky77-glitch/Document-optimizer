@@ -71,7 +71,7 @@ members are duplicated, but the original bytes are not changed.
 
 | ID | Severity | Boundary | Deterministic result |
 | --- | --- | --- | --- |
-| RA-021 | high implementation gate | missing reporting-period pair | direct insertion core is accepted at `991002a`; shared-formula compatibility, apply wiring and release shadow remain |
+| RA-021 | high implementation gate | missing reporting-period pair | direct insertion and shared-formula compatibility are accepted at `90e7a73`; apply/API wiring and release shadow remain |
 
 RA-019 and RA-020 are closed at published checkpoint `fe3d5ee`: exact merged-parent binding,
 semantic detail start, broad structural work nomination and unique bounded source/stage identity
@@ -112,7 +112,10 @@ the verifier inverse-normalizes only authorized coordinate fields and compares c
 trees; stable ZIP metadata and unaffected members are preserved; all fallible proof precedes the
 no-clobber link. The remaining corpus compatibility gate is not a verifier bypass: only a complete
 shared-formula group wholly left of the boundary, with unchanged operands, may pass unchanged.
-Affected, incomplete, duplicate, array and data-table formula topology remains rejected.
+Affected, incomplete, duplicate, array and data-table formula topology remains rejected. The
+bounded shared-formula dependency is accepted at `90e7a73`; both preflight and an independent
+verifier-local topology parser reject malformed uint32 IDs, blank anchors and duplicate physical
+cells even when source and candidate contain the same corruption.
 
 ## RA-014 — verification is not a numeric reconciliation
 

@@ -208,3 +208,23 @@ read-only тестов. Это сохраняет обе независимые 
 одну полную запись базы. Новые тесты добавляются только для доказанного риска или контракта;
 дублирующие setup/data-generation следует объединять fixtures/parametrization, но assertions и
 adversarial границы не удаляются ради меньшего числа тестов.
+
+## DO-022: preview и apply связываются неизменяемой идентичностью (2026-08-14)
+
+Историческая цель без физической пары может участвовать только в `reconcile` с явным `YYYY-MM`.
+Preview создаёт невписываемые виртуальные ячейки в структурно рассчитанных будущих координатах;
+все остальные факты строки читаются из исходной digest-bound цели. `verify` остаётся на строгом
+reader и никогда не вызывает planner, preview или transformer.
+
+Идентичность цели — SHA-256 канонического контракта, исходного target digest, выбранного этапа,
+nullable периода и nullable plan digest. Она входит в state/catalog/package/target/apply fingerprints.
+Перед writer расчёты повторяются на подготовленной и строго перечитанной цели; совпадение доказывает
+канонический digest из calculation ID, target row ID, статуса и writer-квантизованных Decimal
+quantity/cost. Ноль является записываемым значением, только `null/null` не требует вставки.
+
+Manifest v3 хранит период и ограниченные target/plan/calculation digests, но не значения, формулы,
+листы или координаты книги. Recovery пересобирает доказательства без повторного transformer/writer
+и exact-replay коммитит feedback один раз. Старый manifest v2 намеренно не восстанавливается.
+
+Связанные карточки: [[tasks/reconciliation-period-apply]],
+[[tasks/reconciliation-period-preview]], [[tasks/reconciliation-period-apply-service]].

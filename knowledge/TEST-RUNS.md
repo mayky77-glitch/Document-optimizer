@@ -11,6 +11,18 @@ updated: 2026-08-13
 
 Keep only the two latest completed runs relevant to active work.
 
+## 2026-08-14 — wholly-left shared formulas accepted
+
+- Feature `d06bab74de77338921d801d9fc470412e7f96c39`, ORDA integration `2e28152` and
+  published main `90e7a73` passed the exact low-load profile: `86 passed` in `0.57s`; Ruff
+  check/format and `git diff --check` passed.
+- Independent P6 reproduced invalid blank/overflow IDs, incomplete/reused/overlapping groups,
+  forged plan evidence and a duplicate formula-less physical `<c>` at anchor/follower addresses.
+  Forward preflight and the separate verifier-local parser reject every case; a unique adjacent
+  cell remains valid and failed preflight preserves a pre-existing output sentinel.
+- No private workbook or full suite was used in the feature task. The final real shadow remains
+  deferred until apply/service/API wiring is complete.
+
 ## 2026-08-13 — direct OOXML period insertion accepted
 
 - Final feature `07401099c25898eef14ad6fcf2703040391dbdb9`, ORDA integration `f236291` and
@@ -27,24 +39,6 @@ Keep only the two latest completed runs relevant to active work.
 - Full and private runs were deliberately deferred to the final release shadow to limit system
   load. The actual clean target still needs the separate wholly-left shared-formula compatibility
   gate before it is an eligible end-to-end insertion input.
-
-## 2026-08-13 — low-load period-insertion architecture shadow
-
-- Twelve original sources, one clean target and one desired reference were inspected from immutable
-  copies; every input hash stayed unchanged. OOXML contains 1,820,820 formula cells and a `<v>`
-  node for each, but 1,196 caches are empty. Only a formula in an otherwise eligible reconciliation
-  metric row is a controlled failure; blanket workbook-level rejection would be inaccurate.
-- Clean/reference comparison still proves an adjacent two-column reporting-period insertion while
-  the historical pair and all mapped values remain unchanged. The mapped formulas follow exact A1
-  insertion translation; the sole additional formula is a calculated cost value on one semantic
-  row, not a structural formula the insertion layer must invent.
-- Both packages contain the same 16 ZIP members. The actual coordinate-bearing surface includes
-  formulas/calcChain, 64 merges, 22 conditional-format ranges, one auto-filter, one simple defined
-  name and comments/VML. No tables, charts, external links, validation or extension lists were
-  present. Source hashes stayed unchanged.
-- A bounded `openpyxl.insert_cols()` probe demonstrated why it is not an implementation option: it
-  does not translate the full coordinate graph and rewrites package state. The frozen implementation
-  uses direct OOXML plus an independent inverse-delta verifier.
 
 ## Knowledge validation
 

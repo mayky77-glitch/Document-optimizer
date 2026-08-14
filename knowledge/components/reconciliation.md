@@ -62,5 +62,6 @@ historical-only target therefore needs the explicit, idempotent insertion govern
 The direct insertion core is published at `991002a`: it rebuilds a digest-bound structural plan,
 changes only an independently proven OOXML allowlist, inverse-verifies the whole semantic delta and
 publishes no-clobber. Release compatibility remains intentionally narrower than arbitrary Excel:
-the next card permits only complete shared-formula groups wholly left and semantically unaffected;
-all affected or ambiguous formula topology stays fail-closed.
+the accepted `90e7a73` compatibility layer permits only complete shared-formula groups wholly left
+and semantically unaffected; all affected, duplicate or ambiguous formula topology stays
+fail-closed under a separate verifier-local parser.

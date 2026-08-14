@@ -38,10 +38,11 @@ updated: 2026-08-13
   published main checkpoint `991002a`. Its source-rebuilt plan, full inverse semantic verifier,
   stable ZIP metadata proof, left comments/VML/external hyperlinks and no-clobber publication all
   passed the final independent P6 and a `56 passed` focused gate.
-- [[tasks/reconciliation-period-shared-formulas|Shared-formula preservation]] is the active bounded
-  dependency. It may permit only complete unchanged shared groups whose cells, `ref` range and all
-  formula operands are wholly left of the insertion boundary. Affected, incomplete, duplicate,
-  translated, array or data-table groups remain controlled failures.
+- [[tasks/reconciliation-period-shared-formulas|Shared-formula preservation]] is accepted through
+  feature `d06bab7`, ORDA integration `2e28152` and published checkpoint `90e7a73`. Complete
+  unchanged groups wholly left are preserved; uint32/blank IDs, duplicate physical cells,
+  incomplete/affected topology, array and data-table groups fail closed under an independent
+  verifier-local parser.
 
 ## Completed context
 
@@ -56,8 +57,7 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Implement and independently review
-[[tasks/reconciliation-period-shared-formulas|the bounded shared-formula card]] from published
-checkpoint `991002a`. Keep execution sequential and low-load. Do not open preview/apply or the
-service/API/UI period field until this compatibility gate is accepted; run the private release
-shadow and full suite only once after the complete write path is integrated.
+Freeze and implement the corrected [[tasks/reconciliation-period-apply|preview/apply and service
+manifest card]] from `90e7a73`. Verification must remain strict/no-write, while reconciliation may
+prepare a period only after actionable calculations. Keep API/UI wiring separate and run the
+private release shadow plus full suite only once after the complete write path is integrated.

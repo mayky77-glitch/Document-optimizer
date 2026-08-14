@@ -42,11 +42,10 @@ Only after its P6 acceptance may [[reconciliation-period-apply|preview/apply int
 future coordinates to review and prepare the workbook after an actionable calculation exists.
 Service, API and UI period input remain a later wave.
 
-The direct transformer is accepted and published at `991002a`. De-identified release evidence
-showed complete shared-formula groups wholly left of the insertion boundary, so a narrow dependent
-compatibility card now precedes preview/apply. It preserves those groups unchanged only after full
-topology and operand proof; it does not introduce template phrases, fixed coordinates or broad
-formula translation.
+The direct transformer is accepted at `991002a`; bounded shared-formula compatibility is accepted
+at `90e7a73`. It preserves complete groups unchanged only after full topology, uint32, physical-cell
+uniqueness and operand proof; it introduces no template phrases, fixed coordinates or broad formula
+translation. Preview/apply and durable service state are now the active dependency.
 
 One developer write stream runs at a time. No private corpus test and no full suite runs inside the
 feature tasks. Integration uses merge commits, focused gates and one independent high-risk review

@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: accepted
 card_id: reconciliation-period-shared-formulas
 version: 1
 work_id: reconciliation-period-shared-formulas-v1
@@ -8,7 +8,7 @@ task_id: period-shared-formulas
 purpose: Preserve complete shared-formula groups only when insertion cannot affect them.
 role: developer
 route: P4 -> developer / gpt-5.6-terra / high; reason: exact OOXML formula topology and inverse verification.
-launch_status: planned
+launch_status: accepted
 card_path: knowledge/tasks/reconciliation-period-shared-formulas.md
 card_commit_sha_source: exact planning commit containing this card
 base_sha_source: exact planning commit containing this card
@@ -64,3 +64,12 @@ Regressions use only generated minimal packages: valid one-cell and multi-cell l
 independent left groups; affected formula operand, affected/ref-crossing group, missing/extra member,
 duplicate anchor/`si`, follower text/ref, array/data-table and candidate topology tampering. Re-run
 all existing insertion/no-clobber tests. No private workbook and no full suite in this feature task.
+
+## Accepted evidence
+
+- Feature: `d06bab74de77338921d801d9fc470412e7f96c39`.
+- ORDA integration: `2e28152c6cb688c9949cb690174296974f9175dd`.
+- Published main: `90e7a73aa156897c60fc507a420ff805e0ba4474`.
+- Exact focused profile: `86 passed`; Ruff check/format and diff check passed.
+- Independent P6: merge yes after uint32/blank/duplicate physical cell, permissive-forward,
+  forged-plan, topology-tamper and no-clobber probes.

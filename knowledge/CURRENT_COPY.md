@@ -11,7 +11,7 @@ updated: 2026-08-13
 
 - Path: `Document-optimizer-ready` under the project documents directory.
 - Branch: `main`.
-- Local and remote product checkpoint: `991002a7e54f08a4c875a68ecb5ccb1f27c3e449`.
+- Local and remote product checkpoint: `90e7a73aa156897c60fc507a420ff805e0ba4474`.
 - Purpose: canonical production and audit copy for document reconciliation and drawing-card workflows.
 - Working tree: one unrelated untracked drawing-card UX specification; preserve and never stage it with reconciliation work.
 
@@ -22,5 +22,6 @@ Target-measure Wave 2 is accepted through ORDA integration `1362c53` and publish
 `959e3b9` after `104 passed`, Ruff, format, diff and independent P6 review.
 Direct period-insertion OOXML is accepted through ORDA integration `f236291` and published in
 `main` at `991002a` after `56 passed`, Ruff, format, diff and independent P6 review. The next
-bounded compatibility card covers only unchanged shared-formula groups wholly left of insertion.
+bounded compatibility card is accepted through integration `2e28152` and published at `90e7a73`
+after `86 passed` and independent adversarial P6.
 Source spreadsheets, generated reports and audit helpers remain outside Git.
