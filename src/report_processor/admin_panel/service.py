@@ -45,6 +45,7 @@ RECONCILIATION_MANIFEST_CONTRACT = "AdminReconciliationJobManifest-3.0"
 _RECOVERABLE_MANIFEST_STATUSES = frozenset(
     {"ready", "review_required", "applying", "pending", "running"}
 )
+_CANONICAL_VERIFICATION_STATUSES = frozenset({"passed", "failed"})
 LOGGER = logging.getLogger(__name__)
 
 
@@ -582,6 +583,7 @@ class AdminPanelService:
         if job.apply_manifest is not None:
             payload["apply"] = job.apply_manifest
         if job.operation == "verify":
+            _validate_verification_metadata(job)
             payload.update(
                 verification_status=job.verification_status,
                 verification_message=job.verification_message,
@@ -837,16 +839,6 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
         )
         if any(key not in manifest for key in verification_keys):
             raise ValueError("reconciliation verification manifest is incomplete")
-        if status in {"pending", "running"}:
-            if (
-                manifest["verification_status"] is not None
-                or manifest["verification_message"] is not None
-            ):
-                raise ValueError("reconciliation verification manifest is invalid")
-        elif not isinstance(manifest["verification_status"], str) or not isinstance(
-            manifest["verification_message"], str
-        ):
-            raise ValueError("reconciliation verification manifest is invalid")
         if not all(
             isinstance(manifest[key], int) and manifest[key] >= 0 for key in verification_keys[2:]
         ):
@@ -903,6 +895,8 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
             _strict_manifest_count(manifest.get("failed_row_count")) if operation == "verify" else 0
         ),
     )
+    if operation == "verify":
+        _validate_verification_metadata(job)
     _validate_manifest_identity(job)
     return job
 
@@ -990,6 +984,28 @@ def _validate_apply_identity(job: AdminJob, state: ReconciliationReviewState) ->
         or state.target_identity_digest != job.target_identity_digest
     ):
         raise RuntimeError("reconciliation apply target identity changed")
+
+
+def _validate_verification_metadata(job: AdminJob) -> None:
+    if job.status in {"pending", "running", "failed"}:
+        if (
+            job.verification_status is not None
+            or job.verification_message is not None
+            or job.checked_row_count != 0
+            or job.failed_row_count != 0
+        ):
+            raise ValueError("reconciliation verification manifest is invalid")
+        return
+    if job.status != "ready" or job.verification_status not in _CANONICAL_VERIFICATION_STATUSES:
+        raise ValueError("reconciliation verification manifest is invalid")
+    if not isinstance(job.verification_message, str) or not job.verification_message:
+        raise ValueError("reconciliation verification manifest is invalid")
+    if job.verification_status == "passed":
+        if job.output is not None or job.failed_row_count != 0:
+            raise ValueError("reconciliation verification manifest is invalid")
+        return
+    if job.output is None or job.failed_row_count < 1:
+        raise ValueError("reconciliation verification manifest is invalid")
 
 
 def _manifest_count(value: object) -> int:
@@ -1210,7 +1226,7 @@ def _apply_snapshot_names(job: AdminJob) -> list[str]:
 
 def _verify_recovered_ready_job(job: AdminJob, manifest: dict[str, object]) -> None:
     if job.output is None:
-        if job.operation != "verify" or job.verification_status != "pass":
+        if job.operation != "verify" or job.verification_status != "passed":
             raise RuntimeError("reconciliation ready result is unavailable")
         return
     expected_digest = _manifest_digest(manifest.get("output_digest"))

@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from report_processor.admin_panel.reconciliation_execution import ReconciliationReviewResult
-from report_processor.admin_panel.reconciliation_target import ReconciliationTargetIdentity
-from report_processor.admin_panel.service import AdminJob, AdminPanelService
+from report_processor.admin_panel.reconciliation_verification import VerificationResult
+from report_processor.admin_panel.service import AdminPanelService
 
 
 def _upload(value: str) -> bytes:
@@ -106,41 +106,28 @@ def test_tampered_or_symlinked_ready_output_is_not_recovered(tmp_path: Path) -> 
         recovered.get_job(changed_input.job_id)
 
 
-def test_passed_verification_without_an_artifact_recovers(tmp_path: Path) -> None:
+def test_passed_verification_without_an_artifact_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     service = AdminPanelService(tmp_path / "jobs")
-    directory = service.workspace_root / "verify-only"
-    directory.mkdir()
-    source = directory / "source.xlsx"
-    target = directory / "target.xlsx"
-    source.write_bytes(_upload("source"))
-    target.write_bytes(_upload("target"))
-    job = AdminJob(
-        job_id="verify-only",
-        directory=directory,
-        source=source,
-        target=target,
-        stage="13.1",
-        mode="write",
-        source_digest=hashlib.sha256(source.read_bytes()).hexdigest(),
-        target_digest=hashlib.sha256(target.read_bytes()).hexdigest(),
-        target_identity_digest=ReconciliationTargetIdentity(
-            hashlib.sha256(target.read_bytes()).hexdigest(), "13.1"
-        ).target_identity_digest,
-        sources=(source,),
-        source_digests=(hashlib.sha256(source.read_bytes()).hexdigest(),),
-        operation="verify",
-        status="ready",
-        verification_status="pass",
-        verification_message="verified",
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.verify_reconciliation",
+        lambda *_args: VerificationResult("passed", "verified", 1, 0),
     )
-    service.jobs[job.job_id] = job
-    service._persist_job(job)
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=_upload("source"),
+        target_name="target.xlsx",
+        target_content=_upload("target"),
+        stage="13.1",
+        operation="verify",
+    )
 
     restored = AdminPanelService(service.workspace_root).get_job(job.job_id)
 
     assert restored.status == "ready"
     assert restored.output is None
-    assert restored.verification_status == "pass"
+    assert restored.verification_status == "passed"
 
 
 def test_recovery_rejects_output_swapped_after_descriptor_validation(
