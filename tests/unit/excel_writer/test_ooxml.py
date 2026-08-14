@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import struct
 import threading
 import tracemalloc
 from pathlib import Path
@@ -232,6 +233,21 @@ def test_wrong_root_and_nested_spreadsheet_cells_fail_before_edit() -> None:
             replace_cell_value(xml, "A1", "3")
 
 
+@pytest.mark.parametrize(
+    "cell_parent",
+    (b'<c r="A1"><v>2</v></c>', b'<sheetData><c r="A1"><v>2</v></c></sheetData>'),
+)
+def test_spreadsheet_cells_outside_rows_fail_before_edit(cell_parent: bytes) -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        + cell_parent
+        + b"</worksheet>"
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+        replace_cell_value(xml, "A1", "3")
+
+
 def test_self_closing_value_expansion_preserves_opening_attributes() -> None:
     xml = (
         b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
@@ -294,7 +310,9 @@ def test_compact_index_has_bounded_memory_for_twenty_thousand_cells() -> None:
         tracemalloc.stop()
 
     assert len(index.cells) == 20_000
-    assert peak < 24 * 1024 * 1024
+    # The compact index retains less than 10x the source XML, excluding the
+    # caller-owned XML buffer itself; this catches accidental per-cell graphs.
+    assert peak - len(xml) < len(xml) * 9
 
 
 def test_verify_temp_package_scans_changed_part_once_for_one_thousand_cells(
@@ -337,6 +355,21 @@ def test_worksheet_and_archive_admission_limits_fail_before_processing(
     with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
         archive.writestr("xl/worksheets/sheet1.xml", b"x" * 100)
     monkeypatch.setattr(ooxml, "_MAX_COMPRESSION_RATIO", 1)
+    with pytest.raises(ExcelWriterSafetyError, match="INVALID_XLSX_PACKAGE"):
+        ooxml.reject_unsupported_package(archive_path)
+
+
+def test_raw_central_directory_count_must_match_eocd_before_zipfile(tmp_path: Path) -> None:
+    archive_path = tmp_path / "forged-count.xlsx"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("first", b"1")
+        archive.writestr("second", b"2")
+    payload = bytearray(archive_path.read_bytes())
+    eocd = payload.rfind(b"PK\x05\x06")
+    struct.pack_into("<H", payload, eocd + 8, 1)
+    struct.pack_into("<H", payload, eocd + 10, 1)
+    archive_path.write_bytes(payload)
+
     with pytest.raises(ExcelWriterSafetyError, match="INVALID_XLSX_PACKAGE"):
         ooxml.reject_unsupported_package(archive_path)
 

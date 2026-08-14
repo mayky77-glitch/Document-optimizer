@@ -91,7 +91,9 @@ def write_target_report(
     output = Path(output_path)
     _validate_public_inputs(source, output, decision, target_schema)
     snapshot_path, source_identity = _snapshot_source(source, output.parent)
-    snapshot_owned = True
+    temp_path: Path | None = None
+    published = False
+    published_identity: _PublishedOutputIdentity | None = None
     try:
         _validate_schema_identity(source, source_identity, target_schema)
         if decision not in _WRITABLE_DECISIONS:
@@ -106,7 +108,6 @@ def write_target_report(
                 (),
                 (),
             )
-            snapshot_path.unlink(missing_ok=True)
             return result
         if output.exists():
             raise ExcelWriterSafetyError("OUTPUT_EXISTS", str(output))
@@ -116,14 +117,8 @@ def write_target_report(
         written_cells = _build_write_plan(snapshot_path, calculations, target_schema, parts)
         if not written_cells:
             raise ExcelWriterInputError("EMPTY_WRITE_SET", "no non-None calculated values")
-    except BaseException:
-        snapshot_path.unlink(missing_ok=True)
-        raise
-    changes_by_part = _changes_by_part(written_cells, parts)
-    temp_path = _temp_path(output)
-    published = False
-    published_identity: _PublishedOutputIdentity | None = None
-    try:
+        changes_by_part = _changes_by_part(written_cells, parts)
+        temp_path = _temp_path(output)
         _write_temp_package(snapshot_path, temp_path, changes_by_part, remove_calc_chain=True)
         _verify_temp_package(snapshot_path, temp_path, changes_by_part, remove_calc_chain=True)
         if package_has_formulas(temp_path, parts):
@@ -157,9 +152,9 @@ def write_target_report(
             _remove_published_output_if_owned(output, published_identity)
         raise ExcelWriterAtomicError("ATOMIC_PUBLISH_FAILED", str(error)) from error
     finally:
-        temp_path.unlink(missing_ok=True)
-        if snapshot_owned:
-            snapshot_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        snapshot_path.unlink(missing_ok=True)
 
 
 def _validate_public_inputs(
@@ -368,10 +363,32 @@ def _temp_path(output: Path) -> Path:
 
 
 def _source_identity(path: Path) -> _SourceIdentity:
-    details = path.stat()
-    return _SourceIdentity(
-        details.st_dev, details.st_ino, details.st_size, details.st_mtime_ns, _sha256(path)
-    )
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > 256 * 1024 * 1024:
+            raise ExcelWriterSafetyError("INVALID_SOURCE", "source is not a bounded regular file")
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := os.read(descriptor, 1_048_576):
+            size += len(chunk)
+            if size > 256 * 1024 * 1024:
+                raise ExcelWriterSafetyError("INVALID_SOURCE", "source exceeds limit")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ) or size != before.st_size:
+            raise ExcelWriterIntegrityError("SOURCE_CHANGED_DURING_WRITE", str(path))
+        return _SourceIdentity(
+            before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, digest.hexdigest()
+        )
+    finally:
+        os.close(descriptor)
 
 
 def _snapshot_source(source: Path, directory: Path) -> tuple[Path, _SourceIdentity]:
@@ -383,24 +400,36 @@ def _snapshot_source(source: Path, directory: Path) -> tuple[Path, _SourceIdenti
     snapshot_name = ""
     try:
         details = os.fstat(descriptor)
-        if not stat.S_ISREG(details.st_mode):
+        if not stat.S_ISREG(details.st_mode) or details.st_size > 256 * 1024 * 1024:
             raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "source is not a regular file")
         snapshot_descriptor, snapshot_name = tempfile.mkstemp(
             prefix=".excel-writer-source-", suffix=".xlsx", dir=directory
         )
         os.fchmod(snapshot_descriptor, 0o600)
         digest = hashlib.sha256()
+        copied = 0
         while chunk := os.read(descriptor, 1_048_576):
+            copied += len(chunk)
+            if copied > 256 * 1024 * 1024:
+                raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "source exceeds limit")
             digest.update(chunk)
-            os.write(snapshot_descriptor, chunk)
+            _write_all(snapshot_descriptor, chunk)
+        final_details = os.fstat(descriptor)
+        if (details.st_dev, details.st_ino, details.st_size, details.st_mtime_ns) != (
+            final_details.st_dev,
+            final_details.st_ino,
+            final_details.st_size,
+            final_details.st_mtime_ns,
+        ) or copied != details.st_size:
+            raise ExcelWriterIntegrityError("SOURCE_CHANGED_DURING_WRITE", str(source))
         os.fsync(snapshot_descriptor)
         return (
             Path(snapshot_name),
             _SourceIdentity(
-                details.st_dev,
-                details.st_ino,
-                details.st_size,
-                details.st_mtime_ns,
+                final_details.st_dev,
+                final_details.st_ino,
+                final_details.st_size,
+                final_details.st_mtime_ns,
                 digest.hexdigest(),
             ),
         )
@@ -426,6 +455,17 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1_048_576), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    """Do not silently accept a short write while capturing the source snapshot."""
+
+    offset = 0
+    while offset < len(payload):
+        written = os.write(descriptor, payload[offset:])
+        if written <= 0:
+            raise OSError("short snapshot write")
+        offset += written
 
 
 def _published_output_identity(path: Path) -> _PublishedOutputIdentity:
