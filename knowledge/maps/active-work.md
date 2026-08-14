@@ -25,7 +25,9 @@ as blocked evidence because full historical preview also needs the shared target
 paths. Active replacement: first
 [[../tasks/reconciliation-period-preview-complete|combined bounded preview]], then
 [[../tasks/reconciliation-period-apply-service-v2|transactional apply/service recovery]], then a
-separate API/UI wave and one low-load release shadow.
+namespace compatibility through
+[[../tasks/reconciliation-writer-namespace|the byte-preserving writer bridge]], then a separate
+API/UI wave and one low-load release shadow.
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 
