@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -116,6 +118,59 @@ def test_safe_package_passes_without_an_artifact(tmp_path: Path, monkeypatch) ->
     assert result.message == "Все документы проверены. Ошибок не найдено."
     assert result.checked_row_count == 1 and result.failed_row_count == 0
     assert result.output is None
+
+
+def test_verification_rejects_period_before_review_or_preview_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    job = _job(tmp_path)
+    job.reporting_period = "2026-08"
+    called = False
+
+    def should_not_run(*_args):
+        nonlocal called
+        called = True
+        raise AssertionError("verification must not build a reconciliation review")
+
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.prepare_review", should_not_run
+    )
+
+    with pytest.raises(VerificationTechnicalFailure, match="REPORTING_PERIOD_UNSUPPORTED"):
+        verify_reconciliation(job, ())
+
+    assert called is False
+
+
+def test_fresh_verification_import_does_not_load_period_planner() -> None:
+    script = """
+import sys
+import report_processor.admin_panel.reconciliation_verification
+assert 'report_processor.excel_writer.period_insertion' not in sys.modules
+import report_processor.excel_writer as writer
+assert 'prepare_period_insertion' in dir(writer)
+first = writer.prepare_period_insertion
+assert first is writer.prepare_period_insertion
+from report_processor.excel_writer import prepare_period_insertion
+assert first is prepare_period_insertion
+namespace = {}
+exec('from report_processor.excel_writer import *', namespace)
+assert namespace['prepare_period_insertion'] is first
+from report_processor.excel_writer import period_insertion
+assert period_insertion.prepare_period_insertion is first
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.parametrize(

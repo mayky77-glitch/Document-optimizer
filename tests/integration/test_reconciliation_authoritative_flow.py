@@ -1,6 +1,7 @@
 import threading
 from decimal import Decimal
 from hashlib import sha256
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,9 +10,14 @@ from report_processor.admin_panel.reconciliation_execution import (
     ReconciliationApplyResult,
     _apply_plan,
     _feedback_records,
+    _physical_source_identity,
 )
 from report_processor.admin_panel.reconciliation_state import ReconciliationReviewState
-from report_processor.admin_panel.reconciliation_target import _bindings, writer_calculations
+from report_processor.admin_panel.reconciliation_target import (
+    ReconciliationTargetIdentity,
+    _bindings,
+    writer_calculations,
+)
 from report_processor.admin_panel.reconciliation_target_measure import TargetMeasurePair
 from report_processor.admin_panel.service import (
     AdminJob,
@@ -27,6 +33,7 @@ from report_processor.reconciliation_review import (
     ReviewRow,
     build_review_groups,
 )
+from report_processor.schema import LogicalColumn
 
 
 def test_two_accepted_source_rows_contribute_once_to_one_target_aggregate() -> None:
@@ -52,6 +59,16 @@ def test_two_accepted_source_rows_contribute_once_to_one_target_aggregate() -> N
     assert result.cost == Decimal("25.00")
 
 
+def test_physical_source_identity_uses_normalized_source_row_provenance() -> None:
+    source = calculation_source_row("source:upload-a:17")
+
+    assert _physical_source_identity(source) == (
+        source.source_file_id,
+        source.source_sheet,
+        source.source_row_number,
+    )
+
+
 def test_reconciliation_target_binds_discovered_cells_and_scales_writer_values() -> None:
     source = calculation_source_row(
         "source:1", quantity=Decimal("1.005"), cost=Decimal("1000000.005")
@@ -63,8 +80,26 @@ def test_reconciliation_target_binds_discovered_cells_and_scales_writer_values()
     (written,) = writer_calculations(calculated)
 
     pair = TargetMeasurePair("Отчёт", 12, 13, "август 2026 количество", "август 2026 стоимость")
+    roles = {
+        "Отчёт": {
+            role: SimpleNamespace(
+                column_index=index,
+                column_letter=letter,
+                header_text=role.value,
+            )
+            for role, index, letter in (
+                (LogicalColumn.OBJECT_CODE, 1, "A"),
+                (LogicalColumn.DOCUMENT_INDEX, 2, "B"),
+                (LogicalColumn.STAGE, 3, "C"),
+                (LogicalColumn.ROW_NUMBER, 4, "D"),
+                (LogicalColumn.WORK_NAME, 5, "E"),
+                (LogicalColumn.UNIT, 6, "F"),
+            )
+        }
+    }
     assert [
-        (binding.logical_column.value, binding.column_letter) for binding in _bindings((pair,))
+        (binding.logical_column.value, binding.column_letter)
+        for binding in _bindings(roles, (pair,))
     ] == [
         ("object_code", "A"),
         ("document_index", "B"),
@@ -79,21 +114,30 @@ def test_reconciliation_target_binds_discovered_cells_and_scales_writer_values()
     assert written.cost == Decimal("2.70")
 
 
-def _review_job(tmp_path) -> tuple[AdminPanelService, AdminJob, str]:
+def _review_job(
+    tmp_path,
+    *,
+    work_name: str = "Монтаж трубы",
+    unit: str = "м",
+    category: str = "target-1",
+) -> tuple[AdminPanelService, AdminJob, str]:
     service = AdminPanelService(tmp_path)
     directory = tmp_path / "job"
     directory.mkdir()
     source, target = directory / "source.xlsx", directory / "target.xlsx"
     source.write_bytes(b"source")
     target.write_bytes(b"target")
-    row = ReviewRow("source:1", "Монтаж трубы", "м", Decimal("1"), Decimal("2"))
+    row = ReviewRow("source:1", work_name, unit, Decimal("1"), Decimal("2"))
     (group,) = build_review_groups((row,))
     state = ReconciliationReviewState(
         rows={row.row_id: row},
         groups={group.group_id: group},
-        categories={"target-1": "Цель"},
+        categories={category: "Цель"},
         source_digests=(sha256(source.read_bytes()).hexdigest(),),
         target_digest=sha256(target.read_bytes()).hexdigest(),
+        target_identity_digest=ReconciliationTargetIdentity(
+            sha256(target.read_bytes()).hexdigest(), "13.1"
+        ).target_identity_digest,
     )
     job = AdminJob(
         job_id="job",
@@ -104,6 +148,7 @@ def _review_job(tmp_path) -> tuple[AdminPanelService, AdminJob, str]:
         mode="write",
         source_digest=state.source_digests[0],
         target_digest=state.target_digest,
+        target_identity_digest=state.target_identity_digest,
         sources=(source,),
         source_digests=state.source_digests,
         status="review_required",
@@ -113,7 +158,7 @@ def _review_job(tmp_path) -> tuple[AdminPanelService, AdminJob, str]:
     return service, job, group.group_id
 
 
-def _accept_group(job: AdminJob, group_id: str) -> None:
+def _accept_group(job: AdminJob, group_id: str, *, category: str = "target-1") -> None:
     assert job.review_state is not None
     version = job.review_state.group_snapshot()[0].version
     job.review_state.put_group(
@@ -121,7 +166,7 @@ def _accept_group(job: AdminJob, group_id: str) -> None:
         ReviewDecision(
             action=ReviewAction.ACCEPT,
             mode=ReviewMode.QUANTITY_COST,
-            target_category="target-1",
+            target_category=category,
             group_id=group_id,
             version=version,
         ),
@@ -144,7 +189,7 @@ def test_apply_blocks_unresolved_and_tampered_input_before_write(tmp_path, monke
 
     _accept_group(job, group_id)
     job.target.write_bytes(b"tampered")
-    with pytest.raises(RuntimeError, match="input upload changed"):
+    with pytest.raises(RuntimeError, match="target upload changed"):
         service.apply_reconciliation(job.job_id)
     assert called is False and job.status == "failed"
 
@@ -176,11 +221,28 @@ def test_feedback_failure_removes_written_output_and_never_marks_job_ready(
 
 @pytest.mark.parametrize("fault", ["before_commit", "after_commit"])
 def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) -> None:
-    service, job, group_id = _review_job(tmp_path)
-    _accept_group(job, group_id)
+    distinctive_work = "DISTINCTIVE PRIVATE WORK 9f44"
+    distinctive_unit = "DISTINCTIVE PRIVATE UNIT 2b81"
+    distinctive_category = "DISTINCTIVE PRIVATE CATEGORY 7c12"
+    service, job, group_id = _review_job(
+        tmp_path,
+        work_name=distinctive_work,
+        unit=distinctive_unit,
+        category=distinctive_category,
+    )
+    _accept_group(job, group_id, category=distinctive_category)
     output = job.directory / "result.xlsx"
     decisions = tuple(job.review_state.core_decisions())
     feedback = _feedback_records(job.review_state, decisions)
+    evidence = {
+        "catalog_digest": "a" * 64,
+        "target_identity_digest": job.target_identity_digest,
+        "calculation_digest": "c" * 64,
+        "rules_hash": "d" * 64,
+        "actionable": True,
+        "feedback": feedback,
+    }
+    plan: dict[str, str] = {}
 
     def write_result(*_args):
         output.write_bytes(b"result")
@@ -193,9 +255,24 @@ def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) 
             _feedback_records(job.review_state, decisions),
             decisions,
         )
-        return ReconciliationApplyResult(output, feedback, apply_key, plan_hash)
+        plan.update(apply_key=apply_key, plan_hash=plan_hash)
+        return ReconciliationApplyResult(
+            output,
+            feedback,
+            apply_key,
+            plan_hash,
+            evidence["catalog_digest"],
+            evidence["target_identity_digest"],
+            evidence["calculation_digest"],
+            evidence["rules_hash"],
+            True,
+        )
 
     monkeypatch.setattr("report_processor.admin_panel.service.apply_review", write_result)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.rebuild_apply_evidence",
+        lambda *_args: {**plan, **evidence},
+    )
     monkeypatch.setattr(
         "report_processor.admin_panel.service.prepare_review",
         lambda *_args: __import__(
@@ -225,12 +302,139 @@ def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) 
     with pytest.raises(OSError):
         service.apply_reconciliation(job.job_id)
     assert job.status == "applying"
+    manifest_bytes = (job.directory / "job-manifest.json").read_bytes()
+    for private_value in (distinctive_work, distinctive_unit, distinctive_category):
+        assert private_value.encode() not in manifest_bytes
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    replay_decision = manifest["apply"]["evidence"]["decisions"][0]
+    assert set(replay_decision) == {
+        "action",
+        "group_id",
+        "mode",
+        "row_id",
+        "target_category_token",
+        "version",
+    }
 
     restored = AdminPanelService(tmp_path).get_job(job.job_id)
 
     assert restored.status == "ready"
     records = AdminPanelService(tmp_path).feedback_store.records(job.target_digest)
-    assert len(records) == len(feedback)
+    assert records == feedback
+    assert AdminPanelService(tmp_path).feedback_store.records(job.target_digest) == records
+
+
+def _crash_non_actionable_apply(tmp_path, monkeypatch):
+    service, job, group_id = _review_job(tmp_path)
+    _accept_group(job, group_id)
+    output = job.directory / "result.xlsx"
+    decisions = tuple(job.review_state.core_decisions())
+    feedback = _feedback_records(job.review_state, decisions)
+    evidence = {
+        "catalog_digest": "a" * 64,
+        "target_identity_digest": job.target_identity_digest,
+        "calculation_digest": "c" * 64,
+        "rules_hash": "d" * 64,
+        "actionable": False,
+        "feedback": feedback,
+    }
+    plan: dict[str, str] = {}
+
+    def publish_unchanged(*_args):
+        output.write_bytes(job.target.read_bytes())
+        from report_processor.business_rules import load_default_rule_set
+
+        apply_key, plan_hash = _apply_plan(
+            job,
+            job.review_state,
+            load_default_rule_set().rule_set.content_hash,
+            feedback,
+            decisions,
+        )
+        plan.update(apply_key=apply_key, plan_hash=plan_hash)
+        return ReconciliationApplyResult(
+            output,
+            feedback,
+            apply_key,
+            plan_hash,
+            evidence["catalog_digest"],
+            evidence["target_identity_digest"],
+            evidence["calculation_digest"],
+            evidence["rules_hash"],
+            False,
+        )
+
+    monkeypatch.setattr("report_processor.admin_panel.service.apply_review", publish_unchanged)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.rebuild_apply_evidence",
+        lambda *_args: {**plan, **evidence},
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.prepare_review",
+        lambda *_args: __import__(
+            "report_processor.admin_panel.reconciliation_execution",
+            fromlist=["ReconciliationReviewResult"],
+        ).ReconciliationReviewResult(state=job.review_state, source_batch=None),
+    )
+    monkeypatch.setattr(
+        service.feedback_store,
+        "commit_apply",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("before commit")),
+    )
+    with pytest.raises(OSError, match="before commit"):
+        service.apply_reconciliation(job.job_id)
+    return service, job, feedback, plan
+
+
+def test_non_actionable_recovery_keeps_original_bytes_and_replays_once(
+    tmp_path, monkeypatch
+) -> None:
+    service, job, feedback, _plan = _crash_non_actionable_apply(tmp_path, monkeypatch)
+    original = job.target.read_bytes()
+
+    restored = AdminPanelService(tmp_path).get_job(job.job_id)
+
+    assert restored.output is not None and restored.output.read_bytes() == original
+    assert service.feedback_store.records(job.target_digest) == feedback
+    assert AdminPanelService(tmp_path).feedback_store.records(job.target_digest) == feedback
+
+
+def test_non_actionable_recovery_rejects_self_consistent_changed_output(
+    tmp_path, monkeypatch
+) -> None:
+    service, job, _feedback, plan = _crash_non_actionable_apply(tmp_path, monkeypatch)
+    assert job.output is not None
+    job.output.write_bytes(b"self-consistent but not the immutable target")
+    changed_digest = sha256(job.output.read_bytes()).hexdigest()
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    manifest["output_digest"] = changed_digest
+    manifest["apply"]["output_digest"] = changed_digest
+    manifest["apply"]["payload_hash"] = sha256(
+        f"{plan['plan_hash']}:output-sha256:{changed_digest}".encode()
+    ).hexdigest()
+    service._job_store.save(job.job_id, manifest)
+
+    recovered = AdminPanelService(tmp_path)
+
+    with pytest.raises(KeyError):
+        recovered.get_job(job.job_id)
+    assert recovered.feedback_store.records(job.target_digest) == ()
+
+
+def test_apply_recovery_rejects_tampered_category_replay_token(tmp_path, monkeypatch) -> None:
+    service, job, _feedback, _plan = _crash_non_actionable_apply(tmp_path, monkeypatch)
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None
+    manifest["apply"]["evidence"]["decisions"][0]["target_category_token"] = "f" * 64
+    service._job_store.save(job.job_id, manifest)
+
+    recovered = AdminPanelService(tmp_path)
+
+    with pytest.raises(KeyError):
+        recovered.get_job(job.job_id)
+    assert recovered.feedback_store.records(job.target_digest) == ()
 
 
 def test_hostile_apply_hash_cannot_commit_feedback_or_publish_ready(tmp_path, monkeypatch) -> None:
@@ -302,6 +506,10 @@ def test_repeated_apply_keeps_verified_ready_result_unchanged(tmp_path, monkeypa
     assert calls == 1
     assert output.read_bytes() == before
     assert job.status == "ready" and job.result_available is True
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None and "apply" not in manifest
+    restored = AdminPanelService(tmp_path).get_job(job.job_id)
+    assert restored.status == "ready" and restored.result_available is True
 
 
 def test_apply_validates_and_chmods_output_before_feedback_commit(tmp_path, monkeypatch) -> None:

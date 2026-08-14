@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from report_processor.admin_panel import service as admin_service
+from report_processor.admin_panel.reconciliation_execution import ReconciliationReviewResult
 from report_processor.admin_panel.service import MAX_MANUAL_DISCREPANCY_DECISIONS, AdminPanelService
 from report_processor.domain.exceptions import UnsupportedExcelFormatError
 from report_processor.domain.statuses import StatusCode
@@ -78,6 +79,109 @@ def _manual_discrepancy_result():
     )
 
 
+def _blocked_result():
+    return SimpleNamespace(
+        artifacts={"quality_report": SimpleNamespace(summary={}, issues=())},
+        state="BLOCKED",
+        exit_code=3,
+        warnings=(),
+        errors=(),
+    )
+
+
+def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
+    tmp_path: Path,
+) -> None:
+    service = AdminPanelService(
+        tmp_path / "jobs",
+        execute=lambda _job: ReconciliationReviewResult(state=object(), source_batch=None),
+    )
+    service.run = lambda job_id: service.jobs[job_id]
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+        reporting_period="2026-08",
+    )
+
+    manifest = service._job_store.load(job.job_id)
+    assert job.reporting_period == "2026-08"
+    assert manifest is not None
+    assert manifest["contract"] == "AdminReconciliationJobManifest-3.0"
+    assert manifest["reporting_period"] == "2026-08"
+
+    for required_key in ("reporting_period", "target_identity_digest"):
+        incomplete = dict(manifest)
+        incomplete.pop(required_key)
+        (job.directory / "job-manifest.json").write_text(json.dumps(incomplete), encoding="utf-8")
+        with pytest.raises(KeyError):
+            AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
+
+    legacy = dict(manifest)
+    legacy["contract"] = "AdminReconciliationJobManifest-2.0"
+    (job.directory / "job-manifest.json").write_text(json.dumps(legacy), encoding="utf-8")
+    with pytest.raises(KeyError):
+        AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
+
+    with pytest.raises(ValueError, match="REPORTING_PERIOD_INVALID"):
+        service.create_job(
+            source_name="source.xlsx",
+            source_content=b"PK\x03\x04source",
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04target",
+            stage="13.1",
+            reporting_period="2026-8",
+        )
+    with pytest.raises(ValueError, match="UNSUPPORTED_FOR_VERIFY"):
+        service.create_job(
+            source_name="source.xlsx",
+            source_content=b"PK\x03\x04source",
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04target",
+            stage="13.1",
+            operation="verify",
+            reporting_period="2026-08",
+        )
+
+
+def test_ready_period_manifest_rejects_tampered_preview_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected_identity = "a" * 64
+    monkeypatch.setattr(
+        admin_service,
+        "_period_target_identity_digest",
+        lambda _job: expected_identity,
+    )
+    service = AdminPanelService(tmp_path / "jobs")
+    service.run = lambda job_id: service.jobs[job_id]
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+        reporting_period="2026-08",
+    )
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"output")
+    job.status = "ready"
+    job.output = output
+    job.result_name = "optimized-report.xlsx"
+    job.target_identity_digest = expected_identity
+    service._persist_job(job)
+
+    tampered = service._job_store.load(job.job_id)
+    assert tampered is not None
+    tampered["target_identity_digest"] = "b" * 64
+    (job.directory / "job-manifest.json").write_text(json.dumps(tampered), encoding="utf-8")
+
+    with pytest.raises(KeyError):
+        AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
+
+
 def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path: Path) -> None:
     source_content = b"PK\x03\x04source"
     target_content = b"PK\x03\x04target"
@@ -116,6 +220,48 @@ def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path
     assert [item["decision"] for item in payload["decisions"]] == ["fit", "not_fit"]
     assert str(tmp_path) not in result_path.read_text(encoding="utf-8")
     assert payload["statement"].startswith("Решения оператора записаны отдельно")
+
+
+def test_generic_blocked_job_keeps_private_journal_available_in_process(tmp_path: Path) -> None:
+    service = AdminPanelService(tmp_path / "jobs", execute=lambda _job: _blocked_result())
+
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+    )
+
+    assert job.status == "blocked" and job.result_available is True
+    output, name = service.get_result(job.job_id)
+    assert name == "review-journal.json" and output.is_file()
+
+
+def test_generic_manual_output_promotes_to_ready_after_decisions(tmp_path: Path) -> None:
+    expected = b"precomputed generic result"
+
+    def execute(job):
+        (job.directory / "result.xlsx").write_bytes(expected)
+        return _manual_result()
+
+    service = AdminPanelService(tmp_path / "jobs", execute=execute)
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+    )
+    assert job.status == "review_required" and job.output is not None
+    assert job.result_available is False
+    first, second = (item["suggestion_id"] for item in job.suggestions)
+
+    service.record_decision(job_id=job.job_id, suggestion_id=first, decision="fit")
+    service.record_decision(job_id=job.job_id, suggestion_id=second, decision="not_fit")
+
+    output, _name = service.get_result(job.job_id)
+    assert job.status == "ready" and output.read_bytes() == expected
 
 
 def test_omitted_stage_auto_selects_the_only_structurally_valid_target_stage(
