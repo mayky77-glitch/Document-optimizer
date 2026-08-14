@@ -193,6 +193,41 @@ def test_raw_merge_count_limit_rejects_before_overlap_work() -> None:
     assert operations == []
 
 
+def _raw_merges_payload(declared_count: str, physical_count: int) -> bytes:
+    references = "".join(
+        f'<mergeCell ref="A{index}:B{index}"/>' for index in range(1, physical_count + 1)
+    )
+    return (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<mergeCells count="{declared_count}">{references}</mergeCells>'
+        "</worksheet>"
+    ).encode()
+
+
+@pytest.mark.parametrize(
+    ("declared_count", "physical_count"),
+    (("0", 0), ("1", 1), ("64", 64), ("٤٠٩٦", 4_096)),
+)
+def test_raw_merge_count_uses_numeric_limit(declared_count: str, physical_count: int) -> None:
+    assert (
+        len(period_insertion._raw_sheet_merges(_raw_merges_payload(declared_count, physical_count)))
+        == physical_count
+    )
+
+
+def test_raw_merge_count_rejects_numeric_value_above_limit() -> None:
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        period_insertion._raw_sheet_merges(_raw_merges_payload("4097", 0))
+
+
+@pytest.mark.parametrize(("declared_count", "physical_count"), (("0", 1), ("1", 0)))
+def test_raw_merge_count_rejects_declared_physical_mismatch(
+    declared_count: str, physical_count: int
+) -> None:
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        period_insertion._raw_sheet_merges(_raw_merges_payload(declared_count, physical_count))
+
+
 def test_planner_rejects_wide_header_merge_before_output(tmp_path: Path) -> None:
     source, output = tmp_path / "wide.xlsx", tmp_path / "output.xlsx"
     workbook = Workbook()

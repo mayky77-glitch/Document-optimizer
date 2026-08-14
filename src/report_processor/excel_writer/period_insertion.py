@@ -88,13 +88,11 @@ def _raw_sheet_merges(payload: bytes, operations: list[int] | None = None) -> tu
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
     normalized_count = count.lstrip("0") or "0"
     maximum_count = str(_MAX_RAW_MERGES)
-    if (
-        len(normalized_count) > len(maximum_count)
-        or normalized_count > maximum_count
-        or len(container) > _MAX_RAW_MERGES
-    ):
+    if len(normalized_count) > len(maximum_count) or len(container) > _MAX_RAW_MERGES:
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
     declared_count = int(normalized_count)
+    if declared_count > _MAX_RAW_MERGES:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
     references: list[tuple[str, tuple[int, int, int, int]]] = []
     seen: set[str] = set()
     for child in container:
