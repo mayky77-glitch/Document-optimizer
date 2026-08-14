@@ -8,10 +8,10 @@ task_id: writer-namespace
 purpose: Make the byte-preserving Excel writer accept legal SpreadsheetML namespace prefixes.
 role: developer
 route: P5 -> developer / inherited runtime; reason: byte-offset XML parsing and writer integrity.
-launch_status: ready-after-service-review
+launch_status: ready
 card_path: knowledge/tasks/reconciliation-writer-namespace.md
 card_commit_sha_source: exact planning commit containing this card
-base_sha_source: 6d2bed7205e0f4b10acdae8394a9ce7b3d8a9ddb
+base_sha_source: dac566aee43a1a0fae81e04c34464cf1c9720280
 branch: codex/reconciliation-writer-namespace
 branch_base_sha_source: exact planning commit containing this card
 write_scope:
