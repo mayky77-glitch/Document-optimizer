@@ -365,6 +365,10 @@ def test_repeated_apply_keeps_verified_ready_result_unchanged(tmp_path, monkeypa
     assert calls == 1
     assert output.read_bytes() == before
     assert job.status == "ready" and job.result_available is True
+    manifest = service._job_store.load(job.job_id)
+    assert manifest is not None and "apply" not in manifest
+    restored = AdminPanelService(tmp_path).get_job(job.job_id)
+    assert restored.status == "ready" and restored.result_available is True
 
 
 def test_apply_validates_and_chmods_output_before_feedback_commit(tmp_path, monkeypatch) -> None:

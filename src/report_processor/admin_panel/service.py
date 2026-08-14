@@ -347,10 +347,11 @@ class AdminPanelService:
                         job, output, owned_output, output_digest
                     ),
                 )
-                # Publish a ready manifest while keeping the in-memory state
-                # applying until that durable write succeeds.
-                ready_manifest = self._manifest_for(job)
-                ready_manifest["status"] = "ready"
+                # Publish a fully validated ready manifest while keeping the
+                # in-memory state applying until that durable write succeeds.
+                ready_manifest = self._manifest_for(
+                    replace(job, status="ready", apply_manifest=None)
+                )
                 self._job_store.save(job.job_id, ready_manifest)
                 job.status = "ready"
                 job.apply_manifest = None
