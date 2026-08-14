@@ -87,8 +87,13 @@ class AdminJob:
 
     @property
     def result_available(self) -> bool:
+        allowed_statuses = (
+            {"ready"}
+            if self.operation == "verify" or self.review_state is not None
+            else {"ready", "blocked", "review_recorded"}
+        )
         return (
-            self.status == "ready"
+            self.status in allowed_statuses
             and self.output is not None
             and self.output.is_file()
             and not self.unresolved_suggestion_ids
@@ -304,6 +309,7 @@ class AdminPanelService:
             _validate_apply_identity(job, job.review_state)
             decisions = tuple(job.review_state.core_decisions())
             job.status = "applying"
+            self._persist_job(job)
             owned_output: tuple[int, int] | None = None
             try:
                 _verify_inputs(job)
@@ -521,7 +527,7 @@ class AdminPanelService:
             job.output = job.directory / "review-journal.json"
             _private_write(job.output, journal_payload(job))
             job.result_name = "review-journal.json"
-            job.status = "ready"
+            job.status = "review_recorded"
         elif job.status == "review_required":
             job.status = "ready"
 
@@ -599,6 +605,7 @@ class AdminPanelService:
             has_output=job.output is not None,
             has_apply=job.apply_manifest is not None,
             verification_status=job.verification_status,
+            runtime_generic=job.operation == "reconcile" and job.review_state is None,
         )
         if job.apply_manifest is not None:
             _validate_apply_header(job, job.apply_manifest)
@@ -625,7 +632,11 @@ class AdminPanelService:
             elif job.status == "ready":
                 _verify_recovered_ready_job(job, manifest)
             elif job.status == "applying":
-                self._recover_applying_job(job, manifest)
+                if job.output is None and "apply" not in manifest:
+                    job.status = "failed"
+                    job.errors = ("PROCESSING_INTERRUPTED",)
+                else:
+                    self._recover_applying_job(job, manifest)
             else:
                 # Never repeat interrupted processing.  An applying manifest
                 # lacks an immutable feedback payload, so it cannot safely
@@ -1094,23 +1105,32 @@ def _validate_status_artifact_matrix(
     has_output: bool,
     has_apply: bool,
     verification_status: str | None,
+    runtime_generic: bool = False,
 ) -> None:
     operation = validate_operation(operation)
     if operation == "reconcile":
         expected = {
-            "pending": (False, False),
-            "running": (False, False),
-            "review_required": (False, False),
-            "applying": (True, True),
-            "ready": (True, False),
+            "pending": {(False, False)},
+            "running": {(False, False)},
+            "review_required": {(False, False)},
+            "applying": {(False, False), (True, True)},
+            "ready": {(True, False)},
+            "failed": {(False, False)},
         }.get(status)
+        if runtime_generic:
+            expected = {
+                "review_required": {(False, False), (True, False)},
+                "blocked": {(True, False)},
+                "review_recorded": {(True, False)},
+            }.get(status, expected)
     else:
         expected = {
-            "pending": (False, False),
-            "running": (False, False),
-            "ready": (verification_status == "failed", False),
+            "pending": {(False, False)},
+            "running": {(False, False)},
+            "ready": {(verification_status == "failed", False)},
+            "failed": {(False, False)},
         }.get(status)
-    if expected is None or expected != (has_output, has_apply):
+    if expected is None or (has_output, has_apply) not in expected:
         raise ValueError("reconciliation manifest status artifacts are inconsistent")
 
 

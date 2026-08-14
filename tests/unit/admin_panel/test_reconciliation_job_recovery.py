@@ -269,24 +269,89 @@ def test_v1_manifest_is_invalidated_before_recovery(tmp_path: Path) -> None:
         recovered.get_job(job.job_id)
 
 
-def test_interrupted_apply_fails_closed_without_a_download(tmp_path: Path) -> None:
-    service = _ready_service(tmp_path / "jobs")
-    job = _ready_job(service)
-    assert job.output is not None
+def test_interrupted_apply_fails_closed_without_a_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "jobs"
+    service = AdminPanelService(
+        workspace,
+        execute=lambda _job: ReconciliationReviewResult(state=object(), source_batch=None),
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=_upload("source"),
+        target_name="target.xlsx",
+        target_content=_upload("target"),
+        stage="13.1",
+    )
+    assert job.status == "review_required" and job.output is None
+    job.status = "applying"
+    service._persist_job(job)
+    orphan = job.directory / "result.xlsx"
+    orphan.write_bytes(b"writer completed before the replay plan was durable")
+    orphan.chmod(0o600)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review",
+        lambda *_args: pytest.fail("recovery must not retry the writer"),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.prepare_review",
+        lambda *_args: pytest.fail("pre-evidence recovery must not rebuild review"),
+    )
+
+    recovered = AdminPanelService(workspace)
+
+    restored = recovered.get_job(job.job_id)
+    assert restored.status == "failed" and restored.output is None
+    with pytest.raises(KeyError):
+        recovered.get_result(job.job_id)
+    assert orphan.read_bytes() == b"writer completed before the replay plan was durable"
+
+
+@pytest.mark.parametrize("partial", ["output", "apply"])
+def test_applying_manifest_rejects_partial_evidence_envelopes(tmp_path: Path, partial: str) -> None:
+    workspace = tmp_path / "jobs"
+    service = AdminPanelService(
+        workspace,
+        execute=lambda _job: ReconciliationReviewResult(state=object(), source_batch=None),
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=_upload("source"),
+        target_name="target.xlsx",
+        target_content=_upload("target"),
+        stage="13.1",
+    )
+    job.status = "applying"
+    service._persist_job(job)
     manifest = service._job_store.load(job.job_id)
     assert manifest is not None
-    job.status = "applying"
-    with pytest.raises(ValueError, match="status artifacts"):
-        service._persist_job(job)
-    manifest["status"] = "applying"
+    if partial == "output":
+        output = job.directory / "result.xlsx"
+        output.write_bytes(b"partial")
+        output.chmod(0o600)
+        job.output = output
+        job.result_name = "optimized-report.xlsx"
+        with pytest.raises(ValueError, match="status artifacts"):
+            service._persist_job(job)
+        job.output = None
+        job.result_name = None
+        manifest.update(
+            output_path=output.name,
+            output_digest=hashlib.sha256(output.read_bytes()).hexdigest(),
+            output_identity=[output.stat().st_dev, output.stat().st_ino],
+            result_name="optimized-report.xlsx",
+        )
+    else:
+        job.apply_manifest = {}
+        with pytest.raises(ValueError, match="status artifacts"):
+            service._persist_job(job)
+        job.apply_manifest = None
+        manifest["apply"] = {}
     (job.directory / "job-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-    recovered = AdminPanelService(tmp_path / "jobs")
-
-    # An old/incomplete applying record has no immutable replay plan and is
-    # deliberately invisible rather than being rerun or made downloadable.
     with pytest.raises(KeyError):
-        recovered.get_job(job.job_id)
+        AdminPanelService(workspace).get_job(job.job_id)
 
 
 def test_apply_manifest_never_contains_workbook_derived_feedback_values(tmp_path: Path) -> None:
