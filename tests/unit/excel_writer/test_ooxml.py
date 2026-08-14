@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -97,6 +99,117 @@ def test_formula_cells_become_numeric_literals_including_shared_formula_cells() 
         assert not is_formula
         assert has_style
         assert cell_type in {None, "n"}
+
+
+@pytest.mark.parametrize("prefix", (b"", b"s:", b"ns0:", b"arbitrary:"))
+def test_namespace_qualified_cells_preserve_their_exact_qnames(prefix: bytes) -> None:
+    declaration = (
+        b'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        if not prefix
+        else b"xmlns:"
+        + prefix[:-1]
+        + b'="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    )
+    xml = (
+        b"<worksheet "
+        + declaration
+        + b'><sheetData><row r="1"><'
+        + prefix
+        + b'c r="D1"/><'
+        + prefix
+        + b'c r="E1"><'
+        + prefix
+        + b"f>D1*2</"
+        + prefix
+        + b"f><"
+        + prefix
+        + b"v/></"
+        + prefix
+        + b"c></row></sheetData></worksheet>"
+    )
+
+    updated = replace_cell_value(xml, "D1", "1.25")
+    materialized = materialize_formula_cells(updated, {"E1": "2.50"})
+
+    assert (
+        b"<" + prefix + b'c r="D1"><' + prefix + b"v>1.25</" + prefix + b"v></" + prefix + b"c>"
+        in updated
+    )
+    assert (
+        b"<" + prefix + b'c r="E1"><' + prefix + b"v>2.50</" + prefix + b"v></" + prefix + b"c>"
+        in materialized
+    )
+    assert formula_count(materialized) == 0
+    assert inspect_cell(materialized, "E1")[1] == "2.50"
+
+
+def test_foreign_lookalikes_are_ignored_and_namespace_calls_are_request_local() -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        b'xmlns:foreign="urn:foreign"><sheetData><row r="1">'
+        b'<foreign:c r="D1"><foreign:f>1</foreign:f><foreign:v>99</foreign:v></foreign:c>'
+        b'<c r="E1"><v>2</v></c></row></sheetData></worksheet>'
+    )
+    before = dict(ET._namespace_map)
+    errors: list[Exception] = []
+
+    def replace() -> None:
+        try:
+            assert inspect_cell(xml, "E1")[1] == "2"
+            assert replace_cell_value(xml, "E1", "3").count(b"foreign:c") == 2
+        except Exception as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    threads = [threading.Thread(target=replace) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    assert formula_count(xml) == 0
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+        inspect_cell(xml, "D1")
+    assert ET._namespace_map == before
+
+
+def test_duplicate_spreadsheet_value_nodes_fail_closed() -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row r="1"><c r="D1"><v>1</v><v>2</v></c>'
+        b"</row></sheetData></worksheet>"
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_LEXEME_MISMATCH"):
+        inspect_cell(xml, "D1")
+
+
+def test_duplicate_coordinates_and_dtds_fail_closed() -> None:
+    duplicate = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row><c r="D1"/><c r="D1"/></row></sheetData></worksheet>'
+    )
+    dtd = (
+        b'<!DOCTYPE worksheet [<!ENTITY value "1">]><worksheet '
+        b'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<c r="D1"><v>&value;</v></c></worksheet>'
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+        inspect_cell(duplicate, "D1")
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+        inspect_cell(dtd, "D1")
+
+
+def test_self_closing_value_expansion_preserves_opening_attributes() -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row><c r="D1"><v custom="keep"/></c></row></sheetData></worksheet>'
+    )
+
+    updated = replace_cell_value(xml, "D1", "4")
+
+    assert b'<v custom="keep">4</v>' in updated
 
 
 @pytest.mark.parametrize(
