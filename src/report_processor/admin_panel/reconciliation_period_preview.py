@@ -49,7 +49,7 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         adapted = _snapshot_session(session, formula_all, value_all)
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
         workbook_schema = analyze_workbook_schema(adapted)
-        roles = _base_roles(workbook_schema)
+        roles = _base_roles(workbook_schema, formula_all)
         metadata_schema = _reconciliation_metadata_schema(workbook_schema, roles)
         formula_snapshots, value_snapshots = _session_snapshots(adapted, roles)
         selected_stage = resolve_reconciliation_stage(
