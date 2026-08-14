@@ -88,11 +88,11 @@ class AdminJob:
     @property
     def result_available(self) -> bool:
         return (
-            self.output is not None
+            self.status == "ready"
+            and self.output is not None
             and self.output.is_file()
             and not self.unresolved_suggestion_ids
             and not self.unresolved_manual_discrepancy_ids
-            and self.status not in {"pending", "running", "applying", "failed"}
         )
 
     @property
@@ -304,7 +304,6 @@ class AdminPanelService:
             _validate_apply_identity(job, job.review_state)
             decisions = tuple(job.review_state.core_decisions())
             job.status = "applying"
-            self._persist_job(job)
             owned_output: tuple[int, int] | None = None
             try:
                 _verify_inputs(job)
@@ -362,7 +361,7 @@ class AdminPanelService:
                 if job.apply_manifest is None:
                     _remove_partial_output(job, owned_output)
                     job.status, job.errors = "failed", ("PROCESSING_FAILED",)
-                    self._persist_job(job)
+                    self._job_store.delete(job.job_id)
                 raise
             return job
 
@@ -522,7 +521,7 @@ class AdminPanelService:
             job.output = job.directory / "review-journal.json"
             _private_write(job.output, journal_payload(job))
             job.result_name = "review-journal.json"
-            job.status = "review_recorded"
+            job.status = "ready"
         elif job.status == "review_required":
             job.status = "ready"
 
@@ -594,6 +593,15 @@ class AdminPanelService:
                 checked_row_count=job.checked_row_count,
                 failed_row_count=job.failed_row_count,
             )
+        _validate_status_artifact_matrix(
+            operation=job.operation,
+            status=job.status,
+            has_output=job.output is not None,
+            has_apply=job.apply_manifest is not None,
+            verification_status=job.verification_status,
+        )
+        if job.apply_manifest is not None:
+            _validate_apply_header(job, job.apply_manifest)
         return payload
 
     def _recover_jobs(self) -> None:
@@ -887,8 +895,6 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
     output_identity = _manifest_identity(manifest.get("output_identity")) if output else None
     output_digest = _manifest_digest(manifest.get("output_digest")) if output else None
     has_apply = "apply" in manifest
-    if has_apply != (status == "applying" and output is not None):
-        raise ValueError("reconciliation manifest apply is inconsistent")
     if operation == "verify":
         verification_keys = (
             "verification_status",
@@ -955,6 +961,16 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
     if operation == "verify":
         _validate_verification_metadata(job)
     _validate_manifest_identity(job)
+    _validate_status_artifact_matrix(
+        operation=operation,
+        status=status,
+        has_output=output is not None,
+        has_apply=has_apply,
+        verification_status=job.verification_status,
+    )
+    if has_apply:
+        _validate_apply_header(job, manifest["apply"])
+        _load_apply_manifest(job, manifest["apply"])
     return job
 
 
@@ -1071,6 +1087,33 @@ def _validate_verification_metadata(job: AdminJob) -> None:
         raise ValueError("reconciliation verification manifest is invalid")
 
 
+def _validate_status_artifact_matrix(
+    *,
+    operation: str,
+    status: str,
+    has_output: bool,
+    has_apply: bool,
+    verification_status: str | None,
+) -> None:
+    operation = validate_operation(operation)
+    if operation == "reconcile":
+        expected = {
+            "pending": (False, False),
+            "running": (False, False),
+            "review_required": (False, False),
+            "applying": (True, True),
+            "ready": (True, False),
+        }.get(status)
+    else:
+        expected = {
+            "pending": (False, False),
+            "running": (False, False),
+            "ready": (verification_status == "failed", False),
+        }.get(status)
+    if expected is None or expected != (has_output, has_apply):
+        raise ValueError("reconciliation manifest status artifacts are inconsistent")
+
+
 def _strict_manifest_count(value: object) -> int:
     if type(value) is not int or not 0 <= value <= 10_000_000:
         raise ValueError("reconciliation verification manifest is invalid")
@@ -1107,6 +1150,32 @@ def _apply_manifest(
         "payload_hash": payload_hash,
         "evidence": evidence,
     }
+
+
+def _validate_apply_header(job: AdminJob, value: object) -> None:
+    required = {
+        "output_path",
+        "output_digest",
+        "output_identity",
+        "apply_key",
+        "payload_hash",
+        "evidence",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError("reconciliation apply plan is incomplete")
+    if job.output is None or job.output_identity is None or job.output_digest is None:
+        raise ValueError("reconciliation apply output is incomplete")
+    if value["output_path"] != job.output.name or value["output_path"] != "result.xlsx":
+        raise ValueError("reconciliation apply output path is invalid")
+    if _manifest_digest(value["output_digest"]) != job.output_digest:
+        raise ValueError("reconciliation apply output digest is inconsistent")
+    if _manifest_identity(value["output_identity"]) != job.output_identity:
+        raise ValueError("reconciliation apply output identity is inconsistent")
+    if not all(
+        isinstance(value[key], str) and 1 <= len(value[key]) <= 128
+        for key in ("apply_key", "payload_hash")
+    ) or not isinstance(value["evidence"], dict):
+        raise ValueError("reconciliation apply plan is invalid")
 
 
 def _load_apply_manifest(job: AdminJob, value: object) -> dict[str, object]:

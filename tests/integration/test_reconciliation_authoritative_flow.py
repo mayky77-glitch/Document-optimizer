@@ -293,7 +293,7 @@ def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) 
         def fail_ready_manifest(*args, **kwargs):
             nonlocal calls
             calls += 1
-            if calls == 3:
+            if calls == 2:
                 raise OSError("after commit")
             return original_save(*args, **kwargs)
 
