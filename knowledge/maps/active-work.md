@@ -26,8 +26,9 @@ paths. Active replacement: first
 [[../tasks/reconciliation-period-preview-complete|combined bounded preview]], then
 [[../tasks/reconciliation-period-apply-service-v2|transactional apply/service recovery]], then a
 namespace compatibility through
-[[../tasks/reconciliation-writer-namespace-v3|the immutable bounded writer bridge]], then a separate
-API/UI wave and one low-load release shadow.
+[[../tasks/reconciliation-writer-namespace-v3|the immutable bounded writer bridge]], then
+[[../tasks/reconciliation-period-ui|the explicit period API/UI wave]], then one low-load release
+shadow.
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
 
