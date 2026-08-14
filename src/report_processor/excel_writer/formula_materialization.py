@@ -23,7 +23,9 @@ from .ooxml import (
 _RECALCULATION_TIMEOUT_SECONDS = 120
 
 
-def recalculate_and_materialize(path: Path, source_descriptor: int | None = None) -> None:
+def recalculate_and_materialize(
+    path: Path, source_descriptor: int | None = None
+) -> tuple[int, int]:
     """Recalculate a private copy, then replace all formulas with numeric literals."""
 
     source = source_descriptor if source_descriptor is not None else path
@@ -51,7 +53,7 @@ def recalculate_and_materialize(path: Path, source_descriptor: int | None = None
         values_by_part = _recalculated_values(
             recalculated, authoritative_parts, coordinates_by_part
         )
-    materialize_formula_package(
+    materialized_identity = materialize_formula_package(
         path,
         authoritative_parts,
         values_by_part,
@@ -60,6 +62,7 @@ def recalculate_and_materialize(path: Path, source_descriptor: int | None = None
     # The replacement is still held open by materialize_formula_package only
     # during the replace; reopen its verified private pathname here.
     verify_materialized_package(path, values_by_part)
+    return materialized_identity
 
 
 def _formula_coordinates(path: Path | int, parts: dict[str, str]) -> dict[str, tuple[str, ...]]:

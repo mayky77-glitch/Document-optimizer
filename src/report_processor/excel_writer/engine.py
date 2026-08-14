@@ -154,11 +154,11 @@ def write_target_report(
         )
         _assert_named_descriptor(temp.path, temp.descriptor)
         if package_has_formulas(temp.descriptor, parts):
-            recalculate_and_materialize(temp.path, temp.descriptor)
+            materialized_identity = recalculate_and_materialize(temp.path, temp.descriptor)
             # Formula materialization replaces the archive; re-open only after
             # proving the expected private pathname still denotes that result.
             os.close(temp.descriptor)
-            temp = _open_owned_temp(temp.path)
+            temp = _open_owned_temp(temp.path, materialized_identity)
         verify_formula_free_package(temp.descriptor, parts)
         _assert_source_unchanged(source, source_identity)
         _assert_named_descriptor(temp.path, temp.descriptor)
@@ -405,13 +405,18 @@ def _temp_path(output: Path) -> _OwnedTemp:
     return _OwnedTemp(Path(name), descriptor, details.st_dev, details.st_ino)
 
 
-def _open_owned_temp(path: Path) -> _OwnedTemp:
+def _open_owned_temp(path: Path, expected_identity: tuple[int, int] | None = None) -> _OwnedTemp:
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     details = os.fstat(descriptor)
     named = os.lstat(path)
-    if not stat.S_ISREG(details.st_mode) or (details.st_dev, details.st_ino) != (
-        named.st_dev,
-        named.st_ino,
+    if (
+        not stat.S_ISREG(details.st_mode)
+        or (details.st_dev, details.st_ino)
+        != (
+            named.st_dev,
+            named.st_ino,
+        )
+        or (expected_identity is not None and (details.st_dev, details.st_ino) != expected_identity)
     ):
         os.close(descriptor)
         raise ExcelWriterIntegrityError("ATOMIC_PUBLISH_FAILED", "temporary output changed")

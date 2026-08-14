@@ -1091,7 +1091,7 @@ def materialize_formula_package(
     values_by_part: Mapping[str, Mapping[str, str]],
     *,
     source_descriptor: int | None = None,
-) -> None:
+) -> tuple[int, int]:
     """Materialize every formula in-place and remove obsolete calculation-chain metadata."""
 
     descriptor, name = tempfile.mkstemp(
@@ -1127,6 +1127,7 @@ def materialize_formula_package(
                 payload = _remove_calc_chain_metadata(info.filename, payload)
                 output.writestr(info, payload)
         _fsync_file(descriptor)
+        result = os.fstat(descriptor)
         if source_descriptor is not None:
             _assert_path_matches_descriptor(path, source_descriptor)
         os.replace(temporary, path)
@@ -1139,7 +1140,7 @@ def materialize_formula_package(
         raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", str(error)) from error
     finally:
         os.close(descriptor)
-    return None
+    return result.st_dev, result.st_ino
 
 
 def verify_materialized_package(
