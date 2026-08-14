@@ -5,10 +5,15 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+import zipfile
 from dataclasses import dataclass
+from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
+
+from report_processor.target_report.ooxml import worksheet_parts
 
 _HEADER_ROWS = 80
 _MAX_HEADER_WINDOW_CELLS = 500_000
@@ -17,6 +22,8 @@ _MAX_SUFFIX_CELLS = 50_000
 _MAX_SUFFIX_ROW = 1_048_576
 _MAX_SUFFIX_COLUMN = 16_384
 _MAX_VALIDATED_MERGE_RANGES = 4_096
+_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_Q = lambda name: f"{{{_MAIN_NS}}}{name}"  # noqa: E731
 _RUSSIAN_MONTH_TOKENS = {
     "январь": 1,
     "января": 1,
@@ -52,10 +59,49 @@ class ReconciliationTargetMeasureError(ValueError):
     """The selected target does not expose one safe current-period measure."""
 
 
+def raw_worksheet_merge_ranges(source_path: Path, sheet_name: str) -> tuple[str, ...]:
+    """Read one worksheet's unnormalised merge topology from its OOXML part."""
+
+    try:
+        part = worksheet_parts(Path(source_path)).get(sheet_name)
+        if part is None:
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        with zipfile.ZipFile(source_path) as archive:
+            root = ET.fromstring(archive.read(part))
+    except ReconciliationTargetMeasureError:
+        raise
+    except Exception as error:
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID") from error
+    containers = root.findall(_Q("mergeCells"))
+    if not containers:
+        return ()
+    if len(containers) != 1:
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    container = containers[0]
+    count = container.attrib.get("count")
+    if count is None or not count.isdecimal():
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    normalized_count = count.lstrip("0") or "0"
+    maximum_count = str(_MAX_VALIDATED_MERGE_RANGES)
+    if (
+        len(normalized_count) > len(maximum_count)
+        or normalized_count > maximum_count
+        or len(container) > _MAX_VALIDATED_MERGE_RANGES
+    ):
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    if any(child.tag != _Q("mergeCell") or set(child.attrib) != {"ref"} for child in container):
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    references = tuple(child.attrib["ref"] for child in container)
+    if int(normalized_count) != len(references):
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    return validated_merge_ranges(references)
+
+
 def validated_merge_ranges(references: tuple[str, ...]) -> tuple[str, ...]:
     """Fail closed on non-canonical, duplicate, or overlapping merge evidence."""
 
     ranges: list[tuple[str, tuple[int, int, int, int]]] = []
+    seen: set[str] = set()
     for reference in references:
         if len(ranges) >= _MAX_VALIDATED_MERGE_RANGES:
             raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
@@ -71,25 +117,69 @@ def validated_merge_ranges(references: tuple[str, ...]) -> tuple[str, ...]:
             or (left == right and top == bottom)
             or not 1 <= left <= right <= _MAX_SUFFIX_COLUMN
             or not 1 <= top <= bottom <= _MAX_SUFFIX_ROW
-            or any(reference == existing for existing, _bounds in ranges)
-            or any(
-                not (
-                    right < existing_left
-                    or existing_right < left
-                    or bottom < existing_top
-                    or existing_bottom < top
-                )
-                for _existing, (
-                    existing_left,
-                    existing_top,
-                    existing_right,
-                    existing_bottom,
-                ) in ranges
-            )
+            or reference in seen
         ):
             raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        seen.add(reference)
         ranges.append((reference, (left, top, right, bottom)))
+    _reject_overlapping_merge_ranges(bounds for _reference, bounds in ranges)
     return tuple(reference for reference, _bounds in ranges)
+
+
+def _reject_overlapping_merge_ranges(bounds) -> None:
+    events: dict[int, list[tuple[int, int, int]]] = {}
+    for left, top, right, bottom in bounds:
+        events.setdefault(top, []).append((1, left, right))
+        events.setdefault(bottom + 1, []).append((-1, left, right))
+    index = _MergeRangeIndex()
+    for row in sorted(events):
+        for delta, left, right in events[row]:
+            if delta < 0:
+                index.add(left, right, delta)
+        for delta, left, right in events[row]:
+            if delta > 0:
+                if index.maximum(left, right):
+                    raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+                index.add(left, right, delta)
+
+
+class _MergeRangeIndex:
+    """Fixed-column range index, keeping raw merge validation subquadratic."""
+
+    def __init__(self) -> None:
+        self._maximum = [0] * (_MAX_SUFFIX_COLUMN * 4)
+        self._lazy = [0] * (_MAX_SUFFIX_COLUMN * 4)
+
+    def add(self, left: int, right: int, delta: int) -> None:
+        self._update(1, 1, _MAX_SUFFIX_COLUMN, left, right, delta)
+
+    def maximum(self, left: int, right: int) -> int:
+        return self._query(1, 1, _MAX_SUFFIX_COLUMN, left, right)
+
+    def _update(self, node: int, start: int, end: int, left: int, right: int, delta: int) -> None:
+        if left <= start and end <= right:
+            self._maximum[node] += delta
+            self._lazy[node] += delta
+            return
+        middle = (start + end) // 2
+        if left <= middle:
+            self._update(node * 2, start, middle, left, right, delta)
+        if right > middle:
+            self._update(node * 2 + 1, middle + 1, end, left, right, delta)
+        self._maximum[node] = self._lazy[node] + max(
+            self._maximum[node * 2], self._maximum[node * 2 + 1]
+        )
+
+    def _query(self, node: int, start: int, end: int, left: int, right: int) -> int:
+        if left <= start and end <= right:
+            return self._maximum[node]
+        middle = (start + end) // 2
+        result = 0
+        if left <= middle:
+            result = self._query(node * 2, start, middle, left, right)
+        if right > middle:
+            result = max(result, self._query(node * 2 + 1, middle + 1, end, left, right))
+        return self._lazy[node] + result
 
 
 @dataclass(frozen=True, slots=True)

@@ -49,7 +49,7 @@ from .reconciliation_identity import terminal_identity
 from .reconciliation_target_measure import (
     TargetMeasurePair,
     discover_target_measures,
-    validated_merge_ranges,
+    raw_worksheet_merge_ranges,
 )
 
 _STAGE_RE = re.compile(r"этап\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
@@ -321,9 +321,7 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
         if not detail_rows:
             raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
         merged_ranges = {
-            sheet_name: validated_merge_ranges(
-                read_sheet_structure(session.source.local_path, sheet_name).merged_ranges
-            )
+            sheet_name: raw_worksheet_merge_ranges(session.source.local_path, sheet_name)
             for sheet_name in detail_rows
         }
         measure_pairs = discover_target_measures(

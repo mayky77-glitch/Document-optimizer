@@ -62,6 +62,38 @@ def _target(path, *, second_sheet: bool = False, current: bool = False) -> None:
     workbook.close()
 
 
+def _malform_raw_merge_inventory(path, case: str) -> None:
+    if case == "split_competing_pair":
+        workbook = load_workbook(path)
+        sheet = workbook["Отчёт 1"]
+        sheet["N1"], sheet["N2"], sheet["O2"] = (
+            "Отчетный период",
+            "Количество",
+            "Стоимость",
+        )
+        workbook.save(path)
+        workbook.close()
+    with zipfile.ZipFile(path) as archive:
+        members = {item.filename: archive.read(item.filename) for item in archive.infolist()}
+    namespace = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    root = ET.fromstring(members["xl/worksheets/sheet1.xml"])
+    merges = root.find(f"{namespace}mergeCells")
+    assert merges is not None
+    if case == "count_mismatch":
+        merges.attrib["count"] = str(len(merges) + 1)
+    elif case == "multiple_containers":
+        ET.SubElement(root, f"{namespace}mergeCells", {"count": "0"})
+    elif case == "split_competing_pair":
+        additional = ET.SubElement(root, f"{namespace}mergeCells", {"count": "1"})
+        ET.SubElement(additional, f"{namespace}mergeCell", {"ref": "N1:O1"})
+    else:
+        raise AssertionError(case)
+    members["xl/worksheets/sheet1.xml"] = ET.tostring(root)
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, payload in members.items():
+            archive.writestr(name, payload)
+
+
 def test_historical_preview_projects_future_cells_and_leaves_source_unchanged(tmp_path) -> None:
     target = tmp_path / "historical.xlsx"
     _target(target)
@@ -350,6 +382,31 @@ def test_current_read_rejects_overlapping_raw_merge_inventory(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="TARGET_HEADER_WINDOW_INVALID"):
         read_reconciliation_target(target, sha256(target.read_bytes()).hexdigest(), "13.1")
+
+
+@pytest.mark.parametrize("case", ("count_mismatch", "multiple_containers", "split_competing_pair"))
+def test_current_read_rejects_malformed_raw_merge_container(tmp_path, case: str) -> None:
+    target = tmp_path / "current.xlsx"
+    _target(target, current=True)
+    _malform_raw_merge_inventory(target, case)
+
+    with pytest.raises(ValueError, match="TARGET_HEADER_WINDOW_INVALID"):
+        read_reconciliation_target(target, sha256(target.read_bytes()).hexdigest(), "13.1")
+
+
+@pytest.mark.parametrize("case", ("count_mismatch", "multiple_containers", "split_competing_pair"))
+@pytest.mark.parametrize(("current", "period"), ((True, None), (False, "2026-08")))
+def test_preview_rejects_malformed_raw_merge_container(
+    tmp_path, case: str, current: bool, period: str | None
+) -> None:
+    target = tmp_path / "target.xlsx"
+    _target(target, current=current)
+    _malform_raw_merge_inventory(target, case)
+
+    with pytest.raises(ValueError, match="TARGET_HEADER_WINDOW_INVALID"):
+        preview_reconciliation_target(
+            target, sha256(target.read_bytes()).hexdigest(), "13.1", period
+        )
 
 
 def _many_row_target(path, *, current: bool) -> None:

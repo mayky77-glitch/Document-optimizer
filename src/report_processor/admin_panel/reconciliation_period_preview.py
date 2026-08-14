@@ -7,7 +7,6 @@ from report_processor.excel_writer import build_period_insertion_plan
 from report_processor.processing.adapters import _materialized
 from report_processor.schema import analyze_workbook_schema
 from report_processor.target_report import TargetPeriodIdentity, TargetReportReadRequest
-from report_processor.target_report.ooxml import read_sheet_structure
 
 from .reconciliation_period import ReportingPeriod
 from .reconciliation_target import (
@@ -33,7 +32,7 @@ from .reconciliation_target import (
 from .reconciliation_target_measure import (
     ReconciliationTargetMeasureError,
     discover_target_measures,
-    validated_merge_ranges,
+    raw_worksheet_merge_ranges,
 )
 
 
@@ -62,9 +61,7 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         if not detail_rows:
             raise ValueError("RECONCILIATION_TARGET_STAGE_EMPTY")
         merged_ranges = {
-            sheet_name: validated_merge_ranges(
-                read_sheet_structure(session.source.local_path, sheet_name).merged_ranges
-            )
+            sheet_name: raw_worksheet_merge_ranges(session.source.local_path, sheet_name)
             for sheet_name in detail_rows
         }
         try:
