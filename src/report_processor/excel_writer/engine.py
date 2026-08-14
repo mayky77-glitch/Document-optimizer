@@ -85,6 +85,16 @@ class _SourceSnapshot:
     identity: _SourceIdentity
 
 
+@dataclass(frozen=True, slots=True)
+class _OwnedTemp:
+    """A private temporary name permanently paired with its opened inode."""
+
+    path: Path
+    descriptor: int
+    device: int
+    inode: int
+
+
 def write_target_report(
     source_path: str | Path,
     output_path: str | Path,
@@ -99,7 +109,7 @@ def write_target_report(
     _validate_public_inputs(source, output, decision, target_schema)
     snapshot = _snapshot_source(source, output.parent)
     snapshot_path, source_identity = snapshot.path, snapshot.identity
-    temp_path: Path | None = None
+    temp: _OwnedTemp | None = None
     published = False
     published_identity: _PublishedOutputIdentity | None = None
     try:
@@ -126,31 +136,38 @@ def write_target_report(
         if not written_cells:
             raise ExcelWriterInputError("EMPTY_WRITE_SET", "no non-None calculated values")
         changes_by_part = _changes_by_part(written_cells, parts)
-        temp_path = _temp_path(output)
+        temp = _temp_path(output)
         worksheet_parts = frozenset(parts.values())
         _write_temp_package(
             snapshot.descriptor,
-            temp_path,
+            temp.descriptor,
             changes_by_part,
             remove_calc_chain=True,
             worksheet_parts=worksheet_parts,
         )
         _verify_temp_package(
             snapshot.descriptor,
-            temp_path,
+            temp.descriptor,
             changes_by_part,
             remove_calc_chain=True,
             worksheet_parts=worksheet_parts,
         )
-        if package_has_formulas(temp_path, parts):
-            recalculate_and_materialize(temp_path)
-        verify_formula_free_package(temp_path, parts)
+        _assert_named_descriptor(temp.path, temp.descriptor)
+        if package_has_formulas(temp.descriptor, parts):
+            recalculate_and_materialize(temp.path, temp.descriptor)
+            # Formula materialization replaces the archive; re-open only after
+            # proving the expected private pathname still denotes that result.
+            os.close(temp.descriptor)
+            temp = _open_owned_temp(temp.path)
+        verify_formula_free_package(temp.descriptor, parts)
         _assert_source_unchanged(source, source_identity)
-        published_identity = _published_output_identity(temp_path)
-        _publish_no_clobber(temp_path, output)
+        _assert_named_descriptor(temp.path, temp.descriptor)
+        published_identity = _published_output_identity(temp.path)
+        _publish_no_clobber(temp.path, output)
         published = True
-        output_sha256 = _sha256(output)
-        _reopen_published_output(output)
+        output_sha256 = _sha256_descriptor(temp.descriptor)
+        _reopen_published_output(temp.descriptor)
+        _assert_named_descriptor(output, temp.descriptor)
         return _result(
             WriteStatus.WRITTEN,
             decision,
@@ -173,10 +190,11 @@ def write_target_report(
             _remove_published_output_if_owned(output, published_identity)
         raise ExcelWriterAtomicError("ATOMIC_PUBLISH_FAILED", str(error)) from error
     finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
+        if temp is not None:
+            _unlink_if_owned(temp.path, temp.descriptor)
+            os.close(temp.descriptor)
+        _unlink_if_owned(snapshot_path, snapshot.descriptor)
         os.close(snapshot.descriptor)
-        snapshot_path.unlink(missing_ok=True)
 
 
 def _validate_public_inputs(
@@ -380,10 +398,24 @@ def _changes_by_part(
     return {part: tuple(items) for part, items in changes.items()}
 
 
-def _temp_path(output: Path) -> Path:
+def _temp_path(output: Path) -> _OwnedTemp:
     descriptor, name = tempfile.mkstemp(prefix=".excel-writer-", suffix=".xlsx", dir=output.parent)
-    os.close(descriptor)
-    return Path(name)
+    os.fchmod(descriptor, 0o600)
+    details = os.fstat(descriptor)
+    return _OwnedTemp(Path(name), descriptor, details.st_dev, details.st_ino)
+
+
+def _open_owned_temp(path: Path) -> _OwnedTemp:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    details = os.fstat(descriptor)
+    named = os.lstat(path)
+    if not stat.S_ISREG(details.st_mode) or (details.st_dev, details.st_ino) != (
+        named.st_dev,
+        named.st_ino,
+    ):
+        os.close(descriptor)
+        raise ExcelWriterIntegrityError("ATOMIC_PUBLISH_FAILED", "temporary output changed")
+    return _OwnedTemp(path, descriptor, details.st_dev, details.st_ino)
 
 
 def _source_identity(path: Path) -> _SourceIdentity:
@@ -459,9 +491,9 @@ def _snapshot_source(source: Path, directory: Path) -> _SourceSnapshot:
             ),
         )
     except BaseException:
-        if snapshot_name:
-            Path(snapshot_name).unlink(missing_ok=True)
         if snapshot_descriptor >= 0:
+            if snapshot_name:
+                _unlink_if_owned(Path(snapshot_name), snapshot_descriptor)
             os.close(snapshot_descriptor)
             snapshot_descriptor = -1
         raise
@@ -501,6 +533,44 @@ def _published_output_identity(path: Path) -> _PublishedOutputIdentity:
     return _PublishedOutputIdentity(details.st_dev, details.st_ino)
 
 
+def _assert_named_descriptor(path: Path, descriptor: int) -> None:
+    """Fail closed if a private output name stopped naming its opened inode."""
+
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+    except OSError as error:
+        raise ExcelWriterIntegrityError(
+            "ATOMIC_PUBLISH_FAILED", "output identity unavailable"
+        ) from error
+    if not stat.S_ISREG(named.st_mode) or (opened.st_dev, opened.st_ino) != (
+        named.st_dev,
+        named.st_ino,
+    ):
+        raise ExcelWriterIntegrityError("ATOMIC_PUBLISH_FAILED", "output identity changed")
+
+
+def _unlink_if_owned(path: Path, descriptor: int) -> None:
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+        if (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino):
+            path.unlink()
+    except FileNotFoundError:
+        return
+
+
+def _sha256_descriptor(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    stream = os.fdopen(os.dup(descriptor), "rb")
+    try:
+        while chunk := stream.read(1_048_576):
+            digest.update(chunk)
+    finally:
+        stream.close()
+    return digest.hexdigest()
+
+
 def _remove_published_output_if_owned(
     path: Path, identity: _PublishedOutputIdentity | None
 ) -> None:
@@ -515,12 +585,16 @@ def _remove_published_output_if_owned(
         return
 
 
-def _reopen_published_output(output: Path) -> None:
+def _reopen_published_output(output: Path | int) -> None:
     try:
         from openpyxl import load_workbook
 
-        workbook = load_workbook(output, read_only=True, data_only=False, keep_links=True)
-        workbook.close()
+        stream = os.fdopen(os.dup(output), "rb") if isinstance(output, int) else output.open("rb")
+        try:
+            workbook = load_workbook(stream, read_only=True, data_only=False, keep_links=True)
+            workbook.close()
+        finally:
+            stream.close()
     except Exception as error:
         raise ExcelWriterIntegrityError("REOPEN_FAILED", str(error)) from error
 

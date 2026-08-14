@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -22,11 +23,14 @@ from .ooxml import (
 _RECALCULATION_TIMEOUT_SECONDS = 120
 
 
-def recalculate_and_materialize(path: Path) -> None:
+def recalculate_and_materialize(path: Path, source_descriptor: int | None = None) -> None:
     """Recalculate a private copy, then replace all formulas with numeric literals."""
 
-    authoritative_parts = worksheet_part_map(path)
-    coordinates_by_part = _formula_coordinates(path, authoritative_parts)
+    source = source_descriptor if source_descriptor is not None else path
+    authoritative_parts = worksheet_part_map(
+        source, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED"
+    )
+    coordinates_by_part = _formula_coordinates(source, authoritative_parts)
     with tempfile.TemporaryDirectory(prefix="excel-writer-recalc-") as directory:
         workspace = Path(directory)
         profile = workspace / "profile"
@@ -34,7 +38,10 @@ def recalculate_and_materialize(path: Path) -> None:
         input_path = workspace / path.name
         profile.mkdir()
         output_directory.mkdir()
-        shutil.copy2(path, input_path)
+        if source_descriptor is None:
+            shutil.copy2(path, input_path)
+        else:
+            _copy_descriptor(source_descriptor, input_path)
         _run_libreoffice(input_path, output_directory, profile)
         recalculated = output_directory / path.name
         if not recalculated.is_file():
@@ -44,11 +51,18 @@ def recalculate_and_materialize(path: Path) -> None:
         values_by_part = _recalculated_values(
             recalculated, authoritative_parts, coordinates_by_part
         )
-    materialize_formula_package(path, authoritative_parts, values_by_part)
+    materialize_formula_package(
+        path,
+        authoritative_parts,
+        values_by_part,
+        source_descriptor=source_descriptor,
+    )
+    # The replacement is still held open by materialize_formula_package only
+    # during the replace; reopen its verified private pathname here.
     verify_materialized_package(path, values_by_part)
 
 
-def _formula_coordinates(path: Path, parts: dict[str, str]) -> dict[str, tuple[str, ...]]:
+def _formula_coordinates(path: Path | int, parts: dict[str, str]) -> dict[str, tuple[str, ...]]:
     try:
         with admitted_zipfile(
             path, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED"
@@ -74,7 +88,9 @@ def _recalculated_values(
     authoritative_parts: dict[str, str],
     coordinates_by_part: dict[str, tuple[str, ...]],
 ) -> dict[str, dict[str, str]]:
-    recalculated_parts = worksheet_part_map(recalculated)
+    recalculated_parts = worksheet_part_map(
+        recalculated, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED"
+    )
     values_by_part: dict[str, dict[str, str]] = {}
     try:
         with admitted_zipfile(
@@ -99,6 +115,19 @@ def _recalculated_values(
     except (OSError, zipfile.BadZipFile, KeyError) as error:
         raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", str(error)) from error
     return values_by_part
+
+
+def _copy_descriptor(descriptor: int, destination: Path) -> None:
+    """Copy an already-admitted inode; never reopen its mutable pathname."""
+
+    stream = os.fdopen(os.dup(descriptor), "rb")
+    try:
+        with destination.open("xb") as target:
+            shutil.copyfileobj(stream, target, length=1_048_576)
+            target.flush()
+            os.fsync(target.fileno())
+    finally:
+        stream.close()
 
 
 def _run_libreoffice(input_path: Path, output_directory: Path, profile: Path) -> None:

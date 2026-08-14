@@ -7,6 +7,7 @@ import posixpath
 import re
 import stat
 import struct
+import tempfile
 import zipfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -694,30 +695,30 @@ def read_archive_part(
     return archive.read(info)
 
 
-def worksheet_part_map(source_path: Path | int) -> dict[str, str]:
+def worksheet_part_map(
+    source_path: Path | int,
+    error_type=ExcelWriterSafetyError,
+    code: str = "INVALID_XLSX_PACKAGE",
+) -> dict[str, str]:
     try:
-        with admitted_zipfile(
-            source_path, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE"
-        ) as archive:
+        with admitted_zipfile(source_path, error_type, code) as archive:
             workbook = _safe_xml_root(
-                read_archive_part(
-                    archive, "xl/workbook.xml", ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE"
-                ),
-                ExcelWriterSafetyError,
-                "INVALID_XLSX_PACKAGE",
+                read_archive_part(archive, "xl/workbook.xml", error_type, code),
+                error_type,
+                code,
             )
             relationships = _safe_xml_root(
                 read_archive_part(
                     archive,
                     "xl/_rels/workbook.xml.rels",
-                    ExcelWriterSafetyError,
-                    "INVALID_XLSX_PACKAGE",
+                    error_type,
+                    code,
                 ),
-                ExcelWriterSafetyError,
-                "INVALID_XLSX_PACKAGE",
+                error_type,
+                code,
             )
     except (OSError, zipfile.BadZipFile, KeyError, ValueError) as error:
-        raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "package metadata invalid") from error
+        raise error_type(code, "package metadata invalid") from error
     targets = {
         item.attrib["Id"]: item.attrib["Target"]
         for item in relationships.findall(f"{{{_PKG_REL_NS}}}Relationship")
@@ -957,9 +958,25 @@ def materialize_formula_cells(xml: bytes, values: Mapping[str, str]) -> bytes:
     return b"".join(pieces)
 
 
+def _archive_output(target: Path | int):
+    """Return a writable binary stream for an owned descriptor or a private path."""
+
+    if isinstance(target, int):
+        return os.fdopen(os.dup(target), "w+b")
+    return target.open("w+b")
+
+
+def _archive_input(target: Path | int):
+    """Return a readable binary stream without reopening an owned descriptor."""
+
+    if isinstance(target, int):
+        return os.fdopen(os.dup(target), "rb")
+    return target.open("rb")
+
+
 def write_temp_package(
-    source_path: Path,
-    temp_path: Path,
+    source_path: Path | int,
+    temp_path: Path | int,
     changes_by_part: Mapping[str, tuple[tuple[str, str], ...]],
     *,
     remove_calc_chain: bool = False,
@@ -972,7 +989,8 @@ def write_temp_package(
             admitted_zipfile(
                 source_path, ExcelWriterAtomicError, "ATOMIC_PUBLISH_FAILED"
             ) as source,
-            zipfile.ZipFile(temp_path, "w", allowZip64=True) as output,
+            _archive_output(temp_path) as target,
+            zipfile.ZipFile(target, "w", allowZip64=True) as output,
         ):
             output.comment = source.comment
             for info in source.infolist():
@@ -1002,7 +1020,7 @@ def write_temp_package(
 
 def verify_temp_package(
     source_path: Path,
-    temp_path: Path,
+    temp_path: Path | int,
     changes_by_part: Mapping[str, tuple[tuple[str, str], ...]],
     *,
     remove_calc_chain: bool = False,
@@ -1058,7 +1076,7 @@ def verify_temp_package(
                     expected = _remove_calc_chain_metadata(name, expected)
                 if updated != expected:
                     raise ExcelWriterIntegrityError("PRESERVATION_CHECK_FAILED", name)
-        with temp_path.open("rb") as stream:
+        with _archive_input(temp_path) as stream:
             workbook = load_workbook(stream, read_only=True, data_only=False, keep_links=True)
             workbook.close()
     except ExcelWriterIntegrityError:
@@ -1071,16 +1089,25 @@ def materialize_formula_package(
     path: Path,
     worksheet_parts: Mapping[str, str],
     values_by_part: Mapping[str, Mapping[str, str]],
+    *,
+    source_descriptor: int | None = None,
 ) -> None:
     """Materialize every formula in-place and remove obsolete calculation-chain metadata."""
 
-    temporary = path.with_suffix(".materializing.xlsx")
+    descriptor, name = tempfile.mkstemp(
+        prefix=".excel-writer-materializing-", suffix=".xlsx", dir=path.parent
+    )
+    temporary = Path(name)
+    os.fchmod(descriptor, 0o600)
     try:
         with (
             admitted_zipfile(
-                path, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED"
+                source_descriptor if source_descriptor is not None else path,
+                ExcelWriterIntegrityError,
+                "FORMULA_MATERIALIZATION_FAILED",
             ) as source,
-            zipfile.ZipFile(temporary, "w", allowZip64=True) as output,
+            _archive_output(descriptor) as target,
+            zipfile.ZipFile(target, "w", allowZip64=True) as output,
         ):
             output.comment = source.comment
             for info in source.infolist():
@@ -1091,6 +1118,7 @@ def materialize_formula_package(
                     info.filename,
                     ExcelWriterIntegrityError,
                     "FORMULA_MATERIALIZATION_FAILED",
+                    worksheet=info.filename in worksheet_parts.values(),
                 )
                 if info.filename in worksheet_parts.values():
                     payload = materialize_formula_cells(
@@ -1098,20 +1126,24 @@ def materialize_formula_package(
                     )
                 payload = _remove_calc_chain_metadata(info.filename, payload)
                 output.writestr(info, payload)
-        _fsync_file(temporary)
+        _fsync_file(descriptor)
+        if source_descriptor is not None:
+            _assert_path_matches_descriptor(path, source_descriptor)
         os.replace(temporary, path)
-        _fsync_file(path)
+        _fsync_file(descriptor)
     except ExcelWriterIntegrityError:
-        temporary.unlink(missing_ok=True)
+        _unlink_if_owned(temporary, descriptor)
         raise
     except (OSError, zipfile.BadZipFile, ValueError) as error:
-        temporary.unlink(missing_ok=True)
+        _unlink_if_owned(temporary, descriptor)
         raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", str(error)) from error
+    finally:
+        os.close(descriptor)
     return None
 
 
 def verify_materialized_package(
-    path: Path, values_by_part: Mapping[str, Mapping[str, str]]
+    path: Path | int, values_by_part: Mapping[str, Mapping[str, str]]
 ) -> None:
     """Prove that all worksheet formulas became the expected numeric values."""
 
@@ -1147,7 +1179,7 @@ def verify_materialized_package(
         raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", str(error)) from error
 
 
-def package_has_formulas(path: Path, worksheet_parts: Mapping[str, str]) -> bool:
+def package_has_formulas(path: Path | int, worksheet_parts: Mapping[str, str]) -> bool:
     """Return whether any final worksheet still contains a formula element."""
 
     try:
@@ -1170,7 +1202,7 @@ def package_has_formulas(path: Path, worksheet_parts: Mapping[str, str]) -> bool
         raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", str(error)) from error
 
 
-def verify_formula_free_package(path: Path, worksheet_parts: Mapping[str, str]) -> None:
+def verify_formula_free_package(path: Path | int, worksheet_parts: Mapping[str, str]) -> None:
     """Verify formula-free worksheets and the absence of stale calcChain metadata."""
 
     try:
@@ -1244,8 +1276,37 @@ def publish_no_clobber(temp_path: Path, output_path: Path) -> None:
         raise ExcelWriterAtomicError("ATOMIC_PUBLISH_FAILED", str(error)) from error
 
 
-def _fsync_file(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
+def _unlink_if_owned(path: Path, descriptor: int) -> None:
+    """Never delete a replacement planted at a private temporary pathname."""
+
+    try:
+        details = os.fstat(descriptor)
+        named = os.lstat(path)
+        if (details.st_dev, details.st_ino) == (named.st_dev, named.st_ino):
+            path.unlink()
+    except FileNotFoundError:
+        return
+
+
+def _assert_path_matches_descriptor(path: Path, descriptor: int) -> None:
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+    except OSError as error:
+        raise ExcelWriterIntegrityError(
+            "FORMULA_MATERIALIZATION_FAILED", "formula package identity unavailable"
+        ) from error
+    if not stat.S_ISREG(named.st_mode) or (opened.st_dev, opened.st_ino) != (
+        named.st_dev,
+        named.st_ino,
+    ):
+        raise ExcelWriterIntegrityError(
+            "FORMULA_MATERIALIZATION_FAILED", "formula package identity changed"
+        )
+
+
+def _fsync_file(path: Path | int) -> None:
+    descriptor = os.dup(path) if isinstance(path, int) else os.open(path, os.O_RDONLY)
     try:
         os.fsync(descriptor)
     finally:
