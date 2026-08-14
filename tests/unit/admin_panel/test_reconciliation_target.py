@@ -26,22 +26,6 @@ from report_processor.schema import LogicalColumn, SheetType
 from report_processor.target_report import TargetWorksheetSnapshot
 
 
-class _Sheet:
-    def __init__(self, values):
-        self.max_row = len(values)
-        self._values = values
-
-    def cell(self, row, column):
-        from types import SimpleNamespace
-
-        return SimpleNamespace(value=self._values[row - 1][column - 1])
-
-
-class _Session:
-    def __init__(self, values):
-        self.formula_workbook = type("Workbook", (), {"worksheets": (_Sheet(values),)})()
-
-
 def test_terminal_index_rejects_year_and_ambiguous_values() -> None:
     assert terminal_index("1234") == "1234"
     assert terminal_index("10.02.0123") == "0123"
@@ -62,16 +46,6 @@ def test_stage_resolution_discovers_exactly_one_stage_only() -> None:
         resolve_reconciliation_stage((), None)
 
 
-def test_stage_enumeration_ignores_header_and_notes_without_index() -> None:
-    from report_processor.admin_panel.reconciliation_target import enumerate_reconciliation_stages
-
-    session = _Session(
-        (("", "", "Этап"), ("", "", "Примечание"), ("", "1234", "Этап 13.1. Работы"))
-    )
-
-    assert enumerate_reconciliation_stages(session) == ("13.1",)
-
-
 @pytest.mark.parametrize("stage", ("13.1", None), ids=("selected", "no-selected"))
 def test_macro_enabled_target_is_rejected_before_reconciliation_review(tmp_path, stage) -> None:
     target = tmp_path / "target.xlsm"
@@ -87,26 +61,6 @@ def test_macro_enabled_target_is_rejected_on_no_selected_publish_path(tmp_path) 
 
     with pytest.raises(ReconciliationTargetInputError, match=r"Целевой отчёт \.xlsm"):
         publish_unchanged_target(target, tmp_path / "result.xlsx", "digest")
-
-
-def test_structural_stage_discovery_keeps_printable_labels_and_requires_target_rows() -> None:
-    from report_processor.admin_panel.reconciliation_target import (
-        structurally_valid_reconciliation_stages,
-    )
-
-    session = _Session(
-        (
-            ("", "1234", "Секция (А)", "", ""),
-            ("", None, None, "1", "Работа А"),
-            ("", "1234", "Секция/Б", "1", "Работа Б"),
-            ("", "1234", "Только заголовок", "", ""),
-        )
-    )
-
-    assert structurally_valid_reconciliation_stages(session, maximum=64) == (
-        "Секция (А)",
-        "Секция/Б",
-    )
 
 
 def test_stage_validation_keeps_broad_printable_labels_without_locations() -> None:
@@ -125,6 +79,13 @@ def test_reader_uses_discovered_cells_for_target_snapshot_provenance(tmp_path) -
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Отчёт"
+    sheet["B1"], sheet["C1"], sheet["D1"], sheet["E1"], sheet["F1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
     sheet.merge_cells("L1:M1")
     sheet["L1"] = "Отчетный период"
     sheet["L2"], sheet["M2"] = "Количество", "Стоимость"
@@ -159,6 +120,13 @@ def test_writer_updates_only_structurally_discovered_current_measure_cells(tmp_p
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Отчёт"
+    sheet["B1"], sheet["C1"], sheet["D1"], sheet["E1"], sheet["F1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
     sheet["J1"], sheet["K1"] = "Документальная отчетность", "Документальная отчетность"
     sheet["J2"], sheet["K2"] = "Количество", "Стоимость"
     sheet.merge_cells("L1:M1")

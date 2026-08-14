@@ -43,6 +43,14 @@ def _accept_group(state: ReconciliationReviewState, group_id: str) -> str:
     return version
 
 
+def test_version_fingerprint_binds_immutable_target_identity() -> None:
+    first, _, _ = _state()
+    second, _, _ = _state()
+    second.target_identity_digest = "different-target-identity"
+
+    assert first.version_fingerprint != second.version_fingerprint
+
+
 def test_stale_group_and_row_writes_leave_state_unmodified() -> None:
     state, group_id, row_id = _state()
     version = _accept_group(state, group_id)

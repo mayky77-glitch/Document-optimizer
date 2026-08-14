@@ -57,6 +57,7 @@ class ReconciliationReviewState:
     categories: Mapping[str, str]
     source_digests: tuple[str, ...]
     target_digest: str
+    target_identity_digest: str | None = None
     available_categories: Mapping[str, frozenset[str]] = field(default_factory=dict)
     grouping: GroupingResult | None = None
     group_decisions: dict[str, ReviewDecision] = field(default_factory=dict)
@@ -90,6 +91,7 @@ class ReconciliationReviewState:
         payload = {
             "sources": self.source_digests,
             "target": self.target_digest,
+            "target_identity": self.target_identity_digest,
             "categories": sorted(self.categories),
             "packages": [(item.package_id, item.version) for item in self._packages()],
             "families": [(item.family_id, item.version) for item in self._families()],

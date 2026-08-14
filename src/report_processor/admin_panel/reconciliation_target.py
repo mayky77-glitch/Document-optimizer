@@ -3,19 +3,27 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
 import tempfile
 from collections.abc import Iterable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.processing.adapters import _materialized
-from report_processor.schema import LogicalColumn, SheetType, analyze_workbook_schema
+from report_processor.schema import (
+    LogicalColumn,
+    SheetType,
+    analyze_workbook_schema,
+    resolve_logical_columns,
+)
+from report_processor.schema.column_aliases import DEFAULT_COLUMN_ALIASES
 from report_processor.target_report import (
+    TargetCellSnapshot,
     TargetColumnBinding,
     TargetReportReadRequest,
     TargetReportRow,
@@ -32,6 +40,72 @@ from .reconciliation_identity import terminal_identity
 from .reconciliation_target_measure import TargetMeasurePair, discover_target_measures
 
 _STAGE_RE = re.compile(r"этап\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
+_BASE_ROLES = (
+    LogicalColumn.DOCUMENT_INDEX,
+    LogicalColumn.STAGE,
+    LogicalColumn.ROW_NUMBER,
+    LogicalColumn.WORK_NAME,
+    LogicalColumn.UNIT,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationTargetIdentity:
+    """Digest binding review input to one immutable target interpretation."""
+
+    original_target_digest: str
+    selected_stage: str
+    period: object | None = None
+    plan_digest: str | None = None
+    contract_version: str = "ReconciliationTargetIdentity-1.0"
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "ReconciliationTargetIdentity-1.0":
+            raise ValueError("RECONCILIATION_TARGET_IDENTITY_INVALID")
+        if not isinstance(self.original_target_digest, str) or not self.original_target_digest:
+            raise ValueError("RECONCILIATION_TARGET_IDENTITY_INVALID")
+        if not isinstance(self.selected_stage, str) or not self.selected_stage:
+            raise ValueError("RECONCILIATION_TARGET_IDENTITY_INVALID")
+        period_value = getattr(self.period, "value", self.period)
+        if period_value is not None and not isinstance(period_value, str):
+            raise ValueError("RECONCILIATION_TARGET_IDENTITY_INVALID")
+        if self.plan_digest is not None and (
+            not isinstance(self.plan_digest, str) or not self.plan_digest
+        ):
+            raise ValueError("RECONCILIATION_TARGET_IDENTITY_INVALID")
+
+    def canonical_bytes(self) -> bytes:
+        return json.dumps(
+            {
+                "contract_version": self.contract_version,
+                "original_target_digest": self.original_target_digest,
+                "period": getattr(self.period, "value", self.period),
+                "plan_digest": self.plan_digest,
+                "selected_stage": self.selected_stage,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+
+    @property
+    def target_identity_digest(self) -> str:
+        return hashlib.sha256(self.canonical_bytes()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationTargetPreview:
+    """Read-only historical target projection and frozen insertion evidence."""
+
+    schema: object
+    rows: tuple[object, ...]
+    period: object | None
+    plan: object | None
+    target_identity: ReconciliationTargetIdentity
+
+    @property
+    def target_identity_digest(self) -> str:
+        return self.target_identity.target_identity_digest
 
 
 class ReconciliationTargetScopeError(ValueError):
@@ -92,11 +166,14 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
     source = _materialized(path, f"target:{digest}")
     with open_dual_workbook(WorkbookOpenRequest(source)) as session:
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
-        stages = enumerate_reconciliation_stages(session)
+        workbook_schema = analyze_workbook_schema(session)
+        roles = _base_roles(workbook_schema)
+        stages = _enumerate_stages(session.formula_workbook, roles)
         selected_stage = resolve_reconciliation_stage(stages, stage)
+        detail_rows = _first_detail_rows(session.formula_workbook, selected_stage, roles)
         measure_pairs = discover_target_measures(
             session.formula_workbook,
-            _first_detail_rows(session.formula_workbook, selected_stage),
+            detail_rows,
             {
                 sheet_name: read_sheet_structure(
                     session.source.local_path, sheet_name
@@ -106,11 +183,11 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
         )
         report = generic.read_target_report(
             session,
-            analyze_workbook_schema(session),
+            workbook_schema,
             TargetReportReadRequest(selected_stage=selected_stage),
         )
-        bindings = _bindings(measure_pairs)
-        rows = tuple(_rows(session, selected_stage, measure_pairs))
+        bindings = _bindings(roles, measure_pairs)
+        rows = tuple(_rows(session, selected_stage, measure_pairs, roles))
     if not rows:
         raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
     schema = replace(report.schema, column_bindings=bindings)
@@ -127,22 +204,10 @@ def terminal_index(value: object) -> str | None:
 
 
 def enumerate_reconciliation_stages(session) -> tuple[str, ...]:
-    """Return canonical stage identities observed in the fixed target layout."""
-    stages: set[str] = set()
-    for sheet in session.formula_workbook.worksheets:
-        active_index = None
-        for row_number in range(1, int(sheet.max_row or 0) + 1):
-            index_value = sheet.cell(row_number, 2).value
-            if index_value is not None:
-                active_index = terminal_index(index_value)
-            value = sheet.cell(row_number, 3).value
-            if value is None or not str(value).strip():
-                continue
-            if active_index is None:
-                continue
-            match = _STAGE_RE.search(str(value).strip())
-            stages.add(match.group(1) if match else str(value).strip())
-    return tuple(sorted(stages))
+    """Return stages only after logical role binding succeeds."""
+    return _enumerate_stages(
+        session.formula_workbook, _base_roles(analyze_workbook_schema(session))
+    )
 
 
 def structurally_valid_reconciliation_stages(session, *, maximum: int) -> tuple[str, ...]:
@@ -155,29 +220,12 @@ def structurally_valid_reconciliation_stages(session, *, maximum: int) -> tuple[
 
     if not isinstance(maximum, int) or maximum < 1:
         raise ValueError("maximum must be positive")
-    stages: set[str] = set()
-    for sheet in session.formula_workbook.worksheets:
-        active_index = active_stage = None
-        for row_number in range(1, int(sheet.max_row or 0) + 1):
-            index_value = sheet.cell(row_number, 2).value
-            if index_value is not None:
-                active_index = terminal_index(index_value)
-            raw_stage = sheet.cell(row_number, 3).value
-            if raw_stage is not None and str(raw_stage).strip():
-                stage_name = str(raw_stage).strip()
-                stage_match = _STAGE_RE.search(stage_name)
-                active_stage = stage_match.group(1) if stage_match else stage_name
-            if (
-                active_stage is None
-                or active_index is None
-                or sheet.cell(row_number, 4).value is None
-                or not sheet.cell(row_number, 5).value
-            ):
-                continue
-            stages.add(active_stage)
-            if len(stages) > maximum:
-                return tuple(sorted(stages))
-    return tuple(sorted(stages))
+    roles = _base_roles(analyze_workbook_schema(session))
+    stages = _enumerate_stages(session.formula_workbook, roles)
+    valid = tuple(
+        stage for stage in stages if _first_detail_rows(session.formula_workbook, stage, roles)
+    )
+    return valid[: maximum + 1]
 
 
 def resolve_reconciliation_stage(stages: tuple[str, ...], requested: str | None) -> str:
@@ -215,20 +263,21 @@ def _million_rub(value: Decimal | None) -> Decimal | None:
     return (value / Decimal(1_000_000)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def _bindings(measure_pairs: tuple[TargetMeasurePair, ...] = ()) -> tuple[TargetColumnBinding, ...]:
-    columns = (
-        (LogicalColumn.OBJECT_CODE, 1, "A"),
-        (LogicalColumn.DOCUMENT_INDEX, 2, "B"),
-        (LogicalColumn.STAGE, 3, "C"),
-        (LogicalColumn.ROW_NUMBER, 4, "D"),
-        (LogicalColumn.WORK_NAME, 5, "E"),
-        (LogicalColumn.UNIT, 6, "F"),
-    )
-    static = tuple(
-        TargetColumnBinding(key, number, letter, None, "RECONCILIATION_LAYOUT")
-        for key, number, letter in columns
-    )
-    bindings = list(static)
+def _bindings(
+    roles: dict[str, dict[LogicalColumn, object]],
+    measure_pairs: tuple[TargetMeasurePair, ...] = (),
+) -> tuple[TargetColumnBinding, ...]:
+    bindings = [
+        TargetColumnBinding(
+            role,
+            resolution.column_index,
+            resolution.column_letter,
+            resolution.header_text,
+            "RECONCILIATION_SCHEMA",
+        )
+        for sheet_name in sorted(roles)
+        for role, resolution in roles[sheet_name].items()
+    ]
     seen = {(binding.logical_column, binding.column_index) for binding in bindings}
     for pair in measure_pairs:
         for logical_column, column, letter, header in (
@@ -253,13 +302,86 @@ def _bindings(measure_pairs: tuple[TargetMeasurePair, ...] = ()) -> tuple[Target
     return tuple(bindings)
 
 
-def _first_detail_rows(workbook, selected_stage: str) -> dict[str, int]:
+def _preview_bindings(roles, plan) -> tuple[TargetColumnBinding, ...]:
+    pairs = tuple(
+        TargetMeasurePair(
+            anchor.sheet_name,
+            anchor.cost_column + 1,
+            anchor.cost_column + 2,
+            "",
+            "",
+        )
+        for anchor in plan.anchors
+    )
+    return _bindings(roles, pairs)
+
+
+def _base_roles(workbook_schema) -> dict[str, dict[LogicalColumn, object]]:
+    """Bind reconciliation facts only through existing logical schema evidence."""
+
+    result: dict[str, dict[LogicalColumn, object]] = {}
+    for worksheet in workbook_schema.worksheets:
+        resolutions = resolve_logical_columns(
+            worksheet.headers, SheetType.ADDITIONAL_REPORT, DEFAULT_COLUMN_ALIASES
+        )
+        by_role = {item.logical_column: item for item in resolutions}
+        if not any(
+            by_role.get(role) is not None and by_role[role].status != "COLUMN_NOT_FOUND"
+            for role in _BASE_ROLES
+        ):
+            continue
+        resolved: dict[LogicalColumn, object] = {}
+        for role in _BASE_ROLES:
+            resolution = by_role.get(role)
+            if resolution is None or resolution.status == "COLUMN_NOT_FOUND":
+                raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_BASE_ROLE_MISSING")
+            if (
+                resolution.status != "OK"
+                or resolution.column_index is None
+                or resolution.column_letter is None
+            ):
+                raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_BASE_ROLE_AMBIGUOUS")
+            resolved[role] = resolution
+        result[worksheet.sheet_name] = resolved
+    if not result:
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_BASE_ROLE_MISSING")
+    return result
+
+
+def _enumerate_stages(workbook, roles) -> tuple[str, ...]:
+    stages: set[str] = set()
+    for sheet in workbook.worksheets:
+        if sheet.title not in roles:
+            continue
+        columns = roles[sheet.title]
+        active_index = None
+        for row_number in range(1, int(sheet.max_row or 0) + 1):
+            raw_index = sheet.cell(
+                row_number, columns[LogicalColumn.DOCUMENT_INDEX].column_index
+            ).value
+            if raw_index is not None:
+                active_index = terminal_index(raw_index)
+            raw_stage = sheet.cell(row_number, columns[LogicalColumn.STAGE].column_index).value
+            if raw_stage is None or not str(raw_stage).strip() or active_index is None:
+                continue
+            stage_name = str(raw_stage).strip()
+            stage_match = _STAGE_RE.search(stage_name)
+            stages.add(stage_match.group(1) if stage_match else stage_name)
+    return tuple(sorted(stages))
+
+
+def _first_detail_rows(workbook, selected_stage: str, roles) -> dict[str, int]:
     rows: dict[str, int] = {}
     for sheet in workbook.worksheets:
+        if sheet.title not in roles:
+            continue
+        columns = roles[sheet.title]
         active_index = active_stage = None
         for row_number in range(1, int(sheet.max_row or 0) + 1):
-            raw_index = sheet.cell(row_number, 2).value
-            raw_stage = sheet.cell(row_number, 3).value
+            raw_index = sheet.cell(
+                row_number, columns[LogicalColumn.DOCUMENT_INDEX].column_index
+            ).value
+            raw_stage = sheet.cell(row_number, columns[LogicalColumn.STAGE].column_index).value
             if raw_index is not None:
                 active_index = terminal_index(raw_index)
             if raw_stage is not None and str(raw_stage).strip():
@@ -269,15 +391,42 @@ def _first_detail_rows(workbook, selected_stage: str) -> dict[str, int]:
             if (
                 active_stage == selected_stage
                 and active_index
-                and sheet.cell(row_number, 4).value is not None
-                and sheet.cell(row_number, 5).value
+                and sheet.cell(row_number, columns[LogicalColumn.ROW_NUMBER].column_index).value
+                is not None
+                and sheet.cell(row_number, columns[LogicalColumn.WORK_NAME].column_index).value
             ):
                 rows[sheet.title] = row_number
                 break
     return rows
 
 
-def _rows(session, selected_stage: str, measure_pairs: tuple[TargetMeasurePair, ...]):
+def _rows(session, selected_stage: str, measure_pairs: tuple[TargetMeasurePair, ...], roles):
+    return _rows_for_pairs(session, selected_stage, measure_pairs, roles, writable=True)
+
+
+def _preview_rows(session, selected_stage: str, plan, roles):
+    pairs = tuple(
+        TargetMeasurePair(
+            anchor.sheet_name,
+            anchor.cost_column + 1,
+            anchor.cost_column + 2,
+            "",
+            "",
+        )
+        for anchor in plan.anchors
+    )
+    return _rows_for_pairs(session, selected_stage, pairs, roles, writable=False, virtual=True)
+
+
+def _rows_for_pairs(
+    session,
+    selected_stage: str,
+    measure_pairs: tuple[TargetMeasurePair, ...],
+    roles,
+    *,
+    writable: bool,
+    virtual: bool = False,
+):
     formula = session.formula_workbook
     values = session.value_workbook
     trusted = formula_caches_trusted(session.source.local_path)
@@ -285,23 +434,32 @@ def _rows(session, selected_stage: str, measure_pairs: tuple[TargetMeasurePair, 
     for sheet_name in formula.sheetnames:
         formula_sheet, value_sheet = formula[sheet_name], values[sheet_name]
         pair = pair_by_sheet.get(sheet_name)
-        if pair is None:
+        if pair is None or sheet_name not in roles:
             continue
-        bindings = _bindings((pair,))
+        columns = roles[sheet_name]
+        bindings = _bindings({sheet_name: columns}, (pair,))
         lexemes = read_sheet_lexemes(session.source.local_path, sheet_name)
         comments = dict(read_sheet_comments(session.source.local_path, sheet_name))
         active_index = active_name = active_stage = None
         for row_number in range(1, int(formula_sheet.max_row or 0) + 1):
-            raw_index = formula_sheet.cell(row_number, 2).value
-            raw_stage = formula_sheet.cell(row_number, 3).value
+            raw_index = formula_sheet.cell(
+                row_number, columns[LogicalColumn.DOCUMENT_INDEX].column_index
+            ).value
+            raw_stage = formula_sheet.cell(
+                row_number, columns[LogicalColumn.STAGE].column_index
+            ).value
             if raw_index is not None:
                 active_index = terminal_index(raw_index)
             if raw_stage is not None and str(raw_stage).strip():
                 active_name = str(raw_stage).strip()
                 stage_match = _STAGE_RE.search(active_name)
                 active_stage = stage_match.group(1) if stage_match else active_name
-            work_name = formula_sheet.cell(row_number, 5).value
-            position = formula_sheet.cell(row_number, 4).value
+            work_name = formula_sheet.cell(
+                row_number, columns[LogicalColumn.WORK_NAME].column_index
+            ).value
+            position = formula_sheet.cell(
+                row_number, columns[LogicalColumn.ROW_NUMBER].column_index
+            ).value
             if (
                 active_stage != selected_stage
                 or not active_index
@@ -310,7 +468,11 @@ def _rows(session, selected_stage: str, measure_pairs: tuple[TargetMeasurePair, 
             ):
                 continue
             cells = tuple(
-                (
+                (binding.logical_column, _virtual_cell(binding.column_letter, row_number))
+                if virtual
+                and binding.logical_column
+                in {LogicalColumn.CURRENT_PERIOD_QUANTITY, LogicalColumn.CURRENT_PERIOD_COST}
+                else (
                     binding.logical_column,
                     _cell_snapshot(
                         f"{binding.column_letter}{row_number}",
@@ -329,7 +491,7 @@ def _rows(session, selected_stage: str, measure_pairs: tuple[TargetMeasurePair, 
                 sheet_name,
                 SheetType.ADDITIONAL_REPORT,
                 row_number,
-                str(formula_sheet.cell(row_number, 1).value or "").strip() or None,
+                None,
                 active_name,
                 str(position).strip(),
                 str(work_name).strip(),
@@ -340,11 +502,29 @@ def _rows(session, selected_stage: str, measure_pairs: tuple[TargetMeasurePair, 
                 document_index_raw=active_index,
                 document_index_normalized=active_index,
                 stage=active_stage,
-                unit=str(formula_sheet.cell(row_number, 6).value or "").strip() or None,
+                unit=str(
+                    formula_sheet.cell(row_number, columns[LogicalColumn.UNIT].column_index).value
+                    or ""
+                ).strip()
+                or None,
                 selected_quantity=_numeric(by_key.get(LogicalColumn.CURRENT_PERIOD_QUANTITY)),
                 selected_cost=_numeric(by_key.get(LogicalColumn.CURRENT_PERIOD_COST)),
-                writable=trusted,
+                writable=writable and trusted,
             )
+
+
+def _virtual_cell(column_letter: str, row_number: int) -> TargetCellSnapshot:
+    return TargetCellSnapshot(
+        f"{column_letter}{row_number}",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        "VIRTUAL_FUTURE_CELL",
+    )
 
 
 def _numeric(cell):
