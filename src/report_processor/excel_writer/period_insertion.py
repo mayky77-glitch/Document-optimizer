@@ -26,6 +26,7 @@ from report_processor.admin_panel.reconciliation_period import (
 )
 from report_processor.admin_panel.reconciliation_target_measure import (
     ReconciliationTargetMeasureError,
+    bounded_header_windows,
     calendar_identities,
     discover_historical_target_measures,
     discover_target_measures,
@@ -71,12 +72,16 @@ def build_period_insertion_plan(
         digest = hashlib.sha256(stream.read()).hexdigest()
     workbook = load_workbook(source, read_only=False, data_only=False, keep_links=True)
     try:
+        header_windows = bounded_header_windows(workbook, first_detail_rows, merged_ranges_by_sheet)
         current: set[str] = set()
         missing: set[str] = set()
         for sheet_name, detail_row in first_detail_rows.items():
             try:
                 pair = discover_target_measures(
-                    workbook, {sheet_name: detail_row}, merged_ranges_by_sheet
+                    workbook,
+                    {sheet_name: detail_row},
+                    merged_ranges_by_sheet,
+                    {sheet_name: header_windows[sheet_name]},
                 )
             except ReconciliationTargetMeasureError as error:
                 if str(error) != "TARGET_CURRENT_PERIOD_PAIR_MISSING":
@@ -100,7 +105,7 @@ def build_period_insertion_plan(
                 True,
             )
         historical = discover_historical_target_measures(
-            workbook, first_detail_rows, merged_ranges_by_sheet
+            workbook, first_detail_rows, merged_ranges_by_sheet, header_windows
         )
         anchors = tuple(
             ReconciliationSheetAnchor(
@@ -246,7 +251,8 @@ def verify_period_insertion(
         workbook = load_workbook(output, read_only=False, data_only=False, keep_links=True)
         try:
             rows = {anchor.sheet_name: anchor.first_detail_row for anchor in plan.anchors}
-            pairs = discover_target_measures(workbook, rows)
+            header_windows = bounded_header_windows(workbook, rows)
+            pairs = discover_target_measures(workbook, rows, header_windows=header_windows)
             if {(pair.sheet_name, pair.quantity_column, pair.cost_column) for pair in pairs} != {
                 (anchor.sheet_name, anchor.cost_column + 1, anchor.cost_column + 2)
                 for anchor in plan.anchors

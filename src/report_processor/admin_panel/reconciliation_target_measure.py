@@ -11,6 +11,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 
 _HEADER_ROWS = 80
+_MAX_HEADER_WINDOW_CELLS = 500_000
 _MAX_SUFFIX_INSPECTED_CELLS = 100_000
 _MAX_SUFFIX_CELLS = 50_000
 _MAX_SUFFIX_ROW = 1_048_576
@@ -48,6 +49,15 @@ _DATE = re.compile(r"(?<!\d)\d{1,2}\s*[./-]\s*(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|
 
 class ReconciliationTargetMeasureError(ValueError):
     """The selected target does not expose one safe current-period measure."""
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedHeaderWindow:
+    """Physical columns permitted for one exact header-row window."""
+
+    start_row: int
+    end_row: int
+    columns: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +117,7 @@ def discover_target_measures(
     workbook,
     first_detail_rows: dict[str, int],
     merged_ranges_by_sheet: dict[str, tuple[str, ...]] | None = None,
+    header_windows: dict[str, BoundedHeaderWindow] | None = None,
 ) -> tuple[TargetMeasurePair, ...]:
     """Discover exactly one current-period pair for every selected-stage sheet.
 
@@ -118,10 +129,16 @@ def discover_target_measures(
 
     pairs: list[TargetMeasurePair] = []
     for sheet_name, first_detail_row in sorted(first_detail_rows.items()):
+        window = (header_windows or {}).get(sheet_name) or bounded_header_window(
+            workbook[sheet_name],
+            first_detail_row,
+            (merged_ranges_by_sheet or {}).get(sheet_name, ()),
+        )
         candidates = _sheet_candidates(
             workbook[sheet_name],
             first_detail_row,
             (merged_ranges_by_sheet or {}).get(sheet_name, ()),
+            window,
         )
         if not candidates:
             raise ReconciliationTargetMeasureError("TARGET_CURRENT_PERIOD_PAIR_MISSING")
@@ -137,6 +154,7 @@ def discover_historical_target_measures(
     workbook,
     first_detail_rows: dict[str, int],
     merged_ranges_by_sheet: dict[str, tuple[str, ...]] | None = None,
+    header_windows: dict[str, BoundedHeaderWindow] | None = None,
 ) -> tuple[HistoricalTargetMeasureEvidence, ...]:
     """Return one documentary/historical adjacent measure pair per selected sheet.
 
@@ -146,10 +164,16 @@ def discover_historical_target_measures(
 
     pairs: list[HistoricalTargetMeasureEvidence] = []
     for sheet_name, first_detail_row in sorted(first_detail_rows.items()):
+        window = (header_windows or {}).get(sheet_name) or bounded_header_window(
+            workbook[sheet_name],
+            first_detail_row,
+            (merged_ranges_by_sheet or {}).get(sheet_name, ()),
+        )
         candidates = _sheet_historical_candidates(
             workbook[sheet_name],
             first_detail_row,
             (merged_ranges_by_sheet or {}).get(sheet_name, ()),
+            window,
         )
         if len(candidates) != 1:
             raise ReconciliationTargetMeasureError("TARGET_HISTORICAL_PAIR_MISSING")
@@ -159,18 +183,89 @@ def discover_historical_target_measures(
     return tuple(pairs)
 
 
-def _sheet_candidates(
-    sheet, first_detail_row: int, merged_ranges: tuple[str, ...]
-) -> tuple[TargetMeasurePair, ...]:
-    end = max(0, first_detail_row - 1)
+def bounded_header_windows(
+    workbook,
+    first_detail_rows: dict[str, int],
+    merged_ranges_by_sheet: dict[str, tuple[str, ...]] | None = None,
+) -> dict[str, BoundedHeaderWindow]:
+    """Derive all detector inputs from physical cells in exact header rows."""
+
+    return {
+        sheet_name: bounded_header_window(
+            workbook[sheet_name],
+            first_detail_row,
+            (merged_ranges_by_sheet or {}).get(sheet_name, ()),
+        )
+        for sheet_name, first_detail_row in sorted(first_detail_rows.items())
+    }
+
+
+def bounded_header_window(
+    sheet, first_detail_row: int, merged_ranges: tuple[str, ...] = ()
+) -> BoundedHeaderWindow:
+    """Return only physical or merged columns above the first detail row."""
+
+    if not isinstance(first_detail_row, int) or not 2 <= first_detail_row <= _MAX_SUFFIX_ROW:
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    end = first_detail_row - 1
     start = max(1, end - _HEADER_ROWS + 1)
-    if end < start:
-        return ()
-    values, spans = _header_cells(sheet, start, end, merged_ranges)
+    cells = getattr(sheet, "_cells", None)
+    if not isinstance(cells, dict):
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    columns: set[int] = set()
+    for inspected, (coordinate, _cell) in enumerate(cells.items(), start=1):
+        if inspected > _MAX_HEADER_WINDOW_CELLS:
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        if not isinstance(coordinate, tuple) or len(coordinate) != 2:
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        row, column = coordinate
+        if not isinstance(row, int) or not isinstance(column, int):
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        if not 1 <= row <= _MAX_SUFFIX_ROW or not 1 <= column <= _MAX_SUFFIX_COLUMN:
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        if start <= row <= end:
+            columns.add(column)
+    for left, _top, right, _bottom in _header_merged_ranges(sheet, merged_ranges, start, end):
+        columns.update(range(left, right + 1))
+        if len(columns) > _MAX_HEADER_WINDOW_CELLS:
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    return BoundedHeaderWindow(start, end, tuple(sorted(columns)))
+
+
+def _header_merged_ranges(sheet, merged_ranges, start, end):
+    ranges = getattr(getattr(sheet, "merged_cells", None), "ranges", ())
+    ranges = ranges or tuple(merged_ranges)
+    result = []
+    for merged in ranges:
+        try:
+            if isinstance(merged, tuple):
+                left, top, right, bottom = merged
+            else:
+                left, top, right, bottom = range_boundaries(str(merged))
+        except ValueError as error:
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID") from error
+        if not (1 <= left <= right <= _MAX_SUFFIX_COLUMN and 1 <= top <= bottom <= _MAX_SUFFIX_ROW):
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        if top <= end and bottom >= start:
+            result.append((left, top, right, bottom))
+    return tuple(result)
+
+
+def _sheet_candidates(
+    sheet,
+    first_detail_row: int,
+    merged_ranges: tuple[str, ...],
+    window: BoundedHeaderWindow,
+) -> tuple[TargetMeasurePair, ...]:
+    start, end = _validated_window(window, first_detail_row)
+    values, spans = _header_cells(sheet, window, merged_ranges)
+    columns = frozenset(window.columns)
     candidates: dict[tuple[object, ...], HistoricalTargetMeasureEvidence] = {}
     for row in range(start, end + 1):
-        for quantity_column in range(1, int(sheet.max_column or 0)):
+        for quantity_column in window.columns:
             cost_column = quantity_column + 1
+            if cost_column not in columns:
+                continue
             quantity = _labels(values, spans, start, row, quantity_column)
             cost = _labels(values, spans, start, row, cost_column)
             if (
@@ -220,17 +315,20 @@ def _sheet_candidates(
 
 
 def _sheet_historical_candidates(
-    sheet, first_detail_row: int, merged_ranges: tuple[str, ...]
+    sheet,
+    first_detail_row: int,
+    merged_ranges: tuple[str, ...],
+    window: BoundedHeaderWindow,
 ) -> tuple[HistoricalTargetMeasureEvidence, ...]:
-    end = max(0, first_detail_row - 1)
-    start = max(1, end - _HEADER_ROWS + 1)
-    if end < start:
-        return ()
-    values, spans = _header_cells(sheet, start, end, merged_ranges)
+    start, end = _validated_window(window, first_detail_row)
+    values, spans = _header_cells(sheet, window, merged_ranges)
+    columns = frozenset(window.columns)
     candidates: dict[tuple[object, ...], HistoricalTargetMeasureEvidence] = {}
     for row in range(start, end + 1):
-        for quantity_column in range(1, int(sheet.max_column or 0)):
+        for quantity_column in window.columns:
             cost_column = quantity_column + 1
+            if cost_column not in columns:
+                continue
             quantity = _labels(values, spans, start, row, quantity_column)
             cost = _labels(values, spans, start, row, cost_column)
             if (
@@ -325,31 +423,44 @@ def _rightmost_coordinate_key(reference: str) -> tuple[int, int]:
     return column_index_from_string(column), row
 
 
-def _header_cells(sheet, start: int, end: int, merged_ranges: tuple[str, ...]):
+def _validated_window(window: BoundedHeaderWindow, first_detail_row: int) -> tuple[int, int]:
+    end = first_detail_row - 1
+    start = max(1, end - _HEADER_ROWS + 1)
+    if (
+        window.start_row != start
+        or window.end_row != end
+        or window.columns != tuple(sorted(window.columns))
+        or len(set(window.columns)) != len(window.columns)
+    ):
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    if any(
+        not isinstance(column, int) or not 1 <= column <= _MAX_SUFFIX_COLUMN
+        for column in window.columns
+    ):
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    return start, end
+
+
+def _values_by_column(window: BoundedHeaderWindow) -> frozenset[int]:
+    return frozenset(window.columns)
+
+
+def _header_cells(sheet, window: BoundedHeaderWindow, merged_ranges: tuple[str, ...]):
+    start, end = window.start_row, window.end_row
     values = {
         (row, column): sheet.cell(row, column).value
         for row in range(start, end + 1)
-        for column in range(1, int(sheet.max_column or 0) + 1)
+        for column in window.columns
     }
     spans: dict[tuple[int, int], tuple[int, int, int, int]] = {}
-    ranges = getattr(getattr(sheet, "merged_cells", None), "ranges", ())
-    ranges = ranges or tuple(range_boundaries(item) for item in merged_ranges)
-    for merged in ranges:
-        if isinstance(merged, tuple):
-            left, top, right, bottom = merged
-        else:
-            top, left, bottom, right = (
-                merged.min_row,
-                merged.min_col,
-                merged.max_row,
-                merged.max_col,
-            )
-        if bottom < start or top > end:
-            continue
+    allowed = _values_by_column(window)
+    for left, top, right, bottom in _header_merged_ranges(sheet, merged_ranges, start, end):
         key = (top, left, bottom, right)
         value = sheet.cell(top, left).value
         for row in range(max(start, top), min(end, bottom) + 1):
             for column in range(left, right + 1):
+                if column not in allowed:
+                    continue
                 values[row, column] = value
                 spans[row, column] = key
     return values, spans

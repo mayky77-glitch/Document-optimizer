@@ -413,6 +413,21 @@ def test_current_pair_discovery_ignores_far_dimension_column(tmp_path, monkeypat
     assert row.selected_quantity.value == 12
 
 
+def test_preview_discovery_ignores_far_dimension_column(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "shifted-historical.xlsx"
+    _shifted_header_target(target, current=False)
+    original = target.read_bytes()
+    access_count = _bounded_snapshot_cell_access(monkeypatch)
+
+    preview = preview_reconciliation_target(target, sha256(original).hexdigest(), "13.1", "2026-08")
+
+    assert access_count() < 1_000
+    assert target.read_bytes() == original
+    assert preview.schema.status == "OK"
+    assert preview.schema.pair_cardinality == "1"
+    assert preview.rows[0].cell_for(LogicalColumn.CURRENT_PERIOD_QUANTITY).coordinate == "N52"
+
+
 def test_public_reconciliation_read_uses_one_snapshot_parse_per_view(tmp_path, monkeypatch) -> None:
     target = tmp_path / "current-many.xlsx"
     _many_row_target(target, current=True)

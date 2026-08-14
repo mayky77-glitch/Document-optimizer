@@ -16,7 +16,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from openpyxl.cell.read_only import ReadOnlyCell
-from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
+from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from openpyxl.worksheet._reader import WorkSheetParser
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
@@ -321,7 +321,7 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
             for sheet_name in detail_rows
         }
         measure_pairs = discover_target_measures(
-            _measure_workbook(adapted.formula_workbook, formula_all, detail_rows, merged_ranges),
+            adapted.formula_workbook,
             detail_rows,
             merged_ranges,
         )
@@ -577,25 +577,6 @@ def _snapshot_session(session, formula_snapshots, value_snapshots):
         formula_workbook=_SnapshotWorkbook(session.formula_workbook, formula_snapshots),
         value_workbook=_SnapshotWorkbook(session.value_workbook, value_snapshots),
     )
-
-
-def _measure_workbook(workbook, snapshots, detail_rows, merged_ranges):
-    """Constrain measure discovery to physical header evidence, not dimensions."""
-
-    maximum_columns: dict[str, int] = {}
-    for sheet_name, detail_row in detail_rows.items():
-        start, end = max(1, detail_row - 80), max(0, detail_row - 1)
-        columns = {column for row, column in snapshots[sheet_name].cells if start <= row <= end}
-        for reference in merged_ranges.get(sheet_name, ()):
-            left, top, right, bottom = range_boundaries(reference)
-            if top <= end and bottom >= start:
-                columns.update(range(left, right + 1))
-        maximum_column = max(columns, default=1)
-        if maximum_column * max(0, end - start + 1) > _MAX_ROLE_SCAN_CELLS:
-            raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_MEASURE_SCAN_LIMIT")
-        maximum_columns[sheet_name] = maximum_column
-    raw_workbook = getattr(workbook, "_workbook", workbook)
-    return _SnapshotWorkbook(raw_workbook, snapshots, maximum_columns)
 
 
 def _reconciliation_schema(

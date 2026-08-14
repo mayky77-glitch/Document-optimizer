@@ -70,6 +70,25 @@ def test_common_merged_current_parent_is_sufficient_without_calendar_month() -> 
     assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
 
 
+def test_physical_header_window_ignores_far_dimension_column(monkeypatch) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Отчетный период")
+    sheet["XFD999999"] = "irrelevant"
+    original = sheet.cell
+    accesses = 0
+
+    def counted(*args, **kwargs):
+        nonlocal accesses
+        accesses += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sheet, "cell", counted)
+    (pair,) = discover_target_measures(workbook, {sheet.title: 3})
+
+    assert accesses < 100
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
 @pytest.mark.parametrize(
     ("left", "right"),
     (("Август 2026", "Сентябрь 2026"), ("Период", "Период")),

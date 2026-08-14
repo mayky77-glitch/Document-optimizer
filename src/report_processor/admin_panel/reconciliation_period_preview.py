@@ -18,7 +18,6 @@ from .reconciliation_target import (
     _current_pair_period_identity,
     _enumerate_stages,
     _first_detail_rows,
-    _measure_workbook,
     _preview_bindings,
     _preview_rows,
     _reconciliation_metadata_schema,
@@ -67,9 +66,7 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         }
         try:
             measure_pairs = discover_target_measures(
-                _measure_workbook(
-                    adapted.formula_workbook, formula_all, detail_rows, merged_ranges
-                ),
+                adapted.formula_workbook,
                 detail_rows,
                 merged_ranges,
             )
