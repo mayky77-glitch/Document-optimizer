@@ -31,6 +31,7 @@ from report_processor.schema.column_aliases import DEFAULT_COLUMN_ALIASES
 from report_processor.target_report import (
     TargetCellSnapshot,
     TargetColumnBinding,
+    TargetObjectBlock,
     TargetReportReadRequest,
     TargetReportRow,
 )
@@ -65,6 +66,84 @@ class _PhysicalWorksheetSnapshot:
     cells: dict[tuple[int, int], object]
     rows: tuple[int, ...]
     inspected: tuple[int, int]
+
+
+class _SnapshotWorksheet:
+    """Request-local worksheet view backed only by parsed physical cells."""
+
+    def __init__(self, worksheet, snapshot: _PhysicalWorksheetSnapshot) -> None:
+        self._worksheet = worksheet
+        self._snapshot = snapshot
+        self.title = worksheet.title
+        # Discovery APIs deliberately use this physical index too; it avoids a
+        # read-only worksheet's per-cell XML reparse while preserving sparse rows.
+        self._cells = snapshot.cells
+
+    @property
+    def max_row(self) -> int:
+        return int(getattr(self._worksheet, "max_row", 0) or 0)
+
+    @property
+    def max_column(self) -> int:
+        return int(getattr(self._worksheet, "max_column", 0) or 0)
+
+    def cell(self, row: int, column: int, value=None):
+        if value is not None:
+            raise TypeError("snapshot worksheet is read-only")
+        return _cell_at(self._snapshot, self._worksheet, row, column)
+
+    def iter_rows(
+        self,
+        min_row: int | None = None,
+        max_row: int | None = None,
+        min_col: int | None = None,
+        max_col: int | None = None,
+        values_only: bool = False,
+    ):
+        start_row = max(1, min_row or 1)
+        end_row = min(int(max_row or self.max_row), start_row + _MAX_ROLE_SCAN_ROWS - 1)
+        start_column = max(1, min_col or 1)
+        end_column = min(int(max_col or self.max_column), 16_384)
+        width = max(1, end_column - start_column + 1)
+        end_row = min(end_row, start_row + (_MAX_ROLE_SCAN_CELLS // width) - 1)
+        for row_number in range(start_row, end_row + 1):
+            row = tuple(
+                _cell_at(self._snapshot, self._worksheet, row_number, column)
+                for column in range(start_column, end_column + 1)
+            )
+            yield tuple(cell.value for cell in row) if values_only else row
+
+    def __getattr__(self, name):
+        return getattr(self._worksheet, name)
+
+
+class _SnapshotWorkbook:
+    """Workbook facade that prevents downstream readers from opening XML per cell."""
+
+    def __init__(self, workbook, snapshots: dict[str, _PhysicalWorksheetSnapshot]) -> None:
+        self._workbook = workbook
+        self._worksheets = {
+            name: _SnapshotWorksheet(workbook[name], snapshots[name])
+            for name in workbook.sheetnames
+        }
+
+    @property
+    def sheetnames(self):
+        return self._workbook.sheetnames
+
+    @property
+    def worksheets(self):
+        return tuple(self._worksheets[name] for name in self.sheetnames)
+
+    @property
+    def active(self):
+        return self._worksheets[self._workbook.active.title]
+
+    def __getitem__(self, key):
+        return self._worksheets[key]
+
+    def __getattr__(self, name):
+        return getattr(self._workbook, name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,19 +278,21 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
     _validate_reconciliation_target_type(Path(path))
     source = _materialized(path, f"target:{digest}")
     with open_dual_workbook(WorkbookOpenRequest(source)) as session:
+        formula_all, value_all = _request_snapshots(session)
+        adapted = _snapshot_session(session, formula_all, value_all)
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
-        workbook_schema = analyze_workbook_schema(session)
+        workbook_schema = analyze_workbook_schema(adapted)
         roles = _base_roles(workbook_schema)
-        formula_snapshots, value_snapshots = _session_snapshots(session, roles)
-        stages = _enumerate_stages(session.formula_workbook, roles, formula_snapshots)
+        formula_snapshots, value_snapshots = _session_snapshots(adapted, roles)
+        stages = _enumerate_stages(adapted.formula_workbook, roles, formula_snapshots)
         selected_stage = resolve_reconciliation_stage(stages, stage)
         detail_rows = _first_detail_rows(
-            session.formula_workbook, selected_stage, roles, formula_snapshots
+            adapted.formula_workbook, selected_stage, roles, formula_snapshots
         )
         if not detail_rows:
             raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
         measure_pairs = discover_target_measures(
-            session.formula_workbook,
+            adapted.formula_workbook,
             detail_rows,
             {
                 sheet_name: read_sheet_structure(
@@ -221,17 +302,17 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
             },
         )
         report = generic.read_target_report(
-            session,
+            adapted,
             workbook_schema,
-            TargetReportReadRequest(selected_stage=selected_stage),
+            TargetReportReadRequest(selected_stage=selected_stage, max_rows=0),
         )
         bindings = _bindings(roles, measure_pairs)
         rows = tuple(
-            _rows(session, selected_stage, measure_pairs, roles, formula_snapshots, value_snapshots)
+            _rows(adapted, selected_stage, measure_pairs, roles, formula_snapshots, value_snapshots)
         )
     if not rows:
         raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
-    schema = replace(report.schema, column_bindings=bindings)
+    schema = replace(report.schema, column_bindings=bindings, object_blocks=_object_blocks(rows))
     return schema, rows
 
 
@@ -246,9 +327,11 @@ def terminal_index(value: object) -> str | None:
 
 def enumerate_reconciliation_stages(session) -> tuple[str, ...]:
     """Return stages only after logical role binding succeeds."""
-    roles = _base_roles(analyze_workbook_schema(session))
-    formula_snapshots, _value_snapshots = _session_snapshots(session, roles)
-    return _enumerate_stages(session.formula_workbook, roles, formula_snapshots)
+    formula_all, value_all = _request_snapshots(session)
+    adapted = _snapshot_session(session, formula_all, value_all)
+    roles = _base_roles(analyze_workbook_schema(adapted))
+    formula_snapshots, _value_snapshots = _session_snapshots(adapted, roles)
+    return _enumerate_stages(adapted.formula_workbook, roles, formula_snapshots)
 
 
 def structurally_valid_reconciliation_stages(session, *, maximum: int) -> tuple[str, ...]:
@@ -261,9 +344,11 @@ def structurally_valid_reconciliation_stages(session, *, maximum: int) -> tuple[
 
     if not isinstance(maximum, int) or maximum < 1:
         raise ValueError("maximum must be positive")
-    roles = _base_roles(analyze_workbook_schema(session))
-    formula_snapshots, _value_snapshots = _session_snapshots(session, roles)
-    return _valid_stages(session.formula_workbook, roles, formula_snapshots, maximum)
+    formula_all, value_all = _request_snapshots(session)
+    adapted = _snapshot_session(session, formula_all, value_all)
+    roles = _base_roles(analyze_workbook_schema(adapted))
+    formula_snapshots, _value_snapshots = _session_snapshots(adapted, roles)
+    return _valid_stages(adapted.formula_workbook, roles, formula_snapshots, maximum)
 
 
 def _valid_stages(workbook, roles, snapshots, maximum: int) -> tuple[str, ...]:
@@ -439,27 +524,41 @@ def _enumerate_stages(workbook, roles, snapshots) -> tuple[str, ...]:
     return tuple(sorted(stages))
 
 
-def _session_snapshots(
-    session, roles
+def _request_snapshots(
+    session,
 ) -> tuple[dict[str, _PhysicalWorksheetSnapshot], dict[str, _PhysicalWorksheetSnapshot]]:
     cache_key = "reconciliation-physical-cells-v1"
     cached = session.structure_cache.get(cache_key)
     if cached is not None:
         return cached
     result = (
-        _view_snapshots(session.formula_workbook, roles),
-        _view_snapshots(session.value_workbook, roles),
+        _view_snapshots(session.formula_workbook),
+        _view_snapshots(session.value_workbook),
     )
     session.structure_cache[cache_key] = result
     return result
 
 
-def _view_snapshots(workbook, roles) -> dict[str, _PhysicalWorksheetSnapshot]:
-    return {
-        sheet.title: _physical_snapshot(sheet)
-        for sheet in workbook.worksheets
-        if sheet.title in roles
-    }
+def _snapshot_session(session, formula_snapshots, value_snapshots):
+    return replace(
+        session,
+        formula_workbook=_SnapshotWorkbook(session.formula_workbook, formula_snapshots),
+        value_workbook=_SnapshotWorkbook(session.value_workbook, value_snapshots),
+    )
+
+
+def _session_snapshots(
+    session, roles
+) -> tuple[dict[str, _PhysicalWorksheetSnapshot], dict[str, _PhysicalWorksheetSnapshot]]:
+    formula_all, value_all = _request_snapshots(session)
+    return (
+        {sheet_name: formula_all[sheet_name] for sheet_name in roles},
+        {sheet_name: value_all[sheet_name] for sheet_name in roles},
+    )
+
+
+def _view_snapshots(workbook) -> dict[str, _PhysicalWorksheetSnapshot]:
+    return {sheet.title: _physical_snapshot(sheet) for sheet in workbook.worksheets}
 
 
 def _physical_snapshot(sheet) -> _PhysicalWorksheetSnapshot:
@@ -468,10 +567,13 @@ def _physical_snapshot(sheet) -> _PhysicalWorksheetSnapshot:
         return cached
     cells = getattr(sheet, "_cells", None)
     if isinstance(cells, dict):
+        rows = {row for row, _ in cells}
+        if len(rows) > _MAX_ROLE_SCAN_ROWS or len(cells) > _MAX_ROLE_SCAN_CELLS:
+            raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_LIMIT")
         snapshot = _PhysicalWorksheetSnapshot(
             dict(cells),
-            tuple(sorted({row for row, _ in cells})),
-            (len({row for row, _ in cells}), len(cells)),
+            tuple(sorted(rows)),
+            (len(rows), len(cells)),
         )
     else:
         snapshot = _read_only_physical_snapshot(sheet)
@@ -775,6 +877,30 @@ def _numeric(cell):
         cell.formula.cache_state if cell.formula is not None else "NOT_FORMULA",
         cell.status,
     )
+
+
+def _object_blocks(rows: Iterable[TargetReportRow]) -> tuple[TargetObjectBlock, ...]:
+    blocks: list[TargetObjectBlock] = []
+    active: TargetObjectBlock | None = None
+    for row in rows:
+        key = (row.sheet_name, row.object_code, row.object_name)
+        if active is None or key != (active.sheet_name, active.object_code, active.object_name):
+            if active is not None:
+                blocks.append(active)
+            active = TargetObjectBlock(
+                row.sheet_name, row.row_number, row.row_number, row.object_code, row.object_name
+            )
+        else:
+            active = TargetObjectBlock(
+                active.sheet_name,
+                active.start_row,
+                row.row_number,
+                active.object_code,
+                active.object_name,
+            )
+    if active is not None:
+        blocks.append(active)
+    return tuple(blocks)
 
 
 def _sha256(path: Path) -> str:

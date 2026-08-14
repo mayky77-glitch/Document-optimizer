@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from hashlib import sha256
 
 import pytest
 from openpyxl import Workbook, load_workbook
 
 from report_processor.admin_panel import reconciliation_period_preview
+from report_processor.admin_panel import reconciliation_target as reconciliation_target_module
 from report_processor.admin_panel.reconciliation_period import ReportingPeriod
 from report_processor.admin_panel.reconciliation_period_preview import (  # type: ignore[import-not-found]
     preview_reconciliation_target,
@@ -272,3 +274,84 @@ def test_preview_rejects_target_mutated_during_planning(tmp_path, monkeypatch) -
 
     with pytest.raises(ValueError, match="RECONCILIATION_TARGET_CHANGED"):
         preview_reconciliation_target(target, digest, "13.1", "2026-08")
+
+
+def _many_row_target(path, *, current: bool) -> None:
+    _target(path, current=current)
+    workbook = load_workbook(path)
+    sheet = workbook["Отчёт 1"]
+    for row in range(3, 104):
+        if row > 3:
+            sheet.cell(row, 5).value = row - 2
+            sheet.cell(row, 6).value = f"Монтаж {row}"
+            sheet.cell(row, 7).value = "м"
+        if current:
+            sheet.cell(row, 12).value = row - 2
+            sheet.cell(row, 13).value = f"=L{row}*2"
+    sheet["A999999"] = "far dimension"
+    workbook.save(path)
+    workbook.close()
+
+
+def _instrument_open(monkeypatch, module):
+    original = module.open_dual_workbook
+    counts = {"formula": 0, "value": 0, "cell": 0}
+
+    @contextmanager
+    def instrumented(request):
+        with original(request) as session:
+            for view, key in (
+                (session.formula_workbook, "formula"),
+                (session.value_workbook, "value"),
+            ):
+                for sheet in view.worksheets:
+                    source, cell = sheet._get_source, sheet.cell
+
+                    def counted_source(source=source, key=key):
+                        counts[key] += 1
+                        return source()
+
+                    def counted_cell(*args, cell=cell, **kwargs):
+                        counts["cell"] += 1
+                        return cell(*args, **kwargs)
+
+                    sheet._get_source = counted_source
+                    sheet.cell = counted_cell
+            yield session
+
+    monkeypatch.setattr(module, "open_dual_workbook", instrumented)
+    return counts
+
+
+def test_public_reconciliation_read_uses_one_snapshot_parse_per_view(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "current-many.xlsx"
+    _many_row_target(target, current=True)
+    counts = _instrument_open(monkeypatch, reconciliation_target_module)
+
+    schema, rows = read_reconciliation_target(
+        target, sha256(target.read_bytes()).hexdigest(), "13.1"
+    )
+
+    assert counts == {"formula": 1, "value": 1, "cell": 0}
+    assert len(rows) == 101
+    assert schema.object_blocks[0].start_row == 3
+    assert rows[-1].selected_quantity.value == 101
+    assert rows[-1].cell_for(LogicalColumn.CURRENT_PERIOD_COST).formula.formula == "=L103*2"
+
+
+def test_public_reconciliation_preview_uses_one_snapshot_parse_per_view(
+    tmp_path, monkeypatch
+) -> None:
+    target = tmp_path / "historical-many.xlsx"
+    _many_row_target(target, current=False)
+    counts = _instrument_open(monkeypatch, reconciliation_period_preview)
+
+    preview = preview_reconciliation_target(
+        target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+    )
+
+    assert counts == {"formula": 1, "value": 1, "cell": 0}
+    assert len(preview.rows) == 101
+    assert preview.schema.object_blocks[0].start_row == 3
+    assert preview.rows[-1].selected_quantity.value is None
+    assert preview.rows[-1].cell_for(LogicalColumn.CURRENT_PERIOD_COST).coordinate == "O103"

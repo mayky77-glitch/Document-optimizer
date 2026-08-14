@@ -18,11 +18,14 @@ from .reconciliation_target import (
     _bindings,
     _enumerate_stages,
     _first_detail_rows,
+    _object_blocks,
     _preview_bindings,
     _preview_rows,
+    _request_snapshots,
     _rows,
     _session_snapshots,
     _sha256,
+    _snapshot_session,
     _validate_reconciliation_target_type,
     resolve_reconciliation_stage,
 )
@@ -41,15 +44,17 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         raise ValueError("RECONCILIATION_TARGET_CHANGED")
     source = _materialized(source_path, f"target:{digest}")
     with open_dual_workbook(WorkbookOpenRequest(source)) as session:
+        formula_all, value_all = _request_snapshots(session)
+        adapted = _snapshot_session(session, formula_all, value_all)
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
-        workbook_schema = analyze_workbook_schema(session)
+        workbook_schema = analyze_workbook_schema(adapted)
         roles = _base_roles(workbook_schema)
-        formula_snapshots, value_snapshots = _session_snapshots(session, roles)
+        formula_snapshots, value_snapshots = _session_snapshots(adapted, roles)
         selected_stage = resolve_reconciliation_stage(
-            _enumerate_stages(session.formula_workbook, roles, formula_snapshots), stage
+            _enumerate_stages(adapted.formula_workbook, roles, formula_snapshots), stage
         )
         detail_rows = _first_detail_rows(
-            session.formula_workbook, selected_stage, roles, formula_snapshots
+            adapted.formula_workbook, selected_stage, roles, formula_snapshots
         )
         if not detail_rows:
             raise ValueError("RECONCILIATION_TARGET_STAGE_EMPTY")
@@ -59,7 +64,7 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         }
         try:
             measure_pairs = discover_target_measures(
-                session.formula_workbook, detail_rows, merged_ranges
+                adapted.formula_workbook, detail_rows, merged_ranges
             )
         except ReconciliationTargetMeasureError as error:
             if str(error) != "TARGET_CURRENT_PERIOD_PAIR_MISSING":
@@ -75,14 +80,20 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
             if plan.idempotent or not plan.anchors:
                 raise ValueError("RECONCILIATION_TARGET_PREVIEW_INVALID") from None
             report = generic.read_target_report(
-                session, workbook_schema, TargetReportReadRequest(selected_stage=selected_stage)
+                adapted,
+                workbook_schema,
+                TargetReportReadRequest(selected_stage=selected_stage, max_rows=0),
             )
             rows = tuple(
                 _preview_rows(
-                    session, selected_stage, plan, roles, formula_snapshots, value_snapshots
+                    adapted, selected_stage, plan, roles, formula_snapshots, value_snapshots
                 )
             )
-            schema = replace(report.schema, column_bindings=_preview_bindings(roles, plan))
+            schema = replace(
+                report.schema,
+                column_bindings=_preview_bindings(roles, plan),
+                object_blocks=_object_blocks(rows),
+            )
             identity = ReconciliationTargetIdentity(
                 digest, selected_stage, reporting_period, plan.plan_digest
             )
@@ -90,12 +101,18 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
                 raise ValueError("RECONCILIATION_TARGET_CHANGED") from None
             return ReconciliationTargetPreview(schema, rows, reporting_period, plan, identity)
         report = generic.read_target_report(
-            session, workbook_schema, TargetReportReadRequest(selected_stage=selected_stage)
+            adapted,
+            workbook_schema,
+            TargetReportReadRequest(selected_stage=selected_stage, max_rows=0),
         )
         rows = tuple(
-            _rows(session, selected_stage, measure_pairs, roles, formula_snapshots, value_snapshots)
+            _rows(adapted, selected_stage, measure_pairs, roles, formula_snapshots, value_snapshots)
         )
-        schema = replace(report.schema, column_bindings=_bindings(roles, measure_pairs))
+        schema = replace(
+            report.schema,
+            column_bindings=_bindings(roles, measure_pairs),
+            object_blocks=_object_blocks(rows),
+        )
         identity = ReconciliationTargetIdentity(digest, selected_stage)
         if _sha256(source_path) != digest:
             raise ValueError("RECONCILIATION_TARGET_CHANGED")
