@@ -227,4 +227,5 @@ Manifest v3 хранит период и ограниченные target/plan/ca
 и exact-replay коммитит feedback один раз. Старый manifest v2 намеренно не восстанавливается.
 
 Связанные карточки: [[tasks/reconciliation-period-apply]],
-[[tasks/reconciliation-period-preview]], [[tasks/reconciliation-period-apply-service]].
+[[tasks/reconciliation-period-preview]], [[tasks/reconciliation-period-preview-complete]],
+[[tasks/reconciliation-period-apply-service-v2]].

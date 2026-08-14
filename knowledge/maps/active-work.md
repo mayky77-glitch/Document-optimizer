@@ -20,9 +20,11 @@ The active dependency chain is [[../tasks/reconciliation-real-layout-gate0|Real-
 Structural source/identity is accepted at `fe3d5ee`; the structural target oracle is accepted at
 `959e3b9`. Direct OOXML transformation is accepted at `991002a`, and bounded wholly-left
 shared-formula preservation at `90e7a73`. Active work is
-[[../tasks/reconciliation-period-apply|preview/apply Gate 0]]: first
-[[../tasks/reconciliation-period-preview|structural preview and identity]], then
-[[../tasks/reconciliation-period-apply-service|transactional apply/service recovery]], then a
+[[../tasks/reconciliation-period-apply|preview/apply Gate 0]]. The original preview card is retained
+as blocked evidence because full historical preview also needs the shared target-measure/planner
+paths. Active replacement: first
+[[../tasks/reconciliation-period-preview-complete|combined bounded preview]], then
+[[../tasks/reconciliation-period-apply-service-v2|transactional apply/service recovery]], then a
 separate API/UI wave and one low-load release shadow.
 
 Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].

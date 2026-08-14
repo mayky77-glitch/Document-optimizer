@@ -57,7 +57,10 @@ updated: 2026-08-13
 
 ## Next executable step
 
-Freeze and implement the corrected [[tasks/reconciliation-period-apply|preview/apply and service
-manifest card]] from `90e7a73`. Verification must remain strict/no-write, while reconciliation may
-prepare a period only after actionable calculations. Keep API/UI wiring separate and run the
-private release shadow plus full suite only once after the complete write path is integrated.
+Implement [[tasks/reconciliation-period-preview-complete|the combined bounded preview card]]. The
+earlier six-file scope produced checkpoint `88bb456` and 122 focused passes, but independent P6
+proved that historical planning still inherited a rectangular `max_column` scan from the shared
+detector. The replacement card owns that shared boundary explicitly rather than hiding it with a
+monkeypatch. Then run [[tasks/reconciliation-period-apply-service-v2|transactional apply/recovery]].
+Verification stays strict/no-write; API/UI wiring remains separate. Run the private release shadow
+and full suite only once after the complete write path is integrated.
