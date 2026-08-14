@@ -382,6 +382,92 @@ def test_raw_central_directory_count_must_match_eocd_before_zipfile(tmp_path: Pa
         ooxml.reject_unsupported_package(archive_path)
 
 
+def test_raw_central_directory_must_end_exactly_at_eocd_before_zipfile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A short declared directory must not hide another real CD record."""
+
+    archive_path = tmp_path / "decoy-directory.xlsx"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("first", b"1")
+        archive.writestr("second", b"2")
+    payload = bytearray(archive_path.read_bytes())
+    eocd = payload.rfind(b"PK\x05\x06")
+    central_directory = struct.unpack_from("<L", payload, eocd + 16)[0]
+    first_record_size = 46 + sum(struct.unpack_from("<3H", payload, central_directory + 28))
+    struct.pack_into("<H", payload, eocd + 8, 1)
+    struct.pack_into("<H", payload, eocd + 10, 1)
+    struct.pack_into("<L", payload, eocd + 12, first_record_size)
+    archive_path.write_bytes(payload)
+
+    def must_not_open(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("ZipFile must not see an archive rejected by raw preflight")
+
+    monkeypatch.setattr(ooxml.zipfile, "ZipFile", must_not_open)
+    with pytest.raises(ExcelWriterSafetyError, match="INVALID_XLSX_PACKAGE"):
+        ooxml.reject_unsupported_package(archive_path)
+
+
+def test_semantic_worksheet_size_limit_is_checked_before_custom_part_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Worksheet relationship targets need not live under xl/worksheets/."""
+
+    archive_path = tmp_path / "custom-sheet.xlsx"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("xl/custom/sheet.xml", b"x" * 100)
+    monkeypatch.setattr(ooxml, "_MAX_WORKSHEET_XML_BYTES", 10)
+    with (
+        ZipFile(archive_path) as archive,
+        pytest.raises(ExcelWriterSafetyError, match="INVALID_XLSX_PACKAGE"),
+    ):
+        ooxml.read_archive_part(
+            archive,
+            "xl/custom/sheet.xml",
+            ExcelWriterSafetyError,
+            "INVALID_XLSX_PACKAGE",
+            worksheet=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected_code"),
+    (
+        (lambda payload: replace_cell_value(payload, "D1", "2"), "TARGET_CELL_MISSING"),
+        (
+            lambda payload: numeric_formula_values(payload, ("D1",)),
+            "FORMULA_RESULT_NOT_NUMERIC",
+        ),
+        (
+            lambda payload: materialize_formula_cells(payload, {"D1": "2"}),
+            "FORMULA_MATERIALIZATION_FAILED",
+        ),
+    ),
+)
+def test_duplicate_coordinates_keep_each_callers_controlled_error_code(
+    operation, expected_code: str
+) -> None:
+    duplicate = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row><c r="D1"><f>1</f><v>1</v></c>'
+        b'<c r="D1"><f>1</f><v>1</v></c></row></sheetData></worksheet>'
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match=expected_code):
+        operation(duplicate)
+
+
+def test_dtd_rejection_preserves_the_callers_error_code() -> None:
+    dtd = (
+        b'<!DOCTYPE worksheet [<!ENTITY value "1">]><worksheet '
+        b'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row><c r="D1"><v>&value;</v></c></row></sheetData></worksheet>'
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match="PRESERVATION_CHECK_FAILED"):
+        worksheet_index(dtd, "PRESERVATION_CHECK_FAILED")
+
+
 @pytest.mark.parametrize(
     "cell_xml",
     (

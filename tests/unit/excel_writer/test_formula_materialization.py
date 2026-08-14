@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from dataclasses import replace
 from decimal import Decimal
@@ -13,7 +14,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from fixtures.quality_control.builders import calculated_match, calculated_result
-from report_processor.excel_writer import ExcelWriterAtomicError, WriteStatus, write_target_report
+from report_processor.excel_writer import (
+    ExcelWriterAtomicError,
+    ExcelWriterIntegrityError,
+    WriteStatus,
+    write_target_report,
+)
 from report_processor.excel_writer import formula_materialization as materializer
 from report_processor.quality_control import WriteDecision
 from report_processor.schema import LogicalColumn, SheetType
@@ -97,6 +103,7 @@ def test_workbook_without_formulas_never_launches_recalculation_or_emits_formula
 
     assert result.status is WriteStatus.WRITTEN
     assert output_path.exists()
+    assert result.output_sha256 == _sha256(output_path)
     assert (
         source_path.stat().st_size,
         source_path.stat().st_mtime_ns,
@@ -158,3 +165,34 @@ def test_recalculation_timeout_aborts_without_changing_the_private_copy(
         materializer.recalculate_and_materialize(path)
 
     assert _sha256(path) == before
+
+
+def test_descriptor_copy_starts_at_zero_even_after_another_reader_advanced_it(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "input.xlsx"
+    payload = b"an admitted descriptor must be copied from byte zero"
+    source.write_bytes(payload)
+    descriptor = os.open(source, os.O_RDONLY)
+    try:
+        assert os.read(descriptor, 9) == payload[:9]
+        materializer._copy_descriptor(descriptor, destination)
+    finally:
+        os.close(descriptor)
+
+    assert destination.read_bytes() == payload
+
+
+def test_formula_package_resource_error_is_remapped_to_recalculation_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "formula.xlsx"
+    _workbook(path, formula=True)
+
+    def reject_resource(*_args: object, **_kwargs: object) -> object:
+        raise ExcelWriterIntegrityError("INVALID_XLSX_PACKAGE", "injected")
+
+    monkeypatch.setattr(materializer, "worksheet_part_map", reject_resource)
+    with pytest.raises(ExcelWriterAtomicError, match="FORMULA_RECALCULATION_FAILED"):
+        materializer.recalculate_and_materialize(path)

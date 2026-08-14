@@ -108,6 +108,18 @@ def test_reopen_failure_never_removes_output_replaced_during_publication(
     assert output.read_bytes() == b"concurrent replacement"
 
 
+def test_owned_temp_cleanup_never_unlinks_a_replacement(tmp_path: Path) -> None:
+    temporary = engine._temp_path(tmp_path / "result.xlsx")
+    replacement = tmp_path / "replacement.xlsx"
+    replacement.write_bytes(b"replacement")
+    try:
+        os.replace(replacement, temporary.path)
+        engine._unlink_if_owned(temporary.path, temporary.descriptor)
+        assert temporary.path.read_bytes() == b"replacement"
+    finally:
+        os.close(temporary.descriptor)
+
+
 def test_swap_use_restore_of_source_path_cannot_change_snapshot_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
