@@ -15,7 +15,9 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from openpyxl.cell.read_only import ReadOnlyCell
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
+from openpyxl.worksheet._reader import WorkSheetParser
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.processing.adapters import _materialized
@@ -56,6 +58,13 @@ _CORE_ROLES = _BASE_ROLES[:3]
 _MAX_ROLE_SCAN_ROWS = 100_000
 _MAX_ROLE_SCAN_CELLS = 500_000
 _MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+
+@dataclass(frozen=True, slots=True)
+class _PhysicalWorksheetSnapshot:
+    cells: dict[tuple[int, int], object]
+    rows: tuple[int, ...]
+    inspected: tuple[int, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,9 +202,12 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
         workbook_schema = analyze_workbook_schema(session)
         roles = _base_roles(workbook_schema)
-        stages = _enumerate_stages(session.formula_workbook, roles)
+        formula_snapshots, value_snapshots = _session_snapshots(session, roles)
+        stages = _enumerate_stages(session.formula_workbook, roles, formula_snapshots)
         selected_stage = resolve_reconciliation_stage(stages, stage)
-        detail_rows = _first_detail_rows(session.formula_workbook, selected_stage, roles)
+        detail_rows = _first_detail_rows(
+            session.formula_workbook, selected_stage, roles, formula_snapshots
+        )
         if not detail_rows:
             raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
         measure_pairs = discover_target_measures(
@@ -214,7 +226,9 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
             TargetReportReadRequest(selected_stage=selected_stage),
         )
         bindings = _bindings(roles, measure_pairs)
-        rows = tuple(_rows(session, selected_stage, measure_pairs, roles))
+        rows = tuple(
+            _rows(session, selected_stage, measure_pairs, roles, formula_snapshots, value_snapshots)
+        )
     if not rows:
         raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
     schema = replace(report.schema, column_bindings=bindings)
@@ -232,9 +246,9 @@ def terminal_index(value: object) -> str | None:
 
 def enumerate_reconciliation_stages(session) -> tuple[str, ...]:
     """Return stages only after logical role binding succeeds."""
-    return _enumerate_stages(
-        session.formula_workbook, _base_roles(analyze_workbook_schema(session))
-    )
+    roles = _base_roles(analyze_workbook_schema(session))
+    formula_snapshots, _value_snapshots = _session_snapshots(session, roles)
+    return _enumerate_stages(session.formula_workbook, roles, formula_snapshots)
 
 
 def structurally_valid_reconciliation_stages(session, *, maximum: int) -> tuple[str, ...]:
@@ -248,19 +262,20 @@ def structurally_valid_reconciliation_stages(session, *, maximum: int) -> tuple[
     if not isinstance(maximum, int) or maximum < 1:
         raise ValueError("maximum must be positive")
     roles = _base_roles(analyze_workbook_schema(session))
-    return _valid_stages(session.formula_workbook, roles, maximum)
+    formula_snapshots, _value_snapshots = _session_snapshots(session, roles)
+    return _valid_stages(session.formula_workbook, roles, formula_snapshots, maximum)
 
 
-def _valid_stages(workbook, roles, maximum: int) -> tuple[str, ...]:
+def _valid_stages(workbook, roles, snapshots, maximum: int) -> tuple[str, ...]:
     stages: set[str] = set()
     for sheet in workbook.worksheets:
         columns = roles.get(sheet.title)
         if columns is None:
             continue
         active_index = active_stage = None
-        for row_number in _role_rows(sheet, columns):
+        for row_number in _role_rows(snapshots[sheet.title], columns):
             active_index, active_stage, values = _carried_role_values(
-                sheet, row_number, columns, active_index, active_stage
+                snapshots[sheet.title], row_number, columns, active_index, active_stage
             )
             if not _semantic_detail(active_stage, active_index, values):
                 continue
@@ -406,16 +421,17 @@ def _base_roles(workbook_schema) -> dict[str, dict[LogicalColumn, object]]:
     return result
 
 
-def _enumerate_stages(workbook, roles) -> tuple[str, ...]:
+def _enumerate_stages(workbook, roles, snapshots) -> tuple[str, ...]:
     stages: set[str] = set()
     for sheet in workbook.worksheets:
         if sheet.title not in roles:
             continue
         columns = roles[sheet.title]
         active_index = active_stage = None
-        for row_number in _role_rows(sheet, columns):
+        snapshot = snapshots[sheet.title]
+        for row_number in _role_rows(snapshot, columns):
             active_index, active_stage, _values = _carried_role_values(
-                sheet, row_number, columns, active_index, active_stage
+                snapshot, row_number, columns, active_index, active_stage
             )
             if active_stage is None or active_index is None:
                 continue
@@ -423,44 +439,63 @@ def _enumerate_stages(workbook, roles) -> tuple[str, ...]:
     return tuple(sorted(stages))
 
 
-def _role_rows(sheet, columns) -> tuple[int, ...] | range:
-    """Visit only materialized cells relevant to structural role evidence."""
+def _session_snapshots(
+    session, roles
+) -> tuple[dict[str, _PhysicalWorksheetSnapshot], dict[str, _PhysicalWorksheetSnapshot]]:
+    cache_key = "reconciliation-physical-cells-v1"
+    cached = session.structure_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    result = (
+        _view_snapshots(session.formula_workbook, roles),
+        _view_snapshots(session.value_workbook, roles),
+    )
+    session.structure_cache[cache_key] = result
+    return result
 
-    cached = getattr(sheet, "_reconciliation_role_rows", None)
+
+def _view_snapshots(workbook, roles) -> dict[str, _PhysicalWorksheetSnapshot]:
+    return {
+        sheet.title: _physical_snapshot(sheet)
+        for sheet in workbook.worksheets
+        if sheet.title in roles
+    }
+
+
+def _physical_snapshot(sheet) -> _PhysicalWorksheetSnapshot:
+    cached = getattr(sheet, "_reconciliation_physical_snapshot", None)
     if cached is not None:
         return cached
     cells = getattr(sheet, "_cells", None)
     if isinstance(cells, dict):
-        role_columns = {item.column_index for item in columns.values()}
-        rows = tuple(sorted({row for row, column in cells if column in role_columns}))
-        with suppress(AttributeError, TypeError):
-            sheet._reconciliation_role_rows = rows
-        return rows
-    role_columns = {item.column_index for item in columns.values()}
-    archive = getattr(getattr(sheet, "parent", None), "_archive", None)
-    worksheet_path = getattr(sheet, "_worksheet_path", None)
-    if archive is None or not isinstance(worksheet_path, str):
-        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_UNSUPPORTED")
-    rows, inspected = _ooxml_role_rows(archive, worksheet_path, role_columns)
+        snapshot = _PhysicalWorksheetSnapshot(
+            dict(cells),
+            tuple(sorted({row for row, _ in cells})),
+            (len({row for row, _ in cells}), len(cells)),
+        )
+    else:
+        snapshot = _read_only_physical_snapshot(sheet)
     with suppress(AttributeError, TypeError):
-        sheet._reconciliation_role_rows = rows
-        sheet._reconciliation_role_scan = inspected
-    return rows
+        sheet._reconciliation_physical_snapshot = snapshot
+    return snapshot
 
 
-def _ooxml_role_rows(
-    archive, worksheet_path: str, role_columns: set[int]
-) -> tuple[tuple[int, ...], tuple[int, int]]:
+def _read_only_physical_snapshot(sheet) -> _PhysicalWorksheetSnapshot:
+    source = getattr(sheet, "_get_source", None)
+    if source is None:
+        raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_UNSUPPORTED")
+    parser = WorkSheetParser(
+        None,
+        sheet._shared_strings,
+        data_only=sheet.parent.data_only,
+        epoch=sheet.parent.epoch,
+        date_formats=sheet.parent._date_formats,
+        timedelta_formats=sheet.parent._timedelta_formats,
+    )
+    cells: dict[tuple[int, int], object] = {}
     rows: list[int] = []
-    inspected_rows = inspected_cells = 0
-    previous_row = 0
-    try:
-        stream = archive.open(worksheet_path)
-    except (KeyError, OSError) as error:
-        raise ReconciliationTargetScopeError(
-            "RECONCILIATION_TARGET_ROLE_SCAN_UNSUPPORTED"
-        ) from error
-    with stream:
+    inspected_rows = inspected_cells = previous_row = 0
+    with source() as stream:
         for _event, element in ET.iterparse(stream, events=("end",)):
             if element.tag != f"{_MAIN_NS}row":
                 continue
@@ -470,20 +505,39 @@ def _ooxml_role_rows(
             row_number = _ooxml_row_number(element.attrib.get("r"), previous_row)
             previous_row = row_number
             previous_column = 0
-            has_role = False
             for cell in element:
                 if cell.tag != f"{_MAIN_NS}c":
                     continue
                 inspected_cells += 1
                 if inspected_cells > _MAX_ROLE_SCAN_CELLS:
                     raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_LIMIT")
-                column = _ooxml_cell_column(cell.attrib.get("r"), row_number, previous_column)
-                previous_column = column
-                has_role = has_role or column in role_columns
-            if has_role:
-                rows.append(row_number)
+                previous_column = _ooxml_cell_column(
+                    cell.attrib.get("r"), row_number, previous_column
+                )
+            parsed_row, parsed_cells = parser.parse_row(element)
+            if parsed_row != row_number:
+                raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_ROLE_SCAN_INVALID")
+            rows.append(row_number)
+            for parsed in parsed_cells:
+                cells[parsed["row"], parsed["column"]] = ReadOnlyCell(
+                    sheet,
+                    parsed["row"],
+                    parsed["column"],
+                    parsed["value"],
+                    parsed["data_type"],
+                    parsed["style_id"],
+                )
             element.clear()
-    return tuple(rows), (inspected_rows, inspected_cells)
+    return _PhysicalWorksheetSnapshot(cells, tuple(rows), (inspected_rows, inspected_cells))
+
+
+def _role_rows(snapshot: _PhysicalWorksheetSnapshot, columns) -> tuple[int, ...]:
+    role_columns = {item.column_index for item in columns.values()}
+    return tuple(
+        row
+        for row in snapshot.rows
+        if any((row, column) in snapshot.cells for column in role_columns)
+    )
 
 
 def _ooxml_row_number(reference: str | None, previous_row: int) -> int:
@@ -508,9 +562,9 @@ def _ooxml_cell_column(reference: str | None, row_number: int, previous_column: 
     return column
 
 
-def _carried_role_values(sheet, row_number, columns, active_index, active_stage):
+def _carried_role_values(snapshot, row_number, columns, active_index, active_stage):
     values = {
-        role: sheet.cell(row_number, resolution.column_index).value
+        role: _cell_value(snapshot, row_number, resolution.column_index)
         for role, resolution in columns.items()
     }
     raw_index = values[LogicalColumn.DOCUMENT_INDEX]
@@ -541,20 +595,30 @@ def _semantic_detail(
     )
 
 
+def _cell_value(snapshot: _PhysicalWorksheetSnapshot, row_number: int, column: int) -> object:
+    return getattr(snapshot.cells.get((row_number, column)), "value", None)
+
+
+def _cell_at(snapshot: _PhysicalWorksheetSnapshot, sheet, row_number: int, column: int):
+    cell = snapshot.cells.get((row_number, column))
+    return cell if cell is not None else ReadOnlyCell(sheet, row_number, column, None)
+
+
 def _nonempty(value: object) -> bool:
     return value is not None and bool(str(value).strip())
 
 
-def _first_detail_rows(workbook, selected_stage: str, roles) -> dict[str, int]:
+def _first_detail_rows(workbook, selected_stage: str, roles, snapshots) -> dict[str, int]:
     rows: dict[str, int] = {}
     for sheet in workbook.worksheets:
         if sheet.title not in roles:
             continue
         columns = roles[sheet.title]
         active_index = active_stage = None
-        for row_number in _role_rows(sheet, columns):
+        snapshot = snapshots[sheet.title]
+        for row_number in _role_rows(snapshot, columns):
             active_index, active_stage, values = _carried_role_values(
-                sheet, row_number, columns, active_index, active_stage
+                snapshot, row_number, columns, active_index, active_stage
             )
             if _semantic_detail(active_stage, active_index, values, selected_stage=selected_stage):
                 rows[sheet.title] = row_number
@@ -562,11 +626,26 @@ def _first_detail_rows(workbook, selected_stage: str, roles) -> dict[str, int]:
     return rows
 
 
-def _rows(session, selected_stage: str, measure_pairs: tuple[TargetMeasurePair, ...], roles):
-    return _rows_for_pairs(session, selected_stage, measure_pairs, roles, writable=True)
+def _rows(
+    session,
+    selected_stage: str,
+    measure_pairs: tuple[TargetMeasurePair, ...],
+    roles,
+    formula_snapshots,
+    value_snapshots,
+):
+    return _rows_for_pairs(
+        session,
+        selected_stage,
+        measure_pairs,
+        roles,
+        formula_snapshots,
+        value_snapshots,
+        writable=True,
+    )
 
 
-def _preview_rows(session, selected_stage: str, plan, roles):
+def _preview_rows(session, selected_stage: str, plan, roles, formula_snapshots, value_snapshots):
     pairs = tuple(
         TargetMeasurePair(
             anchor.sheet_name,
@@ -577,7 +656,16 @@ def _preview_rows(session, selected_stage: str, plan, roles):
         )
         for anchor in plan.anchors
     )
-    return _rows_for_pairs(session, selected_stage, pairs, roles, writable=False, virtual=True)
+    return _rows_for_pairs(
+        session,
+        selected_stage,
+        pairs,
+        roles,
+        formula_snapshots,
+        value_snapshots,
+        writable=False,
+        virtual=True,
+    )
 
 
 def _rows_for_pairs(
@@ -585,6 +673,8 @@ def _rows_for_pairs(
     selected_stage: str,
     measure_pairs: tuple[TargetMeasurePair, ...],
     roles,
+    formula_snapshots,
+    value_snapshots,
     *,
     writable: bool,
     virtual: bool = False,
@@ -599,13 +689,15 @@ def _rows_for_pairs(
         if pair is None or sheet_name not in roles:
             continue
         columns = roles[sheet_name]
+        formula_snapshot = formula_snapshots[sheet_name]
+        value_snapshot = value_snapshots[sheet_name]
         bindings = _bindings({sheet_name: columns}, (pair,))
         lexemes = read_sheet_lexemes(session.source.local_path, sheet_name)
         comments = dict(read_sheet_comments(session.source.local_path, sheet_name))
         active_index = active_name = active_stage = None
-        for row_number in _role_rows(formula_sheet, columns):
+        for row_number in _role_rows(formula_snapshot, columns):
             active_index, active_stage, role_values = _carried_role_values(
-                formula_sheet, row_number, columns, active_index, active_stage
+                formula_snapshot, row_number, columns, active_index, active_stage
             )
             raw_stage = role_values[LogicalColumn.STAGE]
             if raw_stage is not None and str(raw_stage).strip():
@@ -625,8 +717,8 @@ def _rows_for_pairs(
                     binding.logical_column,
                     _cell_snapshot(
                         f"{binding.column_letter}{row_number}",
-                        formula_sheet.cell(row_number, binding.column_index),
-                        value_sheet.cell(row_number, binding.column_index),
+                        _cell_at(formula_snapshot, formula_sheet, row_number, binding.column_index),
+                        _cell_at(value_snapshot, value_sheet, row_number, binding.column_index),
                         lexemes.get(f"{binding.column_letter}{row_number}"),
                         comments.get(f"{binding.column_letter}{row_number}"),
                         trusted,

@@ -21,6 +21,7 @@ from .reconciliation_target import (
     _preview_bindings,
     _preview_rows,
     _rows,
+    _session_snapshots,
     _sha256,
     _validate_reconciliation_target_type,
     resolve_reconciliation_stage,
@@ -43,10 +44,13 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
         workbook_schema = analyze_workbook_schema(session)
         roles = _base_roles(workbook_schema)
+        formula_snapshots, value_snapshots = _session_snapshots(session, roles)
         selected_stage = resolve_reconciliation_stage(
-            _enumerate_stages(session.formula_workbook, roles), stage
+            _enumerate_stages(session.formula_workbook, roles, formula_snapshots), stage
         )
-        detail_rows = _first_detail_rows(session.formula_workbook, selected_stage, roles)
+        detail_rows = _first_detail_rows(
+            session.formula_workbook, selected_stage, roles, formula_snapshots
+        )
         if not detail_rows:
             raise ValueError("RECONCILIATION_TARGET_STAGE_EMPTY")
         merged_ranges = {
@@ -73,7 +77,11 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
             report = generic.read_target_report(
                 session, workbook_schema, TargetReportReadRequest(selected_stage=selected_stage)
             )
-            rows = tuple(_preview_rows(session, selected_stage, plan, roles))
+            rows = tuple(
+                _preview_rows(
+                    session, selected_stage, plan, roles, formula_snapshots, value_snapshots
+                )
+            )
             schema = replace(report.schema, column_bindings=_preview_bindings(roles, plan))
             identity = ReconciliationTargetIdentity(
                 digest, selected_stage, reporting_period, plan.plan_digest
@@ -84,7 +92,9 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         report = generic.read_target_report(
             session, workbook_schema, TargetReportReadRequest(selected_stage=selected_stage)
         )
-        rows = tuple(_rows(session, selected_stage, measure_pairs, roles))
+        rows = tuple(
+            _rows(session, selected_stage, measure_pairs, roles, formula_snapshots, value_snapshots)
+        )
         schema = replace(report.schema, column_bindings=_bindings(roles, measure_pairs))
         identity = ReconciliationTargetIdentity(digest, selected_stage)
         if _sha256(source_path) != digest:

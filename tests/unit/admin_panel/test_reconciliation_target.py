@@ -20,6 +20,7 @@ from report_processor.admin_panel.reconciliation_target import (
     terminal_index,
     writer_calculations,
 )
+from report_processor.admin_panel.reconciliation_target_measure import TargetMeasurePair
 from report_processor.calculation import calculate_matches
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.excel_writer import write_target_report
@@ -80,7 +81,7 @@ def test_stage_resolution_discovers_exactly_one_stage_only() -> None:
 
 
 def test_stage_discovery_scans_only_sparse_role_rows_and_stops_at_maximum() -> None:
-    from report_processor.admin_panel.reconciliation_target import _valid_stages
+    from report_processor.admin_panel.reconciliation_target import _physical_snapshot, _valid_stages
 
     sheet = _SparseSheet()
     columns = {
@@ -95,12 +96,14 @@ def test_stage_discovery_scans_only_sparse_role_rows_and_stops_at_maximum() -> N
     }
     workbook = SimpleNamespace(worksheets=(sheet,))
 
-    assert _valid_stages(workbook, {sheet.title: columns}, maximum=1) == ("13.1", "13.2")
-    assert sheet.calls == 15
+    assert _valid_stages(
+        workbook, {sheet.title: columns}, {sheet.title: _physical_snapshot(sheet)}, maximum=1
+    ) == ("13.1", "13.2")
+    assert sheet.calls == 0
 
 
 def test_read_only_sparse_role_scan_ignores_inflated_dimension(tmp_path) -> None:
-    from report_processor.admin_panel.reconciliation_target import _role_rows
+    from report_processor.admin_panel.reconciliation_target import _physical_snapshot, _role_rows
 
     target = tmp_path / "sparse.xlsx"
     workbook = Workbook()
@@ -136,8 +139,83 @@ def test_read_only_sparse_role_scan_ignores_inflated_dimension(tmp_path) -> None
     source = _materialized(target, "target:sparse")
     with open_dual_workbook(WorkbookOpenRequest(source)) as session:
         worksheet = session.formula_workbook.active
-        assert _role_rows(worksheet, columns) == (1, 3)
-        assert worksheet._reconciliation_role_scan == (3, 11)
+        snapshot = _physical_snapshot(worksheet)
+        assert _role_rows(snapshot, columns) == (1, 3)
+        assert snapshot.inspected == (3, 11)
+
+
+def test_read_only_role_projection_opens_each_view_once_for_many_rows(tmp_path) -> None:
+    from report_processor.admin_panel.reconciliation_target import (
+        _base_roles,
+        _enumerate_stages,
+        _first_detail_rows,
+        _rows,
+        _session_snapshots,
+    )
+    from report_processor.schema import analyze_workbook_schema
+
+    target = tmp_path / "many.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["B1"], sheet["C1"], sheet["D1"], sheet["E1"], sheet["F1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    sheet.merge_cells("L1:M1")
+    sheet["L1"] = "Отчетный период"
+    sheet["L2"], sheet["M2"] = "Количество", "Стоимость"
+    for row in range(3, 104):
+        if row == 3:
+            sheet["B3"], sheet["C3"] = "1234", "Этап 13.1"
+        sheet.cell(row, 4).value = row - 2
+        sheet.cell(row, 5).value = f"Монтаж {row}"
+        sheet.cell(row, 6).value = "м"
+        sheet.cell(row, 12).value = row - 2
+        sheet.cell(row, 13).value = f"=L{row}*2"
+    workbook.save(target)
+    workbook.close()
+
+    source = _materialized(target, "target:many")
+    with open_dual_workbook(WorkbookOpenRequest(source)) as session:
+        roles = _base_roles(analyze_workbook_schema(session))
+        formula_sheet, value_sheet = session.formula_workbook.active, session.value_workbook.active
+        counts = {"formula": 0, "value": 0}
+        formula_open, value_open = formula_sheet._get_source, value_sheet._get_source
+
+        def formula_source():
+            counts["formula"] += 1
+            return formula_open()
+
+        def value_source():
+            counts["value"] += 1
+            return value_open()
+
+        formula_sheet._get_source = formula_source
+        value_sheet._get_source = value_source
+        formula_snapshots, value_snapshots = _session_snapshots(session, roles)
+        stage = _enumerate_stages(session.formula_workbook, roles, formula_snapshots)[0]
+        details = _first_detail_rows(session.formula_workbook, stage, roles, formula_snapshots)
+        rows = tuple(
+            _rows(
+                session,
+                stage,
+                (TargetMeasurePair("Отчёт", 12, 13, "Количество", "Стоимость"),),
+                roles,
+                formula_snapshots,
+                value_snapshots,
+            )
+        )
+
+    assert counts == {"formula": 1, "value": 1}
+    assert details == {"Отчёт": 3}
+    assert len(rows) == 101
+    assert rows[0].work_name == "Монтаж 3"
+    assert rows[0].selected_quantity.value == Decimal("1")
+    assert rows[0].cell_for(LogicalColumn.CURRENT_PERIOD_COST).formula.formula == "=L3*2"
 
 
 @pytest.mark.parametrize("stage", ("13.1", None), ids=("selected", "no-selected"))
