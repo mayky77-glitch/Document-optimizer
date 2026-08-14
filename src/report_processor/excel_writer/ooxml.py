@@ -18,12 +18,12 @@ from report_processor.target_report.ooxml import worksheet_parts
 from .exceptions import ExcelWriterAtomicError, ExcelWriterIntegrityError, ExcelWriterSafetyError
 
 _SPREADSHEETML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-_MAX_WORKSHEET_XML_BYTES = 32 * 1024 * 1024
-_MAX_WORKSHEET_EVENTS = 1_100_000
-_MAX_ARCHIVE_ENTRIES = 10_000
-_MAX_ARCHIVE_MEMBER_BYTES = 64 * 1024 * 1024
-_MAX_ARCHIVE_TOTAL_BYTES = 256 * 1024 * 1024
-_MAX_COMPRESSION_RATIO = 1_000
+_MAX_WORKSHEET_XML_BYTES = 128 * 1024 * 1024
+_MAX_WORKSHEET_EVENTS = 2_100_000
+_MAX_ARCHIVE_ENTRIES = 4_096
+_MAX_ARCHIVE_MEMBER_BYTES = 256 * 1024 * 1024
+_MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
+_MAX_COMPRESSION_RATIO = 100
 _CALC_CHAIN_CONTENT_TYPE = re.compile(
     rb'<Override\b(?=[^>]*\bPartName\s*=\s*["\']/xl/calcChain\.xml["\'])[^>]*/>',
     re.IGNORECASE,
@@ -249,24 +249,8 @@ _CALC_CHAIN_RELATIONSHIP = re.compile(
 def reject_unsupported_package(source_path: Path) -> None:
     try:
         with zipfile.ZipFile(source_path) as archive:
-            infos = tuple(archive.infolist())
-            if len(infos) > _MAX_ARCHIVE_ENTRIES:
-                raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "too many package entries")
-            total = 0
-            for info in infos:
-                total += info.file_size
-                if (
-                    info.file_size > _MAX_ARCHIVE_MEMBER_BYTES
-                    or total > _MAX_ARCHIVE_TOTAL_BYTES
-                    or (
-                        info.compress_size
-                        and info.file_size > info.compress_size * _MAX_COMPRESSION_RATIO
-                    )
-                ):
-                    raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "package size limit")
+            admit_archive(archive, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE")
             names = tuple(archive.namelist())
-            if len(names) != len(set(names)):
-                raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "duplicate package entries")
             if any(
                 name.casefold().startswith(("_xmlsignatures/", "xl/signatures/")) for name in names
             ):
@@ -279,6 +263,33 @@ def reject_unsupported_package(source_path: Path) -> None:
         raise
     except (OSError, zipfile.BadZipFile) as error:
         raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", str(error)) from error
+
+
+def admit_archive(archive: zipfile.ZipFile, error_type, code: str) -> None:
+    """Validate central-directory metadata on this same archive handle before reads."""
+
+    infos = tuple(archive.infolist())
+    if len(infos) > _MAX_ARCHIVE_ENTRIES:
+        raise error_type(code, "package admission failed")
+    names: set[str] = set()
+    total = 0
+    for info in infos:
+        if (
+            info.filename in names
+            or info.file_size < 0
+            or info.compress_size < 0
+            or info.flag_bits & 1
+            or (info.file_size and not info.compress_size)
+        ):
+            raise error_type(code, "package admission failed")
+        names.add(info.filename)
+        total += info.file_size
+        if (
+            info.file_size > _MAX_ARCHIVE_MEMBER_BYTES
+            or total > _MAX_ARCHIVE_TOTAL_BYTES
+            or info.file_size > info.compress_size * _MAX_COMPRESSION_RATIO
+        ):
+            raise error_type(code, "package admission failed")
 
 
 def worksheet_part_map(source_path: Path) -> dict[str, str]:

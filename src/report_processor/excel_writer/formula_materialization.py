@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .exceptions import ExcelWriterAtomicError
 from .ooxml import (
+    admit_archive,
     formula_coordinates,
     materialize_formula_package,
     numeric_formula_values,
@@ -49,6 +50,7 @@ def recalculate_and_materialize(path: Path) -> None:
 def _formula_coordinates(path: Path, parts: dict[str, str]) -> dict[str, tuple[str, ...]]:
     try:
         with zipfile.ZipFile(path) as package:
+            admit_archive(package, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED")
             return {part: formula_coordinates(package.read(part)) for part in parts.values()}
     except (OSError, zipfile.BadZipFile, KeyError) as error:
         raise ExcelWriterAtomicError("FORMULA_RECALCULATION_FAILED", str(error)) from error
@@ -63,6 +65,7 @@ def _recalculated_values(
     values_by_part: dict[str, dict[str, str]] = {}
     try:
         with zipfile.ZipFile(recalculated) as package:
+            admit_archive(package, ExcelWriterAtomicError, "FORMULA_RECALCULATION_FAILED")
             for sheet_name, authoritative_part in authoritative_parts.items():
                 recalculated_part = recalculated_parts.get(sheet_name)
                 if recalculated_part is None:
