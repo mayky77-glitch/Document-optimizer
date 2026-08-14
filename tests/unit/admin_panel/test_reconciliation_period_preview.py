@@ -19,7 +19,8 @@ from report_processor.admin_panel.reconciliation_target import (
     ReconciliationTargetScopeError,
     read_reconciliation_target,
 )
-from report_processor.schema import LogicalColumn
+from report_processor.excel_writer import engine as writer_engine
+from report_processor.schema import LogicalColumn, SheetType
 
 
 def _digest(value: str) -> str:
@@ -176,6 +177,37 @@ def test_existing_current_pair_keeps_strict_physical_target_identity(tmp_path) -
     assert preview.target_identity == ReconciliationTargetIdentity(digest, "13.1")
 
 
+def test_reconciliation_schema_envelopes_are_writer_coherent(tmp_path) -> None:
+    current = tmp_path / "current.xlsx"
+    _target(current, current=True)
+    schema, rows = read_reconciliation_target(
+        current, sha256(current.read_bytes()).hexdigest(), "13.1"
+    )
+
+    assert schema.status == "OK"
+    assert schema.diagnostics == ()
+    assert schema.pair_cardinality == "1"
+    assert {row.sheet_name for row in rows} == {item.sheet_name for item in schema.worksheets}
+    assert {item.sheet_type for item in schema.worksheets} == {SheetType.ADDITIONAL_REPORT}
+    writer_engine._validate_schema_identity(
+        current, writer_engine._source_identity(current), schema
+    )
+
+    historical = tmp_path / "historical.xlsx"
+    _target(historical)
+    preview = preview_reconciliation_target(
+        historical, sha256(historical.read_bytes()).hexdigest(), "13.1", "2026-08"
+    )
+
+    assert preview.schema.status == "OK"
+    assert preview.schema.diagnostics == ()
+    assert preview.schema.pair_cardinality == str(len(preview.plan.anchors))
+    assert preview.schema.period_identity.current_period == "2026-08"
+    assert {row.sheet_name for row in preview.rows} == {
+        item.sheet_name for item in preview.schema.worksheets
+    }
+
+
 def test_target_identity_is_canonical_and_period_plan_bound() -> None:
     original, plan, changed = _digest("original"), _digest("plan"), _digest("changed")
     first = ReconciliationTargetIdentity(original, "13.1", "2026-08", plan)
@@ -321,6 +353,64 @@ def _instrument_open(monkeypatch, module):
 
     monkeypatch.setattr(module, "open_dual_workbook", instrumented)
     return counts
+
+
+def _bounded_snapshot_cell_access(monkeypatch):
+    original = reconciliation_target_module._SnapshotWorksheet.cell
+    calls = 0
+
+    def counted(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(reconciliation_target_module._SnapshotWorksheet, "cell", counted)
+    return lambda: calls
+
+
+def _shifted_header_target(path, *, current: bool) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["C50"], sheet["D50"], sheet["E50"], sheet["F50"], sheet["G50"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    sheet.merge_cells("L50:M50")
+    sheet["L50"] = "Отчетный период" if current else "Документальная отчетность за весь период"
+    if not current:
+        sheet["N50"] = "Следующий раздел"
+    sheet["L51"], sheet["M51"] = "Количество", "Стоимость"
+    sheet["C52"], sheet["D52"], sheet["E52"], sheet["F52"], sheet["G52"] = (
+        "1234",
+        "Этап 13.1",
+        "1",
+        "Монтаж",
+        "м",
+    )
+    if current:
+        sheet["L52"], sheet["M52"] = 12, 3.5
+    sheet["XFD999999"] = "irrelevant"
+    workbook.save(path)
+    workbook.close()
+
+
+def test_current_pair_discovery_ignores_far_dimension_column(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "shifted-current.xlsx"
+    _shifted_header_target(target, current=True)
+    access_count = _bounded_snapshot_cell_access(monkeypatch)
+
+    schema, (row,) = read_reconciliation_target(
+        target, sha256(target.read_bytes()).hexdigest(), "13.1"
+    )
+
+    assert access_count() < 1_000
+    assert schema.pair_cardinality == "1"
+    assert row.cell_for(LogicalColumn.CURRENT_PERIOD_QUANTITY).coordinate == "L52"
+    assert row.selected_quantity.value == 12
 
 
 def test_public_reconciliation_read_uses_one_snapshot_parse_per_view(tmp_path, monkeypatch) -> None:

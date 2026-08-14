@@ -26,8 +26,7 @@ from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.excel_writer import write_target_report
 from report_processor.processing.adapters import _materialized
 from report_processor.quality_control import WriteDecision
-from report_processor.schema import LogicalColumn, SheetType
-from report_processor.target_report import TargetWorksheetSnapshot
+from report_processor.schema import LogicalColumn
 
 
 class _SparseSheet:
@@ -319,16 +318,6 @@ def test_writer_updates_only_structurally_discovered_current_measure_cells(tmp_p
 
     schema, (target_row,) = read_reconciliation_target(
         target, sha256(target.read_bytes()).hexdigest(), "13.1"
-    )
-    schema = replace(
-        schema,
-        status="OK",
-        diagnostics=(),
-        worksheets=(
-            TargetWorksheetSnapshot(
-                "Отчёт", SheetType.ADDITIONAL_REPORT, None, ("L1:M1",), None, (), None, False
-            ),
-        ),
     )
     target_row = replace(target_row, writable=True)
     source = calculation_source_row(quantity=Decimal("12.2"), cost=Decimal("3500000"))

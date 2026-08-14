@@ -16,7 +16,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from openpyxl.cell.read_only import ReadOnlyCell
-from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
+from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 from openpyxl.worksheet._reader import WorkSheetParser
 
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
@@ -32,8 +32,10 @@ from report_processor.target_report import (
     TargetCellSnapshot,
     TargetColumnBinding,
     TargetObjectBlock,
+    TargetPeriodIdentity,
     TargetReportReadRequest,
     TargetReportRow,
+    TargetWorksheetSnapshot,
 )
 from report_processor.target_report.ooxml import (
     formula_caches_trusted,
@@ -71,9 +73,16 @@ class _PhysicalWorksheetSnapshot:
 class _SnapshotWorksheet:
     """Request-local worksheet view backed only by parsed physical cells."""
 
-    def __init__(self, worksheet, snapshot: _PhysicalWorksheetSnapshot) -> None:
+    def __init__(
+        self,
+        worksheet,
+        snapshot: _PhysicalWorksheetSnapshot,
+        maximum_column: int | None = None,
+    ) -> None:
         self._worksheet = worksheet
         self._snapshot = snapshot
+        self._maximum_column = maximum_column
+        self._cell_accesses = 0
         self.title = worksheet.title
         # Discovery APIs deliberately use this physical index too; it avoids a
         # read-only worksheet's per-cell XML reparse while preserving sparse rows.
@@ -85,11 +94,19 @@ class _SnapshotWorksheet:
 
     @property
     def max_column(self) -> int:
-        return int(getattr(self._worksheet, "max_column", 0) or 0)
+        if self._maximum_column is not None:
+            return self._maximum_column
+        return max(
+            (column for row, column in self._snapshot.cells if row <= _MAX_ROLE_SCAN_ROWS),
+            default=0,
+        )
 
     def cell(self, row: int, column: int, value=None):
         if value is not None:
             raise TypeError("snapshot worksheet is read-only")
+        self._cell_accesses += 1
+        if self._cell_accesses > _MAX_ROLE_SCAN_CELLS:
+            raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_MEASURE_SCAN_LIMIT")
         return _cell_at(self._snapshot, self._worksheet, row, column)
 
     def iter_rows(
@@ -120,10 +137,17 @@ class _SnapshotWorksheet:
 class _SnapshotWorkbook:
     """Workbook facade that prevents downstream readers from opening XML per cell."""
 
-    def __init__(self, workbook, snapshots: dict[str, _PhysicalWorksheetSnapshot]) -> None:
+    def __init__(
+        self,
+        workbook,
+        snapshots: dict[str, _PhysicalWorksheetSnapshot],
+        maximum_columns: dict[str, int] | None = None,
+    ) -> None:
         self._workbook = workbook
         self._worksheets = {
-            name: _SnapshotWorksheet(workbook[name], snapshots[name])
+            name: _SnapshotWorksheet(
+                workbook[name], snapshots[name], (maximum_columns or {}).get(name)
+            )
             for name in workbook.sheetnames
         }
 
@@ -283,6 +307,7 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
         workbook_schema = analyze_workbook_schema(adapted)
         roles = _base_roles(workbook_schema)
+        metadata_schema = _reconciliation_metadata_schema(workbook_schema, roles)
         formula_snapshots, value_snapshots = _session_snapshots(adapted, roles)
         stages = _enumerate_stages(adapted.formula_workbook, roles, formula_snapshots)
         selected_stage = resolve_reconciliation_stage(stages, stage)
@@ -291,28 +316,35 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
         )
         if not detail_rows:
             raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
+        merged_ranges = {
+            sheet_name: read_sheet_structure(session.source.local_path, sheet_name).merged_ranges
+            for sheet_name in detail_rows
+        }
         measure_pairs = discover_target_measures(
-            adapted.formula_workbook,
+            _measure_workbook(adapted.formula_workbook, formula_all, detail_rows, merged_ranges),
             detail_rows,
-            {
-                sheet_name: read_sheet_structure(
-                    session.source.local_path, sheet_name
-                ).merged_ranges
-                for sheet_name in session.formula_workbook.sheetnames
-            },
+            merged_ranges,
         )
         report = generic.read_target_report(
             adapted,
-            workbook_schema,
+            metadata_schema,
             TargetReportReadRequest(selected_stage=selected_stage, max_rows=0),
         )
         bindings = _bindings(roles, measure_pairs)
         rows = tuple(
             _rows(adapted, selected_stage, measure_pairs, roles, formula_snapshots, value_snapshots)
         )
+        schema = _reconciliation_schema(
+            report.schema,
+            adapted,
+            roles,
+            bindings,
+            rows,
+            period_identity=_current_pair_period_identity(measure_pairs),
+            pair_cardinality=len(measure_pairs),
+        )
     if not rows:
         raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
-    schema = replace(report.schema, column_bindings=bindings, object_blocks=_object_blocks(rows))
     return schema, rows
 
 
@@ -544,6 +576,93 @@ def _snapshot_session(session, formula_snapshots, value_snapshots):
         session,
         formula_workbook=_SnapshotWorkbook(session.formula_workbook, formula_snapshots),
         value_workbook=_SnapshotWorkbook(session.value_workbook, value_snapshots),
+    )
+
+
+def _measure_workbook(workbook, snapshots, detail_rows, merged_ranges):
+    """Constrain measure discovery to physical header evidence, not dimensions."""
+
+    maximum_columns: dict[str, int] = {}
+    for sheet_name, detail_row in detail_rows.items():
+        start, end = max(1, detail_row - 80), max(0, detail_row - 1)
+        columns = {column for row, column in snapshots[sheet_name].cells if start <= row <= end}
+        for reference in merged_ranges.get(sheet_name, ()):
+            left, top, right, bottom = range_boundaries(reference)
+            if top <= end and bottom >= start:
+                columns.update(range(left, right + 1))
+        maximum_column = max(columns, default=1)
+        if maximum_column * max(0, end - start + 1) > _MAX_ROLE_SCAN_CELLS:
+            raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_MEASURE_SCAN_LIMIT")
+        maximum_columns[sheet_name] = maximum_column
+    raw_workbook = getattr(workbook, "_workbook", workbook)
+    return _SnapshotWorkbook(raw_workbook, snapshots, maximum_columns)
+
+
+def _reconciliation_schema(
+    schema,
+    session,
+    roles,
+    bindings,
+    rows,
+    *,
+    period_identity: TargetPeriodIdentity,
+    pair_cardinality: int,
+):
+    """Build a complete writer-compatible envelope from structural evidence."""
+
+    worksheets: list[TargetWorksheetSnapshot] = []
+    for sheet_name in sorted(roles):
+        structure = read_sheet_structure(session.source.local_path, sheet_name)
+        sheet = session.formula_workbook[sheet_name]
+        worksheets.append(
+            TargetWorksheetSnapshot(
+                sheet_name,
+                SheetType.ADDITIONAL_REPORT,
+                structure.dimensions,
+                structure.merged_ranges,
+                structure.auto_filter_ref,
+                read_sheet_comments(session.source.local_path, sheet_name),
+                structure.freeze_panes,
+                sheet.sheet_state != "visible",
+            )
+        )
+    return replace(
+        schema,
+        period_identity=period_identity,
+        column_bindings=bindings,
+        worksheets=tuple(worksheets),
+        object_blocks=_object_blocks(rows),
+        status="OK",
+        diagnostics=(),
+        pair_cardinality=str(pair_cardinality),
+    )
+
+
+def _reconciliation_metadata_schema(workbook_schema, roles):
+    """Promote only structurally proven sheets for the generic metadata reader."""
+
+    return replace(
+        workbook_schema,
+        worksheets=tuple(
+            replace(item, sheet_type=SheetType.ADDITIONAL_REPORT)
+            if item.sheet_name in roles
+            else item
+            for item in workbook_schema.worksheets
+        ),
+    )
+
+
+def _current_pair_period_identity(
+    measure_pairs: tuple[TargetMeasurePair, ...],
+) -> TargetPeriodIdentity:
+    headers = {(item.quantity_header, item.cost_header) for item in measure_pairs}
+    if len(headers) != 1:
+        return TargetPeriodIdentity(status="PERIOD_UNRESOLVED")
+    quantity_header, cost_header = next(iter(headers))
+    return TargetPeriodIdentity(
+        current_period=quantity_header or None,
+        cumulative_period=cost_header or None,
+        status="OK",
     )
 
 
