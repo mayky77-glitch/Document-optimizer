@@ -106,7 +106,7 @@ def test_publish_no_clobber_rejects_a_source_inode_swapped_during_link(
         publish_no_clobber(temp_path, output_path)
 
     assert temp_path.read_bytes() == b"replacement"
-    assert output_path.read_bytes() == b"replacement"
+    assert not output_path.exists()
 
 
 def test_formula_cells_become_numeric_literals_including_shared_formula_cells() -> None:
@@ -548,6 +548,16 @@ def test_dtd_rejection_preserves_the_callers_error_code() -> None:
 def test_non_utf8_worksheet_bytes_are_rejected_before_byte_splicing(payload: bytes) -> None:
     with pytest.raises(ExcelWriterIntegrityError, match="worksheet encoding unsupported"):
         replace_cell_value(payload, "D1", "2")
+
+
+def test_utf8_bom_does_not_hide_a_non_utf8_encoding_declaration() -> None:
+    payload = (
+        b'\xef\xbb\xbf<?xml version="1.0" encoding="windows-1251"?>'
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/'
+        b'spreadsheetml/2006/main"><sheetData/></worksheet>'
+    )
+    with pytest.raises(ExcelWriterIntegrityError, match="worksheet encoding unsupported"):
+        worksheet_index(payload)
 
 
 @pytest.mark.parametrize(

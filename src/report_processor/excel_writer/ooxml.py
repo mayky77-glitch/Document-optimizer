@@ -134,7 +134,8 @@ def _scan_worksheet(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> Work
         or b"\x00" in xml[:200]
     ):
         raise ExcelWriterIntegrityError(error_code, "worksheet encoding unsupported")
-    declaration = re.match(rb"<\?xml[^>]*encoding=[\"']([^\"']+)", xml[:200], re.I)
+    declaration_bytes = xml[3:] if xml.startswith(b"\xef\xbb\xbf") else xml
+    declaration = re.match(rb"<\?xml[^>]*encoding=[\"']([^\"']+)", declaration_bytes[:200], re.I)
     if declaration is not None and declaration.group(1).lower() not in {b"utf-8", b"utf8"}:
         raise ExcelWriterIntegrityError(error_code, "worksheet encoding unsupported")
     parser = expat.ParserCreate(namespace_separator="}")
@@ -1164,15 +1165,14 @@ def materialize_formula_package(
         descriptor = -1
         return materialized
     except ExcelWriterIntegrityError:
-        _unlink_if_owned(path if replaced else temporary, descriptor)
         raise
     except (OSError, zipfile.BadZipFile, ValueError) as error:
-        _unlink_if_owned(path if replaced else temporary, descriptor)
         raise ExcelWriterIntegrityError(
             "FORMULA_MATERIALIZATION_FAILED", "formula package could not be materialized"
         ) from error
     finally:
         if descriptor >= 0:
+            _unlink_if_owned(path if replaced else temporary, descriptor)
             os.close(descriptor)
 
 
@@ -1304,6 +1304,7 @@ def publish_no_clobber(
         else os.open(temp_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     )
     linked = False
+    linked_descriptor = -1
     try:
         opened = os.fstat(descriptor)
         named = os.lstat(temp_path)
@@ -1316,8 +1317,15 @@ def publish_no_clobber(
             )
         os.link(temp_path, output_path, follow_symlinks=False)
         linked = True
-        published = os.lstat(output_path)
+        linked_descriptor = os.open(output_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        published = os.fstat(linked_descriptor)
         if (published.st_dev, published.st_ino) != (opened.st_dev, opened.st_ino):
+            current_source = os.lstat(temp_path)
+            if (published.st_dev, published.st_ino) == (
+                current_source.st_dev,
+                current_source.st_ino,
+            ):
+                _unlink_if_owned(output_path, linked_descriptor)
             raise ExcelWriterAtomicError(
                 "ATOMIC_PUBLISH_FAILED", "published output identity changed"
             )
@@ -1332,6 +1340,8 @@ def publish_no_clobber(
         _unlink_if_owned(temp_path, descriptor)
         raise ExcelWriterAtomicError("ATOMIC_PUBLISH_FAILED", str(error)) from error
     finally:
+        if linked_descriptor >= 0:
+            os.close(linked_descriptor)
         os.close(descriptor)
 
 

@@ -235,3 +235,21 @@ def test_failed_post_replace_formula_verification_preserves_a_replacement(
         ooxml.materialize_formula_package(path, parts, {})
 
     assert path.read_bytes() == b"replacement"
+
+
+def test_base_exception_after_formula_replace_still_removes_owned_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "formula.xlsx"
+    _workbook(path, formula=False)
+    parts = ooxml.worksheet_part_map(path)
+
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ooxml, "verify_materialized_package", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        ooxml.materialize_formula_package(path, parts, {})
+
+    assert not path.exists()
+    assert not tuple(tmp_path.glob(".excel-writer-materializing-*.xlsx"))
