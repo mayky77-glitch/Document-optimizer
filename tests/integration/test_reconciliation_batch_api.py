@@ -57,11 +57,20 @@ def _workbook_bytes() -> bytes:
 def _target_workbook_bytes() -> bytes:
     workbook = Workbook()
     sheet = workbook.active
-    sheet["B1"] = "1234"
-    sheet["C1"] = "Этап 13.1"
-    sheet["D1"] = "1"
-    sheet["E1"] = "Целевая работа"
-    sheet["F1"] = "шт"
+    sheet["B1"], sheet["C1"], sheet["D1"], sheet["E1"], sheet["F1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"], sheet["F3"] = (
+        "1234",
+        "Этап 13.1",
+        "1",
+        "Целевая работа",
+        "шт",
+    )
     stream = BytesIO()
     workbook.save(stream)
     workbook.close()
