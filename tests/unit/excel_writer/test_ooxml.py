@@ -113,7 +113,9 @@ def test_namespace_qualified_cells_preserve_their_exact_qnames(prefix: bytes) ->
         + b'="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
     )
     xml = (
-        b"<worksheet "
+        b"<"
+        + prefix
+        + b"worksheet "
         + declaration
         + b'><sheetData><row r="1"><'
         + prefix
@@ -127,7 +129,9 @@ def test_namespace_qualified_cells_preserve_their_exact_qnames(prefix: bytes) ->
         + prefix
         + b"v/></"
         + prefix
-        + b"c></row></sheetData></worksheet>"
+        + b"c></row></sheetData></"
+        + prefix
+        + b"worksheet>"
     )
 
     updated = replace_cell_value(xml, "D1", "1.25")
@@ -201,6 +205,30 @@ def test_duplicate_coordinates_and_dtds_fail_closed() -> None:
         inspect_cell(duplicate, "D1")
     with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
         inspect_cell(dtd, "D1")
+
+
+@pytest.mark.parametrize("coordinate", ("XFE1", "A1048577"))
+def test_out_of_range_excel_a1_coordinates_fail_closed(coordinate: str) -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row><c r="' + coordinate.encode() + b'"><v>1</v></c>'
+        b"</row></sheetData></worksheet>"
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+        inspect_cell(xml, coordinate)
+
+
+def test_wrong_root_and_nested_spreadsheet_cells_fail_before_edit() -> None:
+    wrong_root = b'<root xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>'
+    nested = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<c r="A1"><c r="A2"><v>2</v></c></c></worksheet>'
+    )
+
+    for xml in (wrong_root, nested):
+        with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+            replace_cell_value(xml, "A1", "3")
 
 
 def test_self_closing_value_expansion_preserves_opening_attributes() -> None:

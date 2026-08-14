@@ -31,9 +31,12 @@ from .formula_materialization import recalculate_and_materialize
 from .models import EXCEL_WRITER_CONTRACT_VERSION, WriteResult, WriteStatus, WrittenCell
 from .ooxml import (
     WorksheetIndex,
+    admit_archive,
     inspect_index_cell,
     package_has_formulas,
+    read_archive_part,
     reject_unsupported_package,
+    validate_xlsx_source,
     verify_formula_free_package,
     worksheet_index,
     worksheet_part_map,
@@ -163,6 +166,7 @@ def _validate_public_inputs(
         raise ExcelWriterSafetyError("INVALID_SOURCE", str(source))
     if not stat.S_ISREG(source.stat().st_mode):
         raise ExcelWriterSafetyError("INVALID_SOURCE", "source is not a regular file")
+    validate_xlsx_source(source, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE")
     if output.suffix.casefold() != ".xlsx":
         raise ExcelWriterSafetyError("INVALID_OUTPUT_EXTENSION", str(output))
     if not output.parent.is_dir():
@@ -228,66 +232,74 @@ def _build_write_plan(
     source_indexes: dict[str, WorksheetIndex] = {}
     seen_coordinates: set[tuple[str, str]] = set()
     plan: list[WrittenCell] = []
-    for calculation in calculations:
-        row = calculation.target_row
-        if not row.writable:
-            raise ExcelWriterInputError("TARGET_NOT_WRITABLE", calculation.target_row_id)
-        worksheet = worksheets.get(row.sheet_name)
-        part = parts.get(row.sheet_name)
-        if worksheet is None or part is None:
-            raise ExcelWriterIntegrityError("TARGET_SHEET_MISSING", row.sheet_name)
-        if part not in source_xml:
-            with zipfile.ZipFile(source) as archive:
-                source_xml[part] = archive.read(part)
-            source_indexes[part] = worksheet_index(source_xml[part])
-        for logical_column, attribute in _ALLOWED_COLUMNS:
-            value = getattr(calculation, attribute)
-            if value is None:
-                continue
-            decimal_text = _decimal_text(value)
-            target_cell = row.cell_for(logical_column)
-            if not bindings[logical_column]:
-                continue
-            matching_bindings = [
-                item
-                for item in bindings[logical_column]
-                if target_cell is not None
-                and item.column_letter + str(row.row_number) == target_cell.coordinate
-            ]
-            if len(matching_bindings) != 1:
-                raise ExcelWriterIntegrityError(
-                    "TARGET_COLUMN_BINDING_MISSING", f"{row.sheet_name}!{logical_column}"
-                )
-            if target_cell is None or target_cell.coordinate != (
-                matching_bindings[0].column_letter + str(row.row_number)
-            ):
-                raise ExcelWriterIntegrityError(
-                    "TARGET_IDENTITY_MISMATCH", calculation.target_row_id
-                )
-            coordinate_key = (row.sheet_name, target_cell.coordinate)
-            if coordinate_key in seen_coordinates:
-                raise ExcelWriterInputError(
-                    "DUPLICATE_WRITE_COORDINATE", f"{row.sheet_name}!{target_cell.coordinate}"
-                )
-            _validate_target_cell(
-                source_indexes[part],
-                target_cell.coordinate,
-                target_cell.raw_lexeme,
-                target_cell.formula is not None,
-                worksheet.merged_ranges,
-            )
-            seen_coordinates.add(coordinate_key)
-            plan.append(
-                WrittenCell(
-                    calculation.calculation_id,
-                    calculation.target_row_id,
-                    row.sheet_name,
-                    row.row_number,
-                    target_cell.coordinate,
-                    logical_column,
-                    decimal_text,
-                )
-            )
+    try:
+        validate_xlsx_source(source, ExcelWriterIntegrityError, "TARGET_CELL_MISSING")
+        with zipfile.ZipFile(source) as archive:
+            admit_archive(archive, ExcelWriterIntegrityError, "TARGET_CELL_MISSING")
+            for calculation in calculations:
+                row = calculation.target_row
+                if not row.writable:
+                    raise ExcelWriterInputError("TARGET_NOT_WRITABLE", calculation.target_row_id)
+                worksheet = worksheets.get(row.sheet_name)
+                part = parts.get(row.sheet_name)
+                if worksheet is None or part is None:
+                    raise ExcelWriterIntegrityError("TARGET_SHEET_MISSING", row.sheet_name)
+                if part not in source_xml:
+                    source_xml[part] = read_archive_part(
+                        archive, part, ExcelWriterIntegrityError, "TARGET_CELL_MISSING"
+                    )
+                    source_indexes[part] = worksheet_index(source_xml[part])
+                for logical_column, attribute in _ALLOWED_COLUMNS:
+                    value = getattr(calculation, attribute)
+                    if value is None:
+                        continue
+                    decimal_text = _decimal_text(value)
+                    target_cell = row.cell_for(logical_column)
+                    if not bindings[logical_column]:
+                        continue
+                    matching_bindings = [
+                        item
+                        for item in bindings[logical_column]
+                        if target_cell is not None
+                        and item.column_letter + str(row.row_number) == target_cell.coordinate
+                    ]
+                    if len(matching_bindings) != 1:
+                        raise ExcelWriterIntegrityError(
+                            "TARGET_COLUMN_BINDING_MISSING", f"{row.sheet_name}!{logical_column}"
+                        )
+                    if target_cell is None or target_cell.coordinate != (
+                        matching_bindings[0].column_letter + str(row.row_number)
+                    ):
+                        raise ExcelWriterIntegrityError(
+                            "TARGET_IDENTITY_MISMATCH", calculation.target_row_id
+                        )
+                    coordinate_key = (row.sheet_name, target_cell.coordinate)
+                    if coordinate_key in seen_coordinates:
+                        raise ExcelWriterInputError(
+                            "DUPLICATE_WRITE_COORDINATE",
+                            f"{row.sheet_name}!{target_cell.coordinate}",
+                        )
+                    _validate_target_cell(
+                        source_indexes[part],
+                        target_cell.coordinate,
+                        target_cell.raw_lexeme,
+                        target_cell.formula is not None,
+                        worksheet.merged_ranges,
+                    )
+                    seen_coordinates.add(coordinate_key)
+                    plan.append(
+                        WrittenCell(
+                            calculation.calculation_id,
+                            calculation.target_row_id,
+                            row.sheet_name,
+                            row.row_number,
+                            target_cell.coordinate,
+                            logical_column,
+                            decimal_text,
+                        )
+                    )
+    except (OSError, zipfile.BadZipFile) as error:
+        raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", str(error)) from error
     return tuple(
         sorted(plan, key=lambda item: (item.sheet_name, item.coordinate, item.calculation_id))
     )
