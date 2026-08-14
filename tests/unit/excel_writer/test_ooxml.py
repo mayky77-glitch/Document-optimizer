@@ -234,7 +234,7 @@ def test_request_local_index_scans_once_for_many_inspections(
         b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
         b"<sheetData><row>" + cells + b"</row></sheetData></worksheet>"
     )
-    original = ooxml._worksheet_elements
+    original = ooxml._scan_worksheet
     calls = 0
 
     def counted(payload: bytes, error_code: str = "TARGET_CELL_MISSING"):
@@ -242,10 +242,39 @@ def test_request_local_index_scans_once_for_many_inspections(
         calls += 1
         return original(payload, error_code)
 
-    monkeypatch.setattr(ooxml, "_worksheet_elements", counted)
+    monkeypatch.setattr(ooxml, "_scan_worksheet", counted)
     index = worksheet_index(xml)
     for row in range(1, 1_001):
         assert inspect_index_cell(index, f"A{row}")[1] == str(row)
+    assert calls == 1
+
+
+def test_verify_temp_package_scans_changed_part_once_for_one_thousand_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_path = tmp_path / "source.xlsx"
+    temp_path = tmp_path / "temporary.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Лист"
+    for row in range(1, 1_001):
+        sheet.cell(row, 1, row)
+    workbook.save(source_path)
+    workbook.close()
+    part = worksheet_part_map(source_path)["Лист"]
+    changes = {part: tuple((f"A{row}", str(row + 1_000)) for row in range(1, 1_001))}
+    write_temp_package(source_path, temp_path, changes)
+    original = ooxml._scan_worksheet
+    calls = 0
+
+    def counted(payload: bytes, error_code: str = "TARGET_CELL_MISSING"):
+        nonlocal calls
+        calls += 1
+        return original(payload, error_code)
+
+    monkeypatch.setattr(ooxml, "_scan_worksheet", counted)
+    verify_temp_package(source_path, temp_path, changes)
+
     assert calls == 1
 
 

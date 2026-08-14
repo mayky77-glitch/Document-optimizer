@@ -13,7 +13,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from fixtures.quality_control.builders import calculated_match, calculated_result
-from report_processor.excel_writer import ExcelWriterIntegrityError, engine, write_target_report
+from report_processor.excel_writer import (
+    ExcelWriterIntegrityError,
+    engine,
+    ooxml,
+    write_target_report,
+)
 from report_processor.quality_control import WriteDecision
 from report_processor.schema import LogicalColumn, SheetType
 from report_processor.target_report.models import (
@@ -101,3 +106,53 @@ def test_reopen_failure_never_removes_output_replaced_during_publication(
         )
 
     assert output.read_bytes() == b"concurrent replacement"
+
+
+def test_build_write_plan_scans_one_changed_part_once_for_one_thousand_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.xlsx"
+    _workbook(source)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Лист"
+    for row in range(1, 1_001):
+        cell = sheet.cell(row, 4, row)
+        cell.font = Font(bold=True)
+    workbook.save(source)
+    workbook.close()
+    schema = _schema(source)
+    template = _calculation()
+    calculations = []
+    for row in range(1, 1_001):
+        snapshot = TargetCellSnapshot(
+            f"D{row}", row, str(row), Decimal(row), 1, "0.00", None, None, "OK"
+        )
+        target = replace(
+            template.target_row,
+            row_number=row,
+            cells=((LogicalColumn.CURRENT_PERIOD_QUANTITY, snapshot),),
+        )
+        calculations.append(
+            replace(
+                template,
+                calculation_id=f"generated-{row}",
+                target_row_id=f"generated-row-{row}",
+                target_row=target,
+                trace=replace(template.trace, target_row_id=f"generated-row-{row}"),
+            )
+        )
+    original = ooxml._scan_worksheet
+    calls = 0
+
+    def counted(payload: bytes, error_code: str = "TARGET_CELL_MISSING"):
+        nonlocal calls
+        calls += 1
+        return original(payload, error_code)
+
+    monkeypatch.setattr(ooxml, "_scan_worksheet", counted)
+    parts = engine.worksheet_part_map(source)
+    plan = engine._build_write_plan(source, tuple(calculations), schema, parts)
+
+    assert len(plan) == 1_000
+    assert calls == 1

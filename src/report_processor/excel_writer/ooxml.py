@@ -6,7 +6,7 @@ import os
 import re
 import zipfile
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
@@ -34,106 +34,165 @@ _CALC_CHAIN_CONTENT_TYPE = re.compile(
 _A1 = re.compile(r"[A-Z]{1,3}[1-9][0-9]{0,6}\Z")
 
 
-@dataclass
-class _WorksheetElement:
+@dataclass(frozen=True, slots=True)
+class _ChildSpan:
+    """Exact span of a direct SpreadsheetML ``f`` or ``v`` child."""
+
+    qname: bytes
+    start: int
+    opening_end: int
+    end: int
+    content_start: int
+    content_end: int
+    self_closing: bool
+    has_children: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _CellSpan:
+    """Minimal immutable evidence needed to inspect or rewrite one cell."""
+
+    qname: bytes
+    attributes: Mapping[str, str]
+    start: int
+    opening_end: int
+    end: int
+    self_closing: bool
+    formulas: tuple[_ChildSpan, ...]
+    values: tuple[_ChildSpan, ...]
+
+
+@dataclass(slots=True)
+class _OpenCell:
+    """Parser-local state; converted to a frozen span before the index escapes."""
+
     name: str
     qname: bytes
     attributes: dict[str, str]
     start: int
     opening_end: int
-    end: int = 0
-    content_start: int = 0
-    content_end: int = 0
-    self_closing: bool = False
-    parent: _WorksheetElement | None = None
-    children: list[_WorksheetElement] = field(default_factory=list)
+    formulas: list[_ChildSpan]
+    values: list[_ChildSpan]
+
+
+@dataclass(slots=True)
+class _OpenChild:
+    name: str
+    qname: bytes
+    start: int
+    opening_end: int
+    parent: _OpenCell
+    has_children: bool = False
 
 
 class _RejectedWorksheetXml(Exception):
     """Internal sentinel for worksheet constructs that must never be expanded."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorksheetIndex:
     """Request-local immutable namespace-aware evidence for one worksheet payload."""
 
     xml: bytes
-    cells: Mapping[str, tuple[_WorksheetElement, ...]]
+    cells: Mapping[str, tuple[_CellSpan, ...]]
+    cells_without_reference: tuple[_CellSpan, ...]
+    formula_count: int
 
 
 def worksheet_index(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> WorksheetIndex:
-    elements = _worksheet_elements(xml, error_code)
-    cells: dict[str, list[_WorksheetElement]] = {}
-    for element in elements:
-        if _is_sheet_element(element, "c"):
-            coordinate = element.attributes.get("r")
-            if coordinate is not None:
-                if not _A1.fullmatch(coordinate):
-                    raise ExcelWriterIntegrityError(error_code, "invalid cell reference")
-                cells.setdefault(coordinate, []).append(element)
-    return WorksheetIndex(
-        xml, MappingProxyType({key: tuple(value) for key, value in cells.items()})
-    )
+    return _scan_worksheet(xml, error_code)
 
 
-def _worksheet_elements(
-    xml: bytes, error_code: str = "TARGET_CELL_MISSING"
-) -> tuple[_WorksheetElement, ...]:
-    """Return namespace-expanded worksheet elements with their original byte spans.
-
-    Expat resolves namespaces without touching ElementTree's process-global registry; the
-    raw tag lexeme is recovered from Expat's byte index so edits retain its exact prefix.
-    """
+def _scan_worksheet(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> WorksheetIndex:
+    """Build compact request-local, namespace-aware evidence for one worksheet XML payload."""
 
     if len(xml) > _MAX_WORKSHEET_XML_BYTES:
         raise ExcelWriterIntegrityError(error_code, "worksheet XML exceeds limit")
     declaration = re.match(rb"<\?xml[^>]*encoding=[\"']([^\"']+)", xml[:200], re.I)
-    if declaration is not None and declaration.group(1).casefold() not in {b"utf-8", b"utf8"}:
+    if declaration is not None and declaration.group(1).lower() not in {b"utf-8", b"utf8"}:
         raise ExcelWriterIntegrityError(error_code, "worksheet encoding unsupported")
     parser = expat.ParserCreate(namespace_separator="}")
-    elements: list[_WorksheetElement] = []
-    stack: list[_WorksheetElement] = []
+    cells: dict[str, list[_CellSpan]] = {}
+    cells_without_reference: list[_CellSpan] = []
+    stack: list[tuple[str, _OpenCell | _OpenChild | None]] = []
     events = 0
     cell_count = 0
+    formula_count = 0
 
     def start(name: str, attributes: dict[str, str]) -> None:
-        nonlocal events, cell_count
+        nonlocal events, cell_count, formula_count
         events += 1
         if events > _MAX_WORKSHEET_EVENTS:
             raise _RejectedWorksheetXml()
         if len(stack) >= _MAX_XML_DEPTH:
             raise _RejectedWorksheetXml()
+        parent = stack[-1][1] if stack else None
+        if isinstance(parent, _OpenChild):
+            parent.has_children = True
         if name == _SPREADSHEETML_NS + "}c":
             cell_count += 1
             if cell_count > _MAX_WORKSHEET_CELLS:
                 raise _RejectedWorksheetXml()
-        if name in {_SPREADSHEETML_NS + "}f", _SPREADSHEETML_NS + "}v"} and (
-            not stack or stack[-1].name != _SPREADSHEETML_NS + "}c"
-        ):
-            raise _RejectedWorksheetXml()
         offset = parser.CurrentByteIndex
         opening_end = _opening_tag_end(xml, offset)
         qname = _opening_qname(xml, offset, opening_end)
-        element = _WorksheetElement(
-            name, qname, attributes, offset, opening_end, content_start=opening_end
-        )
-        if stack:
-            element.parent = stack[-1]
-            stack[-1].children.append(element)
-        elements.append(element)
-        stack.append(element)
-
-    def end(_name: str) -> None:
-        element = stack.pop()
-        offset = parser.CurrentByteIndex
-        element.self_closing = xml[element.start : element.opening_end].rstrip().endswith(b"/>")
-        if element.self_closing:
-            element.end = offset
-            element.content_end = element.opening_end
+        if name == _SPREADSHEETML_NS + "}c":
+            reference = attributes.get("r")
+            if reference is not None and not _A1.fullmatch(reference):
+                raise _RejectedWorksheetXml()
+            stack.append(
+                (
+                    name,
+                    _OpenCell(name, qname, dict(attributes), offset, opening_end, [], []),
+                )
+            )
+        elif name in {_SPREADSHEETML_NS + "}f", _SPREADSHEETML_NS + "}v"}:
+            if not isinstance(parent, _OpenCell):
+                raise _RejectedWorksheetXml()
+            if name.endswith("}f"):
+                formula_count += 1
+            stack.append((name, _OpenChild(name, qname, offset, opening_end, parent)))
         else:
-            closing_end = _closing_tag_end(xml, offset)
-            element.content_end = offset
-            element.end = closing_end
+            stack.append((name, None))
+
+    def end(name: str) -> None:
+        opened_name, opened = stack.pop()
+        if name != opened_name:
+            raise _RejectedWorksheetXml()
+        offset = parser.CurrentByteIndex
+        if isinstance(opened, _OpenChild):
+            self_closing = xml[opened.start : opened.opening_end].rstrip().endswith(b"/>")
+            span = _ChildSpan(
+                opened.qname,
+                opened.start,
+                opened.opening_end,
+                offset if self_closing else _closing_tag_end(xml, offset),
+                opened.opening_end,
+                opened.opening_end if self_closing else offset,
+                self_closing,
+                opened.has_children,
+            )
+            children = (
+                opened.parent.formulas if opened.name.endswith("}f") else opened.parent.values
+            )
+            children.append(span)
+        elif isinstance(opened, _OpenCell):
+            self_closing = xml[opened.start : opened.opening_end].rstrip().endswith(b"/>")
+            cell = _CellSpan(
+                opened.qname,
+                MappingProxyType(dict(opened.attributes)),
+                opened.start,
+                opened.opening_end,
+                offset if self_closing else _closing_tag_end(xml, offset),
+                self_closing,
+                tuple(opened.formulas),
+                tuple(opened.values),
+            )
+            reference = cell.attributes.get("r")
+            if reference is not None:
+                cells.setdefault(reference, []).append(cell)
+            else:
+                cells_without_reference.append(cell)
 
     parser.StartElementHandler = start
     parser.EndElementHandler = end
@@ -145,7 +204,12 @@ def _worksheet_elements(
         raise ExcelWriterIntegrityError(error_code, "invalid worksheet XML") from error
     if stack:
         raise ExcelWriterIntegrityError(error_code, "unclosed worksheet XML")
-    return tuple(elements)
+    return WorksheetIndex(
+        xml,
+        MappingProxyType({key: tuple(value) for key, value in cells.items()}),
+        tuple(cells_without_reference),
+        formula_count,
+    )
 
 
 def _opening_tag_end(xml: bytes, start: int) -> int:
@@ -176,13 +240,10 @@ def _opening_qname(xml: bytes, start: int, end: int) -> bytes:
     return match.group(1)
 
 
-def _is_sheet_element(element: _WorksheetElement, local_name: str) -> bool:
-    return element.name == _SPREADSHEETML_NS + "}" + local_name
-
-
-def _cells(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> tuple[_WorksheetElement, ...]:
-    return tuple(
-        item for item in _worksheet_elements(xml, error_code) if _is_sheet_element(item, "c")
+def _cells(index: WorksheetIndex) -> tuple[_CellSpan, ...]:
+    return (
+        tuple(cell for matches in index.cells.values() for cell in matches)
+        + index.cells_without_reference
     )
 
 
@@ -195,7 +256,7 @@ def inspect_index_cell(
         raise ExcelWriterIntegrityError(error_code, detail)
     element = matches[0]
     value = _child(element, "v", "TARGET_CELL_LEXEME_MISMATCH")
-    if value is not None and value.children:
+    if value is not None and value.has_children:
         raise ExcelWriterIntegrityError(error_code, coordinate)
     try:
         lexeme = (
@@ -215,9 +276,9 @@ def inspect_index_cell(
 
 
 def _child(
-    element: _WorksheetElement, local_name: str, error_code: str = "TARGET_CELL_LEXEME_MISMATCH"
-) -> _WorksheetElement | None:
-    matches = [item for item in element.children if _is_sheet_element(item, local_name)]
+    element: _CellSpan, local_name: str, error_code: str = "TARGET_CELL_LEXEME_MISMATCH"
+) -> _ChildSpan | None:
+    matches = element.formulas if local_name == "f" else element.values
     if len(matches) > 1:
         raise ExcelWriterIntegrityError(error_code, "ambiguous cell child")
     return matches[0] if matches else None
@@ -336,13 +397,22 @@ def replace_cell_value(xml: bytes, coordinate: str, decimal_text: str) -> bytes:
 def _replace_cell_values(xml: bytes, changes: tuple[tuple[str, str], ...]) -> bytes:
     """Apply one worksheet part's requested replacements after one namespace scan."""
 
+    return _replace_index_cell_values(worksheet_index(xml), changes)
+
+
+def _replace_index_cell_values(
+    index: WorksheetIndex, changes: tuple[tuple[str, str], ...]
+) -> bytes:
+    """Apply replacements using already-scanned immutable worksheet evidence."""
+
     requested = dict(changes)
     if len(requested) != len(changes):
         raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", "duplicate requested cell")
     pieces: list[bytes] = []
     cursor = 0
     changed: set[str] = set()
-    for element in _cells(xml):
+    xml = index.xml
+    for element in _cells(index):
         coordinate = element.attributes.get("r")
         if coordinate not in requested:
             continue
@@ -403,14 +473,14 @@ def _replace_cell_values(xml: bytes, changes: tuple[tuple[str, str], ...]) -> by
 def formula_count(xml: bytes) -> int:
     """Return the number of formula elements in one worksheet part."""
 
-    return sum(_is_sheet_element(item, "f") for item in _worksheet_elements(xml))
+    return worksheet_index(xml).formula_count
 
 
 def formula_coordinates(xml: bytes) -> tuple[str, ...]:
     """Return formula coordinates from one authoritative worksheet XML part."""
 
     coordinates: list[str] = []
-    for cell in _cells(xml, "FORMULA_MATERIALIZATION_FAILED"):
+    for cell in _cells(worksheet_index(xml, "FORMULA_MATERIALIZATION_FAILED")):
         if _child(cell, "f", "FORMULA_MATERIALIZATION_FAILED") is None:
             continue
         reference = cell.attributes.get("r")
@@ -427,7 +497,7 @@ def numeric_formula_values(xml: bytes, coordinates: tuple[str, ...]) -> dict[str
 
     requested = set(coordinates)
     values: dict[str, str] = {}
-    for cell in _cells(xml, "FORMULA_RESULT_NOT_NUMERIC"):
+    for cell in _cells(worksheet_index(xml, "FORMULA_RESULT_NOT_NUMERIC")):
         coordinate = cell.attributes.get("r")
         if coordinate is None:
             continue
@@ -445,7 +515,7 @@ def materialize_formula_cells(xml: bytes, values: Mapping[str, str]) -> bytes:
 
     pieces: list[bytes] = []
     cursor = 0
-    for element in _cells(xml, "FORMULA_MATERIALIZATION_FAILED"):
+    for element in _cells(worksheet_index(xml, "FORMULA_MATERIALIZATION_FAILED")):
         formula = _child(element, "f", "FORMULA_MATERIALIZATION_FAILED")
         if formula is None:
             continue
@@ -457,7 +527,7 @@ def materialize_formula_cells(xml: bytes, values: Mapping[str, str]) -> bytes:
             raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
         cell = xml[element.start : element.end]
         value = _child(element, "v", "FORMULA_MATERIALIZATION_FAILED")
-        if value is None or value.children:
+        if value is None or value.has_children:
             raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
         replacement = decimal_text.encode("ascii")
         if value.self_closing:
@@ -540,6 +610,7 @@ def verify_temp_package(
                 raise ExcelWriterIntegrityError(
                     "PRESERVATION_CHECK_FAILED", "package structure changed"
                 )
+            source_indexes: dict[str, WorksheetIndex] = {}
             for name in source_names:
                 if remove_calc_chain and name == "xl/calcChain.xml":
                     continue
@@ -548,20 +619,14 @@ def verify_temp_package(
                 expected = original
                 changes = changes_by_part.get(name, ())
                 if changes:
-                    expected = _replace_cell_values(expected, changes)
+                    index = source_indexes.setdefault(
+                        name, worksheet_index(original, "PRESERVATION_CHECK_FAILED")
+                    )
+                    expected = _replace_index_cell_values(index, changes)
                 if remove_calc_chain:
                     expected = _remove_calc_chain_metadata(name, expected)
                 if updated != expected:
                     raise ExcelWriterIntegrityError("PRESERVATION_CHECK_FAILED", name)
-            for part, changes in changes_by_part.items():
-                updated = output.read(part)
-                index = worksheet_index(updated, "PRESERVATION_CHECK_FAILED")
-                for coordinate, decimal_text in changes:
-                    _, actual, is_formula, _, cell_type = inspect_index_cell(
-                        index, coordinate, "PRESERVATION_CHECK_FAILED"
-                    )
-                    if is_formula or cell_type not in {None, "n"} or actual != decimal_text:
-                        raise ExcelWriterIntegrityError("PRESERVATION_CHECK_FAILED", coordinate)
         with temp_path.open("rb") as stream:
             workbook = load_workbook(stream, read_only=True, data_only=False, keep_links=True)
             workbook.close()
@@ -674,12 +739,12 @@ def _remove_calc_chain_metadata(name: str, payload: bytes) -> bytes:
     return payload
 
 
-def _finite_numeric_lexeme(xml: bytes, cell: _WorksheetElement, coordinate: str) -> str:
+def _finite_numeric_lexeme(xml: bytes, cell: _CellSpan, coordinate: str) -> str:
     cell_type = cell.attributes.get("t")
     if cell_type is not None and cell_type != "n":
         raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
     value = _child(cell, "v", "FORMULA_RESULT_NOT_NUMERIC")
-    if value is None or value.self_closing or value.children:
+    if value is None or value.self_closing or value.has_children:
         raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
     try:
         decimal_text = xml[value.content_start : value.content_end].decode("ascii")
