@@ -9,6 +9,7 @@ import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import PatternFill
+from openpyxl.utils import get_column_letter
 
 from report_processor.admin_panel import reconciliation_target_measure
 from report_processor.admin_panel.reconciliation_period import ReconciliationPeriodError
@@ -96,6 +97,98 @@ def test_sparse_far_suffix_is_compact_and_part_of_the_immutable_plan(tmp_path: P
     assert anchor.suffix_last_coordinate == "Z1000000"
     assert anchor.suffix_rightmost_coordinate == "Z1000000"
     assert len(anchor.suffix_coordinate_sha256) == 64
+
+
+def _duplicate_l1_m1_merge(payload: bytes) -> bytes:
+    root = ET.fromstring(payload)
+    merges = root.find(_Q("mergeCells"))
+    assert merges is not None
+    merges.attrib["count"] = str(len(merges) + 1)
+    ET.SubElement(merges, _Q("mergeCell"), {"ref": "L1:M1"})
+    return ET.tostring(root)
+
+
+def test_raw_duplicate_merge_rejects_build_prepare_and_verify_without_output(
+    tmp_path: Path,
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    with zipfile.ZipFile(source) as archive:
+        source_sheet = archive.read("xl/worksheets/sheet1.xml")
+    _add_zip_members(source, {"xl/worksheets/sheet1.xml": _duplicate_l1_m1_merge(source_sheet)})
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    with pytest.raises(ReconciliationPeriodError):
+        prepare_period_insertion(source, output, plan)
+    assert not output.exists()
+
+    clean = tmp_path / "clean.xlsx"
+    _historical_book(clean)
+    clean_plan = build_period_insertion_plan(clean, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(clean, output, clean_plan)
+    with zipfile.ZipFile(output) as archive:
+        output_sheet = archive.read("xl/worksheets/sheet1.xml")
+    _add_zip_members(output, {"xl/worksheets/sheet1.xml": _duplicate_l1_m1_merge(output_sheet)})
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        verify_period_insertion(clean, output, clean_plan)
+
+
+@pytest.mark.parametrize("count", (1_000, 2_000, 4_000))
+def test_raw_merge_sweep_has_bounded_subquadratic_work(count: int) -> None:
+    references = "".join(
+        f'<mergeCell ref="{get_column_letter(index * 4 + 1)}1:'
+        f'{get_column_letter(index * 4 + 2)}1"/>'
+        for index in range(count)
+    )
+    payload = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<mergeCells count="{count}">{references}</mergeCells>'
+        "</worksheet>"
+    ).encode()
+    operations: list[int] = []
+
+    assert len(period_insertion._raw_sheet_merges(payload, operations)) == count
+    assert len(operations) < count * 100
+
+
+def test_raw_merge_count_limit_rejects_before_overlap_work() -> None:
+    count = period_insertion._MAX_RAW_MERGES + 1
+    references = "".join(
+        f'<mergeCell ref="{get_column_letter(index * 2 + 1)}1:'
+        f'{get_column_letter(index * 2 + 2)}1"/>'
+        for index in range(count)
+    )
+    payload = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<mergeCells count="{count}">{references}</mergeCells>'
+        "</worksheet>"
+    ).encode()
+    operations: list[int] = []
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        period_insertion._raw_sheet_merges(payload, operations)
+
+    assert operations == []
+
+
+def test_planner_rejects_wide_header_merge_before_output(tmp_path: Path) -> None:
+    source, output = tmp_path / "wide.xlsx", tmp_path / "output.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet.merge_cells("A1:XFD1")
+    sheet.merge_cells("L50:M50")
+    sheet["L50"] = "Документальная отчетность за весь период"
+    sheet["L51"], sheet["M51"], sheet["N52"] = "Количество", "Стоимость", "suffix"
+    workbook.save(source)
+    workbook.close()
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_ANCHOR_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 52})
+
+    assert not output.exists()
 
 
 def test_suffix_rightmost_is_column_major_while_bounds_are_row_major(tmp_path: Path) -> None:

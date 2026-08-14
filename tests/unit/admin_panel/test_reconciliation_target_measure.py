@@ -6,6 +6,7 @@ import pytest
 from openpyxl import Workbook
 
 from report_processor.admin_panel.reconciliation_target_measure import (
+    BoundedHeaderWindow,
     ReconciliationTargetMeasureError,
     discover_historical_target_measures,
     discover_target_measures,
@@ -68,6 +69,54 @@ def test_common_merged_current_parent_is_sufficient_without_calendar_month() -> 
     (pair,) = discover_target_measures(workbook, {sheet.title: 3})
 
     assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+def test_physical_header_window_ignores_far_dimension_column(monkeypatch) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Отчетный период")
+    sheet["XFD999999"] = "irrelevant"
+    original = sheet.cell
+    accesses = 0
+
+    def counted(*args, **kwargs):
+        nonlocal accesses
+        accesses += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sheet, "cell", counted)
+    (pair,) = discover_target_measures(workbook, {sheet.title: 3})
+
+    assert accesses < 100
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+def test_header_work_budget_rejects_wide_intersecting_merge_before_cell_reads(monkeypatch) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Отчетный период")
+    sheet.merge_cells("A1:XFD1")
+    original = sheet.cell
+    accesses = 0
+
+    def counted(*args, **kwargs):
+        nonlocal accesses
+        accesses += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sheet, "cell", counted)
+    with pytest.raises(ReconciliationTargetMeasureError, match="TARGET_HEADER_WINDOW_INVALID"):
+        discover_target_measures(workbook, {sheet.title: 52})
+
+    assert accesses == 0
+
+
+def test_supplied_header_window_must_equal_actual_competing_pair_evidence() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Отчетный период")
+    _pair(sheet, 14, "Отчетный период")
+    supplied = BoundedHeaderWindow(1, 2, (12, 13))
+
+    with pytest.raises(ReconciliationTargetMeasureError, match="TARGET_HEADER_WINDOW_INVALID"):
+        discover_target_measures(workbook, {sheet.title: 3}, header_windows={sheet.title: supplied})
 
 
 @pytest.mark.parametrize(

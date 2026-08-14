@@ -26,6 +26,7 @@ from report_processor.admin_panel.reconciliation_period import (
 )
 from report_processor.admin_panel.reconciliation_target_measure import (
     ReconciliationTargetMeasureError,
+    bounded_header_windows,
     calendar_identities,
     discover_historical_target_measures,
     discover_target_measures,
@@ -50,6 +51,152 @@ _PERMITTED_DEFINED_NAMES = {
     "_xlnm._FilterDatabase",
 }
 _XMLNS = re.compile(rb"\s(xmlns(?::[A-Za-z_][\w.-]*)?=\"[^\"]+\")")
+_MAX_ROWS = 1_048_576
+_MAX_COLUMNS = 16_384
+_MAX_RAW_MERGES = 4_096
+
+
+def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]]:
+    """Validate unnormalised OOXML merge topology before opening a workbook."""
+
+    parts = worksheet_parts(source)
+    requested = tuple(sheet_names)
+    if any(name not in parts for name in requested):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    try:
+        with zipfile.ZipFile(source) as archive:
+            return {name: _raw_sheet_merges(archive.read(parts[name])) for name in requested}
+    except ReconciliationPeriodError:
+        raise
+    except Exception as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+
+
+def _raw_sheet_merges(payload: bytes, operations: list[int] | None = None) -> tuple[str, ...]:
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+    containers = root.findall(_Q("mergeCells"))
+    if not containers:
+        return ()
+    if len(containers) != 1:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    container = containers[0]
+    count = container.attrib.get("count")
+    if count is None or not count.isdecimal():
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    normalized_count = count.lstrip("0") or "0"
+    maximum_count = str(_MAX_RAW_MERGES)
+    if (
+        len(normalized_count) > len(maximum_count)
+        or normalized_count > maximum_count
+        or len(container) > _MAX_RAW_MERGES
+    ):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    declared_count = int(normalized_count)
+    references: list[tuple[str, tuple[int, int, int, int]]] = []
+    seen: set[str] = set()
+    for child in container:
+        if child.tag != _Q("mergeCell") or set(child.attrib) != {"ref"}:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+        reference = child.attrib["ref"]
+        try:
+            left, top, right, bottom = range_boundaries(reference)
+        except ValueError as error:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+        canonical = f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
+        if (
+            reference != canonical
+            or (left == right and top == bottom)
+            or not 1 <= left <= right <= _MAX_COLUMNS
+            or not 1 <= top <= bottom <= _MAX_ROWS
+            or reference in seen
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+        seen.add(reference)
+        references.append((reference, (left, top, right, bottom)))
+    if declared_count != len(references):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    _reject_overlapping_raw_merges((bounds for _reference, bounds in references), operations)
+    return tuple(reference for reference, _bounds in references)
+
+
+def _reject_overlapping_raw_merges(bounds, operations: list[int] | None = None) -> None:
+    """Sweep rows with a bounded range-add/range-max column index."""
+
+    events: dict[int, list[tuple[int, int, int]]] = {}
+    for left, top, right, bottom in bounds:
+        events.setdefault(top, []).append((1, left, right))
+        events.setdefault(bottom + 1, []).append((-1, left, right))
+    tree = _MergeIntervalIndex(_MAX_COLUMNS, operations)
+    for row in sorted(events):
+        removals = (event for event in events[row] if event[0] < 0)
+        additions = (event for event in events[row] if event[0] > 0)
+        for delta, left, right in removals:
+            tree.add(left, right, delta)
+        for _delta, left, right in additions:
+            if tree.maximum(left, right):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+            tree.add(left, right, 1)
+
+
+class _MergeIntervalIndex:
+    """Fixed 16,384-column lazy segment tree for merge-overlap checks."""
+
+    def __init__(self, columns: int, operations: list[int] | None) -> None:
+        self._maximum = [0] * (columns * 4)
+        self._lazy = [0] * (columns * 4)
+        self._columns = columns
+        self._operations = operations
+
+    def add(self, left: int, right: int, delta: int) -> None:
+        self._update(1, 1, self._columns, left, right, delta)
+
+    def maximum(self, left: int, right: int) -> int:
+        return self._query(1, 1, self._columns, left, right)
+
+    def _count(self) -> None:
+        if self._operations is not None:
+            self._operations.append(1)
+
+    def _update(self, node: int, start: int, end: int, left: int, right: int, delta: int) -> None:
+        self._count()
+        if left <= start and end <= right:
+            self._maximum[node] += delta
+            self._lazy[node] += delta
+            return
+        middle = (start + end) // 2
+        if left <= middle:
+            self._update(node * 2, start, middle, left, right, delta)
+        if right > middle:
+            self._update(node * 2 + 1, middle + 1, end, left, right, delta)
+        self._maximum[node] = self._lazy[node] + max(
+            self._maximum[node * 2], self._maximum[node * 2 + 1]
+        )
+
+    def _query(self, node: int, start: int, end: int, left: int, right: int) -> int:
+        self._count()
+        if left <= start and end <= right:
+            return self._maximum[node]
+        middle = (start + end) // 2
+        result = 0
+        if left <= middle:
+            result = self._query(node * 2, start, middle, left, right)
+        if right > middle:
+            result = max(result, self._query(node * 2 + 1, middle + 1, end, left, right))
+        return self._lazy[node] + result
+
+
+def _validated_header_merges(
+    source: Path,
+    sheet_names,
+    supplied: dict[str, tuple[str, ...]] | None,
+) -> dict[str, tuple[str, ...]]:
+    raw = _raw_merge_inventory(source, sheet_names)
+    if supplied is not None and any(tuple(supplied.get(name, ())) != raw[name] for name in raw):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_ANCHOR_INVALID")
+    return raw
 
 
 def build_period_insertion_plan(
@@ -65,18 +212,23 @@ def build_period_insertion_plan(
     )
     source = Path(source_path)
     _reject_package(source)
+    raw_merges = _validated_header_merges(source, first_detail_rows, merged_ranges_by_sheet)
     parts = worksheet_parts(source)
     sheet_ids = _sheet_id_map(source)
     with source.open("rb") as stream:
         digest = hashlib.sha256(stream.read()).hexdigest()
     workbook = load_workbook(source, read_only=False, data_only=False, keep_links=True)
     try:
+        header_windows = bounded_header_windows(workbook, first_detail_rows, raw_merges)
         current: set[str] = set()
         missing: set[str] = set()
         for sheet_name, detail_row in first_detail_rows.items():
             try:
                 pair = discover_target_measures(
-                    workbook, {sheet_name: detail_row}, merged_ranges_by_sheet
+                    workbook,
+                    {sheet_name: detail_row},
+                    raw_merges,
+                    {sheet_name: header_windows[sheet_name]},
                 )
             except ReconciliationTargetMeasureError as error:
                 if str(error) != "TARGET_CURRENT_PERIOD_PAIR_MISSING":
@@ -100,7 +252,7 @@ def build_period_insertion_plan(
                 True,
             )
         historical = discover_historical_target_measures(
-            workbook, first_detail_rows, merged_ranges_by_sheet
+            workbook, first_detail_rows, raw_merges, header_windows
         )
         anchors = tuple(
             ReconciliationSheetAnchor(
@@ -152,6 +304,7 @@ def prepare_period_insertion(
     source, output = Path(source_path), Path(output_path)
     _assert_digest(source, plan.source_sha256)
     _validate_plan(source, plan)
+    _raw_merge_inventory(source, (anchor.sheet_name for anchor in plan.anchors))
     if plan.idempotent:
         raise ReconciliationPeriodError("PERIOD_INSERTION_IDEMPOTENT")
     try:
@@ -202,6 +355,8 @@ def verify_period_insertion(
     source, output = Path(source_path), Path(output_path)
     _assert_digest(source, plan.source_sha256)
     _validate_plan(source, plan)
+    _raw_merge_inventory(source, (anchor.sheet_name for anchor in plan.anchors))
+    _raw_merge_inventory(output, (anchor.sheet_name for anchor in plan.anchors))
     anchors = {item.sheet_name: item for item in plan.anchors}
     source_parts = dict(plan.worksheet_parts)
     try:
@@ -246,7 +401,8 @@ def verify_period_insertion(
         workbook = load_workbook(output, read_only=False, data_only=False, keep_links=True)
         try:
             rows = {anchor.sheet_name: anchor.first_detail_row for anchor in plan.anchors}
-            pairs = discover_target_measures(workbook, rows)
+            header_windows = bounded_header_windows(workbook, rows)
+            pairs = discover_target_measures(workbook, rows, header_windows=header_windows)
             if {(pair.sheet_name, pair.quantity_column, pair.cost_column) for pair in pairs} != {
                 (anchor.sheet_name, anchor.cost_column + 1, anchor.cost_column + 2)
                 for anchor in plan.anchors

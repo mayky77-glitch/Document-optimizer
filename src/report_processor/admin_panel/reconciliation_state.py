@@ -57,6 +57,7 @@ class ReconciliationReviewState:
     categories: Mapping[str, str]
     source_digests: tuple[str, ...]
     target_digest: str
+    target_identity_digest: str | None = None
     available_categories: Mapping[str, frozenset[str]] = field(default_factory=dict)
     grouping: GroupingResult | None = None
     group_decisions: dict[str, ReviewDecision] = field(default_factory=dict)
@@ -69,6 +70,16 @@ class ReconciliationReviewState:
     last_action: str | None = None
     _undo: _DecisionSnapshot | None = None
     _autosave: Callable[[ReconciliationReviewState], None] | None = None
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "target_identity_digest" and hasattr(self, name):
+            raise AttributeError("target identity is immutable")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name == "target_identity_digest":
+            raise AttributeError("target identity is immutable")
+        object.__delattr__(self, name)
 
     def set_autosave(self, callback: Callable[[ReconciliationReviewState], None]) -> None:
         self._autosave = callback
@@ -90,6 +101,7 @@ class ReconciliationReviewState:
         payload = {
             "sources": self.source_digests,
             "target": self.target_digest,
+            "target_identity": self.target_identity_digest,
             "categories": sorted(self.categories),
             "packages": [(item.package_id, item.version) for item in self._packages()],
             "families": [(item.family_id, item.version) for item in self._families()],
