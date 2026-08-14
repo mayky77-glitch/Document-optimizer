@@ -18,6 +18,12 @@ from report_processor.target_report.ooxml import worksheet_parts
 from .exceptions import ExcelWriterAtomicError, ExcelWriterIntegrityError, ExcelWriterSafetyError
 
 _SPREADSHEETML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_MAX_WORKSHEET_XML_BYTES = 32 * 1024 * 1024
+_MAX_WORKSHEET_EVENTS = 1_100_000
+_MAX_ARCHIVE_ENTRIES = 10_000
+_MAX_ARCHIVE_MEMBER_BYTES = 64 * 1024 * 1024
+_MAX_ARCHIVE_TOTAL_BYTES = 256 * 1024 * 1024
+_MAX_COMPRESSION_RATIO = 1_000
 _CALC_CHAIN_CONTENT_TYPE = re.compile(
     rb'<Override\b(?=[^>]*\bPartName\s*=\s*["\']/xl/calcChain\.xml["\'])[^>]*/>',
     re.IGNORECASE,
@@ -43,6 +49,23 @@ class _RejectedWorksheetXml(Exception):
     """Internal sentinel for worksheet constructs that must never be expanded."""
 
 
+@dataclass(frozen=True)
+class WorksheetIndex:
+    """Request-local immutable namespace-aware evidence for one worksheet payload."""
+
+    xml: bytes
+    cells: Mapping[str, tuple[_WorksheetElement, ...]]
+
+
+def worksheet_index(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> WorksheetIndex:
+    elements = _worksheet_elements(xml, error_code)
+    cells: dict[str, list[_WorksheetElement]] = {}
+    for element in elements:
+        if _is_sheet_element(element, "c") and (coordinate := element.attributes.get("r")):
+            cells.setdefault(coordinate, []).append(element)
+    return WorksheetIndex(xml, {key: tuple(value) for key, value in cells.items()})
+
+
 def _worksheet_elements(
     xml: bytes, error_code: str = "TARGET_CELL_MISSING"
 ) -> tuple[_WorksheetElement, ...]:
@@ -52,11 +75,18 @@ def _worksheet_elements(
     raw tag lexeme is recovered from Expat's byte index so edits retain its exact prefix.
     """
 
+    if len(xml) > _MAX_WORKSHEET_XML_BYTES:
+        raise ExcelWriterIntegrityError(error_code, "worksheet XML exceeds limit")
     parser = expat.ParserCreate(namespace_separator="}")
     elements: list[_WorksheetElement] = []
     stack: list[_WorksheetElement] = []
+    events = 0
 
     def start(name: str, attributes: dict[str, str]) -> None:
+        nonlocal events
+        events += 1
+        if events > _MAX_WORKSHEET_EVENTS:
+            raise _RejectedWorksheetXml()
         offset = parser.CurrentByteIndex
         opening_end = _opening_tag_end(xml, offset)
         qname = _opening_qname(xml, offset, opening_end)
@@ -132,6 +162,34 @@ def _cells(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> tuple[_Worksh
     )
 
 
+def inspect_index_cell(
+    index: WorksheetIndex, coordinate: str, error_code: str = "TARGET_CELL_MISSING"
+) -> tuple[bytes, str | None, bool, bool, str | None]:
+    matches = index.cells.get(coordinate, ())
+    if len(matches) != 1:
+        detail = f"duplicate XML cell {coordinate}" if matches else coordinate
+        raise ExcelWriterIntegrityError(error_code, detail)
+    element = matches[0]
+    value = _child(element, "v", "TARGET_CELL_LEXEME_MISMATCH")
+    if value is not None and value.children:
+        raise ExcelWriterIntegrityError(error_code, coordinate)
+    try:
+        lexeme = (
+            index.xml[value.content_start : value.content_end].decode("utf-8")
+            if value is not None and not value.self_closing
+            else None
+        )
+    except UnicodeDecodeError as error:
+        raise ExcelWriterIntegrityError(error_code, coordinate) from error
+    return (
+        index.xml[element.start : element.end],
+        lexeme,
+        _child(element, "f", error_code) is not None,
+        "s" in element.attributes,
+        element.attributes.get("t"),
+    )
+
+
 def _child(
     element: _WorksheetElement, local_name: str, error_code: str = "TARGET_CELL_LEXEME_MISMATCH"
 ) -> _WorksheetElement | None:
@@ -191,6 +249,21 @@ _CALC_CHAIN_RELATIONSHIP = re.compile(
 def reject_unsupported_package(source_path: Path) -> None:
     try:
         with zipfile.ZipFile(source_path) as archive:
+            infos = tuple(archive.infolist())
+            if len(infos) > _MAX_ARCHIVE_ENTRIES:
+                raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "too many package entries")
+            total = 0
+            for info in infos:
+                total += info.file_size
+                if (
+                    info.file_size > _MAX_ARCHIVE_MEMBER_BYTES
+                    or total > _MAX_ARCHIVE_TOTAL_BYTES
+                    or (
+                        info.compress_size
+                        and info.file_size > info.compress_size * _MAX_COMPRESSION_RATIO
+                    )
+                ):
+                    raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "package size limit")
             names = tuple(archive.namelist())
             if len(names) != len(set(names)):
                 raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "duplicate package entries")
@@ -218,27 +291,7 @@ def worksheet_part_map(source_path: Path) -> dict[str, str]:
 def inspect_cell(xml: bytes, coordinate: str) -> tuple[bytes, str | None, bool, bool, str | None]:
     """Return target cell bytes, numeric lexeme, formula flag, and style presence."""
 
-    matches = [item for item in _cells(xml) if item.attributes.get("r") == coordinate]
-    if len(matches) > 1:
-        raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", f"duplicate XML cell {coordinate}")
-    if matches:
-        element = matches[0]
-        value = _child(element, "v")
-        if value is not None and value.children:
-            raise ExcelWriterIntegrityError("TARGET_CELL_LEXEME_MISMATCH", coordinate)
-        lexeme = (
-            xml[value.content_start : value.content_end].decode("utf-8")
-            if value is not None and not value.self_closing
-            else None
-        )
-        return (
-            xml[element.start : element.end],
-            lexeme,
-            _child(element, "f") is not None,
-            "s" in element.attributes,
-            element.attributes.get("t"),
-        )
-    raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", coordinate)
+    return inspect_index_cell(worksheet_index(xml), coordinate)
 
 
 def replace_cell_value(xml: bytes, coordinate: str, decimal_text: str) -> bytes:
@@ -461,8 +514,11 @@ def verify_temp_package(
                     raise ExcelWriterIntegrityError("PRESERVATION_CHECK_FAILED", name)
             for part, changes in changes_by_part.items():
                 updated = output.read(part)
+                index = worksheet_index(updated, "PRESERVATION_CHECK_FAILED")
                 for coordinate, decimal_text in changes:
-                    _, actual, is_formula, _, cell_type = inspect_cell(updated, coordinate)
+                    _, actual, is_formula, _, cell_type = inspect_index_cell(
+                        index, coordinate, "PRESERVATION_CHECK_FAILED"
+                    )
                     if is_formula or cell_type not in {None, "n"} or actual != decimal_text:
                         raise ExcelWriterIntegrityError("PRESERVATION_CHECK_FAILED", coordinate)
         with temp_path.open("rb") as stream:
@@ -524,8 +580,11 @@ def verify_materialized_package(
                 xml = package.read(part)
                 if formula_count(xml):
                     raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", part)
+                index = worksheet_index(xml, "FORMULA_MATERIALIZATION_FAILED")
                 for coordinate, expected in values.items():
-                    _, actual, is_formula, _, cell_type = inspect_cell(xml, coordinate)
+                    _, actual, is_formula, _, cell_type = inspect_index_cell(
+                        index, coordinate, "FORMULA_MATERIALIZATION_FAILED"
+                    )
                     if is_formula or cell_type not in {None, "n"} or actual != expected:
                         raise ExcelWriterIntegrityError(
                             "FORMULA_MATERIALIZATION_FAILED", coordinate

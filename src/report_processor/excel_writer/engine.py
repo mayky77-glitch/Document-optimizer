@@ -30,10 +30,12 @@ from .exceptions import (
 from .formula_materialization import recalculate_and_materialize
 from .models import EXCEL_WRITER_CONTRACT_VERSION, WriteResult, WriteStatus, WrittenCell
 from .ooxml import (
-    inspect_cell,
+    WorksheetIndex,
+    inspect_index_cell,
     package_has_formulas,
     reject_unsupported_package,
     verify_formula_free_package,
+    worksheet_index,
     worksheet_part_map,
 )
 from .ooxml import (
@@ -223,6 +225,7 @@ def _build_write_plan(
     for binding in schema.column_bindings:
         bindings[binding.logical_column].append(binding)
     source_xml: dict[str, bytes] = {}
+    source_indexes: dict[str, WorksheetIndex] = {}
     seen_coordinates: set[tuple[str, str]] = set()
     plan: list[WrittenCell] = []
     for calculation in calculations:
@@ -236,6 +239,7 @@ def _build_write_plan(
         if part not in source_xml:
             with zipfile.ZipFile(source) as archive:
                 source_xml[part] = archive.read(part)
+            source_indexes[part] = worksheet_index(source_xml[part])
         for logical_column, attribute in _ALLOWED_COLUMNS:
             value = getattr(calculation, attribute)
             if value is None:
@@ -266,7 +270,7 @@ def _build_write_plan(
                     "DUPLICATE_WRITE_COORDINATE", f"{row.sheet_name}!{target_cell.coordinate}"
                 )
             _validate_target_cell(
-                source_xml[part],
+                source_indexes[part],
                 target_cell.coordinate,
                 target_cell.raw_lexeme,
                 target_cell.formula is not None,
@@ -290,7 +294,7 @@ def _build_write_plan(
 
 
 def _validate_target_cell(
-    xml: bytes,
+    index: WorksheetIndex,
     coordinate: str,
     expected_lexeme: str | None,
     has_snapshot_formula: bool,
@@ -298,7 +302,7 @@ def _validate_target_cell(
 ) -> None:
     if _is_merged(coordinate, merged_ranges):
         raise ExcelWriterIntegrityError("TARGET_CELL_IS_MERGED", coordinate)
-    _, actual_lexeme, is_formula, has_style, cell_type = inspect_cell(xml, coordinate)
+    _, actual_lexeme, is_formula, has_style, cell_type = inspect_index_cell(index, coordinate)
     if not has_style:
         raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", f"missing style: {coordinate}")
     if cell_type not in {None, "n"}:
