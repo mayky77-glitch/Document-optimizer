@@ -30,10 +30,15 @@ from .exceptions import (
 from .formula_materialization import recalculate_and_materialize
 from .models import EXCEL_WRITER_CONTRACT_VERSION, WriteResult, WriteStatus, WrittenCell
 from .ooxml import (
-    inspect_cell,
+    WorksheetIndex,
+    admitted_zipfile,
+    inspect_index_cell,
     package_has_formulas,
+    read_archive_part,
     reject_unsupported_package,
+    validate_xlsx_source,
     verify_formula_free_package,
+    worksheet_index,
     worksheet_part_map,
 )
 from .ooxml import (
@@ -73,6 +78,23 @@ class _PublishedOutputIdentity:
     inode: int
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceSnapshot:
+    path: Path
+    descriptor: int
+    identity: _SourceIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnedTemp:
+    """A private temporary name permanently paired with its opened inode."""
+
+    path: Path
+    descriptor: int
+    device: int
+    inode: int
+
+
 def write_target_report(
     source_path: str | Path,
     output_path: str | Path,
@@ -85,44 +107,77 @@ def write_target_report(
     source = Path(source_path)
     output = Path(output_path)
     _validate_public_inputs(source, output, decision, target_schema)
-    source_identity = _source_identity(source)
-    _validate_schema_identity(source, source_identity, target_schema)
-    if decision not in _WRITABLE_DECISIONS:
-        return _result(
-            WriteStatus.SKIPPED_DECISION,
-            decision,
-            target_schema,
-            source_identity.sha256,
-            None,
-            None,
-            (),
-            (),
-            (),
-        )
-    if output.exists():
-        raise ExcelWriterSafetyError("OUTPUT_EXISTS", str(output))
-    calculations = _validated_calculations(calculation_results)
-    reject_unsupported_package(source)
-    parts = worksheet_part_map(source)
-    written_cells = _build_write_plan(source, calculations, target_schema, parts)
-    if not written_cells:
-        raise ExcelWriterInputError("EMPTY_WRITE_SET", "no non-None calculated values")
-    changes_by_part = _changes_by_part(written_cells, parts)
-    temp_path = _temp_path(output)
+    snapshot = _snapshot_source(source, output.parent)
+    snapshot_path, source_identity = snapshot.path, snapshot.identity
+    temp: _OwnedTemp | None = None
     published = False
     published_identity: _PublishedOutputIdentity | None = None
     try:
-        _write_temp_package(source, temp_path, changes_by_part, remove_calc_chain=True)
-        _verify_temp_package(source, temp_path, changes_by_part, remove_calc_chain=True)
-        if package_has_formulas(temp_path, parts):
-            recalculate_and_materialize(temp_path)
-        verify_formula_free_package(temp_path, parts)
+        _validate_schema_identity(source, source_identity, target_schema)
+        if decision not in _WRITABLE_DECISIONS:
+            result = _result(
+                WriteStatus.SKIPPED_DECISION,
+                decision,
+                target_schema,
+                source_identity.sha256,
+                None,
+                None,
+                (),
+                (),
+                (),
+            )
+            return result
+        if output.exists():
+            raise ExcelWriterSafetyError("OUTPUT_EXISTS", str(output))
+        calculations = _validated_calculations(calculation_results)
+        reject_unsupported_package(snapshot.descriptor)
+        parts = worksheet_part_map(snapshot.descriptor)
+        written_cells = _build_write_plan(snapshot.descriptor, calculations, target_schema, parts)
+        if not written_cells:
+            raise ExcelWriterInputError("EMPTY_WRITE_SET", "no non-None calculated values")
+        changes_by_part = _changes_by_part(written_cells, parts)
+        temp = _temp_path(output)
+        worksheet_parts = frozenset(parts.values())
+        _write_temp_package(
+            snapshot.descriptor,
+            temp.descriptor,
+            changes_by_part,
+            remove_calc_chain=True,
+            worksheet_parts=worksheet_parts,
+        )
+        _verify_temp_package(
+            snapshot.descriptor,
+            temp.descriptor,
+            changes_by_part,
+            remove_calc_chain=True,
+            worksheet_parts=worksheet_parts,
+        )
+        _assert_named_descriptor(temp.path, temp.descriptor)
+        if package_has_formulas(temp.descriptor, parts):
+            materialized = recalculate_and_materialize(temp.path, temp.descriptor)
+            # Adopt the verified replacement descriptor before closing the old
+            # inode.  This keeps cleanup and any error path free of EBADF
+            # masking, and never reopens a mutable temporary pathname.
+            previous_temp = temp
+            temp = _OwnedTemp(
+                previous_temp.path,
+                materialized.descriptor,
+                materialized.device,
+                materialized.inode,
+            )
+            os.close(previous_temp.descriptor)
+        verify_formula_free_package(temp.descriptor, parts)
         _assert_source_unchanged(source, source_identity)
-        published_identity = _published_output_identity(temp_path)
-        _publish_no_clobber(temp_path, output)
+        _assert_named_descriptor(temp.path, temp.descriptor)
+        published_identity = _published_output_identity(temp.descriptor)
+        _publish_no_clobber(temp.path, output, temp.descriptor)
         published = True
-        output_sha256 = _sha256(output)
+        output_sha256 = _sha256_descriptor(temp.descriptor)
+        # Keep the long-standing single-argument reopen seam for callers and
+        # tests; identity and digest are checked immediately afterwards using
+        # a fresh no-follow descriptor for the published pathname.
         _reopen_published_output(output)
+        _verify_published_output(output, temp.descriptor, output_sha256)
         return _result(
             WriteStatus.WRITTEN,
             decision,
@@ -145,7 +200,11 @@ def write_target_report(
             _remove_published_output_if_owned(output, published_identity)
         raise ExcelWriterAtomicError("ATOMIC_PUBLISH_FAILED", str(error)) from error
     finally:
-        temp_path.unlink(missing_ok=True)
+        if temp is not None:
+            _unlink_if_owned(temp.path, temp.descriptor)
+            os.close(temp.descriptor)
+        _unlink_if_owned(snapshot_path, snapshot.descriptor)
+        os.close(snapshot.descriptor)
 
 
 def _validate_public_inputs(
@@ -161,6 +220,7 @@ def _validate_public_inputs(
         raise ExcelWriterSafetyError("INVALID_SOURCE", str(source))
     if not stat.S_ISREG(source.stat().st_mode):
         raise ExcelWriterSafetyError("INVALID_SOURCE", "source is not a regular file")
+    validate_xlsx_source(source, ExcelWriterSafetyError, "INVALID_XLSX_PACKAGE")
     if output.suffix.casefold() != ".xlsx":
         raise ExcelWriterSafetyError("INVALID_OUTPUT_EXTENSION", str(output))
     if not output.parent.is_dir():
@@ -213,7 +273,7 @@ def _validated_calculations(values: Iterable[CalculationResult]) -> tuple[Calcul
 
 
 def _build_write_plan(
-    source: Path,
+    source: Path | int,
     calculations: tuple[CalculationResult, ...],
     schema: TargetReportSchema,
     parts: dict[str, str],
@@ -223,74 +283,86 @@ def _build_write_plan(
     for binding in schema.column_bindings:
         bindings[binding.logical_column].append(binding)
     source_xml: dict[str, bytes] = {}
+    source_indexes: dict[str, WorksheetIndex] = {}
     seen_coordinates: set[tuple[str, str]] = set()
     plan: list[WrittenCell] = []
-    for calculation in calculations:
-        row = calculation.target_row
-        if not row.writable:
-            raise ExcelWriterInputError("TARGET_NOT_WRITABLE", calculation.target_row_id)
-        worksheet = worksheets.get(row.sheet_name)
-        part = parts.get(row.sheet_name)
-        if worksheet is None or part is None:
-            raise ExcelWriterIntegrityError("TARGET_SHEET_MISSING", row.sheet_name)
-        if part not in source_xml:
-            with zipfile.ZipFile(source) as archive:
-                source_xml[part] = archive.read(part)
-        for logical_column, attribute in _ALLOWED_COLUMNS:
-            value = getattr(calculation, attribute)
-            if value is None:
-                continue
-            decimal_text = _decimal_text(value)
-            target_cell = row.cell_for(logical_column)
-            if not bindings[logical_column]:
-                continue
-            matching_bindings = [
-                item
-                for item in bindings[logical_column]
-                if target_cell is not None
-                and item.column_letter + str(row.row_number) == target_cell.coordinate
-            ]
-            if len(matching_bindings) != 1:
-                raise ExcelWriterIntegrityError(
-                    "TARGET_COLUMN_BINDING_MISSING", f"{row.sheet_name}!{logical_column}"
-                )
-            if target_cell is None or target_cell.coordinate != (
-                matching_bindings[0].column_letter + str(row.row_number)
-            ):
-                raise ExcelWriterIntegrityError(
-                    "TARGET_IDENTITY_MISMATCH", calculation.target_row_id
-                )
-            coordinate_key = (row.sheet_name, target_cell.coordinate)
-            if coordinate_key in seen_coordinates:
-                raise ExcelWriterInputError(
-                    "DUPLICATE_WRITE_COORDINATE", f"{row.sheet_name}!{target_cell.coordinate}"
-                )
-            _validate_target_cell(
-                source_xml[part],
-                target_cell.coordinate,
-                target_cell.raw_lexeme,
-                target_cell.formula is not None,
-                worksheet.merged_ranges,
-            )
-            seen_coordinates.add(coordinate_key)
-            plan.append(
-                WrittenCell(
-                    calculation.calculation_id,
-                    calculation.target_row_id,
-                    row.sheet_name,
-                    row.row_number,
-                    target_cell.coordinate,
-                    logical_column,
-                    decimal_text,
-                )
-            )
+    try:
+        with admitted_zipfile(source, ExcelWriterIntegrityError, "TARGET_CELL_MISSING") as archive:
+            for calculation in calculations:
+                row = calculation.target_row
+                if not row.writable:
+                    raise ExcelWriterInputError("TARGET_NOT_WRITABLE", calculation.target_row_id)
+                worksheet = worksheets.get(row.sheet_name)
+                part = parts.get(row.sheet_name)
+                if worksheet is None or part is None:
+                    raise ExcelWriterIntegrityError("TARGET_SHEET_MISSING", row.sheet_name)
+                if part not in source_xml:
+                    source_xml[part] = read_archive_part(
+                        archive,
+                        part,
+                        ExcelWriterIntegrityError,
+                        "TARGET_CELL_MISSING",
+                        worksheet=True,
+                    )
+                    source_indexes[part] = worksheet_index(source_xml[part])
+                for logical_column, attribute in _ALLOWED_COLUMNS:
+                    value = getattr(calculation, attribute)
+                    if value is None:
+                        continue
+                    decimal_text = _decimal_text(value)
+                    target_cell = row.cell_for(logical_column)
+                    if not bindings[logical_column]:
+                        continue
+                    matching_bindings = [
+                        item
+                        for item in bindings[logical_column]
+                        if target_cell is not None
+                        and item.column_letter + str(row.row_number) == target_cell.coordinate
+                    ]
+                    if len(matching_bindings) != 1:
+                        raise ExcelWriterIntegrityError(
+                            "TARGET_COLUMN_BINDING_MISSING", f"{row.sheet_name}!{logical_column}"
+                        )
+                    if target_cell is None or target_cell.coordinate != (
+                        matching_bindings[0].column_letter + str(row.row_number)
+                    ):
+                        raise ExcelWriterIntegrityError(
+                            "TARGET_IDENTITY_MISMATCH", calculation.target_row_id
+                        )
+                    coordinate_key = (row.sheet_name, target_cell.coordinate)
+                    if coordinate_key in seen_coordinates:
+                        raise ExcelWriterInputError(
+                            "DUPLICATE_WRITE_COORDINATE",
+                            f"{row.sheet_name}!{target_cell.coordinate}",
+                        )
+                    _validate_target_cell(
+                        source_indexes[part],
+                        target_cell.coordinate,
+                        target_cell.raw_lexeme,
+                        target_cell.formula is not None,
+                        worksheet.merged_ranges,
+                    )
+                    seen_coordinates.add(coordinate_key)
+                    plan.append(
+                        WrittenCell(
+                            calculation.calculation_id,
+                            calculation.target_row_id,
+                            row.sheet_name,
+                            row.row_number,
+                            target_cell.coordinate,
+                            logical_column,
+                            decimal_text,
+                        )
+                    )
+    except (OSError, zipfile.BadZipFile) as error:
+        raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", str(error)) from error
     return tuple(
         sorted(plan, key=lambda item: (item.sheet_name, item.coordinate, item.calculation_id))
     )
 
 
 def _validate_target_cell(
-    xml: bytes,
+    index: WorksheetIndex,
     coordinate: str,
     expected_lexeme: str | None,
     has_snapshot_formula: bool,
@@ -298,7 +370,7 @@ def _validate_target_cell(
 ) -> None:
     if _is_merged(coordinate, merged_ranges):
         raise ExcelWriterIntegrityError("TARGET_CELL_IS_MERGED", coordinate)
-    _, actual_lexeme, is_formula, has_style, cell_type = inspect_cell(xml, coordinate)
+    _, actual_lexeme, is_formula, has_style, cell_type = inspect_index_cell(index, coordinate)
     if not has_style:
         raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", f"missing style: {coordinate}")
     if cell_type not in {None, "n"}:
@@ -336,17 +408,114 @@ def _changes_by_part(
     return {part: tuple(items) for part, items in changes.items()}
 
 
-def _temp_path(output: Path) -> Path:
+def _temp_path(output: Path) -> _OwnedTemp:
     descriptor, name = tempfile.mkstemp(prefix=".excel-writer-", suffix=".xlsx", dir=output.parent)
-    os.close(descriptor)
-    return Path(name)
+    os.fchmod(descriptor, 0o600)
+    details = os.fstat(descriptor)
+    return _OwnedTemp(Path(name), descriptor, details.st_dev, details.st_ino)
+
+
+def _open_owned_temp(path: Path, expected_identity: tuple[int, int] | None = None) -> _OwnedTemp:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    details = os.fstat(descriptor)
+    named = os.lstat(path)
+    if (
+        not stat.S_ISREG(details.st_mode)
+        or (details.st_dev, details.st_ino)
+        != (
+            named.st_dev,
+            named.st_ino,
+        )
+        or (expected_identity is not None and (details.st_dev, details.st_ino) != expected_identity)
+    ):
+        os.close(descriptor)
+        raise ExcelWriterIntegrityError("ATOMIC_PUBLISH_FAILED", "temporary output changed")
+    return _OwnedTemp(path, descriptor, details.st_dev, details.st_ino)
 
 
 def _source_identity(path: Path) -> _SourceIdentity:
-    details = path.stat()
-    return _SourceIdentity(
-        details.st_dev, details.st_ino, details.st_size, details.st_mtime_ns, _sha256(path)
-    )
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > 256 * 1024 * 1024:
+            raise ExcelWriterSafetyError("INVALID_SOURCE", "source is not a bounded regular file")
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := os.read(descriptor, 1_048_576):
+            size += len(chunk)
+            if size > 256 * 1024 * 1024:
+                raise ExcelWriterSafetyError("INVALID_SOURCE", "source exceeds limit")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ) or size != before.st_size:
+            raise ExcelWriterIntegrityError("SOURCE_CHANGED_DURING_WRITE", str(path))
+        return _SourceIdentity(
+            before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, digest.hexdigest()
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _snapshot_source(source: Path, directory: Path) -> _SourceSnapshot:
+    """Capture one verified source fd before any hash or ZIP operation."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(source, flags)
+    snapshot_descriptor = -1
+    snapshot_name = ""
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_size > 256 * 1024 * 1024:
+            raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "source is not a regular file")
+        snapshot_descriptor, snapshot_name = tempfile.mkstemp(
+            prefix=".excel-writer-source-", suffix=".xlsx", dir=directory
+        )
+        os.fchmod(snapshot_descriptor, 0o600)
+        digest = hashlib.sha256()
+        copied = 0
+        while chunk := os.read(descriptor, 1_048_576):
+            copied += len(chunk)
+            if copied > 256 * 1024 * 1024:
+                raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "source exceeds limit")
+            digest.update(chunk)
+            _write_all(snapshot_descriptor, chunk)
+        final_details = os.fstat(descriptor)
+        if (details.st_dev, details.st_ino, details.st_size, details.st_mtime_ns) != (
+            final_details.st_dev,
+            final_details.st_ino,
+            final_details.st_size,
+            final_details.st_mtime_ns,
+        ) or copied != details.st_size:
+            raise ExcelWriterIntegrityError("SOURCE_CHANGED_DURING_WRITE", str(source))
+        os.fsync(snapshot_descriptor)
+        return _SourceSnapshot(
+            Path(snapshot_name),
+            snapshot_descriptor,
+            _SourceIdentity(
+                final_details.st_dev,
+                final_details.st_ino,
+                final_details.st_size,
+                final_details.st_mtime_ns,
+                digest.hexdigest(),
+            ),
+        )
+    except BaseException:
+        if snapshot_descriptor >= 0:
+            if snapshot_name:
+                _unlink_if_owned(Path(snapshot_name), snapshot_descriptor)
+            os.close(snapshot_descriptor)
+            snapshot_descriptor = -1
+        raise
+    finally:
+        os.close(descriptor)
+        if snapshot_descriptor >= 0 and not snapshot_name:
+            os.close(snapshot_descriptor)
 
 
 def _assert_source_unchanged(path: Path, expected: _SourceIdentity) -> None:
@@ -363,9 +532,56 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _published_output_identity(path: Path) -> _PublishedOutputIdentity:
-    details = path.stat()
+def _write_all(descriptor: int, payload: bytes) -> None:
+    """Do not silently accept a short write while capturing the source snapshot."""
+
+    offset = 0
+    while offset < len(payload):
+        written = os.write(descriptor, payload[offset:])
+        if written <= 0:
+            raise OSError("short snapshot write")
+        offset += written
+
+
+def _published_output_identity(path: Path | int) -> _PublishedOutputIdentity:
+    details = os.fstat(path) if isinstance(path, int) else path.stat()
     return _PublishedOutputIdentity(details.st_dev, details.st_ino)
+
+
+def _assert_named_descriptor(path: Path, descriptor: int) -> None:
+    """Fail closed if a private output name stopped naming its opened inode."""
+
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+    except OSError as error:
+        raise ExcelWriterIntegrityError(
+            "ATOMIC_PUBLISH_FAILED", "output identity unavailable"
+        ) from error
+    if not stat.S_ISREG(named.st_mode) or (opened.st_dev, opened.st_ino) != (
+        named.st_dev,
+        named.st_ino,
+    ):
+        raise ExcelWriterIntegrityError("ATOMIC_PUBLISH_FAILED", "output identity changed")
+
+
+def _unlink_if_owned(path: Path, descriptor: int) -> None:
+    try:
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+        if (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino):
+            path.unlink()
+    except FileNotFoundError:
+        return
+
+
+def _sha256_descriptor(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    offset = 0
+    while chunk := os.pread(descriptor, 1_048_576, offset):
+        digest.update(chunk)
+        offset += len(chunk)
+    return digest.hexdigest()
 
 
 def _remove_published_output_if_owned(
@@ -382,14 +598,59 @@ def _remove_published_output_if_owned(
         return
 
 
-def _reopen_published_output(output: Path) -> None:
+def _reopen_published_output(
+    output: Path | int,
+    expected_descriptor: int | None = None,
+    expected_sha256: str | None = None,
+) -> None:
     try:
         from openpyxl import load_workbook
 
-        workbook = load_workbook(output, read_only=True, data_only=False, keep_links=True)
-        workbook.close()
+        if isinstance(output, int):
+            descriptor = os.dup(output)
+        else:
+            descriptor = os.open(output, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            if not isinstance(output, int):
+                _assert_named_descriptor(output, descriptor)
+            if expected_descriptor is not None:
+                expected = os.fstat(expected_descriptor)
+                actual = os.fstat(descriptor)
+                if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+                    raise ExcelWriterIntegrityError("REOPEN_FAILED", "output identity changed")
+            if expected_sha256 is not None and _sha256_descriptor(descriptor) != expected_sha256:
+                raise ExcelWriterIntegrityError("REOPEN_FAILED", "output digest changed")
+            stream = os.fdopen(os.dup(descriptor), "rb")
+            try:
+                stream.seek(0)
+                workbook = load_workbook(stream, read_only=True, data_only=False, keep_links=True)
+                workbook.close()
+            finally:
+                stream.close()
+        finally:
+            os.close(descriptor)
     except Exception as error:
-        raise ExcelWriterIntegrityError("REOPEN_FAILED", str(error)) from error
+        if isinstance(error, ExcelWriterIntegrityError):
+            raise
+        raise ExcelWriterIntegrityError(
+            "REOPEN_FAILED", "published output could not be reopened"
+        ) from error
+
+
+def _verify_published_output(output: Path, expected_descriptor: int, expected_sha256: str) -> None:
+    """Bind the returned pathname, inode and bytes after the reopen gate."""
+
+    descriptor = os.open(output, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        _assert_named_descriptor(output, descriptor)
+        expected = os.fstat(expected_descriptor)
+        actual = os.fstat(descriptor)
+        if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+            raise ExcelWriterIntegrityError("REOPEN_FAILED", "output identity changed")
+        if _sha256_descriptor(descriptor) != expected_sha256:
+            raise ExcelWriterIntegrityError("REOPEN_FAILED", "output digest changed")
+    finally:
+        os.close(descriptor)
 
 
 def _result(
