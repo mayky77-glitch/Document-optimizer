@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: superseded
 card_id: reconciliation-writer-namespace-v2
 version: 2
 work_id: reconciliation-writer-namespace-v2
@@ -41,6 +41,11 @@ acceptance_commands:
 ---
 
 # Namespace-aware writer v2: indexed and bounded
+
+Superseded before integration by [[reconciliation-writer-namespace-v3]]. Independent review proved
+that the first index remained mutable, verification still parsed each changed worksheet twice,
+the event ceiling rejected valid 500,000-cell formula layouts, and several package readers could
+bypass central-directory admission. Commit `251808c` remains generated evidence only.
 
 Continue from the generated-test seed `669b64a`, but do not integrate it directly. Retain its
 request-local Expat namespace expansion, exact QName edits, DTD/entity rejection, foreign-namespace
