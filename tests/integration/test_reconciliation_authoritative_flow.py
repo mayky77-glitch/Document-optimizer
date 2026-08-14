@@ -1,17 +1,24 @@
 import threading
+from dataclasses import replace
 from decimal import Decimal
 from hashlib import sha256
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font
 
 from fixtures.calculation.builders import calculation_rule_set, calculation_source_row, match_result
+from fixtures.quality_control.builders import calculated_match, calculated_result
 from report_processor.admin_panel.reconciliation_execution import (
     ReconciliationApplyResult,
+    ReconciliationReviewResult,
     _apply_plan,
     _feedback_records,
     _physical_source_identity,
 )
+from report_processor.admin_panel.reconciliation_period_preview import preview_reconciliation_target
 from report_processor.admin_panel.reconciliation_state import ReconciliationReviewState
 from report_processor.admin_panel.reconciliation_target import (
     ReconciliationTargetIdentity,
@@ -112,6 +119,105 @@ def test_reconciliation_target_binds_discovered_cells_and_scales_writer_values()
     ]
     assert written.quantity == Decimal("1.01")
     assert written.cost == Decimal("2.70")
+
+
+def _historical_target_bytes() -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["B1"], sheet["C1"], sheet["D1"], sheet["E1"], sheet["F1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    sheet.merge_cells("L1:M1")
+    sheet["L1"] = "Документальная отчетность за весь период"
+    sheet["L2"], sheet["M2"], sheet["N1"] = "Количество", "Стоимость", "Следующий раздел"
+    sheet["B3"], sheet["C3"], sheet["D3"], sheet["E3"], sheet["F3"] = (
+        "1234",
+        "Этап 13.1",
+        "1",
+        "Монтаж",
+        "м",
+    )
+    sheet["L3"].font = sheet["M3"].font = Font(bold=True)
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
+
+
+def test_historical_actionable_apply_writes_inserted_cells_and_survives_restart(
+    tmp_path, monkeypatch
+) -> None:
+    source = BytesIO()
+    Workbook().save(source)
+    source_bytes, target_bytes = source.getvalue(), _historical_target_bytes()
+
+    def execute(job: AdminJob) -> ReconciliationReviewResult:
+        preview = preview_reconciliation_target(
+            job.target, job.target_digest, job.stage, job.reporting_period
+        )
+        job.target_identity_digest = preview.target_identity_digest
+        row = ReviewRow("source:1", "Монтаж", "м", Decimal("1"), Decimal("1"))
+        (group,) = build_review_groups((row,))
+        return ReconciliationReviewResult(
+            ReconciliationReviewState(
+                rows={row.row_id: row},
+                groups={group.group_id: group},
+                categories={"target-1": "Цель"},
+                source_digests=job.source_digests,
+                target_digest=job.target_digest,
+                target_identity_digest=preview.target_identity_digest,
+            ),
+            None,
+        )
+
+    service = AdminPanelService(tmp_path, execute=execute)
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=source_bytes,
+        target_name="target.xlsx",
+        target_content=target_bytes,
+        stage="13.1",
+        reporting_period="2026-08",
+    )
+    assert job.review_state is not None
+    _accept_group(job, job.review_state.group_snapshot()[0].group_id)
+
+    def selected(_job, _state, _decisions, _rules, targets):
+        calculation = replace(
+            calculated_result(calculated_match()),
+            target_row=replace(targets[0], writable=True),
+            quantity=Decimal("7.50"),
+            cost=Decimal("8.25"),
+        )
+        return object(), (), writer_calculations((calculation,))
+
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution._calculate_selected", selected
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_execution._catalog_digest",
+        lambda *_args: "generated-catalog",
+    )
+
+    applied = service.apply_reconciliation(job.job_id)
+
+    assert applied.status == "ready" and applied.output is not None
+    assert applied.source.read_bytes() == source_bytes
+    workbook = load_workbook(applied.output, data_only=True)
+    try:
+        assert workbook["Отчёт"]["N3"].value == 7.5
+        assert workbook["Отчёт"]["O3"].value is not None
+    finally:
+        workbook.close()
+    feedback = service.feedback_store.records(job.target_digest)
+    restored = AdminPanelService(tmp_path).get_job(job.job_id)
+    assert restored.status == "ready" and restored.result_available is True
+    assert AdminPanelService(tmp_path).feedback_store.records(job.target_digest) == feedback
 
 
 def _review_job(

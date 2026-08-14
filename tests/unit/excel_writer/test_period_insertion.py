@@ -14,6 +14,7 @@ from openpyxl.utils import get_column_letter
 from report_processor.admin_panel import reconciliation_target_measure
 from report_processor.admin_panel.reconciliation_period import ReconciliationPeriodError
 from report_processor.excel_writer import period_insertion
+from report_processor.excel_writer.ooxml import inspect_cell, replace_cell_value
 from report_processor.excel_writer.period_insertion import (
     _translate_formula,
     _verify_drawing_delta,
@@ -51,6 +52,25 @@ def test_inserts_unmerged_period_columns_with_parent_row_labels(tmp_path: Path) 
     assert sheet["N2"].value is None and sheet["O2"].value is None
     assert sheet["P3"].value == "хвост"
     assert sheet["P4"].value == "=L4+M4"
+
+
+def test_prepared_historical_target_prefixes_remain_writable_by_the_byte_preserving_writer(
+    tmp_path: Path,
+) -> None:
+    source, prepared = tmp_path / "historical.xlsx", tmp_path / "prepared.xlsx"
+    _historical_book(source)
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, prepared, plan)
+    with zipfile.ZipFile(prepared) as archive:
+        part = archive.read("xl/worksheets/sheet1.xml")
+
+    _, quantity, _, _, _ = inspect_cell(part, "N3")
+    updated = replace_cell_value(part, "N3", "7.50")
+
+    assert quantity is None
+    assert inspect_cell(updated, "N3")[1] == "7.50"
+    assert inspect_cell(updated, "O3")[0] in updated
 
 
 def test_plan_digest_is_deterministic_and_rejects_a_forged_digest(tmp_path: Path) -> None:

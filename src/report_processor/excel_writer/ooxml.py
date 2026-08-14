@@ -39,6 +39,10 @@ class _WorksheetElement:
     children: list[_WorksheetElement] = field(default_factory=list)
 
 
+class _RejectedWorksheetXml(Exception):
+    """Internal sentinel for worksheet constructs that must never be expanded."""
+
+
 def _worksheet_elements(
     xml: bytes, error_code: str = "TARGET_CELL_MISSING"
 ) -> tuple[_WorksheetElement, ...]:
@@ -79,9 +83,11 @@ def _worksheet_elements(
 
     parser.StartElementHandler = start
     parser.EndElementHandler = end
+    parser.StartDoctypeDeclHandler = lambda *_args: (_ for _ in ()).throw(_RejectedWorksheetXml())
+    parser.EntityDeclHandler = lambda *_args: (_ for _ in ()).throw(_RejectedWorksheetXml())
     try:
         parser.Parse(xml, True)
-    except (expat.ExpatError, IndexError, ValueError) as error:
+    except (expat.ExpatError, IndexError, ValueError, _RejectedWorksheetXml) as error:
         raise ExcelWriterIntegrityError(error_code, "invalid worksheet XML") from error
     if stack:
         raise ExcelWriterIntegrityError(error_code, "unclosed worksheet XML")
@@ -126,10 +132,12 @@ def _cells(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> tuple[_Worksh
     )
 
 
-def _child(element: _WorksheetElement, local_name: str) -> _WorksheetElement | None:
+def _child(
+    element: _WorksheetElement, local_name: str, error_code: str = "TARGET_CELL_LEXEME_MISMATCH"
+) -> _WorksheetElement | None:
     matches = [item for item in element.children if _is_sheet_element(item, local_name)]
     if len(matches) > 1:
-        raise ExcelWriterIntegrityError("TARGET_CELL_LEXEME_MISMATCH", "ambiguous cell child")
+        raise ExcelWriterIntegrityError(error_code, "ambiguous cell child")
     return matches[0] if matches else None
 
 
@@ -143,8 +151,35 @@ def _remove_unqualified_type_attribute(cell: bytes) -> bytes:
 
     opening_end = _opening_tag_end(cell, 0)
     opening = cell[:opening_end]
-    updated = re.sub(rb"\s+t\s*=\s*([\"'])[^\"']*\1", b"", opening, count=1)
-    return updated + cell[opening_end:]
+    index = _opening_qname(opening, 0, opening_end)
+    cursor = opening.find(index) + len(index)
+    while cursor < len(opening):
+        whitespace_start = cursor
+        while cursor < len(opening) and opening[cursor] in b" \t\r\n":
+            cursor += 1
+        if cursor >= len(opening) or opening[cursor : cursor + 1] in {b"/", b">"}:
+            break
+        name_start = cursor
+        while cursor < len(opening) and opening[cursor] not in b" \t\r\n=>/":
+            cursor += 1
+        name = opening[name_start:cursor]
+        while cursor < len(opening) and opening[cursor] in b" \t\r\n":
+            cursor += 1
+        if opening[cursor : cursor + 1] != b"=":
+            break
+        cursor += 1
+        while cursor < len(opening) and opening[cursor] in b" \t\r\n":
+            cursor += 1
+        quote = opening[cursor : cursor + 1]
+        if quote not in {b'"', b"'"}:
+            break
+        value_end = opening.find(quote, cursor + 1)
+        if value_end < 0:
+            break
+        cursor = value_end + 1
+        if name == b"t":
+            return opening[:whitespace_start] + opening[cursor:] + cell[opening_end:]
+    return cell
 
 
 _CALC_CHAIN_RELATIONSHIP = re.compile(
@@ -183,10 +218,14 @@ def worksheet_part_map(source_path: Path) -> dict[str, str]:
 def inspect_cell(xml: bytes, coordinate: str) -> tuple[bytes, str | None, bool, bool, str | None]:
     """Return target cell bytes, numeric lexeme, formula flag, and style presence."""
 
-    for element in _cells(xml):
-        if element.attributes.get("r") != coordinate:
-            continue
+    matches = [item for item in _cells(xml) if item.attributes.get("r") == coordinate]
+    if len(matches) > 1:
+        raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", f"duplicate XML cell {coordinate}")
+    if matches:
+        element = matches[0]
         value = _child(element, "v")
+        if value is not None and value.children:
+            raise ExcelWriterIntegrityError("TARGET_CELL_LEXEME_MISMATCH", coordinate)
         lexeme = (
             xml[value.content_start : value.content_end].decode("utf-8")
             if value is not None and not value.self_closing
@@ -203,17 +242,27 @@ def inspect_cell(xml: bytes, coordinate: str) -> tuple[bytes, str | None, bool, 
 
 
 def replace_cell_value(xml: bytes, coordinate: str, decimal_text: str) -> bytes:
-    replacement = decimal_text.encode("ascii")
+    return _replace_cell_values(xml, ((coordinate, decimal_text),))
+
+
+def _replace_cell_values(xml: bytes, changes: tuple[tuple[str, str], ...]) -> bytes:
+    """Apply one worksheet part's requested replacements after one namespace scan."""
+
+    requested = dict(changes)
+    if len(requested) != len(changes):
+        raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", "duplicate requested cell")
     pieces: list[bytes] = []
     cursor = 0
-    changed = False
+    changed: set[str] = set()
     for element in _cells(xml):
-        if element.attributes.get("r") != coordinate:
+        coordinate = element.attributes.get("r")
+        if coordinate not in requested:
             continue
-        if changed:
+        if coordinate in changed:
             raise ExcelWriterIntegrityError(
                 "TARGET_CELL_MISSING", f"duplicate XML cell {coordinate}"
             )
+        replacement = requested[coordinate].encode("ascii")
         cell_type = element.attributes.get("t")
         if cell_type is not None and cell_type != "n":
             raise ExcelWriterIntegrityError("TARGET_CELL_LEXEME_MISMATCH", coordinate)
@@ -238,7 +287,10 @@ def replace_cell_value(xml: bytes, coordinate: str, decimal_text: str) -> bytes:
                 + b">"
             )
         elif value.self_closing:
-            replacement_node = b"<" + value.qname + b">" + replacement + b"</" + value.qname + b">"
+            opening = xml[value.start : value.opening_end]
+            replacement_node = (
+                opening.rstrip()[:-2] + b">" + replacement + b"</" + value.qname + b">"
+            )
             updated = (
                 cell[: value.start - element.start]
                 + replacement_node
@@ -252,9 +304,10 @@ def replace_cell_value(xml: bytes, coordinate: str, decimal_text: str) -> bytes:
             )
         pieces.extend((xml[cursor : element.start], updated))
         cursor = element.end
-        changed = True
-    if not changed:
-        raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", coordinate)
+        changed.add(coordinate)
+    if changed != set(requested):
+        missing = next(iter(set(requested).difference(changed)))
+        raise ExcelWriterIntegrityError("TARGET_CELL_MISSING", missing)
     pieces.append(xml[cursor:])
     return b"".join(pieces)
 
@@ -270,7 +323,7 @@ def formula_coordinates(xml: bytes) -> tuple[str, ...]:
 
     coordinates: list[str] = []
     for cell in _cells(xml, "FORMULA_MATERIALIZATION_FAILED"):
-        if _child(cell, "f") is None:
+        if _child(cell, "f", "FORMULA_MATERIALIZATION_FAILED") is None:
             continue
         reference = cell.attributes.get("r")
         if reference is None:
@@ -305,7 +358,7 @@ def materialize_formula_cells(xml: bytes, values: Mapping[str, str]) -> bytes:
     pieces: list[bytes] = []
     cursor = 0
     for element in _cells(xml, "FORMULA_MATERIALIZATION_FAILED"):
-        formula = _child(element, "f")
+        formula = _child(element, "f", "FORMULA_MATERIALIZATION_FAILED")
         if formula is None:
             continue
         coordinate = element.attributes.get("r")
@@ -315,8 +368,8 @@ def materialize_formula_cells(xml: bytes, values: Mapping[str, str]) -> bytes:
         if decimal_text is None:
             raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
         cell = xml[element.start : element.end]
-        value = _child(element, "v")
-        if value is None:
+        value = _child(element, "v", "FORMULA_MATERIALIZATION_FAILED")
+        if value is None or value.children:
             raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
         replacement = decimal_text.encode("ascii")
         if value.self_closing:
@@ -363,8 +416,9 @@ def write_temp_package(
                 if remove_calc_chain and info.filename == "xl/calcChain.xml":
                     continue
                 payload = source.read(info.filename)
-                for coordinate, decimal_text in changes_by_part.get(info.filename, ()):
-                    payload = replace_cell_value(payload, coordinate, decimal_text)
+                changes = changes_by_part.get(info.filename, ())
+                if changes:
+                    payload = _replace_cell_values(payload, changes)
                 if remove_calc_chain:
                     payload = _remove_calc_chain_metadata(info.filename, payload)
                 output.writestr(info, payload)
@@ -398,8 +452,9 @@ def verify_temp_package(
                 original = source.read(name)
                 updated = output.read(name)
                 expected = original
-                for coordinate, decimal_text in changes_by_part.get(name, ()):
-                    expected = replace_cell_value(expected, coordinate, decimal_text)
+                changes = changes_by_part.get(name, ())
+                if changes:
+                    expected = _replace_cell_values(expected, changes)
                 if remove_calc_chain:
                     expected = _remove_calc_chain_metadata(name, expected)
                 if updated != expected:
@@ -519,8 +574,8 @@ def _finite_numeric_lexeme(xml: bytes, cell: _WorksheetElement, coordinate: str)
     cell_type = cell.attributes.get("t")
     if cell_type is not None and cell_type != "n":
         raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
-    value = _child(cell, "v")
-    if value is None or value.self_closing:
+    value = _child(cell, "v", "FORMULA_RESULT_NOT_NUMERIC")
+    if value is None or value.self_closing or value.children:
         raise ExcelWriterIntegrityError("FORMULA_RESULT_NOT_NUMERIC", coordinate)
     try:
         decimal_text = xml[value.content_start : value.content_end].decode("ascii")

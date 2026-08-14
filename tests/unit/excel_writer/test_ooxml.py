@@ -173,6 +173,45 @@ def test_foreign_lookalikes_are_ignored_and_namespace_calls_are_request_local() 
     assert ET._namespace_map == before
 
 
+def test_duplicate_spreadsheet_value_nodes_fail_closed() -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row r="1"><c r="D1"><v>1</v><v>2</v></c>'
+        b"</row></sheetData></worksheet>"
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_LEXEME_MISMATCH"):
+        inspect_cell(xml, "D1")
+
+
+def test_duplicate_coordinates_and_dtds_fail_closed() -> None:
+    duplicate = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row><c r="D1"/><c r="D1"/></row></sheetData></worksheet>'
+    )
+    dtd = (
+        b'<!DOCTYPE worksheet [<!ENTITY value "1">]><worksheet '
+        b'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<c r="D1"><v>&value;</v></c></worksheet>'
+    )
+
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+        inspect_cell(duplicate, "D1")
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+        inspect_cell(dtd, "D1")
+
+
+def test_self_closing_value_expansion_preserves_opening_attributes() -> None:
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row><c r="D1"><v custom="keep"/></c></row></sheetData></worksheet>'
+    )
+
+    updated = replace_cell_value(xml, "D1", "4")
+
+    assert b'<v custom="keep">4</v>' in updated
+
+
 @pytest.mark.parametrize(
     "cell_xml",
     (
