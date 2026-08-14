@@ -118,6 +118,28 @@ def test_safe_package_passes_without_an_artifact(tmp_path: Path, monkeypatch) ->
     assert result.output is None
 
 
+def test_verification_rejects_period_before_review_or_preview_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    job = _job(tmp_path)
+    job.reporting_period = "2026-08"
+    called = False
+
+    def should_not_run(*_args):
+        nonlocal called
+        called = True
+        raise AssertionError("verification must not build a reconciliation review")
+
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_verification.prepare_review", should_not_run
+    )
+
+    with pytest.raises(VerificationTechnicalFailure, match="REPORTING_PERIOD_UNSUPPORTED"):
+        verify_reconciliation(job, ())
+
+    assert called is False
+
+
 @pytest.mark.parametrize(
     ("safe", "action", "expected_failed"),
     ((False, None, 1), (False, ReviewAction.ACCEPT, 0), (True, ReviewAction.REJECT, 1)),

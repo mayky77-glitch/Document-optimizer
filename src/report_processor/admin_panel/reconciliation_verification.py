@@ -52,6 +52,8 @@ def verify_reconciliation(job, feedback) -> VerificationResult:
     A row passes only when the newest authoritative decision accepts it or its
     group is in a safe DecisionPackage.  Explicit rejection always wins.
     """
+    if getattr(job, "reporting_period", None) is not None:
+        raise VerificationTechnicalFailure("REPORTING_PERIOD_UNSUPPORTED_FOR_VERIFY")
 
     review = prepare_review(job, feedback)
     if review.state is None or review.source_batch is None:

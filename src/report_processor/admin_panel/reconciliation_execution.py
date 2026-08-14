@@ -62,6 +62,11 @@ class ReconciliationApplyResult:
     feedback: tuple[FeedbackRecord, ...]
     apply_key: str
     payload_hash: str
+    catalog_digest: str = ""
+    target_identity_digest: str = ""
+    calculation_digest: str = ""
+    rules_hash: str = ""
+    actionable: bool = False
 
     def __iter__(self):
         # Preserve the narrow pre-integrity adapter contract for direct callers.
@@ -70,11 +75,51 @@ class ReconciliationApplyResult:
 
 
 def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationReviewResult:
+    """Build only the strict physical current-period review.
+
+    Historical target projection is deliberately a separate entry point.  The
+    verification flow calls this function and must never load the preview or
+    period-transform modules.
+    """
+    if getattr(job, "reporting_period", None) is not None:
+        raise ValueError("REPORTING_PERIOD_REQUIRES_PERIOD_PREVIEW")
     try:
         _schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
-        catalog = _catalog(targets)
     except ReconciliationTargetMeasureError as error:
         return ReconciliationReviewResult(None, None, (), True, str(error))
+    except Exception:
+        return ReconciliationReviewResult(None, None, (), True)
+    return _prepare_review_from_targets(job, feedback, targets, job.target_digest)
+
+
+def prepare_period_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationReviewResult:
+    """Build a review against one immutable read-only target projection."""
+    period = getattr(job, "reporting_period", None)
+    if period is None:
+        return prepare_review(job, feedback)
+    try:
+        # Keep this import local: document verification imports only
+        # ``prepare_review`` and must not even import the preview/planner path.
+        from .reconciliation_period_preview import preview_reconciliation_target
+
+        preview = preview_reconciliation_target(job.target, job.target_digest, job.stage, period)
+    except ReconciliationTargetMeasureError as error:
+        return ReconciliationReviewResult(None, None, (), True, str(error))
+    except Exception:
+        return ReconciliationReviewResult(None, None, (), True)
+    identity = preview.target_identity_digest
+    job.target_identity_digest = identity
+    return _prepare_review_from_targets(job, feedback, preview.rows, identity)
+
+
+def _prepare_review_from_targets(
+    job,
+    feedback: tuple[FeedbackRecord, ...],
+    targets,
+    target_identity_digest: str,
+) -> ReconciliationReviewResult:
+    try:
+        catalog = _catalog(targets)
     except Exception:
         return ReconciliationReviewResult(None, None, (), True)
     try:
@@ -99,7 +144,7 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         ),
         version_context=PackageVersionContext(
             _normalized_source_digests(job.source_digests),
-            job.target_digest,
+            target_identity_digest,
             _catalog_version(catalog),
             model_revision=RUBERT_TINY2_MODEL_REVISION,
         ),
@@ -110,6 +155,7 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         categories={key: value for key, value in catalog.labels.items()},
         source_digests=job.source_digests,
         target_digest=job.target_digest,
+        target_identity_digest=target_identity_digest,
         available_categories=_available_categories(batch.rows, catalog, job, identities),
         grouping=grouping,
     )
@@ -136,10 +182,123 @@ def apply_review(
     )
     if not rule_set.valid or rule_set.rule_set is None:
         raise ValueError("RULE_CONFIGURATION_INVALID")
-    schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
-    catalog = _catalog(targets)
     snapshot = decisions if decisions is not None else tuple(state.core_decisions())
-    overrides = apply_overrides(state.rows.values(), state.groups.values(), snapshot)
+    feedback = _feedback_records(state, snapshot)
+    plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, snapshot)
+    schema, targets, identity, preview = _apply_target_projection(job)
+    catalog, matches, selected = _calculate_selected(
+        job, state, snapshot, rule_set.rule_set, targets
+    )
+    catalog_digest = _catalog_digest(catalog, identity)
+    calculation_digest = calculation_semantic_digest(selected)
+    actionable = any(item.quantity is not None or item.cost is not None for item in selected)
+    if not actionable:
+        publish_unchanged_target(job.target, job.directory / "result.xlsx", job.target_digest)
+        return ReconciliationApplyResult(
+            job.directory / "result.xlsx",
+            feedback,
+            *plan,
+            catalog_digest,
+            identity,
+            calculation_digest,
+            rule_set.rule_set.content_hash,
+            False,
+        )
+    write_job = job
+    if preview is not None:
+        from report_processor.excel_writer import prepare_period_insertion
+
+        prepared = prepare_period_insertion(
+            job.target, job.directory / "apply-period-target.xlsx", preview.plan
+        )
+        prepared_digest = getattr(prepared, "output_sha256", None)
+        if not isinstance(prepared_digest, str):
+            raise RuntimeError("RECONCILIATION_PERIOD_PREPARE_INVALID")
+        write_job = _prepared_apply_job(job, prepared_digest)
+        strict_schema, strict_targets = read_reconciliation_target(
+            write_job.target, write_job.target_digest, write_job.stage
+        )
+        strict_catalog, strict_matches, strict_selected = _calculate_selected(
+            write_job, state, snapshot, rule_set.rule_set, strict_targets
+        )
+        strict_catalog_digest = _catalog_digest(strict_catalog, identity)
+        strict_calculation_digest = calculation_semantic_digest(strict_selected)
+        if (
+            strict_catalog_digest != catalog_digest
+            or _match_target_ids(strict_matches) != _match_target_ids(matches)
+            or strict_calculation_digest != calculation_digest
+        ):
+            raise RuntimeError("RECONCILIATION_PERIOD_APPLY_DRIFT")
+        schema, selected = strict_schema, strict_selected
+    result = write_target_report(
+        write_job.target, job.directory / "result.xlsx", WriteDecision.ALLOW_WRITE, selected, schema
+    )
+    if getattr(result, "output_sha256", None) is None:
+        raise RuntimeError("authoritative workbook write was not verified")
+    return ReconciliationApplyResult(
+        job.directory / "result.xlsx",
+        feedback,
+        *plan,
+        catalog_digest,
+        identity,
+        calculation_digest,
+        rule_set.rule_set.content_hash,
+        True,
+    )
+
+
+def rebuild_apply_evidence(
+    job, state: ReconciliationReviewState, decisions: tuple[ReviewDecision, ...]
+):
+    """Recreate bounded apply facts without a transformer or writer call."""
+    from report_processor.business_rules import load_default_rule_set, load_rule_configuration
+
+    rule_set = (
+        load_rule_configuration(job.rules_path)
+        if getattr(job, "rules_path", None)
+        else load_default_rule_set()
+    )
+    if not rule_set.valid or rule_set.rule_set is None:
+        raise RuntimeError("RULE_CONFIGURATION_INVALID")
+    feedback = _feedback_records(state, decisions)
+    apply_key, plan_hash = _apply_plan(
+        job, state, rule_set.rule_set.content_hash, feedback, decisions
+    )
+    _schema, targets, identity, _preview = _apply_target_projection(job)
+    catalog, _matches, selected = _calculate_selected(
+        job, state, decisions, rule_set.rule_set, targets
+    )
+    return {
+        "apply_key": apply_key,
+        "plan_hash": plan_hash,
+        "catalog_digest": _catalog_digest(catalog, identity),
+        "target_identity_digest": identity,
+        "calculation_digest": calculation_semantic_digest(selected),
+        "rules_hash": rule_set.rule_set.content_hash,
+        "actionable": any(item.quantity is not None or item.cost is not None for item in selected),
+        "feedback": feedback,
+    }
+
+
+def _apply_target_projection(job):
+    period = getattr(job, "reporting_period", None)
+    if period is None:
+        schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
+        identity = getattr(job, "target_identity_digest", None) or job.target_digest
+        return schema, targets, identity, None
+    from .reconciliation_period_preview import preview_reconciliation_target
+
+    preview = preview_reconciliation_target(job.target, job.target_digest, job.stage, period)
+    identity = preview.target_identity_digest
+    expected = getattr(job, "target_identity_digest", None)
+    if expected is not None and expected != identity:
+        raise RuntimeError("RECONCILIATION_TARGET_IDENTITY_CHANGED")
+    return preview.schema, preview.rows, identity, preview
+
+
+def _calculate_selected(job, state, decisions, rule_set, targets):
+    catalog = _catalog(targets)
+    overrides = apply_overrides(state.rows.values(), state.groups.values(), decisions)
     target_identities = {terminal_index(target.document_index_normalized) for target in targets} - {
         None
     }
@@ -153,11 +312,9 @@ def apply_review(
         source_rows,
         getattr(source_batch, "terminal_identities", ()),
     )
-    feedback = _feedback_records(state, snapshot)
-    plan = _apply_plan(job, state, rule_set.rule_set.content_hash, feedback, snapshot)
     calculations = calculate_matches(
         matches,
-        rule_set.rule_set,
+        rule_set,
         {
             candidate.candidate_id: override.candidate_inclusion
             for match in matches
@@ -165,18 +322,53 @@ def apply_review(
             if (override := overrides[candidate.source_row_id]) is not None
         },
     )
-    selected = writer_calculations(
-        item for item in calculations if item.status.value.startswith("calculated")
+    return (
+        catalog,
+        matches,
+        writer_calculations(
+            item for item in calculations if item.status.value.startswith("calculated")
+        ),
     )
-    if not selected:
-        publish_unchanged_target(job.target, job.directory / "result.xlsx", job.target_digest)
-        return ReconciliationApplyResult(job.directory / "result.xlsx", feedback, *plan)
-    result = write_target_report(
-        job.target, job.directory / "result.xlsx", WriteDecision.ALLOW_WRITE, selected, schema
+
+
+def _prepared_apply_job(job, prepared_digest: str):
+    from dataclasses import replace
+
+    target = job.directory / "apply-period-target.xlsx"
+    return replace(job, target=target, target_digest=prepared_digest)
+
+
+def _catalog_digest(catalog: _Catalog, target_identity_digest: str) -> str:
+    return _hash(
+        "ReconciliationCatalogIdentity-1.0",
+        target_identity_digest,
+        _catalog_version(catalog),
     )
-    if getattr(result, "output_sha256", None) is None:
-        raise RuntimeError("authoritative workbook write was not verified")
-    return ReconciliationApplyResult(job.directory / "result.xlsx", feedback, *plan)
+
+
+def _match_target_ids(matches) -> tuple[str, ...]:
+    return tuple(sorted(match.target_row_id for match in matches))
+
+
+def calculation_semantic_digest(calculations) -> str:
+    """Canonical writer-adapted calculation facts, sorted independently of input order."""
+    payload = [
+        {
+            "cost": _decimal_text(item.cost),
+            "quantity": _decimal_text(item.quantity),
+            "status": item.status.value,
+            "target_row_id": item.target_row_id,
+        }
+        for item in calculations
+    ]
+    return _hash(
+        "ReconciliationCalculationSemantics-1.0",
+        sorted(payload, key=lambda item: item["target_row_id"]),
+    )
+
+
+def _decimal_text(value) -> str | None:
+    return str(value) if value is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,10 +602,11 @@ def _apply_plan(
         for item in decisions
     ]
     payload = {
-        "contract": "ReconciliationApplyIntegrity-2.0",
+        "contract": "ReconciliationApplyIntegrity-3.0",
         "job_id": getattr(job, "job_id", "direct-apply"),
         "source_digests": tuple(getattr(job, "source_digests", ())),
         "target_digest": job.target_digest,
+        "target_identity_digest": getattr(job, "target_identity_digest", None) or job.target_digest,
         "stage": job.stage,
         "state_fingerprint": getattr(state, "version_fingerprint", "direct-apply"),
         "rules_hash": rules_hash,
@@ -436,11 +629,12 @@ def _apply_plan(
 
 
 def _target_id(job, target) -> str:
+    target_identity = getattr(job, "target_identity_digest", None) or job.target_digest
     return _hash(
         "target",
         "MatchingContract-12.0",
-        f"target:{job.target_digest}",
-        f"sha256:{job.target_digest}",
+        f"target:{target_identity}",
+        f"sha256:{target_identity}",
         target.sheet_name,
         target.row_number,
         _target_cell_coordinate(target, LogicalColumn.CURRENT_PERIOD_QUANTITY),
@@ -466,7 +660,7 @@ def _review_row_id(job, source_row_id: str) -> str:
         "review-row-"
         + _hash(
             "ReconciliationReviewRow-1.0",
-            job.target_digest,
+            getattr(job, "target_identity_digest", None) or job.target_digest,
             *_normalized_source_digests(job.source_digests),
             source_row_id,
         )[:32]

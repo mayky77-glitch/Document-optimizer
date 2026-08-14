@@ -1,6 +1,7 @@
 import threading
 from decimal import Decimal
 from hashlib import sha256
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,7 @@ from report_processor.reconciliation_review import (
     ReviewRow,
     build_review_groups,
 )
+from report_processor.schema import LogicalColumn
 
 
 def test_two_accepted_source_rows_contribute_once_to_one_target_aggregate() -> None:
@@ -63,8 +65,26 @@ def test_reconciliation_target_binds_discovered_cells_and_scales_writer_values()
     (written,) = writer_calculations(calculated)
 
     pair = TargetMeasurePair("Отчёт", 12, 13, "август 2026 количество", "август 2026 стоимость")
+    roles = {
+        "Отчёт": {
+            role: SimpleNamespace(
+                column_index=index,
+                column_letter=letter,
+                header_text=role.value,
+            )
+            for role, index, letter in (
+                (LogicalColumn.OBJECT_CODE, 1, "A"),
+                (LogicalColumn.DOCUMENT_INDEX, 2, "B"),
+                (LogicalColumn.STAGE, 3, "C"),
+                (LogicalColumn.ROW_NUMBER, 4, "D"),
+                (LogicalColumn.WORK_NAME, 5, "E"),
+                (LogicalColumn.UNIT, 6, "F"),
+            )
+        }
+    }
     assert [
-        (binding.logical_column.value, binding.column_letter) for binding in _bindings((pair,))
+        (binding.logical_column.value, binding.column_letter)
+        for binding in _bindings(roles, (pair,))
     ] == [
         ("object_code", "A"),
         ("document_index", "B"),

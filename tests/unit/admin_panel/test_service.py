@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from report_processor.admin_panel import service as admin_service
+from report_processor.admin_panel.reconciliation_execution import ReconciliationReviewResult
 from report_processor.admin_panel.service import MAX_MANUAL_DISCREPANCY_DECISIONS, AdminPanelService
 from report_processor.domain.exceptions import UnsupportedExcelFormatError
 from report_processor.domain.statuses import StatusCode
@@ -76,6 +77,55 @@ def _manual_discrepancy_result():
         warnings=(),
         errors=(),
     )
+
+
+def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
+    tmp_path: Path,
+) -> None:
+    service = AdminPanelService(
+        tmp_path / "jobs",
+        execute=lambda _job: ReconciliationReviewResult(state=object(), source_batch=None),
+    )
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+        reporting_period="2026-08",
+    )
+
+    manifest = service._job_store.load(job.job_id)
+    assert job.reporting_period == "2026-08"
+    assert manifest is not None
+    assert manifest["contract"] == "AdminReconciliationJobManifest-3.0"
+    assert manifest["reporting_period"] == "2026-08"
+
+    legacy = dict(manifest)
+    legacy["contract"] = "AdminReconciliationJobManifest-2.0"
+    (job.directory / "job-manifest.json").write_text(json.dumps(legacy), encoding="utf-8")
+    with pytest.raises(KeyError):
+        AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
+
+    with pytest.raises(ValueError, match="REPORTING_PERIOD_INVALID"):
+        service.create_job(
+            source_name="source.xlsx",
+            source_content=b"PK\x03\x04source",
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04target",
+            stage="13.1",
+            reporting_period="2026-8",
+        )
+    with pytest.raises(ValueError, match="UNSUPPORTED_FOR_VERIFY"):
+        service.create_job(
+            source_name="source.xlsx",
+            source_content=b"PK\x03\x04source",
+            target_name="target.xlsx",
+            target_content=b"PK\x03\x04target",
+            stage="13.1",
+            operation="verify",
+            reporting_period="2026-08",
+        )
 
 
 def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path: Path) -> None:
