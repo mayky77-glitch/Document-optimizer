@@ -86,6 +86,7 @@ def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
         tmp_path / "jobs",
         execute=lambda _job: ReconciliationReviewResult(state=object(), source_batch=None),
     )
+    service.run = lambda job_id: service.jobs[job_id]
     job = service.create_job(
         source_name="source.xlsx",
         source_content=b"PK\x03\x04source",
@@ -100,6 +101,13 @@ def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
     assert manifest is not None
     assert manifest["contract"] == "AdminReconciliationJobManifest-3.0"
     assert manifest["reporting_period"] == "2026-08"
+
+    for required_key in ("reporting_period", "target_identity_digest"):
+        incomplete = dict(manifest)
+        incomplete.pop(required_key)
+        (job.directory / "job-manifest.json").write_text(json.dumps(incomplete), encoding="utf-8")
+        with pytest.raises(KeyError):
+            AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
 
     legacy = dict(manifest)
     legacy["contract"] = "AdminReconciliationJobManifest-2.0"
@@ -126,6 +134,42 @@ def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
             operation="verify",
             reporting_period="2026-08",
         )
+
+
+def test_ready_period_manifest_rejects_tampered_preview_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected_identity = "a" * 64
+    monkeypatch.setattr(
+        admin_service,
+        "_period_target_identity_digest",
+        lambda _job: expected_identity,
+    )
+    service = AdminPanelService(tmp_path / "jobs")
+    service.run = lambda job_id: service.jobs[job_id]
+    job = service.create_job(
+        source_name="source.xlsx",
+        source_content=b"PK\x03\x04source",
+        target_name="target.xlsx",
+        target_content=b"PK\x03\x04target",
+        stage="13.1",
+        reporting_period="2026-08",
+    )
+    output = job.directory / "result.xlsx"
+    output.write_bytes(b"output")
+    job.status = "ready"
+    job.output = output
+    job.result_name = "optimized-report.xlsx"
+    job.target_identity_digest = expected_identity
+    service._persist_job(job)
+
+    tampered = service._job_store.load(job.job_id)
+    assert tampered is not None
+    tampered["target_identity_digest"] = "b" * 64
+    (job.directory / "job-manifest.json").write_text(json.dumps(tampered), encoding="utf-8")
+
+    with pytest.raises(KeyError):
+        AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
 
 
 def test_private_job_requires_each_manual_relation_before_safe_download(tmp_path: Path) -> None:

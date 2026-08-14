@@ -300,11 +300,13 @@ class AdminPanelService:
             job = self._review_job(job_id)
             if job.review_state.unresolved_row_ids():
                 raise ValueError("authoritative review is incomplete")
+            _validate_apply_identity(job, job.review_state)
             decisions = tuple(job.review_state.core_decisions())
             job.status = "applying"
             self._persist_job(job)
             owned_output: tuple[int, int] | None = None
             try:
+                _verify_inputs(job)
                 apply_job = _materialize_apply_snapshot(job)
                 applied = apply_review(apply_job, job.review_state, decisions)
                 output, feedback = applied
@@ -550,10 +552,7 @@ class AdminPanelService:
             raise ValueError("reconciliation job has invalid source facts")
         if len(source_names) != len(source_paths) or any(not name for name in source_names):
             raise ValueError("reconciliation job has invalid source names")
-        if job.reporting_period is None and job.target_identity_digest is None:
-            job.target_identity_digest = _strict_target_identity_digest(
-                job.target_digest, job.stage
-            )
+        _validate_manifest_identity(job)
         payload: dict[str, object] = {
             "contract": RECONCILIATION_MANIFEST_CONTRACT,
             "status": job.status,
@@ -627,6 +626,8 @@ class AdminPanelService:
     def _recover_applying_job(self, job: AdminJob, manifest: dict[str, object]) -> None:
         plan = _load_apply_manifest(job, manifest.get("apply"))
         evidence = plan["evidence"]
+        if evidence["target_identity_digest"] != job.target_identity_digest:
+            raise RuntimeError("reconciliation apply target identity changed")
         if evidence["input_snapshots"] != tuple(_apply_snapshot_names(job)):
             raise RuntimeError("reconciliation apply snapshots changed")
         job.output = _manifest_path(job.directory, plan["output_path"])
@@ -638,6 +639,7 @@ class AdminPanelService:
         self._apply_execution_result(job, recovered)
         if job.status != "review_required" or job.review_state is None:
             raise RuntimeError("reconciliation apply plan cannot be rebuilt")
+        _validate_apply_identity(job, job.review_state)
         decisions = evidence["decisions"]
         current_decisions = _dump_review_decisions(job.review_state.core_decisions())
         if current_decisions != _dump_review_decisions(decisions):
@@ -803,12 +805,6 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
     target = _manifest_path(directory, manifest["target_path"])
     target_digest = _manifest_digest(manifest["target_digest"])
     target_identity_digest = _optional_manifest_digest(manifest.get("target_identity_digest"))
-    if reporting_period is None:
-        expected_identity = _strict_target_identity_digest(target_digest, stage)
-        if target_identity_digest != expected_identity:
-            raise ValueError("reconciliation target identity is inconsistent")
-    elif status in {"review_required", "applying", "ready"} and target_identity_digest is None:
-        raise ValueError("reconciliation target identity is missing")
     names = manifest.get("source_names")
     if (
         not isinstance(names, list)
@@ -818,11 +814,52 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
         raise ValueError("reconciliation manifest source names are invalid")
     source_names = tuple(Path(item).name for item in names)
     output = None
+    output_keys = ("output_path", "output_digest", "output_identity", "result_name")
+    if any(key in manifest for key in output_keys) and not all(
+        key in manifest for key in output_keys
+    ):
+        raise ValueError("reconciliation manifest output is incomplete")
     output_path = manifest.get("output_path")
     if output_path is not None:
         output = _manifest_path(directory, output_path)
     output_identity = _manifest_identity(manifest.get("output_identity")) if output else None
     output_digest = _manifest_digest(manifest.get("output_digest")) if output else None
+    has_apply = "apply" in manifest
+    if has_apply != (status == "applying" and output is not None):
+        raise ValueError("reconciliation manifest apply is inconsistent")
+    if operation == "verify":
+        verification_keys = (
+            "verification_status",
+            "verification_message",
+            "checked_row_count",
+            "failed_row_count",
+        )
+        if any(key not in manifest for key in verification_keys):
+            raise ValueError("reconciliation verification manifest is incomplete")
+        if status in {"pending", "running"}:
+            if (
+                manifest["verification_status"] is not None
+                or manifest["verification_message"] is not None
+            ):
+                raise ValueError("reconciliation verification manifest is invalid")
+        elif not isinstance(manifest["verification_status"], str) or not isinstance(
+            manifest["verification_message"], str
+        ):
+            raise ValueError("reconciliation verification manifest is invalid")
+        if not all(
+            isinstance(manifest[key], int) and manifest[key] >= 0 for key in verification_keys[2:]
+        ):
+            raise ValueError("reconciliation verification manifest is invalid")
+    elif any(
+        key in manifest
+        for key in (
+            "verification_status",
+            "verification_message",
+            "checked_row_count",
+            "failed_row_count",
+        )
+    ):
+        raise ValueError("reconciliation verification manifest is invalid")
     job = AdminJob(
         job_id=job_id,
         directory=directory,
@@ -856,9 +893,16 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
             if isinstance(manifest.get("verification_message"), str)
             else None
         ),
-        checked_row_count=_manifest_count(manifest.get("checked_row_count")),
-        failed_row_count=_manifest_count(manifest.get("failed_row_count")),
+        checked_row_count=(
+            _strict_manifest_count(manifest.get("checked_row_count"))
+            if operation == "verify"
+            else 0
+        ),
+        failed_row_count=(
+            _strict_manifest_count(manifest.get("failed_row_count")) if operation == "verify" else 0
+        ),
     )
+    _validate_manifest_identity(job)
     return job
 
 
@@ -914,8 +958,47 @@ def _strict_target_identity_digest(target_digest: str, stage: str) -> str:
     return ReconciliationTargetIdentity(target_digest, stage).target_identity_digest
 
 
+def _period_target_identity_digest(job: AdminJob) -> str:
+    from .reconciliation_period_preview import preview_reconciliation_target
+
+    return preview_reconciliation_target(
+        job.target, job.target_digest, job.stage, job.reporting_period
+    ).target_identity_digest
+
+
+def _validate_manifest_identity(job: AdminJob) -> None:
+    if job.operation == "verify" and job.reporting_period is not None:
+        raise ValueError("REPORTING_PERIOD_UNSUPPORTED_FOR_VERIFY")
+    if job.reporting_period is None:
+        expected = _strict_target_identity_digest(job.target_digest, job.stage)
+        if job.target_identity_digest != expected:
+            raise ValueError("reconciliation target identity is inconsistent")
+        return
+    if job.status in {"pending", "running"}:
+        if job.target_identity_digest is not None:
+            raise ValueError("reconciliation target identity is inconsistent")
+        return
+    expected = _period_target_identity_digest(job)
+    if job.target_identity_digest != expected:
+        raise ValueError("reconciliation target identity is inconsistent")
+
+
+def _validate_apply_identity(job: AdminJob, state: ReconciliationReviewState) -> None:
+    if (
+        job.target_identity_digest is None
+        or state.target_identity_digest != job.target_identity_digest
+    ):
+        raise RuntimeError("reconciliation apply target identity changed")
+
+
 def _manifest_count(value: object) -> int:
     return value if isinstance(value, int) and 0 <= value <= 10_000_000 else 0
+
+
+def _strict_manifest_count(value: object) -> int:
+    if not isinstance(value, int) or not 0 <= value <= 10_000_000:
+        raise ValueError("reconciliation verification manifest is invalid")
+    return value
 
 
 def _manifest_identity(value: object) -> tuple[int, int]:
@@ -954,7 +1037,7 @@ def _load_apply_manifest(job: AdminJob, value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("reconciliation apply plan is missing")
     required = ("output_path", "output_digest", "apply_key", "payload_hash", "evidence")
-    if any(key not in value for key in required):
+    if set(value) != {*required, "output_identity"}:
         raise ValueError("reconciliation apply plan is incomplete")
     output_path = value["output_path"]
     if output_path != "result.xlsx":
@@ -1000,6 +1083,8 @@ def _apply_evidence(
             "legacy_injected": True,
         }
     rebuilt = rebuild_apply_evidence(job, state, decisions)
+    if rebuilt["target_identity_digest"] != job.target_identity_digest:
+        raise RuntimeError("RECONCILIATION_APPLY_EVIDENCE_CHANGED")
     for field_name in fields:
         supplied = getattr(applied, field_name, "")
         if supplied and supplied != rebuilt[field_name]:
@@ -1022,7 +1107,17 @@ def _apply_evidence(
 def _load_apply_evidence(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or value.get("contract") != "ReconciliationApplyReplay-2.0":
         raise ValueError("reconciliation apply evidence is invalid")
-    if "legacy_injected" in value:
+    required = {
+        "contract",
+        "catalog_digest",
+        "target_identity_digest",
+        "calculation_digest",
+        "rules_hash",
+        "actionable",
+        "decisions",
+        "input_snapshots",
+    }
+    if set(value) != required:
         raise ValueError("reconciliation apply evidence is unsupported")
     fields = ("catalog_digest", "target_identity_digest", "calculation_digest", "rules_hash")
     if any(_optional_manifest_digest(value.get(field_name)) is None for field_name in fields):

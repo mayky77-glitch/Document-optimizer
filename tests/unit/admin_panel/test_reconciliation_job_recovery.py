@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from report_processor.admin_panel.reconciliation_execution import ReconciliationReviewResult
+from report_processor.admin_panel.reconciliation_target import ReconciliationTargetIdentity
 from report_processor.admin_panel.service import AdminJob, AdminPanelService
 
 
@@ -122,11 +123,15 @@ def test_passed_verification_without_an_artifact_recovers(tmp_path: Path) -> Non
         mode="write",
         source_digest=hashlib.sha256(source.read_bytes()).hexdigest(),
         target_digest=hashlib.sha256(target.read_bytes()).hexdigest(),
+        target_identity_digest=ReconciliationTargetIdentity(
+            hashlib.sha256(target.read_bytes()).hexdigest(), "13.1"
+        ).target_identity_digest,
         sources=(source,),
         source_digests=(hashlib.sha256(source.read_bytes()).hexdigest(),),
         operation="verify",
         status="ready",
         verification_status="pass",
+        verification_message="verified",
     )
     service.jobs[job.job_id] = job
     service._persist_job(job)

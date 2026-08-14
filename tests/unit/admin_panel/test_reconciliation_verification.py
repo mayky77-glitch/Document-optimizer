@@ -143,12 +143,27 @@ def test_verification_rejects_period_before_review_or_preview_path(
 
 
 def test_fresh_verification_import_does_not_load_period_planner() -> None:
+    script = """
+import sys
+import report_processor.admin_panel.reconciliation_verification
+assert 'report_processor.excel_writer.period_insertion' not in sys.modules
+import report_processor.excel_writer as writer
+assert 'prepare_period_insertion' in dir(writer)
+first = writer.prepare_period_insertion
+assert first is writer.prepare_period_insertion
+from report_processor.excel_writer import prepare_period_insertion
+assert first is prepare_period_insertion
+namespace = {}
+exec('from report_processor.excel_writer import *', namespace)
+assert namespace['prepare_period_insertion'] is first
+from report_processor.excel_writer import period_insertion
+assert period_insertion.prepare_period_insertion is first
+"""
     completed = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import sys; import report_processor.admin_panel.reconciliation_verification; "
-            "assert 'report_processor.excel_writer.period_insertion' not in sys.modules",
+            script,
         ],
         check=False,
         capture_output=True,

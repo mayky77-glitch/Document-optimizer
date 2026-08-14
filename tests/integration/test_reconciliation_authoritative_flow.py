@@ -13,7 +13,11 @@ from report_processor.admin_panel.reconciliation_execution import (
     _physical_source_identity,
 )
 from report_processor.admin_panel.reconciliation_state import ReconciliationReviewState
-from report_processor.admin_panel.reconciliation_target import _bindings, writer_calculations
+from report_processor.admin_panel.reconciliation_target import (
+    ReconciliationTargetIdentity,
+    _bindings,
+    writer_calculations,
+)
 from report_processor.admin_panel.reconciliation_target_measure import TargetMeasurePair
 from report_processor.admin_panel.service import (
     AdminJob,
@@ -125,6 +129,9 @@ def _review_job(tmp_path) -> tuple[AdminPanelService, AdminJob, str]:
         categories={"target-1": "Цель"},
         source_digests=(sha256(source.read_bytes()).hexdigest(),),
         target_digest=sha256(target.read_bytes()).hexdigest(),
+        target_identity_digest=ReconciliationTargetIdentity(
+            sha256(target.read_bytes()).hexdigest(), "13.1"
+        ).target_identity_digest,
     )
     job = AdminJob(
         job_id="job",
@@ -135,6 +142,7 @@ def _review_job(tmp_path) -> tuple[AdminPanelService, AdminJob, str]:
         mode="write",
         source_digest=state.source_digests[0],
         target_digest=state.target_digest,
+        target_identity_digest=state.target_identity_digest,
         sources=(source,),
         source_digests=state.source_digests,
         status="review_required",
@@ -175,7 +183,7 @@ def test_apply_blocks_unresolved_and_tampered_input_before_write(tmp_path, monke
 
     _accept_group(job, group_id)
     job.target.write_bytes(b"tampered")
-    with pytest.raises(RuntimeError, match="input upload changed"):
+    with pytest.raises(RuntimeError, match="target upload changed"):
         service.apply_reconciliation(job.job_id)
     assert called is False and job.status == "failed"
 
@@ -214,7 +222,7 @@ def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) 
     feedback = _feedback_records(job.review_state, decisions)
     evidence = {
         "catalog_digest": "a" * 64,
-        "target_identity_digest": "b" * 64,
+        "target_identity_digest": job.target_identity_digest,
         "calculation_digest": "c" * 64,
         "rules_hash": "d" * 64,
         "actionable": True,

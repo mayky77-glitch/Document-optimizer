@@ -1,5 +1,7 @@
 """Atomic, no-clobber XLSX publication (ExcelWriterEngine-15.1)."""
 
+from importlib import import_module
+
 from .engine import write_target_report
 from .exceptions import (
     ExcelWriterAtomicError,
@@ -16,6 +18,14 @@ from .models import (
     WrittenCell,
 )
 from .row_annotations import annotate_failed_rows
+
+_LAZY_PERIOD_EXPORTS = frozenset(
+    {
+        "build_period_insertion_plan",
+        "prepare_period_insertion",
+        "verify_period_insertion",
+    }
+)
 
 __all__ = (
     "EXCEL_WRITER_CONTRACT_VERSION",
@@ -38,12 +48,12 @@ __all__ = (
 
 def __getattr__(name: str):
     """Load period transformation only for callers that explicitly request it."""
-    if name in {
-        "build_period_insertion_plan",
-        "prepare_period_insertion",
-        "verify_period_insertion",
-    }:
-        from . import period_insertion
-
-        return getattr(period_insertion, name)
+    if name in _LAZY_PERIOD_EXPORTS:
+        value = getattr(import_module(".period_insertion", __name__), name)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
