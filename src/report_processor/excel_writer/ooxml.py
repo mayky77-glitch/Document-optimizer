@@ -1287,20 +1287,25 @@ def _finite_numeric_lexeme(index: WorksheetIndex, cell: _CellSpan, coordinate: s
 
 
 def publish_no_clobber(temp_path: Path, output_path: Path) -> None:
+    """Link a private archive into place without deleting a raced replacement."""
+
+    descriptor = os.open(temp_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     linked = False
     try:
         os.link(temp_path, output_path)
         linked = True
-        temp_path.unlink()
+        _unlink_if_owned(temp_path, descriptor)
         _fsync_directory(output_path.parent)
     except FileExistsError as error:
-        temp_path.unlink(missing_ok=True)
+        _unlink_if_owned(temp_path, descriptor)
         raise ExcelWriterSafetyError("OUTPUT_EXISTS", str(output_path)) from error
     except OSError as error:
         if linked:
-            output_path.unlink(missing_ok=True)
-        temp_path.unlink(missing_ok=True)
+            _unlink_if_owned(output_path, descriptor)
+        _unlink_if_owned(temp_path, descriptor)
         raise ExcelWriterAtomicError("ATOMIC_PUBLISH_FAILED", str(error)) from error
+    finally:
+        os.close(descriptor)
 
 
 def _unlink_if_owned(path: Path, descriptor: int) -> None:
