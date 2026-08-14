@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: superseded
 card_id: reconciliation-writer-namespace
 version: 1
 work_id: reconciliation-writer-namespace-v1
@@ -39,6 +39,10 @@ acceptance_commands:
 ---
 
 # Namespace-aware worksheet lexemes
+
+Superseded before integration by [[reconciliation-writer-namespace-v2]] after review proved that
+per-cell full XML reparsing was about 97 times slower than the prior lexical path and found two
+additional preservation/resource-bound gaps. The partial feature remains audit evidence only.
 
 Historical period insertion is structurally correct but serializes worksheet elements with a legal
 SpreadsheetML prefix such as `s:c`. The accepted byte-preserving writer currently recognizes only
