@@ -83,16 +83,15 @@ def raw_worksheet_merge_ranges(source_path: Path, sheet_name: str) -> tuple[str,
         raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
     normalized_count = count.lstrip("0") or "0"
     maximum_count = str(_MAX_VALIDATED_MERGE_RANGES)
-    if (
-        len(normalized_count) > len(maximum_count)
-        or normalized_count > maximum_count
-        or len(container) > _MAX_VALIDATED_MERGE_RANGES
-    ):
+    if len(normalized_count) > len(maximum_count) or len(container) > _MAX_VALIDATED_MERGE_RANGES:
+        raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+    declared_count = int(normalized_count)
+    if declared_count > _MAX_VALIDATED_MERGE_RANGES:
         raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
     if any(child.tag != _Q("mergeCell") or set(child.attrib) != {"ref"} for child in container):
         raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
     references = tuple(child.attrib["ref"] for child in container)
-    if int(normalized_count) != len(references):
+    if declared_count != len(references):
         raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
     return validated_merge_ranges(references)
 

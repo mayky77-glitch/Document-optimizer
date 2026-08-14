@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import zipfile
+
 import pytest
 from openpyxl import Workbook
 
+from report_processor.admin_panel import reconciliation_target_measure
 from report_processor.admin_panel.reconciliation_target_measure import (
     BoundedHeaderWindow,
     ReconciliationTargetMeasureError,
     discover_historical_target_measures,
     discover_target_measures,
+    raw_worksheet_merge_ranges,
 )
 
 
@@ -36,6 +40,68 @@ def _pair(
         sheet.cell(1, start).value = parent
     sheet.cell(2, start).value = quantity
     sheet.cell(2, start + 1).value = cost
+
+
+def _raw_merges_payload(declared_count: str, physical_count: int) -> bytes:
+    references = "".join(
+        f'<mergeCell ref="A{index}:B{index}"/>' for index in range(1, physical_count + 1)
+    )
+    return (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<mergeCells count="{declared_count}">{references}</mergeCells>'
+        "</worksheet>"
+    ).encode()
+
+
+def _raw_merge_workbook(tmp_path, payload: bytes):
+    source = tmp_path / "raw-merges.xlsx"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", payload)
+    return source
+
+
+@pytest.mark.parametrize(
+    ("declared_count", "physical_count"),
+    (("0", 0), ("1", 1), ("64", 64), ("٤٠٩٦", 4_096)),
+)
+def test_raw_worksheet_merge_count_uses_numeric_limit(
+    tmp_path, monkeypatch, declared_count: str, physical_count: int
+) -> None:
+    source = _raw_merge_workbook(tmp_path, _raw_merges_payload(declared_count, physical_count))
+    monkeypatch.setattr(
+        reconciliation_target_measure,
+        "worksheet_parts",
+        lambda _source: {"Отчёт": "xl/worksheets/sheet1.xml"},
+    )
+
+    assert len(raw_worksheet_merge_ranges(source, "Отчёт")) == physical_count
+
+
+def test_raw_worksheet_merge_count_rejects_numeric_value_above_limit(tmp_path, monkeypatch) -> None:
+    source = _raw_merge_workbook(tmp_path, _raw_merges_payload("4097", 0))
+    monkeypatch.setattr(
+        reconciliation_target_measure,
+        "worksheet_parts",
+        lambda _source: {"Отчёт": "xl/worksheets/sheet1.xml"},
+    )
+
+    with pytest.raises(ReconciliationTargetMeasureError, match="TARGET_HEADER_WINDOW_INVALID"):
+        raw_worksheet_merge_ranges(source, "Отчёт")
+
+
+@pytest.mark.parametrize(("declared_count", "physical_count"), (("0", 1), ("1", 0)))
+def test_raw_worksheet_merge_count_rejects_declared_physical_mismatch(
+    tmp_path, monkeypatch, declared_count: str, physical_count: int
+) -> None:
+    source = _raw_merge_workbook(tmp_path, _raw_merges_payload(declared_count, physical_count))
+    monkeypatch.setattr(
+        reconciliation_target_measure,
+        "worksheet_parts",
+        lambda _source: {"Отчёт": "xl/worksheets/sheet1.xml"},
+    )
+
+    with pytest.raises(ReconciliationTargetMeasureError, match="TARGET_HEADER_WINDOW_INVALID"):
+        raw_worksheet_merge_ranges(source, "Отчёт")
 
 
 def test_later_unmerged_same_month_pair_wins_over_historical_documentary_pair() -> None:
