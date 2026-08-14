@@ -201,7 +201,7 @@ def verify_period_insertion(
 
     source, output = Path(source_path), Path(output_path)
     _assert_digest(source, plan.source_sha256)
-    _validate_plan(source, plan, rebuild=False)
+    _validate_plan(source, plan)
     anchors = {item.sheet_name: item for item in plan.anchors}
     source_parts = dict(plan.worksheet_parts)
     try:
@@ -854,17 +854,14 @@ def _affected_parts(
     return tuple(sorted(affected))
 
 
-def _validate_plan(
-    source: Path, plan: ReconciliationPeriodInsertionPlan, *, rebuild: bool = True
-) -> None:
+def _validate_plan(source: Path, plan: ReconciliationPeriodInsertionPlan) -> None:
     """Reject fabricated plans before a temporary output identity exists."""
 
     if plan.plan_digest != hashlib.sha256(plan.canonical_bytes()).hexdigest():
         raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
-    if rebuild:
-        expected = build_period_insertion_plan(source, plan.period, dict(plan.selected_detail_rows))
-        if expected.canonical_bytes() != plan.canonical_bytes():
-            raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
+    expected = build_period_insertion_plan(source, plan.period, dict(plan.selected_detail_rows))
+    if expected.canonical_bytes() != plan.canonical_bytes():
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PLAN_INVALID")
     parts = worksheet_parts(source)
     sheet_ids = _sheet_id_map(source)
     if tuple(parts.items()) != plan.worksheet_parts:

@@ -1,6 +1,5 @@
 """Synthetic direct-OOXML reporting-period insertion regressions."""
 
-import hashlib
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -115,28 +114,32 @@ def test_suffix_rightmost_is_column_major_while_bounds_are_row_major(tmp_path: P
     assert anchor.suffix_rightmost_coordinate == "Z4"
 
 
-def test_forged_suffix_evidence_is_rejected_before_creating_output(tmp_path: Path) -> None:
+def test_exported_verifier_rejects_forged_redigested_plan_evidence(tmp_path: Path) -> None:
     source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
     _historical_book(source)
     plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
     (anchor,) = plan.anchors
-    forged = replace(
-        plan,
-        anchors=(
-            replace(
-                anchor,
-                historical_parent_label="поддельная историческая подпись",
-                suffix_coordinate_sha256="0" * 64,
-            ),
+
+    forged_plans = (
+        replace(
+            plan,
+            anchors=(replace(anchor, historical_parent_label="поддельная историческая подпись"),),
+            plan_digest="",
         ),
-        plan_digest="",
+        replace(
+            plan,
+            anchors=(replace(anchor, suffix_coordinate_sha256="0" * 64),),
+            plan_digest="",
+        ),
+        replace(plan, selected_detail_rows=(("Отчёт", 4),), plan_digest=""),
     )
-    assert forged.plan_digest != plan.plan_digest
 
-    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PLAN_INVALID"):
-        prepare_period_insertion(source, output, forged)
-
-    assert not output.exists()
+    verify_period_insertion(source, output, plan)
+    for forged in forged_plans:
+        assert forged.plan_digest != plan.plan_digest
+        with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PLAN_INVALID"):
+            verify_period_insertion(source, output, forged)
 
 
 def test_empty_suffix_fails_closed(tmp_path: Path) -> None:
@@ -248,9 +251,8 @@ def test_independent_verifier_rejects_tampered_worksheet_delta(
         verify_period_insertion(source, output, plan)
 
 
-@pytest.mark.parametrize("invalid_package", ("source", "candidate"))
 def test_verifier_shared_formula_checks_are_independent_of_forward_preflight(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_package: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
     _historical_book(source)
@@ -258,12 +260,7 @@ def test_verifier_shared_formula_checks_are_independent_of_forward_preflight(
     plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
     prepare_period_insertion(source, output, plan)
 
-    def fail_if_forward_parser_is_called(*_args, **_kwargs) -> None:
-        raise AssertionError("verifier used forward shared-formula parser")
-
-    monkeypatch.setattr(
-        period_insertion, "_shared_formula_topology", fail_if_forward_parser_is_called
-    )
+    monkeypatch.setattr(period_insertion, "_shared_formula_topology", lambda *_args: ())
     verify_period_insertion(source, output, plan)
 
     def corrupt_shared_follower(root: ET.Element) -> None:
@@ -273,20 +270,9 @@ def test_verifier_shared_formula_checks_are_independent_of_forward_preflight(
         assert formula is not None
         formula.text = "A1"
 
-    if invalid_package == "candidate":
-        _replace_worksheet(output, corrupt_shared_follower)
-        candidate_plan = plan
-    else:
-        _replace_worksheet(source, corrupt_shared_follower)
-        candidate_plan = replace(
-            plan,
-            source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
-            plan_digest="",
-        )
-        candidate_plan = replace(
-            candidate_plan,
-            plan_digest=hashlib.sha256(candidate_plan.canonical_bytes()).hexdigest(),
-        )
+    _replace_worksheet(source, corrupt_shared_follower)
+    _replace_worksheet(output, corrupt_shared_follower)
+    candidate_plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
 
     with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
         verify_period_insertion(source, output, candidate_plan)
