@@ -251,8 +251,9 @@ def test_independent_verifier_rejects_tampered_worksheet_delta(
         verify_period_insertion(source, output, plan)
 
 
+@pytest.mark.parametrize("corruption", ("follower_text", "bare_duplicate"))
 def test_verifier_shared_formula_checks_are_independent_of_forward_preflight(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corruption: str
 ) -> None:
     source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
     _historical_book(source)
@@ -264,6 +265,10 @@ def test_verifier_shared_formula_checks_are_independent_of_forward_preflight(
     verify_period_insertion(source, output, plan)
 
     def corrupt_shared_follower(root: ET.Element) -> None:
+        if corruption == "bare_duplicate":
+            row = next(row for row in root.iter(_Q("row")) if row.attrib.get("r") == "4")
+            ET.SubElement(row, _Q("c"), {"r": "B4"})
+            return
         formula = next(
             cell.find(_Q("f")) for cell in root.iter(_Q("c")) if cell.attrib.get("r") == "B4"
         )
@@ -587,6 +592,7 @@ def test_shared_formula_calc_chain_keeps_left_members_and_shifts_right_entries(
         "missing_member",
         "extra_member",
         "overlap",
+        "bare_duplicate_member",
         "duplicate_si",
         "mismatched_si",
         "negative_si",
@@ -629,6 +635,14 @@ def test_invalid_shared_formula_groups_fail_closed_without_clobbering_output(
             ET.SubElement(follower, _Q("f"), {"t": "shared", "si": "1"})
 
         _replace_worksheet(source, add_overlapping_group)
+    elif case == "bare_duplicate_member":
+        _add_shared_formula_group(source, "0", "A4:B4", "A1", ("A4", "B4"))
+
+        def add_bare_duplicate(root: ET.Element) -> None:
+            row = next(row for row in root.iter(_Q("row")) if row.attrib.get("r") == "4")
+            ET.SubElement(row, _Q("c"), {"r": "B4"})
+
+        _replace_worksheet(source, add_bare_duplicate)
     elif case == "duplicate_si":
         _add_shared_formula_group(source, "0", "A4", "A1", ("A4",))
         _add_shared_formula_group(source, "0", "B4", "A1", ("B4",))

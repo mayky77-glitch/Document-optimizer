@@ -1047,8 +1047,14 @@ def _shared_formula_topology(
     try:
         formula_nodes = list(root.iter(_Q("f")))
         members_by_si: dict[int, list[tuple[str, int, int, ET.Element]]] = {}
+        physical_cell_counts: dict[tuple[int, int], int] = {}
         direct_formula_count = 0
         for cell in root.iter(_Q("c")):
+            coordinate = cell.attrib.get("r")
+            if coordinate is not None:
+                physical_column, physical_row = coordinate_from_string(coordinate)
+                physical_key = (column_index_from_string(physical_column), physical_row)
+                physical_cell_counts[physical_key] = physical_cell_counts.get(physical_key, 0) + 1
             formulas = cell.findall(_Q("f"))
             direct_formula_count += len(formulas)
             if len(formulas) > 1:
@@ -1066,7 +1072,6 @@ def _shared_formula_topology(
             if set(formula.attrib) - {"t", "si", "ref"}:
                 raise ReconciliationPeriodError(error_code)
             si = formula.attrib.get("si")
-            coordinate = cell.attrib.get("r")
             if si is None or not si.isascii() or not si.isdecimal() or coordinate is None:
                 raise ReconciliationPeriodError(error_code)
             canonical_si = si.lstrip("0") or "0"
@@ -1127,6 +1132,7 @@ def _shared_formula_topology(
                 anchor[1:3] != (left, top)
                 or len(members) != len(actual_members)
                 or len(members) != expected_count
+                or any(physical_cell_counts.get(member) != 1 for member in actual_members)
                 or any(
                     column < left or column > right or row < top or row > bottom
                     for column, row in actual_members
@@ -1168,8 +1174,14 @@ def _verify_shared_formula_topology(
 
     try:
         groups: dict[int, list[tuple[str, int, int, ET.Element]]] = {}
+        physical_cell_counts: dict[tuple[int, int], int] = {}
         direct_formula_count = 0
         for cell in root.iter(_Q("c")):
+            coordinate = cell.attrib.get("r")
+            if coordinate is not None:
+                physical_column, physical_row = coordinate_from_string(coordinate)
+                physical_key = (column_index_from_string(physical_column), physical_row)
+                physical_cell_counts[physical_key] = physical_cell_counts.get(physical_key, 0) + 1
             formulas = cell.findall(_Q("f"))
             direct_formula_count += len(formulas)
             if len(formulas) > 1:
@@ -1187,7 +1199,6 @@ def _verify_shared_formula_topology(
                     raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
                 continue
             si = formula.attrib.get("si")
-            coordinate = cell.attrib.get("r")
             if (
                 set(formula.attrib) - {"t", "si", "ref"}
                 or si is None
@@ -1251,6 +1262,7 @@ def _verify_shared_formula_topology(
                 (anchor_column, anchor_row) != (minimum_column, first_row)
                 or len(coordinates) != len(members)
                 or len(coordinates) != area
+                or any(physical_cell_counts.get(member) != 1 for member in coordinates)
                 or any(
                     column < minimum_column
                     or column > maximum_column
