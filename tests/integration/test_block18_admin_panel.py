@@ -157,8 +157,11 @@ def test_upload_requires_two_xlsx_files_and_keeps_bytes_in_injected_service(clie
 
     created = test_client.post("/api/jobs", files=_files())
     assert created.status_code == 201
+    assert created.json()["operation"] == "reconcile"
+    assert created.json()["reporting_period"] is None
     assert service.create_calls[0]["source_content"] == b"PK\x03\x04source"
     assert service.create_calls[0]["target_content"] == b"PK\x03\x04target"
+    assert service.create_calls[0]["reporting_period"] is None
 
 
 def test_omitted_stage_and_explicit_stage_mode_map_to_service_without_legacy_side_effects(
@@ -230,6 +233,20 @@ def test_period_whitespace_is_forwarded_without_http_normalization(client) -> No
 
     assert created.status_code == 201
     assert service.create_calls[-1]["reporting_period"] == " 2026-08"
+
+
+def test_real_service_rejects_whitespace_period_with_controlled_400(tmp_path: Path) -> None:
+    workspace = tmp_path / "jobs"
+    service = AdminPanelService(workspace)
+    app = create_app(service=service, workspace_root=workspace)
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/jobs", files=_files(), data={"reporting_period": " 2026-08"}
+        )
+
+    assert response.status_code == 400
+    assert service.jobs == {}
 
 
 def test_stage_selection_and_missing_stage_responses_are_controlled_and_private(client) -> None:
