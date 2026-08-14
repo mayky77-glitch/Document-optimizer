@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from types import MappingProxyType
 from xml.parsers import expat
 
 from openpyxl import load_workbook
@@ -20,6 +21,8 @@ from .exceptions import ExcelWriterAtomicError, ExcelWriterIntegrityError, Excel
 _SPREADSHEETML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _MAX_WORKSHEET_XML_BYTES = 128 * 1024 * 1024
 _MAX_WORKSHEET_EVENTS = 2_100_000
+_MAX_WORKSHEET_CELLS = 500_000
+_MAX_XML_DEPTH = 64
 _MAX_ARCHIVE_ENTRIES = 4_096
 _MAX_ARCHIVE_MEMBER_BYTES = 256 * 1024 * 1024
 _MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
@@ -28,6 +31,7 @@ _CALC_CHAIN_CONTENT_TYPE = re.compile(
     rb'<Override\b(?=[^>]*\bPartName\s*=\s*["\']/xl/calcChain\.xml["\'])[^>]*/>',
     re.IGNORECASE,
 )
+_A1 = re.compile(r"[A-Z]{1,3}[1-9][0-9]{0,6}\Z")
 
 
 @dataclass
@@ -61,9 +65,15 @@ def worksheet_index(xml: bytes, error_code: str = "TARGET_CELL_MISSING") -> Work
     elements = _worksheet_elements(xml, error_code)
     cells: dict[str, list[_WorksheetElement]] = {}
     for element in elements:
-        if _is_sheet_element(element, "c") and (coordinate := element.attributes.get("r")):
-            cells.setdefault(coordinate, []).append(element)
-    return WorksheetIndex(xml, {key: tuple(value) for key, value in cells.items()})
+        if _is_sheet_element(element, "c"):
+            coordinate = element.attributes.get("r")
+            if coordinate is not None:
+                if not _A1.fullmatch(coordinate):
+                    raise ExcelWriterIntegrityError(error_code, "invalid cell reference")
+                cells.setdefault(coordinate, []).append(element)
+    return WorksheetIndex(
+        xml, MappingProxyType({key: tuple(value) for key, value in cells.items()})
+    )
 
 
 def _worksheet_elements(
@@ -77,15 +87,29 @@ def _worksheet_elements(
 
     if len(xml) > _MAX_WORKSHEET_XML_BYTES:
         raise ExcelWriterIntegrityError(error_code, "worksheet XML exceeds limit")
+    declaration = re.match(rb"<\?xml[^>]*encoding=[\"']([^\"']+)", xml[:200], re.I)
+    if declaration is not None and declaration.group(1).casefold() not in {b"utf-8", b"utf8"}:
+        raise ExcelWriterIntegrityError(error_code, "worksheet encoding unsupported")
     parser = expat.ParserCreate(namespace_separator="}")
     elements: list[_WorksheetElement] = []
     stack: list[_WorksheetElement] = []
     events = 0
+    cell_count = 0
 
     def start(name: str, attributes: dict[str, str]) -> None:
-        nonlocal events
+        nonlocal events, cell_count
         events += 1
         if events > _MAX_WORKSHEET_EVENTS:
+            raise _RejectedWorksheetXml()
+        if len(stack) >= _MAX_XML_DEPTH:
+            raise _RejectedWorksheetXml()
+        if name == _SPREADSHEETML_NS + "}c":
+            cell_count += 1
+            if cell_count > _MAX_WORKSHEET_CELLS:
+                raise _RejectedWorksheetXml()
+        if name in {_SPREADSHEETML_NS + "}f", _SPREADSHEETML_NS + "}v"} and (
+            not stack or stack[-1].name != _SPREADSHEETML_NS + "}c"
+        ):
             raise _RejectedWorksheetXml()
         offset = parser.CurrentByteIndex
         opening_end = _opening_tag_end(xml, offset)
@@ -478,6 +502,7 @@ def write_temp_package(
             zipfile.ZipFile(source_path, "r") as source,
             zipfile.ZipFile(temp_path, "w", allowZip64=True) as output,
         ):
+            admit_archive(source, ExcelWriterAtomicError, "ATOMIC_PUBLISH_FAILED")
             output.comment = source.comment
             for info in source.infolist():
                 if remove_calc_chain and info.filename == "xl/calcChain.xml":
@@ -505,6 +530,8 @@ def verify_temp_package(
 
     try:
         with zipfile.ZipFile(source_path) as source, zipfile.ZipFile(temp_path) as output:
+            admit_archive(source, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED")
+            admit_archive(output, ExcelWriterIntegrityError, "PRESERVATION_CHECK_FAILED")
             source_names = tuple(source.namelist())
             expected_names = tuple(
                 name for name in source_names if not remove_calc_chain or name != "xl/calcChain.xml"
@@ -557,6 +584,7 @@ def materialize_formula_package(
             zipfile.ZipFile(path, "r") as source,
             zipfile.ZipFile(temporary, "w", allowZip64=True) as output,
         ):
+            admit_archive(source, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
             output.comment = source.comment
             for info in source.infolist():
                 if info.filename == "xl/calcChain.xml":
@@ -587,6 +615,7 @@ def verify_materialized_package(
 
     try:
         with zipfile.ZipFile(path) as package:
+            admit_archive(package, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
             names = tuple(package.namelist())
             if "xl/calcChain.xml" in names or package.testzip() is not None:
                 raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "calcChain")
@@ -614,6 +643,7 @@ def package_has_formulas(path: Path, worksheet_parts: Mapping[str, str]) -> bool
 
     try:
         with zipfile.ZipFile(path) as package:
+            admit_archive(package, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
             return any(formula_count(package.read(part)) for part in worksheet_parts.values())
     except (OSError, zipfile.BadZipFile, KeyError) as error:
         raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", str(error)) from error
@@ -624,6 +654,7 @@ def verify_formula_free_package(path: Path, worksheet_parts: Mapping[str, str]) 
 
     try:
         with zipfile.ZipFile(path) as package:
+            admit_archive(package, ExcelWriterIntegrityError, "FORMULA_MATERIALIZATION_FAILED")
             names = tuple(package.namelist())
             if "xl/calcChain.xml" in names or package.testzip() is not None:
                 raise ExcelWriterIntegrityError("FORMULA_MATERIALIZATION_FAILED", "calcChain")
