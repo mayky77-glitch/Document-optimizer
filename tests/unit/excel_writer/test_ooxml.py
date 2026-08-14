@@ -10,15 +10,17 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from openpyxl import Workbook
 
-from report_processor.excel_writer import ExcelWriterIntegrityError, ExcelWriterSafetyError
+from report_processor.excel_writer import ExcelWriterIntegrityError, ExcelWriterSafetyError, ooxml
 from report_processor.excel_writer.ooxml import (
     formula_count,
     inspect_cell,
+    inspect_index_cell,
     materialize_formula_cells,
     numeric_formula_values,
     publish_no_clobber,
     replace_cell_value,
     verify_temp_package,
+    worksheet_index,
     worksheet_part_map,
     write_temp_package,
 )
@@ -210,6 +212,44 @@ def test_self_closing_value_expansion_preserves_opening_attributes() -> None:
     updated = replace_cell_value(xml, "D1", "4")
 
     assert b'<v custom="keep">4</v>' in updated
+
+
+def test_request_local_index_scans_once_for_many_inspections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cells = b"".join(f'<c r="A{row}" s="1"><v>{row}</v></c>'.encode() for row in range(1, 1_001))
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b"<sheetData><row>" + cells + b"</row></sheetData></worksheet>"
+    )
+    original = ooxml._worksheet_elements
+    calls = 0
+
+    def counted(payload: bytes, error_code: str = "TARGET_CELL_MISSING"):
+        nonlocal calls
+        calls += 1
+        return original(payload, error_code)
+
+    monkeypatch.setattr(ooxml, "_worksheet_elements", counted)
+    index = worksheet_index(xml)
+    for row in range(1, 1_001):
+        assert inspect_index_cell(index, f"A{row}")[1] == str(row)
+    assert calls == 1
+
+
+def test_worksheet_and_archive_admission_limits_fail_before_processing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ooxml, "_MAX_WORKSHEET_XML_BYTES", 10)
+    with pytest.raises(ExcelWriterIntegrityError, match="TARGET_CELL_MISSING"):
+        worksheet_index(b"<worksheet/>")
+
+    archive_path = tmp_path / "compressed.xlsx"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", b"x" * 100)
+    monkeypatch.setattr(ooxml, "_MAX_COMPRESSION_RATIO", 1)
+    with pytest.raises(ExcelWriterSafetyError, match="INVALID_XLSX_PACKAGE"):
+        ooxml.reject_unsupported_package(archive_path)
 
 
 @pytest.mark.parametrize(
