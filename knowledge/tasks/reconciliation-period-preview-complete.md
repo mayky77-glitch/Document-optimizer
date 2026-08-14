@@ -3,7 +3,7 @@ type: orda_task
 status: frozen
 card_id: reconciliation-period-preview-complete
 version: 1
-work_id: reconciliation-period-apply-v3
+work_id: reconciliation-period-apply-v4
 task_id: period-preview-complete
 purpose: Complete structural period preview with bounded shared header discovery and a coherent writable schema.
 role: developer

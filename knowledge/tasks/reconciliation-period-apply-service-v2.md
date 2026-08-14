@@ -3,7 +3,7 @@ type: orda_task
 status: frozen
 card_id: reconciliation-period-apply-service-v2
 version: 1
-work_id: reconciliation-period-apply-v3
+work_id: reconciliation-period-apply-v4
 task_id: period-apply-service
 purpose: Apply the accepted period preview through immutable calculation and restart-safe exact replay.
 role: developer
