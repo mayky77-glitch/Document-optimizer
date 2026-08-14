@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import tracemalloc
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -275,6 +276,25 @@ def test_request_local_index_scans_once_for_many_inspections(
     for row in range(1, 1_001):
         assert inspect_index_cell(index, f"A{row}")[1] == str(row)
     assert calls == 1
+
+
+def test_compact_index_has_bounded_memory_for_twenty_thousand_cells() -> None:
+    cells = b"".join(f'<c r="A{row}" s="1"><v>{row}</v></c>'.encode() for row in range(1, 20_001))
+    xml = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b"<sheetData><row>" + cells + b"</row></sheetData></worksheet>"
+    )
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        index = worksheet_index(xml)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(index.cells) == 20_000
+    assert peak < 24 * 1024 * 1024
 
 
 def test_verify_temp_package_scans_changed_part_once_for_one_thousand_cells(

@@ -92,10 +92,10 @@ def write_target_report(
     _validate_public_inputs(source, output, decision, target_schema)
     snapshot_path, source_identity = _snapshot_source(source, output.parent)
     snapshot_owned = True
-    _validate_schema_identity(source, source_identity, target_schema)
-    if decision not in _WRITABLE_DECISIONS:
-        try:
-            return _result(
+    try:
+        _validate_schema_identity(source, source_identity, target_schema)
+        if decision not in _WRITABLE_DECISIONS:
+            result = _result(
                 WriteStatus.SKIPPED_DECISION,
                 decision,
                 target_schema,
@@ -106,17 +106,19 @@ def write_target_report(
                 (),
                 (),
             )
-        finally:
-            if snapshot_owned:
-                snapshot_path.unlink(missing_ok=True)
-    if output.exists():
-        raise ExcelWriterSafetyError("OUTPUT_EXISTS", str(output))
-    calculations = _validated_calculations(calculation_results)
-    reject_unsupported_package(snapshot_path)
-    parts = worksheet_part_map(snapshot_path)
-    written_cells = _build_write_plan(snapshot_path, calculations, target_schema, parts)
-    if not written_cells:
-        raise ExcelWriterInputError("EMPTY_WRITE_SET", "no non-None calculated values")
+            snapshot_path.unlink(missing_ok=True)
+            return result
+        if output.exists():
+            raise ExcelWriterSafetyError("OUTPUT_EXISTS", str(output))
+        calculations = _validated_calculations(calculation_results)
+        reject_unsupported_package(snapshot_path)
+        parts = worksheet_part_map(snapshot_path)
+        written_cells = _build_write_plan(snapshot_path, calculations, target_schema, parts)
+        if not written_cells:
+            raise ExcelWriterInputError("EMPTY_WRITE_SET", "no non-None calculated values")
+    except BaseException:
+        snapshot_path.unlink(missing_ok=True)
+        raise
     changes_by_part = _changes_by_part(written_cells, parts)
     temp_path = _temp_path(output)
     published = False

@@ -9,7 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
 from fixtures.quality_control.builders import calculated_match, calculated_result
@@ -106,6 +106,46 @@ def test_reopen_failure_never_removes_output_replaced_during_publication(
         )
 
     assert output.read_bytes() == b"concurrent replacement"
+
+
+def test_swap_use_restore_of_source_path_cannot_change_snapshot_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.xlsx"
+    alternate = tmp_path / "alternate.xlsx"
+    parked = tmp_path / "parked.xlsx"
+    output = tmp_path / "result.xlsx"
+    _workbook(source)
+    _workbook(alternate)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Лист"
+    sheet["D30"] = 99
+    sheet["D30"].font = Font(bold=True)
+    workbook.save(alternate)
+    workbook.close()
+    original_write = engine._write_temp_package
+
+    def swap_during_write(snapshot: Path, *args, **kwargs) -> None:
+        assert snapshot.name.startswith(".excel-writer-source-")
+        os.replace(source, parked)
+        os.replace(alternate, source)
+        try:
+            original_write(snapshot, *args, **kwargs)
+        finally:
+            os.replace(source, alternate)
+            os.replace(parked, source)
+
+    monkeypatch.setattr(engine, "_write_temp_package", swap_during_write)
+    result = write_target_report(
+        source, output, WriteDecision.ALLOW_WRITE, (_calculation(),), _schema(source)
+    )
+
+    assert result.status.value == "written"
+    written = load_workbook(output, data_only=True, read_only=True)
+    assert written["Лист"]["D30"].value == 0
+    written.close()
+    assert not tuple(tmp_path.glob(".excel-writer-source-*.xlsx"))
 
 
 def test_build_write_plan_scans_one_changed_part_once_for_one_thousand_cells(
