@@ -15,11 +15,6 @@ from .models import (
     WriteStatus,
     WrittenCell,
 )
-from .period_insertion import (
-    build_period_insertion_plan,
-    prepare_period_insertion,
-    verify_period_insertion,
-)
 from .row_annotations import annotate_failed_rows
 
 __all__ = (
@@ -39,3 +34,16 @@ __all__ = (
     "verify_period_insertion",
     "write_target_report",
 )
+
+
+def __getattr__(name: str):
+    """Load period transformation only for callers that explicitly request it."""
+    if name in {
+        "build_period_insertion_plan",
+        "prepare_period_insertion",
+        "verify_period_insertion",
+    }:
+        from . import period_insertion
+
+        return getattr(period_insertion, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

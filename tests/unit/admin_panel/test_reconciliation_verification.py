@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -138,6 +140,22 @@ def test_verification_rejects_period_before_review_or_preview_path(
         verify_reconciliation(job, ())
 
     assert called is False
+
+
+def test_fresh_verification_import_does_not_load_period_planner() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import report_processor.admin_panel.reconciliation_verification; "
+            "assert 'report_processor.excel_writer.period_insertion' not in sys.modules",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.parametrize(

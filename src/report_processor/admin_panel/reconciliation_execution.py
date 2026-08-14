@@ -38,6 +38,7 @@ from .reconciliation_semantic_assist import RUBERT_TINY2_MODEL_REVISION, run_loc
 from .reconciliation_sources import AllReconciliationSourcesUnusableError, ReconciliationSourceBatch
 from .reconciliation_state import ReconciliationReviewState
 from .reconciliation_target import (
+    ReconciliationTargetIdentity,
     category_id,
     publish_unchanged_target,
     read_reconciliation_target,
@@ -89,7 +90,9 @@ def prepare_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationR
         return ReconciliationReviewResult(None, None, (), True, str(error))
     except Exception:
         return ReconciliationReviewResult(None, None, (), True)
-    return _prepare_review_from_targets(job, feedback, targets, job.target_digest)
+    identity = ReconciliationTargetIdentity(job.target_digest, job.stage).target_identity_digest
+    _bind_target_identity(job, identity)
+    return _prepare_review_from_targets(job, feedback, targets, identity)
 
 
 def prepare_period_review(job, feedback: tuple[FeedbackRecord, ...]) -> ReconciliationReviewResult:
@@ -108,7 +111,7 @@ def prepare_period_review(job, feedback: tuple[FeedbackRecord, ...]) -> Reconcil
     except Exception:
         return ReconciliationReviewResult(None, None, (), True)
     identity = preview.target_identity_digest
-    job.target_identity_digest = identity
+    _bind_target_identity(job, identity)
     return _prepare_review_from_targets(job, feedback, preview.rows, identity)
 
 
@@ -168,6 +171,13 @@ def _prepare_review_from_targets(
     return ReconciliationReviewResult(state, batch, batch.issues)
 
 
+def _bind_target_identity(job, identity: str) -> None:
+    expected = getattr(job, "target_identity_digest", None)
+    if expected is not None and expected != identity:
+        raise RuntimeError("RECONCILIATION_TARGET_IDENTITY_CHANGED")
+    job.target_identity_digest = identity
+
+
 def apply_review(
     job, state: ReconciliationReviewState, decisions: tuple[ReviewDecision, ...] | None = None
 ) -> ReconciliationApplyResult:
@@ -205,7 +215,7 @@ def apply_review(
             False,
         )
     write_job = job
-    if preview is not None:
+    if preview is not None and preview.plan is not None:
         from report_processor.excel_writer import prepare_period_insertion
 
         prepared = prepare_period_insertion(
@@ -284,7 +294,10 @@ def _apply_target_projection(job):
     period = getattr(job, "reporting_period", None)
     if period is None:
         schema, targets = read_reconciliation_target(job.target, job.target_digest, job.stage)
-        identity = getattr(job, "target_identity_digest", None) or job.target_digest
+        identity = ReconciliationTargetIdentity(job.target_digest, job.stage).target_identity_digest
+        expected = getattr(job, "target_identity_digest", None)
+        if expected is not None and expected != identity:
+            raise RuntimeError("RECONCILIATION_TARGET_IDENTITY_CHANGED")
         return schema, targets, identity, None
     from .reconciliation_period_preview import preview_reconciliation_target
 
@@ -354,6 +367,7 @@ def calculation_semantic_digest(calculations) -> str:
     """Canonical writer-adapted calculation facts, sorted independently of input order."""
     payload = [
         {
+            "calculation_id": item.calculation_id,
             "cost": _decimal_text(item.cost),
             "quantity": _decimal_text(item.quantity),
             "status": item.status.value,
@@ -363,7 +377,12 @@ def calculation_semantic_digest(calculations) -> str:
     ]
     return _hash(
         "ReconciliationCalculationSemantics-1.0",
-        sorted(payload, key=lambda item: item["target_row_id"]),
+        sorted(
+            payload,
+            key=lambda item: json.dumps(
+                item, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+            ),
+        ),
     )
 
 
@@ -570,17 +589,19 @@ def _selected_matches(state, overrides, catalog: _Catalog, job, source_rows, ide
 
 
 def _physical_source_identity(source) -> tuple[str, str, int]:
-    location = source.source_location
-    digest = str(location.source_file_id).rsplit(":", 1)[-1]
-    row = location.row_number
+    digest = source.source_file_id
+    sheet_name = source.source_sheet
+    row = source.source_row_number
     if (
-        not digest
-        or not isinstance(location.sheet_name, str)
-        or not location.sheet_name
+        not isinstance(digest, str)
+        or not digest
+        or not isinstance(sheet_name, str)
+        or not sheet_name
+        or not isinstance(row, int)
         or row <= 0
     ):
         raise ValueError("INVALID_SOURCE_IDENTITY")
-    return digest, location.sheet_name, row
+    return digest, sheet_name, row
 
 
 def _apply_plan(

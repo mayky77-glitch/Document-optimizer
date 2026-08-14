@@ -200,6 +200,11 @@ class AdminPanelService:
                 target_name=target_name,
                 operation=clean_operation,
                 reporting_period=clean_period,
+                target_identity_digest=(
+                    None
+                    if clean_period is not None
+                    else _strict_target_identity_digest(target_digest, selected_stage)
+                ),
             )
             self.jobs[job_id] = job
             registered = True
@@ -540,8 +545,15 @@ class AdminPanelService:
     def _manifest_for(self, job: AdminJob) -> dict[str, object]:
         source_paths = tuple(job.sources or (job.source,))
         source_digests = tuple(job.source_digests or (job.source_digest,))
+        source_names = tuple(job.source_names or tuple(path.name for path in source_paths))
         if len(source_paths) != len(source_digests) or not source_paths:
             raise ValueError("reconciliation job has invalid source facts")
+        if len(source_names) != len(source_paths) or any(not name for name in source_names):
+            raise ValueError("reconciliation job has invalid source names")
+        if job.reporting_period is None and job.target_identity_digest is None:
+            job.target_identity_digest = _strict_target_identity_digest(
+                job.target_digest, job.stage
+            )
         payload: dict[str, object] = {
             "contract": RECONCILIATION_MANIFEST_CONTRACT,
             "status": job.status,
@@ -550,10 +562,10 @@ class AdminPanelService:
             "stage": job.stage,
             "source_paths": [_job_relative_path(job, path) for path in source_paths],
             "source_digests": list(source_digests),
-            "source_names": [Path(name).name for name in job.source_names],
+            "source_names": [Path(name).name for name in source_names],
             "target_path": _job_relative_path(job, job.target),
             "target_digest": job.target_digest,
-            "target_name": Path(job.target_name).name,
+            "target_name": Path(job.target_name or job.target.name).name,
             "reporting_period": job.reporting_period,
             "target_identity_digest": job.target_identity_digest,
             "updated_at": datetime.now(UTC).isoformat(),
@@ -627,22 +639,6 @@ class AdminPanelService:
         if job.status != "review_required" or job.review_state is None:
             raise RuntimeError("reconciliation apply plan cannot be rebuilt")
         decisions = evidence["decisions"]
-        if evidence["legacy_injected"]:
-            _decisions, feedback, apply_key, plan_hash = _rebuild_apply_plan(job, job.review_state)
-            if apply_key != plan["apply_key"] or plan_hash != plan["payload_hash"]:
-                raise RuntimeError("reconciliation apply plan changed")
-            self.feedback_store.commit_apply(
-                target_digest=job.target_digest,
-                apply_key=plan["apply_key"],
-                payload_hash=plan["payload_hash"],
-                records=feedback,
-                precommit_validator=lambda: _verify_apply_artifacts(
-                    job, job.output, plan["output_identity"], plan["output_digest"]
-                ),
-            )
-            job.status = "ready"
-            job.apply_manifest = None
-            return
         current_decisions = _dump_review_decisions(job.review_state.core_decisions())
         if current_decisions != _dump_review_decisions(decisions):
             raise RuntimeError("reconciliation apply decisions changed")
@@ -768,8 +764,26 @@ def _prepare_job_review(job: AdminJob, feedback):
 def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, object]) -> AdminJob:
     if manifest.get("contract") != RECONCILIATION_MANIFEST_CONTRACT:
         raise ValueError("reconciliation manifest contract is unsupported")
-    required_strings = ("status", "operation", "mode", "stage", "target_path", "target_digest")
+    required_strings = (
+        "status",
+        "operation",
+        "mode",
+        "stage",
+        "target_path",
+        "target_digest",
+        "target_name",
+        "updated_at",
+    )
     if any(not isinstance(manifest.get(key), str) or not manifest[key] for key in required_strings):
+        raise ValueError("reconciliation manifest is incomplete")
+    required_keys = (
+        "source_paths",
+        "source_digests",
+        "source_names",
+        "reporting_period",
+        "target_identity_digest",
+    )
+    if any(key not in manifest for key in required_keys):
         raise ValueError("reconciliation manifest is incomplete")
     status = str(manifest["status"])
     if status not in _RECOVERABLE_MANIFEST_STATUSES:
@@ -789,16 +803,20 @@ def _job_from_manifest(workspace_root: Path, job_id: str, manifest: dict[str, ob
     target = _manifest_path(directory, manifest["target_path"])
     target_digest = _manifest_digest(manifest["target_digest"])
     target_identity_digest = _optional_manifest_digest(manifest.get("target_identity_digest"))
+    if reporting_period is None:
+        expected_identity = _strict_target_identity_digest(target_digest, stage)
+        if target_identity_digest != expected_identity:
+            raise ValueError("reconciliation target identity is inconsistent")
+    elif status in {"review_required", "applying", "ready"} and target_identity_digest is None:
+        raise ValueError("reconciliation target identity is missing")
     names = manifest.get("source_names")
-    source_names = (
-        tuple(Path(item).name for item in names)
-        if (
-            isinstance(names, list)
-            and len(names) == len(source_paths)
-            and all(isinstance(item, str) for item in names)
-        )
-        else tuple(path.name for path in source_paths)
-    )
+    if (
+        not isinstance(names, list)
+        or len(names) != len(source_paths)
+        or any(not isinstance(item, str) or not item for item in names)
+    ):
+        raise ValueError("reconciliation manifest source names are invalid")
+    source_names = tuple(Path(item).name for item in names)
     output = None
     output_path = manifest.get("output_path")
     if output_path is not None:
@@ -888,6 +906,12 @@ def _validate_reporting_period(value: object) -> str | None:
     from .reconciliation_period import ReportingPeriod
 
     return ReportingPeriod.parse(value).value
+
+
+def _strict_target_identity_digest(target_digest: str, stage: str) -> str:
+    from .reconciliation_target import ReconciliationTargetIdentity
+
+    return ReconciliationTargetIdentity(target_digest, stage).target_identity_digest
 
 
 def _manifest_count(value: object) -> int:
@@ -998,6 +1022,8 @@ def _apply_evidence(
 def _load_apply_evidence(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or value.get("contract") != "ReconciliationApplyReplay-2.0":
         raise ValueError("reconciliation apply evidence is invalid")
+    if "legacy_injected" in value:
+        raise ValueError("reconciliation apply evidence is unsupported")
     fields = ("catalog_digest", "target_identity_digest", "calculation_digest", "rules_hash")
     if any(_optional_manifest_digest(value.get(field_name)) is None for field_name in fields):
         raise ValueError("reconciliation apply evidence is invalid")
@@ -1019,7 +1045,6 @@ def _load_apply_evidence(value: object) -> dict[str, object]:
         "actionable": value["actionable"],
         "decisions": decisions,
         "input_snapshots": tuple(snapshots),
-        "legacy_injected": value.get("legacy_injected") is True,
     }
 
 

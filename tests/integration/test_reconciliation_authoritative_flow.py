@@ -10,6 +10,7 @@ from report_processor.admin_panel.reconciliation_execution import (
     ReconciliationApplyResult,
     _apply_plan,
     _feedback_records,
+    _physical_source_identity,
 )
 from report_processor.admin_panel.reconciliation_state import ReconciliationReviewState
 from report_processor.admin_panel.reconciliation_target import _bindings, writer_calculations
@@ -52,6 +53,16 @@ def test_two_accepted_source_rows_contribute_once_to_one_target_aggregate() -> N
 
     assert result.quantity == Decimal("5.00")
     assert result.cost == Decimal("25.00")
+
+
+def test_physical_source_identity_uses_normalized_source_row_provenance() -> None:
+    source = calculation_source_row("source:upload-a:17")
+
+    assert _physical_source_identity(source) == (
+        source.source_file_id,
+        source.source_sheet,
+        source.source_row_number,
+    )
 
 
 def test_reconciliation_target_binds_discovered_cells_and_scales_writer_values() -> None:
@@ -201,6 +212,15 @@ def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) 
     output = job.directory / "result.xlsx"
     decisions = tuple(job.review_state.core_decisions())
     feedback = _feedback_records(job.review_state, decisions)
+    evidence = {
+        "catalog_digest": "a" * 64,
+        "target_identity_digest": "b" * 64,
+        "calculation_digest": "c" * 64,
+        "rules_hash": "d" * 64,
+        "actionable": True,
+        "feedback": feedback,
+    }
+    plan: dict[str, str] = {}
 
     def write_result(*_args):
         output.write_bytes(b"result")
@@ -213,9 +233,24 @@ def test_restart_exact_replays_durable_apply_once(tmp_path, monkeypatch, fault) 
             _feedback_records(job.review_state, decisions),
             decisions,
         )
-        return ReconciliationApplyResult(output, feedback, apply_key, plan_hash)
+        plan.update(apply_key=apply_key, plan_hash=plan_hash)
+        return ReconciliationApplyResult(
+            output,
+            feedback,
+            apply_key,
+            plan_hash,
+            evidence["catalog_digest"],
+            evidence["target_identity_digest"],
+            evidence["calculation_digest"],
+            evidence["rules_hash"],
+            True,
+        )
 
     monkeypatch.setattr("report_processor.admin_panel.service.apply_review", write_result)
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.rebuild_apply_evidence",
+        lambda *_args: {**plan, **evidence},
+    )
     monkeypatch.setattr(
         "report_processor.admin_panel.service.prepare_review",
         lambda *_args: __import__(

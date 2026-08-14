@@ -14,10 +14,14 @@ from report_processor.admin_panel.reconciliation_execution import (
     _review_row_id,
     _selected_matches,
     apply_review,
+    calculation_semantic_digest,
     prepare_review,
 )
 from report_processor.admin_panel.reconciliation_semantic_assist import RUBERT_TINY2_MODEL_REVISION
-from report_processor.admin_panel.reconciliation_target import publish_unchanged_target
+from report_processor.admin_panel.reconciliation_target import (
+    ReconciliationTargetIdentity,
+    publish_unchanged_target,
+)
 from report_processor.reconciliation_review import (
     FeedbackRecord,
     ReviewAction,
@@ -35,7 +39,7 @@ def test_prepare_review_hides_leading_zero_row_without_hiding_later_nonzero_row(
     nonzero = ReviewRow("nonzero", "Ненулевая работа", "м", Decimal("1"), Decimal("2"), "target-1")
     job = SimpleNamespace(
         source_digests=("source",),
-        target_digest="target",
+        target_digest="b" * 64,
         target=tmp_path / "target.xlsx",
         stage="13.1",
         directory=tmp_path,
@@ -67,6 +71,10 @@ def test_prepare_review_hides_leading_zero_row_without_hiding_later_nonzero_row(
     assert tuple(result.state.rows) == ("nonzero",)
     assert result.state.grouping.partition.hidden_rows == (zero,)
     assert result.state.grouping.version_context.model_revision == RUBERT_TINY2_MODEL_REVISION
+    assert (
+        result.state.target_identity_digest
+        == ReconciliationTargetIdentity(job.target_digest, job.stage).target_identity_digest
+    )
     assert result.state.group_decisions == {} and result.state.row_decisions == {}
 
 
@@ -74,6 +82,30 @@ def test_package_version_source_digests_are_normalized_sorted_and_unique() -> No
     assert _normalized_source_digests((" B ", "a", "b", "A")) == ("a", "b")
     with pytest.raises(ValueError, match="required"):
         _normalized_source_digests(("source", None))
+
+
+def test_calculation_semantic_digest_binds_calculation_identity_and_order() -> None:
+    first = SimpleNamespace(
+        calculation_id="calculation-a",
+        target_row_id="target-a",
+        status=SimpleNamespace(value="calculated"),
+        quantity=Decimal("0.00"),
+        cost=Decimal("0.00"),
+    )
+    second = SimpleNamespace(
+        calculation_id="calculation-b",
+        target_row_id="target-b",
+        status=SimpleNamespace(value="calculated"),
+        quantity=None,
+        cost=Decimal("1.00"),
+    )
+
+    assert calculation_semantic_digest((first, second)) == calculation_semantic_digest(
+        (second, first)
+    )
+    assert calculation_semantic_digest((first,)) != calculation_semantic_digest(
+        (SimpleNamespace(**{**first.__dict__, "calculation_id": "calculation-drift"}),)
+    )
 
 
 def test_catalog_rejects_duplicate_document_index_and_category() -> None:
@@ -89,7 +121,7 @@ def test_prepare_review_projects_duplicate_target_category_as_controlled_target_
 ) -> None:
     job = SimpleNamespace(
         source_digests=("source",),
-        target_digest="target",
+        target_digest="b" * 64,
         target=tmp_path / "target.xlsx",
         stage="13.1",
         directory=tmp_path,
@@ -117,24 +149,17 @@ def test_selected_matches_rejects_same_physical_source_row_across_upload_ordinal
         row_number=10,
     )
     catalog = _Catalog({"category": "Монтаж"}, {("1001", "category"): target})
-    location = SimpleNamespace(
-        source_file_id="source:0:" + "a" * 64,
-        sheet_name="КС-6а",
-        row_number=20,
-    )
     first = SimpleNamespace(
-        source_location=location,
+        source_file_id="source:" + "a" * 64,
+        source_sheet="КС-6а",
+        source_row_number=20,
         source_filename="source-1001.xlsx",
-        source_file_id=location.source_file_id,
     )
     second = SimpleNamespace(
-        source_location=SimpleNamespace(
-            source_file_id="source:1:" + "a" * 64,
-            sheet_name="КС-6а",
-            row_number=20,
-        ),
         source_filename="copy-1001.xlsx",
-        source_file_id="source:1:" + "a" * 64,
+        source_file_id="source:" + "a" * 64,
+        source_sheet="КС-6а",
+        source_row_number=20,
     )
     overrides = {
         "first": SimpleNamespace(action=ReviewAction.ACCEPT, target_category="category"),
@@ -149,7 +174,7 @@ def test_selected_matches_rejects_same_physical_source_row_across_upload_ordinal
             catalog,
             job,
             {"first": first, "second": second},
-            ((location.source_file_id, "1001"), (second.source_file_id, "1001")),
+            ((first.source_file_id, "1001"), (second.source_file_id, "1001")),
         )
 
 
@@ -276,7 +301,7 @@ def test_apply_review_all_rejected_writes_unchanged_target_and_feedback(
     )
     job = SimpleNamespace(
         target=tmp_path / "target.xlsx",
-        target_digest="target-digest",
+        target_digest="b" * 64,
         stage="13.1",
         directory=tmp_path,
         rules_path=None,
