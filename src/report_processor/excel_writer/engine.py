@@ -90,26 +90,31 @@ def write_target_report(
     source = Path(source_path)
     output = Path(output_path)
     _validate_public_inputs(source, output, decision, target_schema)
-    source_identity = _source_identity(source)
+    snapshot_path, source_identity = _snapshot_source(source, output.parent)
+    snapshot_owned = True
     _validate_schema_identity(source, source_identity, target_schema)
     if decision not in _WRITABLE_DECISIONS:
-        return _result(
-            WriteStatus.SKIPPED_DECISION,
-            decision,
-            target_schema,
-            source_identity.sha256,
-            None,
-            None,
-            (),
-            (),
-            (),
-        )
+        try:
+            return _result(
+                WriteStatus.SKIPPED_DECISION,
+                decision,
+                target_schema,
+                source_identity.sha256,
+                None,
+                None,
+                (),
+                (),
+                (),
+            )
+        finally:
+            if snapshot_owned:
+                snapshot_path.unlink(missing_ok=True)
     if output.exists():
         raise ExcelWriterSafetyError("OUTPUT_EXISTS", str(output))
     calculations = _validated_calculations(calculation_results)
-    reject_unsupported_package(source)
-    parts = worksheet_part_map(source)
-    written_cells = _build_write_plan(source, calculations, target_schema, parts)
+    reject_unsupported_package(snapshot_path)
+    parts = worksheet_part_map(snapshot_path)
+    written_cells = _build_write_plan(snapshot_path, calculations, target_schema, parts)
     if not written_cells:
         raise ExcelWriterInputError("EMPTY_WRITE_SET", "no non-None calculated values")
     changes_by_part = _changes_by_part(written_cells, parts)
@@ -117,8 +122,8 @@ def write_target_report(
     published = False
     published_identity: _PublishedOutputIdentity | None = None
     try:
-        _write_temp_package(source, temp_path, changes_by_part, remove_calc_chain=True)
-        _verify_temp_package(source, temp_path, changes_by_part, remove_calc_chain=True)
+        _write_temp_package(snapshot_path, temp_path, changes_by_part, remove_calc_chain=True)
+        _verify_temp_package(snapshot_path, temp_path, changes_by_part, remove_calc_chain=True)
         if package_has_formulas(temp_path, parts):
             recalculate_and_materialize(temp_path)
         verify_formula_free_package(temp_path, parts)
@@ -151,6 +156,8 @@ def write_target_report(
         raise ExcelWriterAtomicError("ATOMIC_PUBLISH_FAILED", str(error)) from error
     finally:
         temp_path.unlink(missing_ok=True)
+        if snapshot_owned:
+            snapshot_path.unlink(missing_ok=True)
 
 
 def _validate_public_inputs(
@@ -363,6 +370,46 @@ def _source_identity(path: Path) -> _SourceIdentity:
     return _SourceIdentity(
         details.st_dev, details.st_ino, details.st_size, details.st_mtime_ns, _sha256(path)
     )
+
+
+def _snapshot_source(source: Path, directory: Path) -> tuple[Path, _SourceIdentity]:
+    """Capture one verified source fd before any hash or ZIP operation."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(source, flags)
+    snapshot_descriptor = -1
+    snapshot_name = ""
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode):
+            raise ExcelWriterSafetyError("INVALID_XLSX_PACKAGE", "source is not a regular file")
+        snapshot_descriptor, snapshot_name = tempfile.mkstemp(
+            prefix=".excel-writer-source-", suffix=".xlsx", dir=directory
+        )
+        os.fchmod(snapshot_descriptor, 0o600)
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 1_048_576):
+            digest.update(chunk)
+            os.write(snapshot_descriptor, chunk)
+        os.fsync(snapshot_descriptor)
+        return (
+            Path(snapshot_name),
+            _SourceIdentity(
+                details.st_dev,
+                details.st_ino,
+                details.st_size,
+                details.st_mtime_ns,
+                digest.hexdigest(),
+            ),
+        )
+    except BaseException:
+        if snapshot_name:
+            Path(snapshot_name).unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(descriptor)
+        if snapshot_descriptor >= 0:
+            os.close(snapshot_descriptor)
 
 
 def _assert_source_unchanged(path: Path, expected: _SourceIdentity) -> None:
