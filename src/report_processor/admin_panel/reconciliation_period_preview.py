@@ -33,6 +33,7 @@ from .reconciliation_target import (
 from .reconciliation_target_measure import (
     ReconciliationTargetMeasureError,
     discover_target_measures,
+    validated_merge_ranges,
 )
 
 
@@ -61,7 +62,9 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         if not detail_rows:
             raise ValueError("RECONCILIATION_TARGET_STAGE_EMPTY")
         merged_ranges = {
-            sheet_name: read_sheet_structure(session.source.local_path, sheet_name).merged_ranges
+            sheet_name: validated_merge_ranges(
+                read_sheet_structure(session.source.local_path, sheet_name).merged_ranges
+            )
             for sheet_name in detail_rows
         }
         try:

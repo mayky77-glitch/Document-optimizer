@@ -46,7 +46,11 @@ from report_processor.target_report.ooxml import (
 from report_processor.target_report.reader import _cell_snapshot
 
 from .reconciliation_identity import terminal_identity
-from .reconciliation_target_measure import TargetMeasurePair, discover_target_measures
+from .reconciliation_target_measure import (
+    TargetMeasurePair,
+    discover_target_measures,
+    validated_merge_ranges,
+)
 
 _STAGE_RE = re.compile(r"этап\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -317,7 +321,9 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
         if not detail_rows:
             raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
         merged_ranges = {
-            sheet_name: read_sheet_structure(session.source.local_path, sheet_name).merged_ranges
+            sheet_name: validated_merge_ranges(
+                read_sheet_structure(session.source.local_path, sheet_name).merged_ranges
+            )
             for sheet_name in detail_rows
         }
         measure_pairs = discover_target_measures(

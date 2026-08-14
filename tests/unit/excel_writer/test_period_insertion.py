@@ -9,6 +9,7 @@ import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import PatternFill
+from openpyxl.utils import get_column_letter
 
 from report_processor.admin_panel import reconciliation_target_measure
 from report_processor.admin_panel.reconciliation_period import ReconciliationPeriodError
@@ -132,6 +133,44 @@ def test_raw_duplicate_merge_rejects_build_prepare_and_verify_without_output(
     _add_zip_members(output, {"xl/worksheets/sheet1.xml": _duplicate_l1_m1_merge(output_sheet)})
     with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
         verify_period_insertion(clean, output, clean_plan)
+
+
+@pytest.mark.parametrize("count", (1_000, 2_000, 4_000))
+def test_raw_merge_sweep_has_bounded_subquadratic_work(count: int) -> None:
+    references = "".join(
+        f'<mergeCell ref="{get_column_letter(index * 4 + 1)}1:'
+        f'{get_column_letter(index * 4 + 2)}1"/>'
+        for index in range(count)
+    )
+    payload = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<mergeCells count="{count}">{references}</mergeCells>'
+        "</worksheet>"
+    ).encode()
+    operations: list[int] = []
+
+    assert len(period_insertion._raw_sheet_merges(payload, operations)) == count
+    assert len(operations) < count * 100
+
+
+def test_raw_merge_count_limit_rejects_before_overlap_work() -> None:
+    count = period_insertion._MAX_RAW_MERGES + 1
+    references = "".join(
+        f'<mergeCell ref="{get_column_letter(index * 2 + 1)}1:'
+        f'{get_column_letter(index * 2 + 2)}1"/>'
+        for index in range(count)
+    )
+    payload = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<mergeCells count="{count}">{references}</mergeCells>'
+        "</worksheet>"
+    ).encode()
+    operations: list[int] = []
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        period_insertion._raw_sheet_merges(payload, operations)
+
+    assert operations == []
 
 
 def test_planner_rejects_wide_header_merge_before_output(tmp_path: Path) -> None:

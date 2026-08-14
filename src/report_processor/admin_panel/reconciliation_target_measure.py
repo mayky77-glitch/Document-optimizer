@@ -16,6 +16,7 @@ _MAX_SUFFIX_INSPECTED_CELLS = 100_000
 _MAX_SUFFIX_CELLS = 50_000
 _MAX_SUFFIX_ROW = 1_048_576
 _MAX_SUFFIX_COLUMN = 16_384
+_MAX_VALIDATED_MERGE_RANGES = 4_096
 _RUSSIAN_MONTH_TOKENS = {
     "январь": 1,
     "января": 1,
@@ -49,6 +50,46 @@ _DATE = re.compile(r"(?<!\d)\d{1,2}\s*[./-]\s*(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|
 
 class ReconciliationTargetMeasureError(ValueError):
     """The selected target does not expose one safe current-period measure."""
+
+
+def validated_merge_ranges(references: tuple[str, ...]) -> tuple[str, ...]:
+    """Fail closed on non-canonical, duplicate, or overlapping merge evidence."""
+
+    ranges: list[tuple[str, tuple[int, int, int, int]]] = []
+    for reference in references:
+        if len(ranges) >= _MAX_VALIDATED_MERGE_RANGES:
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        if not isinstance(reference, str):
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        try:
+            left, top, right, bottom = range_boundaries(reference)
+        except ValueError as error:
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID") from error
+        canonical = f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
+        if (
+            reference != canonical
+            or (left == right and top == bottom)
+            or not 1 <= left <= right <= _MAX_SUFFIX_COLUMN
+            or not 1 <= top <= bottom <= _MAX_SUFFIX_ROW
+            or any(reference == existing for existing, _bounds in ranges)
+            or any(
+                not (
+                    right < existing_left
+                    or existing_right < left
+                    or bottom < existing_top
+                    or existing_bottom < top
+                )
+                for _existing, (
+                    existing_left,
+                    existing_top,
+                    existing_right,
+                    existing_bottom,
+                ) in ranges
+            )
+        ):
+            raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")
+        ranges.append((reference, (left, top, right, bottom)))
+    return tuple(reference for reference, _bounds in ranges)
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,7 +290,8 @@ def _bound_header_window(
 
 def _validate_header_work_budget(window: BoundedHeaderWindow) -> None:
     depth = window.end_row - window.start_row + 1
-    candidate_count = sum(column + 1 in window.columns for column in window.columns)
+    columns = frozenset(window.columns)
+    candidate_count = sum(column + 1 in columns for column in columns)
     work = depth * (len(window.columns) + 2 * candidate_count)
     if depth < 1 or work > _MAX_HEADER_WINDOW_CELLS:
         raise ReconciliationTargetMeasureError("TARGET_HEADER_WINDOW_INVALID")

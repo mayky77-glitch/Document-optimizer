@@ -53,6 +53,7 @@ _PERMITTED_DEFINED_NAMES = {
 _XMLNS = re.compile(rb"\s(xmlns(?::[A-Za-z_][\w.-]*)?=\"[^\"]+\")")
 _MAX_ROWS = 1_048_576
 _MAX_COLUMNS = 16_384
+_MAX_RAW_MERGES = 4_096
 
 
 def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]]:
@@ -71,7 +72,7 @@ def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
 
 
-def _raw_sheet_merges(payload: bytes) -> tuple[str, ...]:
+def _raw_sheet_merges(payload: bytes, operations: list[int] | None = None) -> tuple[str, ...]:
     try:
         root = ET.fromstring(payload)
     except ET.ParseError as error:
@@ -85,7 +86,17 @@ def _raw_sheet_merges(payload: bytes) -> tuple[str, ...]:
     count = container.attrib.get("count")
     if count is None or not count.isdecimal():
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    normalized_count = count.lstrip("0") or "0"
+    maximum_count = str(_MAX_RAW_MERGES)
+    if (
+        len(normalized_count) > len(maximum_count)
+        or normalized_count > maximum_count
+        or len(container) > _MAX_RAW_MERGES
+    ):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    declared_count = int(normalized_count)
     references: list[tuple[str, tuple[int, int, int, int]]] = []
+    seen: set[str] = set()
     for child in container:
         if child.tag != _Q("mergeCell") or set(child.attrib) != {"ref"}:
             raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
@@ -100,27 +111,81 @@ def _raw_sheet_merges(payload: bytes) -> tuple[str, ...]:
             or (left == right and top == bottom)
             or not 1 <= left <= right <= _MAX_COLUMNS
             or not 1 <= top <= bottom <= _MAX_ROWS
+            or reference in seen
         ):
             raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
-        if any(
-            not (
-                right < existing_left
-                or existing_right < left
-                or bottom < existing_top
-                or existing_bottom < top
-            )
-            for _existing, (
-                existing_left,
-                existing_top,
-                existing_right,
-                existing_bottom,
-            ) in references
-        ):
-            raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+        seen.add(reference)
         references.append((reference, (left, top, right, bottom)))
-    if int(count) != len(references):
+    if declared_count != len(references):
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+    _reject_overlapping_raw_merges((bounds for _reference, bounds in references), operations)
     return tuple(reference for reference, _bounds in references)
+
+
+def _reject_overlapping_raw_merges(bounds, operations: list[int] | None = None) -> None:
+    """Sweep rows with a bounded range-add/range-max column index."""
+
+    events: dict[int, list[tuple[int, int, int]]] = {}
+    for left, top, right, bottom in bounds:
+        events.setdefault(top, []).append((1, left, right))
+        events.setdefault(bottom + 1, []).append((-1, left, right))
+    tree = _MergeIntervalIndex(_MAX_COLUMNS, operations)
+    for row in sorted(events):
+        removals = (event for event in events[row] if event[0] < 0)
+        additions = (event for event in events[row] if event[0] > 0)
+        for delta, left, right in removals:
+            tree.add(left, right, delta)
+        for _delta, left, right in additions:
+            if tree.maximum(left, right):
+                raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+            tree.add(left, right, 1)
+
+
+class _MergeIntervalIndex:
+    """Fixed 16,384-column lazy segment tree for merge-overlap checks."""
+
+    def __init__(self, columns: int, operations: list[int] | None) -> None:
+        self._maximum = [0] * (columns * 4)
+        self._lazy = [0] * (columns * 4)
+        self._columns = columns
+        self._operations = operations
+
+    def add(self, left: int, right: int, delta: int) -> None:
+        self._update(1, 1, self._columns, left, right, delta)
+
+    def maximum(self, left: int, right: int) -> int:
+        return self._query(1, 1, self._columns, left, right)
+
+    def _count(self) -> None:
+        if self._operations is not None:
+            self._operations.append(1)
+
+    def _update(self, node: int, start: int, end: int, left: int, right: int, delta: int) -> None:
+        self._count()
+        if left <= start and end <= right:
+            self._maximum[node] += delta
+            self._lazy[node] += delta
+            return
+        middle = (start + end) // 2
+        if left <= middle:
+            self._update(node * 2, start, middle, left, right, delta)
+        if right > middle:
+            self._update(node * 2 + 1, middle + 1, end, left, right, delta)
+        self._maximum[node] = self._lazy[node] + max(
+            self._maximum[node * 2], self._maximum[node * 2 + 1]
+        )
+
+    def _query(self, node: int, start: int, end: int, left: int, right: int) -> int:
+        self._count()
+        if left <= start and end <= right:
+            return self._maximum[node]
+        middle = (start + end) // 2
+        result = 0
+        if left <= middle:
+            result = self._query(node * 2, start, middle, left, right)
+        if right > middle:
+            result = max(result, self._query(node * 2 + 1, middle + 1, end, left, right))
+        return self._lazy[node] + result
 
 
 def _validated_header_merges(
