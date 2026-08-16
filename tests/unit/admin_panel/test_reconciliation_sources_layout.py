@@ -215,6 +215,30 @@ def test_direct_metric_leaves_below_cumulative_parent_are_rejected() -> None:
     workbook.close()
 
 
+def test_nested_cumulative_span_chain_is_not_admitted_as_direct() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    formulas = workbook.copy_worksheet(sheet)
+    for candidate in (sheet, formulas):
+        candidate.append(("", "Наименование работ", "Ед. изм.", "Выполнено нарастающим итогом", ""))
+        candidate.append(("", "", "", "Показатели", ""))
+        candidate.append(("", "", "", "Количество", "Общая стоимость"))
+        candidate.append(("1", "Монтаж", "м", 2, 10))
+    sheet.merge_cells("D1:E1")
+    sheet.merge_cells("D2:E2")
+
+    cumulative = _extract_ks6a_rows(
+        sheet, formulas, "source:one", ReconciliationSourceDescriptor("source.xlsx")
+    )
+    direct = _extract_ks2_rows(
+        sheet, formulas, "source:one", ReconciliationSourceDescriptor("source.xlsx")
+    )
+
+    workbook.close()
+    assert len(cumulative) == 1
+    assert direct == ()
+
+
 def test_column_permutation_does_not_change_physical_role_binding() -> None:
     workbook = Workbook()
     sheet = workbook.active

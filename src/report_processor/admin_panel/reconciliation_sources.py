@@ -266,6 +266,7 @@ def _physical_layouts(
 ):
     """Bind roles only after a physical metric region has been identified."""
     candidates = []
+    all_regions = _all_physical_metric_regions(header)
     for region in _physical_metric_regions(header, cumulative=cumulative):
         roles = _region_roles(
             header,
@@ -281,6 +282,7 @@ def _physical_layouts(
             descriptor,
             source_type=source_type,
             start_row=region.header_end + 1,
+            end_row=_detail_end(sheet, region, all_regions),
             work_column=work_column,
             unit_column=unit_column,
             quantity_column=region.quantity_column,
@@ -333,6 +335,17 @@ def _physical_metric_regions(header: _HeaderGraph, *, cumulative: bool) -> list[
     return list(dict.fromkeys(regions))
 
 
+def _all_physical_metric_regions(header: _HeaderGraph) -> tuple[_MetricRegion, ...]:
+    return tuple(
+        dict.fromkeys(
+            (
+                *_physical_metric_regions(header, cumulative=True),
+                *_physical_metric_regions(header, cumulative=False),
+            )
+        )
+    )
+
+
 def _cumulative_metric_regions(header: _HeaderGraph) -> list[_MetricRegion]:
     regions: list[_MetricRegion] = []
     for parent in sorted(set(header.spans.values())):
@@ -343,8 +356,7 @@ def _cumulative_metric_regions(header: _HeaderGraph) -> list[_MetricRegion]:
         # not by a word inherited into one of its metric descendants.
         if not _role_text(_text_at(header.rows[top - 1], left), "cumulative"):
             continue
-        leaf_row = bottom + 1
-        for quantity, cost in _physical_metric_pairs(header, leaf_row, left, right):
+        for quantity, cost, leaf_row in _cumulative_metric_leaves(header, parent):
             regions.append(
                 _MetricRegion(
                     quantity,
@@ -357,13 +369,50 @@ def _cumulative_metric_regions(header: _HeaderGraph) -> list[_MetricRegion]:
     return regions
 
 
+def _cumulative_metric_leaves(
+    header: _HeaderGraph, root: tuple[int, int, int, int]
+) -> list[tuple[int, int, int]]:
+    """Follow one exact nested merged-span chain from a cumulative root to its leaves."""
+    current = root
+    seen: set[tuple[int, int, int, int]] = set()
+    while current not in seen:
+        seen.add(current)
+        _top, left, bottom, right = current
+        if bottom >= len(header.rows):
+            return []
+        leaf_row = bottom + 1
+        pairs = _physical_metric_pairs(header, leaf_row, left, right)
+        if pairs:
+            return [(quantity, cost, leaf_row) for quantity, cost in pairs]
+        nested = _adjacent_nested_spans(header, current)
+        if len(nested) != 1:
+            return []
+        current = nested[0]
+    return []
+
+
+def _adjacent_nested_spans(
+    header: _HeaderGraph, parent: tuple[int, int, int, int]
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Return only explicit, immediately-adjacent spans geometrically inside ``parent``."""
+    _top, left, bottom, right = parent
+    return tuple(
+        sorted(
+            span
+            for span in set(header.spans.values())
+            if span != parent and span[0] == bottom + 1 and left <= span[1] <= span[3] <= right
+        )
+    )
+
+
 def _direct_metric_regions(header: _HeaderGraph) -> list[_MetricRegion]:
     regions: list[_MetricRegion] = []
     for row_number, row in enumerate(header.rows, 1):
         for quantity, cost in _physical_metric_pairs(header, row_number, 1, len(row)):
-            if _under_cumulative_parent(header, row_number, quantity) or _under_cumulative_parent(
-                header, row_number, cost
-            ):
+            band_start = _header_band_start(header, row_number)
+            if _has_cumulative_ancestor(
+                header, row_number, quantity, band_start=band_start
+            ) or _has_cumulative_ancestor(header, row_number, cost, band_start=band_start):
                 continue
             quantity_span = header.span_at(row_number, quantity)
             cost_span = header.span_at(row_number, cost)
@@ -378,7 +427,7 @@ def _direct_metric_regions(header: _HeaderGraph) -> list[_MetricRegion]:
                         max(quantity_span[2], cost_span[2]),
                         cost,
                     ),
-                    _header_band_start(header, row_number),
+                    band_start,
                 )
             )
     return regions
@@ -401,15 +450,59 @@ def _is_origin(header: _HeaderGraph, row: int, column: int) -> bool:
     return (top, left) == (row, column)
 
 
-def _under_cumulative_parent(header: _HeaderGraph, row: int, column: int) -> bool:
-    """A direct layout cannot reuse leaves directly below a cumulative parent."""
-    return any(
-        bottom == row - 1
-        and left <= column <= right
-        and right > left
-        and _role_text(_text_at(header.rows[top - 1], left), "cumulative")
-        for top, left, bottom, right in set(header.spans.values())
+def _has_cumulative_ancestor(
+    header: _HeaderGraph, row: int, column: int, *, band_start: int
+) -> bool:
+    """Reject direct leaves with a cumulative span anywhere in their exact ancestry."""
+    current = header.span_at(row, column)
+    seen: set[tuple[int, int, int, int]] = set()
+    while current not in seen:
+        seen.add(current)
+        parents = _adjacent_containing_spans(header, current, band_start=band_start)
+        if len(parents) > 1:
+            return True
+        if not parents:
+            return False
+        current = parents[0]
+        top, left, _bottom, _right = current
+        if _role_text(_text_at(header.rows[top - 1], left), "cumulative"):
+            return True
+    return True
+
+
+def _adjacent_containing_spans(
+    header: _HeaderGraph,
+    child: tuple[int, int, int, int],
+    *,
+    band_start: int,
+) -> tuple[tuple[int, int, int, int], ...]:
+    top, left, _bottom, right = child
+    return tuple(
+        sorted(
+            span
+            for span in set(header.spans.values())
+            if span != child
+            and span[0] >= band_start
+            and span[2] == top - 1
+            and span[1] <= left <= right <= span[3]
+        )
     )
+
+
+def _detail_end(sheet, region: _MetricRegion, regions: tuple[_MetricRegion, ...]) -> int:
+    """Stop before the next overlapping physical metric region on this worksheet."""
+    _top, left, _bottom, right = region.metric_span
+    next_starts = [
+        other.metric_span[0]
+        for other in regions
+        if other.metric_span[0] > region.header_end
+        and _spans_overlap(left, right, other.metric_span[1], other.metric_span[3])
+    ]
+    return min(next_starts) - 1 if next_starts else int(sheet.max_row or 0)
+
+
+def _spans_overlap(left: int, right: int, other_left: int, other_right: int) -> bool:
+    return left <= other_right and other_left <= right
 
 
 def _header_band_start(header: _HeaderGraph, leaf_row: int) -> int:
@@ -777,6 +870,7 @@ def _canonical_rows(
     *,
     source_type: str,
     start_row: int,
+    end_row: int | None = None,
     work_column: int,
     unit_column: int,
     quantity_column: int,
@@ -786,7 +880,7 @@ def _canonical_rows(
 ) -> tuple[CanonicalSourceRow, ...]:
     rows: list[CanonicalSourceRow] = []
     for row_number, values in enumerate(
-        sheet.iter_rows(min_row=start_row, values_only=True), start_row
+        sheet.iter_rows(min_row=start_row, max_row=end_row, values_only=True), start_row
     ):
         work_name = _text_at(values, work_column)
         unit = _text_at(values, unit_column)

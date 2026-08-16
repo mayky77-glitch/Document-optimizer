@@ -174,6 +174,32 @@ def test_unique_cumulative_candidate_outranks_direct_candidate(tmp_path: Path) -
     assert batch.selections[0].source_type == "ks6a"
 
 
+def test_cumulative_detail_interval_stops_before_later_overlapping_direct_table(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Выполнено нарастающим итогом", ""),
+        ("", "", "", "Количество", "Общая стоимость"),
+        ("1", "Первая работа", "м", "1", "10"),
+        (),
+        ("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("2", "Вторая работа", "м", "2", "20"),
+    ):
+        sheet.append(row)
+    sheet.merge_cells("D1:E1")
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert batch.selections[0].source_type == "ks6a"
+    assert len(batch.rows) == 1
+    assert batch.rows[0].work_name == "первая работа"
+
+
 def test_two_cumulative_regions_in_one_sheet_fail_controlled_ambiguity(tmp_path: Path) -> None:
     path = tmp_path / "source.xlsx"
     workbook = Workbook()
