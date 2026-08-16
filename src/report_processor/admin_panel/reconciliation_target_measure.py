@@ -66,9 +66,14 @@ _CURRENCY_RATE = re.compile(
     _RUB_CURRENCY.pattern + r"\s*(?:[.,;:()\-]\s*)*/\s*(?=\S)",
     flags=re.UNICODE,
 )
-_PRICE_LABEL = re.compile(r"\b(?:цена|цену|ценой|цене|цен\.?|тариф\w*|расценк\w*)\b")
+_PRICE_LABEL = re.compile(
+    r"\b(?:цена|цены|цену|ценой|цене|ценам|ценами|ценах|цен\.?|"
+    r"тариф\w*|расценк\w*)\b"
+)
+_CONTEXTUAL_PRICES = re.compile(r"\bв(?:\s+\w+){1,4}\s+ценах\b")
+_UNIT_COST_LABEL = re.compile(r"\bединичн\w*\s+стоим\w*\b")
 _CURRENCY_PER_UNIT = re.compile(
-    _RUB_CURRENCY.pattern + r"\s+за\s+\S+",
+    _RUB_CURRENCY.pattern + r"\s+(?:за|на)\s+\S+",
     flags=re.UNICODE,
 )
 
@@ -686,10 +691,25 @@ def _total_cost_leaf(value: str) -> bool:
 
 def _unit_price(value: str) -> bool:
     return bool(
-        _PRICE_LABEL.search(value)
+        (_PRICE_LABEL.search(value) and not _CONTEXTUAL_PRICES.search(value))
+        or _UNIT_COST_LABEL.search(value)
         or re.search(r"\bза\s+единиц\w*\b", value)
         or _CURRENCY_RATE.search(value)
-        or _CURRENCY_PER_UNIT.search(value)
+        or _currency_preposition_rate(value)
+    )
+
+
+def _currency_preposition_rate(value: str) -> bool:
+    """Recognise currency ``за``/``на`` a unit without mistaking a period scope for a rate."""
+
+    match = _CURRENCY_PER_UNIT.search(value)
+    if match is None:
+        return False
+    currency_phrase = value[match.start() :]
+    return not (
+        _current_scope(currency_phrase)
+        or _historical(currency_phrase)
+        or _period_mentions(currency_phrase)
     )
 
 

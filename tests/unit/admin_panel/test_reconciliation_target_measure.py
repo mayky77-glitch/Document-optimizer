@@ -324,6 +324,8 @@ def test_scaled_rub_leaf_under_historical_parent_does_not_become_current() -> No
         "млн RUB/кВт·ч",
         "тыс. руб. / 1 м³",
         "млн рублей за машино-час",
+        "тыс. руб. на 1 м2",
+        "Единичная стоимость, млн руб.",
     ),
 )
 def test_price_or_per_unit_scaled_rub_is_not_a_total_cost(cost: str) -> None:
@@ -336,7 +338,27 @@ def test_price_or_per_unit_scaled_rub_is_not_a_total_cost(cost: str) -> None:
         discover_target_measures(workbook, {sheet.title: 3})
 
 
-@pytest.mark.parametrize("cost", ("Стоимость в текущих ценах", "Сумма в базисных ценах"))
+@pytest.mark.parametrize(
+    "price_label",
+    ("Цена", "Цены", "Цену", "Ценой", "Цене", "Ценам", "Ценами", "Ценах"),
+)
+def test_standalone_price_label_inflections_are_not_total_costs(price_label: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=f"{price_label}, млн руб.")
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Стоимость в текущих ценах",
+        "Сумма в базисных ценах",
+    ),
+)
 def test_contextual_prices_are_not_unit_prices(cost: str) -> None:
     workbook, sheet = _workbook()
     _pair(sheet, 12, "Текущий отчетный период", cost=cost)
@@ -344,6 +366,16 @@ def test_contextual_prices_are_not_unit_prices(cost: str) -> None:
     (pair,) = discover_target_measures(workbook, {sheet.title: 3})
 
     assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+@pytest.mark.parametrize(
+    "cost", ("Стоимость, млн руб. за отчетный период", "Стоимость, млн руб. за весь период")
+)
+def test_currency_over_a_reporting_scope_is_not_a_unit_rate(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._total_cost_leaf(normalized)
+    assert not reconciliation_target_measure._unit_price(normalized)
 
 
 def test_rubka_is_not_a_ruble_currency_form() -> None:
