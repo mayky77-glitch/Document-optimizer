@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from report_processor.work_semantics import is_reporting_scope
+from report_processor.work_semantics import REPORTING_SCOPE_VERSION, is_reporting_scope
 
 
 @pytest.mark.parametrize(
@@ -13,6 +13,7 @@ from report_processor.work_semantics import is_reporting_scope
         "отчетную дату",
         "выполненные сложные работы",
         "сто дней",
+        "тысячу дней",
         "отчетность",
         "дату итогового отчета",
         "весь производственный этап",
@@ -20,6 +21,11 @@ from report_processor.work_semantics import is_reporting_scope
         "август 2026",
         "весь отчетный период",
         "текущий отчетный период",
+        "шесть этапов",
+        "двадцать один этап",
+        "сто этапов",
+        "выполненные работы по текущему этапу",
+        "работы по отчетному периоду",
     ),
 )
 def test_reporting_scope_accepts_bounded_reporting_and_work_phrases(value: str) -> None:
@@ -38,6 +44,9 @@ def test_reporting_scope_accepts_bounded_reporting_and_work_phrases(value: str) 
         "не выполненные работы",
         "оборудование для работ за август",
         "датчик за отчетный период",
+        "час работы",
+        "смену работы",
+        "тысячу квадратных метров работ",
     ),
 )
 def test_reporting_scope_rejects_collisions_and_embedded_objects(value: str) -> None:
@@ -46,3 +55,7 @@ def test_reporting_scope_rejects_collisions_and_embedded_objects(value: str) -> 
 
 def test_reporting_scope_rejects_over_budget_token_sequences() -> None:
     assert not is_reporting_scope(" ".join(("условный",) * 24 + ("дней",)))
+
+
+def test_reporting_scope_exposes_its_version() -> None:
+    assert REPORTING_SCOPE_VERSION == "ReportingScope-1.0"

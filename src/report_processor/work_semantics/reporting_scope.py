@@ -6,6 +6,7 @@ import re
 import unicodedata
 
 MAX_REPORTING_SCOPE_TOKENS = 24
+REPORTING_SCOPE_VERSION = "ReportingScope-1.0"
 _TOKEN = re.compile(r"\w+", flags=re.UNICODE)
 _FINAL_SCOPE_TOKEN = frozenset(
     {
@@ -45,6 +46,7 @@ _FINAL_SCOPE_TOKEN = frozenset(
         "смр",
         "этап",
         "этапа",
+        "этапу",
         "этапов",
         "этапе",
         "этапом",
@@ -64,11 +66,12 @@ _FINAL_SCOPE_TOKEN = frozenset(
         "датой",
         "период",
         "периода",
+        "периоду",
         "периоде",
         "периодом",
     }
 )
-_BARRIER_TOKENS = frozenset({"для", "без", "не", "ни", "кроме", "против"})
+_BARRIER_TOKENS = frozenset({"для", "без", "не", "ни", "кроме", "против", "за", "на", "от", "до"})
 _CALENDAR_MONTH_TOKENS = frozenset(
     {
         "январь",
@@ -97,7 +100,75 @@ _CALENDAR_MONTH_TOKENS = frozenset(
         "декабря",
     }
 )
-_BARRIER_TOKENS = _BARRIER_TOKENS | frozenset({"за", "на", "от", "до", "по"})
+_NUMERAL_TOKENS = frozenset(
+    {
+        "ноль",
+        "один",
+        "одна",
+        "одно",
+        "два",
+        "две",
+        "три",
+        "четыре",
+        "пять",
+        "шесть",
+        "семь",
+        "восемь",
+        "девять",
+        "десять",
+        "одиннадцать",
+        "двенадцать",
+        "тринадцать",
+        "четырнадцать",
+        "пятнадцать",
+        "шестнадцать",
+        "семнадцать",
+        "восемнадцать",
+        "девятнадцать",
+        "двадцать",
+        "тридцать",
+        "сорок",
+        "пятьдесят",
+        "шестьдесят",
+        "семьдесят",
+        "восемьдесят",
+        "девяносто",
+        "сто",
+        "двести",
+        "триста",
+        "четыреста",
+        "пятьсот",
+        "шестьсот",
+        "семьсот",
+        "восемьсот",
+        "девятьсот",
+        "тысяча",
+        "тысячи",
+        "тысячу",
+        "тысяче",
+        "тысячей",
+        "тысяч",
+        "тысячам",
+        "тысячами",
+        "тысячах",
+        "миллион",
+        "миллиона",
+        "миллионов",
+        "миллиону",
+        "миллионом",
+        "миллионах",
+        "миллиард",
+        "миллиарда",
+        "миллиардов",
+        "миллиарду",
+        "миллиардом",
+        "миллиардах",
+    }
+)
+_DETERMINER_TOKENS = frozenset({"весь", "вся", "все", "всех"})
+_MODIFIER = re.compile(
+    r"\w*(?:ый|ий|ой|ая|яя|ое|ее|ую|юю|ого|его|ому|ему|ым|им|ыми|ими|ых|их|ые|енн(?:ый|ая|ое|ые|ого|ому|ым|ыми|ых)|анн(?:ый|ая|ое|ые|ого|ому|ым|ыми|ых))"
+)
 
 
 def is_reporting_scope(value: str) -> bool:
@@ -107,9 +178,30 @@ def is_reporting_scope(value: str) -> bool:
     tokens = tuple(_TOKEN.findall(normalized))
     if not tokens or len(tokens) > MAX_REPORTING_SCOPE_TOKENS:
         return False
-    if _BARRIER_TOKENS & set(tokens):
+    if "по" in tokens:
+        if tokens.count("по") != 1:
+            return False
+        divider = tokens.index("по")
+        return _is_scope_clause(tokens[:divider]) and _is_scope_clause(tokens[divider + 1 :])
+    return _is_scope_clause(tokens)
+
+
+def _is_scope_clause(tokens: tuple[str, ...]) -> bool:
+    if not tokens or _BARRIER_TOKENS & set(tokens):
         return False
-    return tokens[-1] in _FINAL_SCOPE_TOKEN or _is_calendar_scope(tokens)
+    if _is_calendar_scope(tokens):
+        return True
+    return tokens[-1] in _FINAL_SCOPE_TOKEN and all(
+        _is_numeric_token(token)
+        or token in _DETERMINER_TOKENS
+        or token in _FINAL_SCOPE_TOKEN
+        or bool(_MODIFIER.fullmatch(token))
+        for token in tokens[:-1]
+    )
+
+
+def _is_numeric_token(token: str) -> bool:
+    return token.isdecimal() or token in _NUMERAL_TOKENS
 
 
 def _is_calendar_scope(tokens: tuple[str, ...]) -> bool:
