@@ -32,7 +32,7 @@ def test_public_versions_default_resource_and_results_are_deterministic() -> Non
         TERM_CANONICALIZATION_VERSION,
         DOMAIN_ONTOLOGY_VERSION,
         UNIT_ONTOLOGY_VERSION,
-    ) == ("TermCanonicalization-2.0", "DomainOntology-1.0", "UnitOntology-1.0")
+    ) == ("TermCanonicalization-2.0", "DomainOntology-1.0", "UnitOntology-1.1")
     assert DEFAULT_ONTOLOGY.version == DOMAIN_ONTOLOGY_VERSION
     assert first == second
     assert first.semantic_text == "монтаж cable"

@@ -98,6 +98,11 @@ def test_supply_and_installation_are_not_presumed_to_conflict() -> None:
         ("кв м", "square_meter", "area", Decimal("1")),
         ("кубический метр", "cubic_meter", "volume", Decimal("1")),
         ("тонны", "tonne", "mass", Decimal("1000")),
+        ("погонный метр", "meter", "length", Decimal("1")),
+        ("Гкал", "gigacalorie", "energy_gcal", Decimal("1")),
+        ("кВт-ч", "kilowatt_hour", "energy_kwh", Decimal("1")),
+        ("человеко-час", "person_hour", "labor_time", Decimal("1")),
+        ("маш.-час", "machine_hour", "equipment_time", Decimal("1")),
     ],
 )
 def test_unit_identity_exposes_alias_family_and_scale(
@@ -116,6 +121,8 @@ def test_units_keep_piece_and_set_incompatible_while_scaled_families_are_compati
     assert not units_compatible("шт", "комплект")
     assert units_compatible("м", "км")
     assert units_compatible("кг", "т")
+    assert not units_compatible("Гкал", "кВт-ч")
+    assert not units_compatible("человеко-час", "машино-час")
 
 
 def test_unknown_units_are_exact_only_and_cannot_broadly_merge() -> None:

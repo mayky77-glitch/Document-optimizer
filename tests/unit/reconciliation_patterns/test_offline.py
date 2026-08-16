@@ -73,7 +73,7 @@ def write_corpus(
     versions = {
         "term_canonicalization": "TermCanonicalization-2.0",
         "domain_ontology": "DomainOntology-1.0",
-        "unit_ontology": "UnitOntology-1.0",
+        "unit_ontology": "UnitOntology-1.1",
         "typed_slots": "TypedSlots-1.0",
         "semantic_skeleton": "SemanticSkeleton-1.0",
         "category_catalog": "synthetic-catalog",

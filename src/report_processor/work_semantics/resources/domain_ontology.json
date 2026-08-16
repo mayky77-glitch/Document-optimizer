@@ -1,7 +1,7 @@
 {
   "schema_version": "WorkSemanticsOntology-1.0",
   "domain_version": "DomainOntology-1.0",
-  "unit_version": "UnitOntology-1.0",
+  "unit_version": "UnitOntology-1.1",
   "conflict_pairs": {
     "action": [["installation", "dismantling"]],
     "object": []
@@ -46,11 +46,15 @@
   "units": {
     "piece": {"family": "count", "scale": "1", "aliases": ["шт", "шт.", "штука", "ед", "ед."], "forbidden_conversions": ["set"]},
     "set": {"family": "count", "scale": "1", "aliases": ["комплект", "компл", "компл."], "forbidden_conversions": ["piece"]},
-    "meter": {"family": "length", "scale": "1", "aliases": ["м", "м.", "метр", "метры", "пм"], "forbidden_conversions": []},
+    "meter": {"family": "length", "scale": "1", "aliases": ["м", "м.", "метр", "метры", "пм", "погонный метр"], "forbidden_conversions": []},
     "kilometer": {"family": "length", "scale": "1000", "aliases": ["км", "километр"], "forbidden_conversions": []},
     "square_meter": {"family": "area", "scale": "1", "aliases": ["м2", "м²", "кв.м", "кв м", "квадратный метр"], "forbidden_conversions": []},
     "cubic_meter": {"family": "volume", "scale": "1", "aliases": ["м3", "м³", "куб.м", "куб м", "кубический метр"], "forbidden_conversions": []},
     "kilogram": {"family": "mass", "scale": "1", "aliases": ["кг", "килограмм"], "forbidden_conversions": []},
-    "tonne": {"family": "mass", "scale": "1000", "aliases": ["т", "т.", "тонна", "тонны"], "forbidden_conversions": []}
+    "tonne": {"family": "mass", "scale": "1000", "aliases": ["т", "т.", "тонна", "тонны"], "forbidden_conversions": []},
+    "gigacalorie": {"family": "energy_gcal", "scale": "1", "aliases": ["гкал", "гкал."], "forbidden_conversions": []},
+    "kilowatt_hour": {"family": "energy_kwh", "scale": "1", "aliases": ["квтч", "квт ч", "квт-ч", "квт.ч"], "forbidden_conversions": []},
+    "person_hour": {"family": "labor_time", "scale": "1", "aliases": ["человеко-час", "человеко час", "чел.-час", "чел час"], "forbidden_conversions": []},
+    "machine_hour": {"family": "equipment_time", "scale": "1", "aliases": ["машино-час", "машино час", "маш.-час", "маш час"], "forbidden_conversions": []}
   }
 }

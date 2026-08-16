@@ -326,6 +326,11 @@ def test_scaled_rub_leaf_under_historical_parent_does_not_become_current() -> No
         "млн рублей за машино-час",
         "тыс. руб. на 1 м2",
         "млн руб. на квт ч",
+        "млн руб. за квадратный метр",
+        "млн руб. за кубический метр",
+        "млн руб. за погонный метр",
+        "млн руб. за Гкал",
+        "млн руб. за человеко-час",
         "Единичная стоимость, млн руб.",
     ),
 )
@@ -408,6 +413,9 @@ def test_currency_over_a_reporting_scope_is_not_a_unit_rate(cost: str) -> None:
         "Стоимость, млн руб. за год",
         "Стоимость, млн руб. за выполненные работы",
         "Стоимость, млн руб. на дату отчета",
+        "Стоимость, млн руб. за все СМР",
+        "Стоимость, млн руб. за два дня",
+        "Стоимость, млн руб. за 1 этап",
     ),
 )
 def test_currency_over_a_total_scope_is_not_a_unit_rate(cost: str) -> None:
@@ -415,6 +423,14 @@ def test_currency_over_a_total_scope_is_not_a_unit_rate(cost: str) -> None:
 
     assert reconciliation_target_measure._total_cost_leaf(normalized)
     assert not reconciliation_target_measure._unit_price(normalized)
+
+
+def test_unknown_currency_preposition_tail_fails_closed_instead_of_becoming_total_cost() -> None:
+    normalized = reconciliation_target_measure._text("Стоимость, млн руб. за оборудование")
+
+    assert reconciliation_target_measure._currency_preposition_scope(normalized) == "unknown"
+    assert not reconciliation_target_measure._unit_price(normalized)
+    assert not reconciliation_target_measure._total_cost_leaf(normalized)
 
 
 def test_rubka_is_not_a_ruble_currency_form() -> None:

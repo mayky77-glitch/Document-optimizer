@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 
 from report_processor.target_report.ooxml import worksheet_parts
-from report_processor.training_data.normalization import normalize_unit as normalize_training_unit
+from report_processor.work_semantics import canonical_unit
 
 _HEADER_ROWS = 80
 _MAX_HEADER_WINDOW_CELLS = 500_000
@@ -76,18 +76,16 @@ _CURRENCY_PER_UNIT = re.compile(
     _RUB_CURRENCY.pattern + r"\s+(?:за|на)\s+(?P<tail>.+)",
     flags=re.UNICODE,
 )
-_CANONICAL_TRAINING_UNITS = frozenset({"м", "м²", "м³", "шт", "кг", "т", "л", "компл.", "ед.", "%"})
 _TOTAL_SCOPE_TAIL = re.compile(
-    r"^(?:месяц|квартал|год|выполненн\w*\s+работ\w*|дат\w*\s+отчет\w*)\b"
-)
-_COMPACT_MEASUREMENT = re.compile(
     r"^(?:"
-    r"[a-zа-яё]+(?:[-./][a-zа-яё0-9²³]+)+|"
-    r"[a-zа-яё]{1,4}\s+[a-zа-яё]{1,3}|"
-    r"(?:час\w*|смен\w*|машиночас\w*|квтч\w*)"
-    r")\b"
+    r"(?:все|весь|выполненн\w*)\s+(?:смр|работ\w*)|"
+    r"(?:\d+|один|два|три|четыре|пять)\s+(?:дн\w*|недел\w*|месяц\w*|квартал\w*|год\w*)|"
+    r"(?:месяц|квартал|год)\b|"
+    r"дат\w*\s+отчет\w*|"
+    r"(?:\d+|один|два|три|четыре|пять)\s+этап\w*"
+    r")"
 )
-_NUMBER_AND_UNIT = re.compile(r"^\d+(?:[.,]\d+)?\s+\S+")
+_LEADING_MULTIPLIER = re.compile(r"^\d+(?:[.,]\d+)?\s+")
 
 
 class ReconciliationTargetMeasureError(ValueError):
@@ -695,10 +693,15 @@ def _quantity_leaf(value: str) -> bool:
 
 
 def _total_cost_leaf(value: str) -> bool:
+    preposition_scope = _currency_preposition_scope(value)
     return (
-        any(stem in value for stem in ("стоим", "сумм", "затрат"))
-        or bool(_SCALED_RUB.search(value) and _RUB_CURRENCY.search(value))
-    ) and not _unit_price(value)
+        preposition_scope != "unknown"
+        and (
+            any(stem in value for stem in ("стоим", "сумм", "затрат"))
+            or bool(_SCALED_RUB.search(value) and _RUB_CURRENCY.search(value))
+        )
+        and not _unit_price(value)
+    )
 
 
 def _unit_price(value: str) -> bool:
@@ -707,28 +710,27 @@ def _unit_price(value: str) -> bool:
         or _UNIT_COST_LABEL.search(value)
         or re.search(r"\bза\s+единиц\w*\b", value)
         or _CURRENCY_RATE.search(value)
-        or _currency_preposition_rate(value)
+        or _currency_preposition_scope(value) == "rate"
     )
 
 
-def _currency_preposition_rate(value: str) -> bool:
-    """Recognise currency ``за``/``на`` only when its tail is a proven measurement."""
+def _currency_preposition_scope(value: str) -> str | None:
+    """Classify a currency ``за``/``на`` tail as proven rate, total scope, or unknown."""
 
     match = _CURRENCY_PER_UNIT.search(value)
     if match is None:
-        return False
+        return None
     tail = match.group("tail").strip()
     if not tail or _TOTAL_SCOPE_TAIL.search(tail):
-        return False
+        return "total"
     if _current_scope(tail) or _historical(tail) or _period_mentions(tail):
-        return False
-    tokens = tail.split()
-    candidates = (tokens[0], " ".join(tokens[:2]), " ".join(tokens[:3]))
-    if any(
-        normalize_training_unit(candidate) in _CANONICAL_TRAINING_UNITS for candidate in candidates
-    ):
-        return True
-    return bool(_NUMBER_AND_UNIT.search(tail) or _COMPACT_MEASUREMENT.search(tail))
+        return "total"
+    unit_tail = _LEADING_MULTIPLIER.sub("", tail)
+    tokens = unit_tail.split()
+    candidates = tuple(" ".join(tokens[:size]) for size in range(1, min(len(tokens), 3) + 1))
+    if any(not canonical_unit(candidate).exact_only for candidate in candidates):
+        return "rate"
+    return "unknown"
 
 
 def _historical(value: str) -> bool:
