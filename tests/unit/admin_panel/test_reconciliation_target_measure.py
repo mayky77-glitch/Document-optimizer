@@ -415,7 +415,10 @@ def test_currency_over_a_reporting_scope_is_not_a_unit_rate(cost: str) -> None:
         "Стоимость, млн руб. на дату отчета",
         "Стоимость, млн руб. за все СМР",
         "Стоимость, млн руб. за два дня",
+        "Стоимость, млн руб. за шесть дней",
+        "Стоимость, млн руб. за десять дней",
         "Стоимость, млн руб. за 1 этап",
+        "Стоимость, млн руб. за шесть этапов",
     ),
 )
 def test_currency_over_a_total_scope_is_not_a_unit_rate(cost: str) -> None:
@@ -423,6 +426,21 @@ def test_currency_over_a_total_scope_is_not_a_unit_rate(cost: str) -> None:
 
     assert reconciliation_target_measure._total_cost_leaf(normalized)
     assert not reconciliation_target_measure._unit_price(normalized)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Стоимость, млн руб. за м2 за весь период",
+        "Стоимость, млн руб. за человеко-час за выполненные работы",
+    ),
+)
+def test_proven_leading_unit_remains_rate_before_later_total_scope(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._currency_preposition_scope(normalized) == "rate"
+    assert reconciliation_target_measure._unit_price(normalized)
+    assert not reconciliation_target_measure._total_cost_leaf(normalized)
 
 
 def test_unknown_currency_preposition_tail_fails_closed_instead_of_becoming_total_cost() -> None:

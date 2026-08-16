@@ -78,11 +78,9 @@ _CURRENCY_PER_UNIT = re.compile(
 )
 _TOTAL_SCOPE_TAIL = re.compile(
     r"^(?:"
-    r"(?:все|весь|выполненн\w*)\s+(?:смр|работ\w*)|"
-    r"(?:\d+|один|два|три|четыре|пять)\s+(?:дн\w*|недел\w*|месяц\w*|квартал\w*|год\w*)|"
-    r"(?:месяц|квартал|год)\b|"
-    r"дат\w*\s+отчет\w*|"
-    r"(?:\d+|один|два|три|четыре|пять)\s+этап\w*"
+    r"(?:\S+\s+)?(?:дн\w*|недел\w*|месяц\w*|квартал\w*|год\w*|этап\w*)\b|"
+    r"(?:(?:все|весь|выполненн\w*)\s+)?(?:смр|работ\w*)\b|"
+    r"дат\w*\s+отчет\w*"
     r")"
 )
 _LEADING_MULTIPLIER = re.compile(r"^\d+(?:[.,]\d+)?\s+")
@@ -721,15 +719,17 @@ def _currency_preposition_scope(value: str) -> str | None:
     if match is None:
         return None
     tail = match.group("tail").strip()
-    if not tail or _TOTAL_SCOPE_TAIL.search(tail):
-        return "total"
-    if _current_scope(tail) or _historical(tail) or _period_mentions(tail):
+    if not tail:
         return "total"
     unit_tail = _LEADING_MULTIPLIER.sub("", tail)
     tokens = unit_tail.split()
     candidates = tuple(" ".join(tokens[:size]) for size in range(1, min(len(tokens), 3) + 1))
     if any(not canonical_unit(candidate).exact_only for candidate in candidates):
         return "rate"
+    if _TOTAL_SCOPE_TAIL.search(tail):
+        return "total"
+    if _current_scope(tail) or _historical(tail) or _period_mentions(tail):
+        return "total"
     return "unknown"
 
 
