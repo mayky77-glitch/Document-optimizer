@@ -10,6 +10,7 @@ from report_processor.admin_panel.reconciliation_sources import (
     SourceLayoutAmbiguousError,
     _extract_ks2_rows,
     _extract_ks6a_rows,
+    _sparse_region_index,
 )
 
 
@@ -274,3 +275,39 @@ def test_column_permutation_does_not_change_physical_role_binding() -> None:
     workbook.close()
     assert len(rows) == 1
     assert rows[0].work_name_raw == "монтаж"
+
+
+def test_direct_roles_merged_vertically_cover_the_full_header_band() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("", "Наименование работ", "Ед. изм.", "", ""))
+    sheet.append(("", "", "", "", ""))
+    sheet.append(("", "", "", "Количество", "Общая стоимость"))
+    sheet.append(("1", "Монтаж", "м", 2, 10))
+    sheet.merge_cells("B1:B3")
+    sheet.merge_cells("C1:C3")
+
+    rows = _extract_ks2_rows(
+        sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx")
+    )
+
+    workbook.close()
+    assert len(rows) == 1
+
+
+def test_formula_only_materialized_coordinates_obey_sparse_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import report_processor.admin_panel.reconciliation_sources as sources
+
+    data = Workbook()
+    formulas = Workbook()
+    formulas.active["A1"] = "=1+1"
+    formulas.active["B1"] = "=2+2"
+    monkeypatch.setattr(sources, "_REGION_CELL_LIMIT", 1)
+
+    with pytest.raises(SourceLayoutAmbiguousError):
+        _sparse_region_index(data.active, formulas.active)
+
+    data.close()
+    formulas.close()

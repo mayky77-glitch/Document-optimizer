@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.cell.cell import MergedCell
 from openpyxl.utils.cell import get_column_letter
 
 from report_processor.extraction.models import CanonicalSourceRow, SourceLocation
@@ -93,11 +94,15 @@ class _SparseRegionIndex:
     values: dict[tuple[int, int], object]
     formula_cells: frozenset[tuple[int, int]]
     spans: tuple[tuple[int, int, int, int], ...]
+    row_values: dict[int, dict[int, object]]
+    column_values: dict[int, tuple[tuple[int, object], ...]]
+    occupied_rows: frozenset[int]
+    occupied_merge_rows: tuple[tuple[int, int], ...]
     columns: tuple[int, ...]
     rows: tuple[int, ...]
 
 
-_REGION_CELL_LIMIT = 10_000
+_REGION_CELL_LIMIT = 500_000
 _REGION_MERGE_LIMIT = 1_000
 _REGION_CANDIDATE_LIMIT = 256
 
@@ -331,19 +336,27 @@ def _indexed_sheet_layouts(
 
 
 def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
-    cells = {
-        (row, column): cell.value
-        for (row, column), cell in sheet._cells.items()
-        if cell.value is not None
-    }
+    coordinates: set[tuple[int, int]] = set()
+    for cell_map in (sheet._cells, formula_sheet._cells):
+        for coordinate, cell in cell_map.items():
+            if isinstance(cell, MergedCell):
+                continue
+            coordinates.add(coordinate)
+            if len(coordinates) > _REGION_CELL_LIMIT:
+                raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
     spans = tuple(
         sorted(
             (item.min_row, item.min_col, item.max_row, item.max_col)
             for item in sheet.merged_cells.ranges
         )
     )
-    if len(cells) > _REGION_CELL_LIMIT or len(spans) > _REGION_MERGE_LIMIT:
+    if len(spans) > _REGION_MERGE_LIMIT:
         raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    cells = {
+        (row, column): cell.value
+        for (row, column), cell in sheet._cells.items()
+        if cell.value is not None
+    }
     formulas = frozenset(
         (row, column)
         for (row, column), cell in formula_sheet._cells.items()
@@ -354,8 +367,21 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
         | {span[1] for span in spans}
         | {span[3] for span in spans}
     )
+    row_values: dict[int, dict[int, object]] = {}
+    column_values: dict[int, list[tuple[int, object]]] = {}
+    for (row, column), value in cells.items():
+        row_values.setdefault(row, {})[column] = value
+        column_values.setdefault(column, []).append((row, value))
     return _SparseRegionIndex(
-        cells, formulas, spans, tuple(columns), tuple(sorted({row for row, _ in cells}))
+        cells,
+        formulas,
+        spans,
+        row_values,
+        {column: tuple(sorted(values)) for column, values in column_values.items()},
+        frozenset(row_values),
+        tuple(sorted((top, bottom) for top, _left, bottom, _right in spans)),
+        tuple(columns),
+        tuple(sorted(row_values)),
     )
 
 
@@ -399,8 +425,8 @@ def _indexed_metric_pairs(
     index: _SparseRegionIndex, row: int, start: int, end: int
 ) -> list[tuple[int, int]]:
     values = {
-        column: _text(index.values.get((row, column)))
-        for column in index.columns
+        column: _text(value)
+        for column, value in index.row_values.get(row, {}).items()
         if start <= column <= end
     }
     quantities = [
@@ -461,8 +487,8 @@ def _indexed_roles(
 def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: int) -> str:
     values = []
     seen = set()
-    for row, candidate_column in sorted(index.values):
-        if candidate_column != column or not start <= row <= end or (row, candidate_column) in seen:
+    for row, value in index.column_values.get(column, ()):
+        if not start <= row <= end:
             continue
         span = next(
             (
@@ -476,16 +502,32 @@ def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: in
         if origin in seen:
             continue
         seen.add(origin)
-        value = _text(index.values.get(origin))
-        if value:
-            values.append(value)
+        text = _text(index.values.get(origin, value))
+        if text:
+            values.append(text)
+    for top, left, bottom, right in index.spans:
+        if not (left <= column <= right and top <= end and bottom >= start):
+            continue
+        origin = (top, left)
+        if origin in seen:
+            continue
+        seen.add(origin)
+        text = _text(index.values.get(origin))
+        if text:
+            values.append(text)
     return " ".join(values)
 
 
 def _indexed_band_start(index: _SparseRegionIndex, row: int) -> int:
-    while row - 1 in {item_row for item_row, _column in index.values}:
+    while _indexed_row_occupied(index, row - 1):
         row -= 1
     return row
+
+
+def _indexed_row_occupied(index: _SparseRegionIndex, row: int) -> bool:
+    return row in index.occupied_rows or any(
+        top <= row <= bottom for top, bottom in index.occupied_merge_rows
+    )
 
 
 def _indexed_cumulative_ancestor(
