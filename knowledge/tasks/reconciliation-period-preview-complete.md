@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: accepted
 card_id: reconciliation-period-preview-complete
 version: 1
 work_id: reconciliation-period-apply-v4
@@ -8,7 +8,10 @@ task_id: period-preview-complete
 purpose: Complete structural period preview with bounded shared header discovery and a coherent writable schema.
 role: developer
 route: P5 -> developer / gpt-5.6-terra / high; reason: cross-layer XLSX parsing, immutable identity and verified OOXML planning.
-launch_status: planned
+launch_status: accepted
+accepted_feature_sha: ee474dbeb6e804bbd9c74e400488c5da26a3b3e6
+published_main_integration_sha: fe118b96999ad398506e7d9c8da50f8fd420bad3
+accepted_at: 2026-08-16
 card_path: knowledge/tasks/reconciliation-period-preview-complete.md
 card_commit_sha_source: exact planning commit containing this card
 base_sha_source: exact planning commit containing this card
@@ -38,8 +41,8 @@ forbidden_paths:
   - knowledge
   - docs
 contract_versions:
-  input: ReconciliationPeriodInsertion-1.1+ReconciliationTargetMeasure-2.0
-  output: ReconciliationTargetSelection-1.0+ReconciliationTargetInsertionPreview-1.0+ReconciliationTargetIdentity-1.0+BoundedHeaderWindow-1.0
+  input: ReconciliationPeriodInsertion-1.1+ReconciliationTargetMeasure-3.0
+  output: ReconciliationTargetSelection-1.0+ReconciliationTargetInsertionPreview-1.0+ReconciliationTargetIdentity-2.0+BoundedHeaderWindow-1.0
 acceptance_commands:
   - uv run --extra dev pytest -q tests/unit/admin_panel/test_reconciliation_target_measure.py tests/unit/admin_panel/test_reconciliation_period.py tests/unit/admin_panel/test_reconciliation_period_preview.py tests/unit/admin_panel/test_reconciliation_target.py tests/unit/admin_panel/test_reconciliation_state.py tests/unit/excel_writer/test_period_insertion.py
   - uv run --extra dev ruff check src/report_processor/admin_panel/reconciliation_period_preview.py src/report_processor/admin_panel/reconciliation_state.py src/report_processor/admin_panel/reconciliation_target.py src/report_processor/admin_panel/reconciliation_target_measure.py src/report_processor/excel_writer/period_insertion.py tests/unit/admin_panel/test_reconciliation_period_preview.py tests/unit/admin_panel/test_reconciliation_state.py tests/unit/admin_panel/test_reconciliation_target.py tests/unit/admin_panel/test_reconciliation_target_measure.py tests/unit/excel_writer/test_period_insertion.py
@@ -48,6 +51,10 @@ acceptance_commands:
 ---
 
 # Complete structural period preview
+
+Accepted at feature `ee474db` and published through `fe118b9`. The later semantic identity upgrade
+binds target-measure, term, unit-ontology, and reporting-scope versions without changing this
+preview's read-only/no-publication boundary.
 
 Integrate checkpoint `88bb4562f67ab4baac5eae95494c98970f54e0b7` by merge, not cherry-pick or
 rebase. It contains dynamic base-role binding, immutable period identity, request-local physical

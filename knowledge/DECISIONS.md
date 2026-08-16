@@ -2,105 +2,16 @@
 type: decisions
 tags:
   - knowledge/decision
-last_verified: 2026-08-15
-updated: 2026-08-15
+last_verified: 2026-08-16
+updated: 2026-08-16
 ---
 
 # Decisions
 
 Record only accepted cross-cutting decisions. Link each decision to affected component cards and tasks; do not duplicate implementation detail here.
 
-## DO-010: бизнес-правила остаются данными
-
-Блок 10 принимает JSON и YAML, но после строгой валидации строит
-одинаковые immutable models и canonical JSON bytes. YAML tags, anchors, aliases,
-includes, environment interpolation и любые executable constructs запрещены.
-Связанные карточки: [[tasks/document-optimizer-block-10-production]],
-[[tasks/document-optimizer-blocks-09-10-tests]].
-
-## DO-011: сводный XLSX публикует готовые числовые значения
-
-`Сводный отчет` хранит только готовые числовые значения для восьми категорий
-по каждому индексу и для `Все индексы`; формулы в пользовательский файл не
-попадают. Индексы отображаются карточками по две в строке, а общий итог —
-отдельной карточкой. Основной лист называется `Карточка остатков`. Внутренняя
-математика остается в рублях, но все денежные ячейки отчета публикуются в
-миллионах рублей. Все количества и стоимости отображаются ровно с двумя
-знаками после запятой, без округления сохраненного числового значения.
-Стоимость суммируется независимо от единицы.
-Количество суммируется только если каждый индекс имеет одну и ту же непустую
-нормализованную единицу; пропуск или смешение блокирует публикацию вместо
-тихой потери данных. Незанятые правые секции шаблона удаляются.
-Связанные карточки: [[tasks/drawing-card-summary-production]],
-[[tasks/drawing-card-summary-tests]], [[tasks/drawing-card-summary-review]].
-
-## DO-012: тема и решение по группе управляются напрямую
-
-Светлая/темная тема переключается одной кнопкой и хранится только локально в
-браузере. Нерешенная группа имеет единый поток: категория, двухпозиционный
-режим учета, `Применить` или `Отклонить`. Смена категории не создает второй
-набор кнопок подтверждения. Длинные подписи переносятся внутри сегмента; при
-нехватке ширины действия переходят на второй ряд без горизонтального overflow.
-Связанные карточки: [[tasks/drawing-card-summary-ui]],
-[[tasks/drawing-card-summary-review]].
-
-Карточная XLSX-сводка и компактный UI закреплены задачами
-[[tasks/summary-layout-xlsx]], [[tasks/summary-layout-ui]] и
-[[tasks/summary-layout-tests]].
-
-## DO-013: последнее явное review-решение является правилом
-
-Подтверждение, смена категории, режим `только стоимость`, отклонение и пропуск
-сохраняются в приватном feedback store по нормализованному наименованию и
-единице. Новое явное решение заменяет старое и имеет приоритет над встроенным
-примером с тем же ключом. Такое правило применяется до RAG, поэтому идентичная
-строка повторно не требует ручной карточки. Пути, имена файлов и исходные
-пользовательские наименования не копируются в project knowledge.
-Связанные карточки: [[tasks/feedback-rule-reuse]],
-[[tasks/million-feedback-tests]].
-
-## DO-014: договорные значения и feedback публикуются детерминированно (2026-08-03)
-
-Итоги договора и выполненного периода используют соответствующие source row sets,
-Decimal/рубли внутри и миллионы только при публикации; превышение проверяется строго
-выше 1 000 руб., красной остаётся только contract-cost. Перед rerun сохраняется RAG
-snapshot, а replay выполняется только по точному normalized name + normalized unit;
-другая единица требует ручной проверки. Основание: принятая реализация и focused
-регрессия 2026-08-03.
-Связанные карточки: [[components/drawing-card]],
-[[tasks/drawing-card-contract-check-rag-plan]].
-
-## DO-015: claims проверки и сверки разделяются (2026-08-13)
-
-Пользовательская «Проверка документов» (`operation=verify`) и соседняя авторитетная сверка с
-записью target J/K (`operation=reconcile`) считаются разными контрактами. Выводы о корректной
-Decimal-арифметике или verified target output режима `reconcile` не доказывают точность verdict
-или красной разметки `verify`. Текущий `verify` нельзя описывать как числовое сравнение либо как
-100%-точную проверку: числового oracle нет, а реальные ingestion/writer/stage дефекты открыты.
-
-Эта запись не выбирает будущую бизнес-семантику. Определение числового равенства и способ выбора
-этапа остаются owner-gates до новой реализации. Связанные карточки:
-[[components/document-verification]], [[tasks/reconciliation-max-accuracy-audit-v1]],
-[[errors/reconciliation-accuracy-findings]],
-[[tasks/admin-verification-accuracy-remediation]].
-
-## DO-016: PropExtract используется только как источник методик (2026-08-13)
-
-Публичный проект PropExtract можно использовать при анализе `operation=verify` как внешний
-сравнительный источник методик: exact-or-ambiguous identity, field-level provenance,
-order-independent consensus, staged workbook validation и adversarial permutation tests. Его
-предметные RNS/PDF/OCR-правила не переносятся автоматически.
-
-Узкая нормализация PropExtract явно не принимается. Поиск заголовков источника остаётся максимально
-универсальным и учитывает вариативные иерархические многострочные формулировки; закрытый список фраз
-не должен отклонять корректную структуру. Неоднозначность обрабатывается fail-closed по структурным
-доказательствам, а не по отсутствию строки в узком словаре.
-
-На проверенном commit отсутствует верхнеуровневая лицензия приложения, поэтому код, тесты и
-fixtures не копируются. Любое code reuse требует отдельного разрешения правообладателя/лицензии;
-новая реализация должна быть независимой. Связанная карточка:
-[[research/propextract-methods-2026-08-13]],
-[[tasks/admin-verification-accuracy-remediation]].
+Решения DO-010—DO-016 перенесены в
+[[decisions/archive-010-016|архив ранних продуктовых и методических решений]].
 
 ## DO-017: «Проверка документов» получает числовой oracle (2026-08-13)
 
@@ -198,9 +109,8 @@ shared-группа, а также array/data-table формула остаёт�
 ## DO-021: тесты сокращаются по стоимости, а не по счётчику (2026-08-13)
 
 Количество тестов само по себе не является дефектом для Excel-конвейера с большим числом
-fail-closed контрактов. Аудит 1 274 test functions обнаружил только одну одинаковую форму тела,
-но она проверяет разные параметризованные предметные области; доказанно бесполезных тестов для
-удаления не найдено. Полный baseline около 35 секунд остаётся приемлемым.
+fail-closed контрактов. Аудит не нашёл доказанно бесполезных тестов для удаления. Финальный полный
+профиль `2225 passed, 25 skipped` занял `28.07s`, поэтому текущая стоимость остаётся приемлемой.
 
 Оптимизация выполняется без уменьшения граничного покрытия: commit `0d16861` создаёт дорогую
 1 001-строчную DuckDB fixture один раз за сессию и копирует её в изолированные `tmp_path` двух
@@ -222,9 +132,14 @@ nullable периода и nullable plan digest. Она входит в state/ca
 канонический digest из calculation ID, target row ID, статуса и writer-квантизованных Decimal
 quantity/cost. Ноль является записываемым значением, только `null/null` не требует вставки.
 
-Manifest v3 хранит период и ограниченные target/plan/calculation digests, но не значения, формулы,
+`ReconciliationTargetIdentity-2.0` дополнительно связывает target-measure, term-canonicalization,
+`UnitOntology-1.1` и `ReportingScope-2.1`. Поэтому изменение семантики не может сохранить прежний
+state/package/catalog/calculation/apply fingerprint для тех же байтов книги.
+
+Manifest v4 хранит период и ограниченные target/plan/calculation digests, но не значения, формулы,
 листы или координаты книги. Recovery пересобирает доказательства без повторного transformer/writer
-и exact-replay коммитит feedback один раз. Старый manifest v2 намеренно не восстанавливается.
+и exact-replay коммитит feedback один раз. Старые manifest v2/v3 намеренно не восстанавливаются;
+stale applying evidence не вызывает writer и не коммитит feedback.
 
 Связанные карточки: [[tasks/reconciliation-period-apply]],
 [[tasks/reconciliation-period-preview]], [[tasks/reconciliation-period-preview-complete]],
@@ -245,3 +160,36 @@ Manifest v3 хранит период и ограниченные target/plan/ca
 
 Решение принято в [[tasks/reconciliation-writer-namespace-v3]] и опубликовано через main
 integration `fee01c4` после двойного независимого `MERGE YES`.
+
+## DO-024: source layout определяется локальным физическим регионом (2026-08-16)
+
+Источник сначала номинирует смежную физическую пару quantity/total-cost, затем связывает work/unit
+только внутри её точного header band через общий schema resolver. Merged ancestry, вертикальные
+leaf spans и границы следующей таблицы являются физическими фактами; номер строки, глобальный
+Cartesian ролей и закрытый список фраз не являются доказательством.
+
+Все жизнеспособные регионы участвуют в uniqueness: несколько накопительных или несколько прямых
+регионов дают `SOURCE_LAYOUT_AMBIGUOUS`. Накопительный тип имеет приоритет над прямым только после
+независимой проверки каждого региона. Formula без cache становится управляемой ошибкой только
+после структурной пригодности строки.
+
+Sparse index хранит только непустые значения, реальные formula coordinates и валидированные merge
+spans. Styled empty cells не считаются семантическими координатами. Лимиты cells/merges/candidates/
+probes/visits завершаются fail-closed и не используют раздутые `max_row`/`max_column`.
+
+Связанные карточки: [[components/reconciliation]],
+[[tasks/reconciliation-source-region-implementation]],
+[[tasks/reconciliation-real-release-audit]].
+
+## DO-025: ZIP-флаги периода доказываются в local и central headers (2026-08-16)
+
+Period insertion сохраняет только разрешённые `ZipInfo.flag_bits` и `external_attr`. Raw local
+header обязан содержать те же флаги, что central directory; допустимая маска зависит от метода
+сжатия, а LZMA всегда требует EOS bit. Несовпадение или неизвестный флаг блокирует преобразование
+до временного результата и не перезаписывает существующий output.
+
+Сохранение metadata использует узкий CPython-совместимый override приватного `_open_to_write`,
+потому что стандартный writer сбрасывает флаги и подставляет права. Это осознанная зависимость:
+после обновления Python требуется отдельный focused gate local/central metadata.
+
+Связанная карточка: [[tasks/reconciliation-zip-local-flags]].

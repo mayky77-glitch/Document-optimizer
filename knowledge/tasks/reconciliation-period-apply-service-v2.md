@@ -1,6 +1,6 @@
 ---
 type: orda_task
-status: frozen
+status: accepted
 card_id: reconciliation-period-apply-service-v2
 version: 1
 work_id: reconciliation-period-apply-v4
@@ -8,7 +8,10 @@ task_id: period-apply-service
 purpose: Apply the accepted period preview through immutable calculation and restart-safe exact replay.
 role: developer
 route: P5 -> developer / gpt-5.6-terra / high; reason: transactional apply, manifest migration and crash recovery.
-launch_status: blocked-on-period-preview-complete
+launch_status: accepted
+accepted_feature_sha: c0c9c79db153a588cf8614f5d4dbc3b9a36d5875
+published_main_integration_sha: dac566aee43a1a0fae81e04c34464cf1c9720280
+accepted_at: 2026-08-16
 card_path: knowledge/tasks/reconciliation-period-apply-service-v2.md
 card_commit_sha_source: exact planning commit containing this card
 base_sha_source: accepted period-preview-complete integration SHA
@@ -38,8 +41,8 @@ forbidden_paths:
   - knowledge
   - docs
 contract_versions:
-  input: ReconciliationTargetInsertionPreview-1.0+ReconciliationTargetIdentity-1.0+BoundedHeaderWindow-1.0
-  output: ReconciliationCalculationSemantics-1.0+ReconciliationApplyIntegrity-3.0+AdminReconciliationJobManifest-3.0+ReconciliationApplyReplay-2.0
+  input: ReconciliationTargetInsertionPreview-1.0+ReconciliationTargetIdentity-2.0+BoundedHeaderWindow-1.0
+  output: ReconciliationCalculationSemantics-1.0+ReconciliationApplyIntegrity-3.0+AdminReconciliationJobManifest-4.0+ReconciliationApplyReplay-2.0
 acceptance_commands:
   - uv run --extra dev pytest -q tests/unit/admin_panel/test_reconciliation_execution.py tests/unit/admin_panel/test_reconciliation_verification.py tests/unit/admin_panel/test_reconciliation_job_recovery.py tests/unit/admin_panel/test_service.py tests/integration/test_reconciliation_authoritative_flow.py tests/unit/excel_writer/test_period_insertion.py
   - uv run --extra dev ruff check src/report_processor/admin_panel/reconciliation_execution.py src/report_processor/admin_panel/reconciliation_numeric_verification.py src/report_processor/admin_panel/reconciliation_verification.py src/report_processor/admin_panel/service.py tests/unit/admin_panel/test_reconciliation_execution.py tests/unit/admin_panel/test_reconciliation_verification.py tests/unit/admin_panel/test_reconciliation_job_recovery.py tests/unit/admin_panel/test_service.py tests/integration/test_reconciliation_authoritative_flow.py
@@ -49,8 +52,11 @@ acceptance_commands:
 
 # Period-aware apply and recovery v2
 
+Accepted at feature `c0c9c79` and published through `dac566a`. Semantic target identity v2 and
+manifest v4 supersede the original version labels in the frozen implementation narrative.
+
 This card replaces the unlaunched v2 service card after the preview scope was superseded. Add an
-optional canonical `reporting_period` to reconciliation jobs and manifest v3; reject any period for
+optional canonical `reporting_period` to reconciliation jobs and manifest v4; reject any period for
 `verify`. Verification remains strict and must neither import nor call preview, planner or
 transformer.
 

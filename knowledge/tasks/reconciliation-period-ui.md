@@ -1,14 +1,17 @@
 ---
 type: orda_task
-status: frozen
+status: accepted
 card_id: reconciliation-period-ui
-version: 1
+version: 1.1
 work_id: reconciliation-period-ui-v1
 task_id: period-ui
 purpose: Expose optional exact reporting period for reconciliation without weakening verification.
 role: developer
 route: P5 -> developer / inherited runtime; reason: API contract, operation-aware UI state and retry behavior.
-launch_status: blocked-on-reconciliation-writer-namespace-v3
+launch_status: accepted
+accepted_feature_sha: 2d1f36044c784579ad4f849cf531b36efc0507ec
+published_main_integration_sha: d1e5e6799ed22093331242a1d03176fbddefbf3c
+accepted_at: 2026-08-16
 card_path: knowledge/tasks/reconciliation-period-ui.md
 card_commit_sha_source: exact planning commit containing this card
 base_sha_source: accepted reconciliation-writer-namespace-v3 integration SHA
@@ -32,7 +35,7 @@ forbidden_paths:
   - knowledge
   - docs
 contract_versions:
-  input: AdminReconciliationJobManifest-3.0+ReconciliationTargetIdentity-1.0
+  input: AdminReconciliationJobManifest-4.0+ReconciliationTargetIdentity-2.0
   output: AdminReconciliationPeriodUI-1.0
 acceptance_commands:
   - nice -n 10 uv run --extra dev pytest -q tests/integration/test_block18_admin_panel.py tests/unit/admin_panel/test_presentation.py tests/integration/test_verification_ui_contract.py tests/integration/test_reconciliation_authoritative_flow.py
@@ -42,6 +45,12 @@ acceptance_commands:
 ---
 
 # Reconciliation reporting-period API and UI
+
+Accepted. The API and presentation pass an exact optional period only for reconcile; verification
+rejects any nonempty period before job creation. The UI uses native operation/month controls,
+clears and disables the month outside reconcile, and preserves files, operation, period, and exact
+stage labels across a selection-required retry. Focused API/UI review returned `MERGE YES`; the
+final release profile and private no-apply shadow also passed at product checkpoint `4294c15`.
 
 The service already owns exact `YYYY-MM` parsing, persistence, restart identity and the controlled
 rejection of any period for `verify`. This wave exposes that accepted contract without adding

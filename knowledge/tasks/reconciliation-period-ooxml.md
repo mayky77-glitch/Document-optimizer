@@ -38,7 +38,7 @@ forbidden_paths:
   - knowledge
   - docs
 contract_versions:
-  input: ReconciliationTargetMeasure-2.0
+  input: ReconciliationTargetMeasure-3.0
   output: ReconciliationPeriodInsertion-1.0+ReconciliationPeriodInsertionDelta-1.0
 acceptance_commands:
   - uv run --extra dev pytest -q tests/unit/admin_panel/test_reconciliation_target_measure.py tests/unit/admin_panel/test_reconciliation_period.py tests/unit/excel_writer/test_period_insertion.py

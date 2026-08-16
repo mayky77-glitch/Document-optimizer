@@ -1,6 +1,6 @@
 ---
 type: orchestration
-status: in-progress
+status: accepted
 work_id: reconciliation-period-insertion-v1
 objective: Add one explicit reporting-period pair without changing historical target facts or unsupported OOXML state.
 project_root: /Users/x/Documents/Сооотношение документов/Document-optimizer-ready
@@ -16,7 +16,7 @@ data_classification: restricted
 created_at: 2026-08-13T22:30:00+08:00
 tags:
   - task/implementation
-  - status/in-progress
+  - status/accepted
   - domain/document-processing
   - capability/admin-panel
   - risk/high
@@ -29,6 +29,10 @@ links:
 
 # Reconciliation period-insertion Gate 0
 
+Accepted. Direct insertion, bounded shared-formula and threaded-comment compatibility,
+preview/apply/recovery, reconcile-only API/UI input, and the final private release shadow are all
+integrated at product checkpoint `4294c15`.
+
 Published base is accepted target-measure checkpoint `959e3b9`. Code and tests override this card.
 Code Graph confirmed that the existing writer mutates exact target cells but has no structural
 column-insertion primitive. A low-load immutable target/reference comparison proved a two-column
@@ -40,16 +44,17 @@ Two production tasks are strictly sequential. [[reconciliation-period-ooxml|OOXM
 freezes period/anchor/plan contracts and independently verifies one safe transformed private copy.
 Only after its P6 acceptance may [[reconciliation-period-apply|preview/apply integration]] expose
 future coordinates to review and prepare the workbook after an actionable calculation exists.
-Service, API and UI period input remain a later wave.
+Service, API and UI period input are accepted in their later waves.
 
 The direct transformer is accepted at `991002a`; bounded shared-formula compatibility is accepted
 at `90e7a73`. It preserves complete groups unchanged only after full topology, uint32, physical-cell
 uniqueness and operand proof; it introduces no template phrases, fixed coordinates or broad formula
-translation. Preview/apply and durable service state are now the active dependency.
+translation. Preview/apply and durable service state are accepted dependencies.
 
 One developer write stream runs at a time. No private corpus test and no full suite runs inside the
 feature tasks. Integration uses merge commits, focused gates and one independent high-risk review
-per task. The final private shadow and full suite run once, under reduced scheduling priority.
+per task. The final private shadow and full suite ran once under reduced scheduling priority and
+passed.
 
 ## Shared contracts
 

@@ -2,61 +2,33 @@
 type: map
 tags:
   - knowledge/map
-  - status/in-progress
-last_verified: 2026-08-15
-updated: 2026-08-15
+  - status/review
+last_verified: 2026-08-16
+updated: 2026-08-16
 ---
 
 # Active work
 
-Active verification implementation:
-[[../tasks/admin-verification-accuracy-remediation|Accuracy remediation]] with
-[[../tasks/admin-verification-remediation-gate0|frozen ORDO Gate 0]]. Owner decisions for numeric
-J/K verification and target-stage selection are accepted. Completed discovery audit:
-[[../tasks/reconciliation-max-accuracy-audit-v1|Максимальная точность проверки и сверки]]; findings
-remain tracked in [[../errors/reconciliation-accuracy-findings|RA-001—RA-018]] until verified closed.
-Numeric/stage remediation is integrated; the sequential lifecycle wave is accepted at `c8da710`.
-The active dependency chain is [[../tasks/reconciliation-real-layout-gate0|Real-layout Gate 0]].
-Structural source/identity is accepted at `fe3d5ee`; the structural target oracle is accepted at
-`959e3b9`. Direct OOXML transformation is accepted at `991002a`, and bounded wholly-left
-shared-formula preservation at `90e7a73`. Active work is
-[[../tasks/reconciliation-period-apply|preview/apply Gate 0]]. The original preview card is retained
-as blocked evidence because full historical preview also needs the shared target-measure/planner
-paths. Active replacement: first
-[[../tasks/reconciliation-period-preview-complete|combined bounded preview]], then
-[[../tasks/reconciliation-period-apply-service-v2|transactional apply/service recovery]], then a
-namespace compatibility through
-[[../tasks/reconciliation-writer-namespace-v3|the immutable bounded writer bridge]] is accepted at
-feature `d71b7f4` / main integration `fee01c4`. Active next:
-[[../tasks/reconciliation-period-ui|the explicit period API/UI wave]], then one low-load release
-shadow.
+The reconciliation accuracy release is at the publication gate:
 
-Active Qdrant plan: [[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation]].
+- [[../tasks/reconciliation-real-release-audit|Final release audit]] — accepted at product
+  checkpoint `4294c15`; knowledge publication and remote CI remain.
+- [[../tasks/reconciliation-source-region-implementation|Region-local source parser]] — accepted
+  after private shadow and independent review.
+- [[../tasks/reconciliation-zip-local-flags|ZIP local-header metadata]] — accepted after focused
+  metadata and LZMA regressions.
 
-Wave 1: [[../tasks/qdrant-dense-rag-core|core]] and
-[[../tasks/qdrant-dense-rag-infra|local service/infra]]. Wave 2:
-[[../tasks/qdrant-dense-rag-indexer|indexer/evaluation]] and
-[[../tasks/qdrant-dense-rag-app|application integration]].
+No product implementation wave remains active for reporting-period reconciliation. The following
+are completed dependencies retained for traceability:
 
-Link only active task cards here. Remove or move links after orchestration accepts completion.
+- [[../tasks/reconciliation-period-ui|Reporting-period API/UI]].
+- [[../tasks/reconciliation-writer-namespace-v3|Namespace-aware writer v3]].
+- [[../tasks/reconciliation-period-insertion-gate0|Direct OOXML period insertion]].
+- [[../tasks/admin-verification-accuracy-remediation|Numeric verification remediation]].
+- [[../tasks/reconciliation-real-layout-gate0|Real-layout dependency history]].
 
-No active drawing-card initiative. Completed/recent:
-[[../tasks/drawing-card-contract-check-rag-plan|Договорные значения и RAG feedback]].
+Active Qdrant work is separate:
+[[../tasks/qdrant-dense-rag-implementation-plan|Dense RAG implementation plan]].
 
-Completed admin integration: [[../tasks/admin-package-backend|safe Excel/PDF API]],
-[[../tasks/admin-package-ui|workflow UI/guide]],
-[[../tasks/admin-verification-ooxml|red-row OOXML]],
-[[../tasks/admin-verification-service|verification service/API]] and
-[[../tasks/admin-verification-ui|verification/report UI]].
-
-Completed global package review:
-[[../tasks/reconciliation-global-batch-review-v5-final|Reconciliation global batch review v5 final]].
-
-Completed reconciliation handoff: [[../tasks/reconciliation-real-data-resilience-v4-final]].
-
-Completed Excel-PDF Wave 10: [[../tasks/excel-pdf-wave10-final]].
-
-- [[../ORCHESTRATION|Orchestration rules]]
-- Последняя принятая волна: [[../tasks/summary-layout-xlsx|Карточная XLSX-сводка]],
-  [[../tasks/summary-layout-ui|компактная панель решений]] и
-  [[../tasks/summary-layout-tests|регрессии layout]].
+Link only genuinely active task cards here. Move accepted implementation detail to the component,
+decision, or completed task card.

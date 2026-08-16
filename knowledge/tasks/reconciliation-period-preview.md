@@ -45,6 +45,10 @@ acceptance_commands:
 
 # Structural period preview
 
+Historical frozen card, superseded by
+[[reconciliation-period-preview-complete|the accepted complete preview card]]. Do not implement or
+use the version labels below as current contracts.
+
 Resolve base target roles `DOCUMENT_INDEX`, `STAGE`, `ROW_NUMBER`, `WORK_NAME`, `UNIT` from the
 existing logical schema and hierarchical header evidence. Require one unambiguous `OK` binding per
 role, propagate index/stage values and select only semantic detail rows in the requested stage.

@@ -48,6 +48,10 @@ acceptance_commands:
 
 # Period-aware apply and recovery
 
+Historical frozen card, superseded by
+[[reconciliation-period-apply-service-v2|the accepted apply/recovery v2 card]]. Do not implement or
+use the version labels below as current contracts.
+
 Add optional `reporting_period` to `AdminJob` and `create_job`, parse once with `ReportingPeriod`,
 reject any non-null value for `verify`, and persist/recover canonical null/`YYYY-MM` in manifest v3.
 Reconciliation uses a new period-aware review entry; verification continues calling the strict

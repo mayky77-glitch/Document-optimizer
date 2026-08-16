@@ -1,6 +1,6 @@
 ---
 type: orchestration
-status: frozen
+status: accepted
 work_id: reconciliation-period-apply-v2
 objective: Preview and apply one reporting period with strict verification and restart-safe evidence.
 project_root: /Users/x/Documents/Сооотношение документов/Document-optimizer-ready
@@ -14,9 +14,12 @@ merge_method: merge-no-ff
 shared_paths_owner: integration
 data_classification: restricted
 created_at: 2026-08-14T13:00:00+08:00
+accepted_at: 2026-08-16
+published_preview_sha: fe118b96999ad398506e7d9c8da50f8fd420bad3
+published_apply_sha: dac566aee43a1a0fae81e04c34464cf1c9720280
 tags:
   - task/implementation
-  - status/in-progress
+  - status/accepted
   - domain/document-processing
   - capability/admin-panel
   - risk/high
@@ -28,6 +31,10 @@ links:
 ---
 
 # Period preview/apply Gate 0
+
+Accepted. Preview is published at `fe118b9`; apply/recovery is published at `dac566a`. Later
+semantic versioning supersedes the original identity/manifest versions below with
+`ReconciliationTargetIdentity-2.0` and `AdminReconciliationJobManifest-4.0`.
 
 Published dependency is `main@90e7a73`: direct OOXML insertion and bounded wholly-left shared
 formulas are accepted. CodeGraph confirmed that the prior single-task card was unsafe because it
@@ -45,11 +52,11 @@ the strict physical target reader and may never import or call the planner, prev
   hierarchical headers; ambiguity fails closed without fixed A–F columns or phrase ranking.
 - `ReconciliationTargetInsertionPreview-1.0`: non-writable virtual quantity/cost cells use each
   plan anchor's future adjacent coordinates; all other row facts come from the immutable target.
-- `ReconciliationTargetIdentity-1.0`: digest of original target SHA, selected stage, nullable
+- `ReconciliationTargetIdentity-2.0`: digest of original target SHA, selected stage, nullable
   canonical period and nullable plan digest. Catalog/package/state/target/apply identities consume it.
 - `ReconciliationCalculationSemantics-1.0`: canonical sorted JSON of calculation ID, target row ID,
   status and writer-adapted quantity/cost exact Decimal strings/null.
-- `ReconciliationApplyIntegrity-3.0`, `AdminReconciliationJobManifest-3.0` and
+- `ReconciliationApplyIntegrity-3.0`, `AdminReconciliationJobManifest-4.0` and
   `ReconciliationApplyReplay-2.0`: period, plan, target identity and calculation digests are durable
   replay evidence; manifests contain no workbook values, formulas, sheets or coordinates.
 
@@ -63,6 +70,6 @@ target IDs plus semantic calculation digest before the existing writer. Existing
 pair is idempotent; mixed or unsupported topology fails closed.
 
 Recovery reconstructs period-aware review and calculation evidence without transformer/writer,
-matches all manifest digests, then exact-replays the SQLite commit. Old v2 manifests are
-intentionally rejected. API/UI reporting-period input and final private/full release shadow remain
-the next separate wave.
+matches all manifest digests, then exact-replays the SQLite commit. Old v2/v3 manifests are
+intentionally rejected. API/UI reporting-period input and the final private/full release shadow are
+accepted at product checkpoint `4294c15`.
