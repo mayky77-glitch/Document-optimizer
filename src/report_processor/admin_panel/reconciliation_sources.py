@@ -109,6 +109,8 @@ class _SparseRegionIndex:
     visit_count: list[int]
     columns: tuple[int, ...]
     rows: tuple[int, ...]
+    max_column: int
+    last_sparse_row: int
 
 
 _REGION_CELL_LIMIT = 500_000
@@ -297,7 +299,7 @@ def _indexed_sheet_layouts(
     probed: list[tuple[_StreamedLayout, tuple[CanonicalSourceRow, ...]]] = []
     for layout in structural:
         region = layout.region
-        end_row = _indexed_detail_end(region, structural, index.rows)
+        end_row = _indexed_detail_end(region, structural, index.last_sparse_row)
         rows = _canonical_index_rows(
             index,
             sheet.title,
@@ -383,7 +385,7 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
         if cell.data_type == "f"
     )
     columns = sorted(
-        {column for _row, column in cells}
+        {column for _row, column in coordinates}
         | {span[1] for span in spans}
         | {span[3] for span in spans}
     )
@@ -409,7 +411,7 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
             for column, values in column_values.items()
         },
         frozenset(row_values),
-        _coalesced_row_intervals(spans),
+        _coalesced_row_intervals(spans, row_values),
         {row: tuple(items) for row, items in spans_by_top.items()},
         {row: tuple(items) for row, items in spans_by_bottom.items()},
         {(top, left): span for span in spans for top, left, _bottom, _right in (span,)},
@@ -419,14 +421,22 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
         [0],
         tuple(columns),
         tuple(sorted(row_values)),
+        max(columns, default=0),
+        max(
+            max((row for row, _column in coordinates), default=0),
+            max((span[2] for span in spans), default=0),
+        ),
     )
 
 
 def _coalesced_row_intervals(
     spans: tuple[tuple[int, int, int, int], ...],
+    row_values: dict[int, dict[int, object]],
 ) -> tuple[tuple[int, int], ...]:
     intervals: list[tuple[int, int]] = []
-    for top, _left, bottom, _right in spans:
+    for top, bottom in sorted(
+        [(top, bottom) for top, _left, bottom, _right in spans] + [(row, row) for row in row_values]
+    ):
         if intervals and top <= intervals[-1][1] + 1:
             intervals[-1] = (intervals[-1][0], max(intervals[-1][1], bottom))
         else:
@@ -447,22 +457,37 @@ def _indexed_structural_layouts(index: _SparseRegionIndex) -> tuple[_StreamedLay
             if roles is not None:
                 layouts.append(
                     _StreamedLayout(
-                        _MetricRegion(quantity, cost, header_end, root, top), *roles, True
+                        _MetricRegion(
+                            quantity,
+                            cost,
+                            header_end,
+                            (top, quantity, header_end, cost),
+                            top,
+                        ),
+                        *roles,
+                        True,
                     )
                 )
     for row in index.rows:
-        for quantity, cost in _indexed_metric_pairs(index, row, 1, max(index.columns, default=0)):
+        for quantity, cost in _indexed_metric_pairs(index, row, 1, index.max_column):
             band_start = _indexed_band_start(index, row)
             if _indexed_cumulative_ancestor(
                 index, row, quantity, band_start
             ) or _indexed_cumulative_ancestor(index, row, cost, band_start):
                 continue
             probe_count = _next_region_probe(probe_count)
-            roles = _indexed_roles(index, band_start, row, quantity, cost, SheetType.KS2)
+            header_end = _metric_header_end(index, row, quantity, cost)
+            roles = _indexed_roles(index, band_start, header_end, quantity, cost, SheetType.KS2)
             if roles is not None:
                 layouts.append(
                     _StreamedLayout(
-                        _MetricRegion(quantity, cost, row, (row, quantity, row, cost), band_start),
+                        _MetricRegion(
+                            quantity,
+                            cost,
+                            header_end,
+                            (row, quantity, header_end, cost),
+                            band_start,
+                        ),
                         *roles,
                         False,
                     )
@@ -482,18 +507,25 @@ def _next_region_probe(count: int) -> int:
 def _indexed_metric_pairs(
     index: _SparseRegionIndex, row: int, start: int, end: int
 ) -> list[tuple[int, int]]:
-    values = {
-        column: _text(value)
-        for column, value in index.row_values.get(row, {}).items()
-        if start <= column <= end
-    }
-    quantities = [
-        column
-        for column, value in values.items()
-        if any(stem in value for stem in ("колич", "объем", "объём"))
+    values = index.row_values.get(row, {})
+    columns = tuple(column for column in sorted(values) if start <= column <= end)
+    _consume_region_visits(index, len(columns))
+    return [
+        (quantity, quantity + 1)
+        for quantity in columns
+        if quantity + 1 in values
+        and any(stem in _text(values[quantity]) for stem in ("колич", "объем", "объём"))
+        and _cost_text(_text(values[quantity + 1]))
     ]
-    costs = [column for column, value in values.items() if _cost_text(value)]
-    return [(quantity, cost) for quantity in quantities for cost in costs if cost == quantity + 1]
+
+
+def _metric_header_end(index: _SparseRegionIndex, row: int, quantity: int, cost: int) -> int:
+    """Metric leaves include the whole exact merged span, not merely their origins."""
+    return max(
+        row,
+        index.span_by_origin.get((row, quantity), (row, quantity, row, quantity))[2],
+        index.span_by_origin.get((row, cost), (row, cost, row, cost))[2],
+    )
 
 
 def _indexed_cumulative_leaves(
@@ -504,7 +536,7 @@ def _indexed_cumulative_leaves(
     _top, left, bottom, right = current
     leaf_row = bottom + 1
     leaves = [
-        (quantity, cost, leaf_row)
+        (quantity, cost, _metric_header_end(index, leaf_row, quantity, cost))
         for quantity, cost in _indexed_metric_pairs(index, leaf_row, left, right)
     ]
     for nested in index.spans_by_top.get(leaf_row, ()):
@@ -550,6 +582,11 @@ def _indexed_band_columns(index: _SparseRegionIndex, start: int, end: int) -> tu
         _consume_region_visits(index, len(index.row_values[row]))
         columns.update(index.row_values[row])
     for span in _band_spans(index, start, end):
+        lower = bisect_left(index.columns, span[1])
+        upper = bisect_right(index.columns, span[3])
+        covered = index.columns[lower:upper]
+        _consume_region_visits(index, len(covered))
+        columns.update(covered)
         columns.add(span[1])
     return tuple(sorted(columns))
 
@@ -592,9 +629,7 @@ def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: in
 def _indexed_band_start(index: _SparseRegionIndex, row: int) -> int:
     while row > 1:
         previous = row - 1
-        if previous in index.occupied_rows:
-            row = previous
-            continue
+        _consume_region_visits(index)
         interval = _merge_interval_containing(index.occupied_merge_rows, previous)
         if interval is None:
             return row
@@ -603,8 +638,6 @@ def _indexed_band_start(index: _SparseRegionIndex, row: int) -> int:
 
 
 def _indexed_row_occupied(index: _SparseRegionIndex, row: int) -> bool:
-    if row in index.occupied_rows:
-        return True
     return _merge_interval_containing(index.occupied_merge_rows, row) is not None
 
 
@@ -655,7 +688,7 @@ def _band_spans(
 def _indexed_cumulative_ancestor(
     index: _SparseRegionIndex, row: int, column: int, band_start: int
 ) -> bool:
-    current = (row, column, row, column)
+    current = index.span_by_origin.get((row, column), (row, column, row, column))
     seen = set()
     while current not in seen:
         seen.add(current)
@@ -674,7 +707,7 @@ def _indexed_cumulative_ancestor(
 
 
 def _indexed_detail_end(
-    region: _MetricRegion, layouts: tuple[_StreamedLayout, ...], rows: tuple[int, ...]
+    region: _MetricRegion, layouts: tuple[_StreamedLayout, ...], last_sparse_row: int
 ) -> int:
     _top, left, _bottom, right = region.metric_span
     starts = [
@@ -684,7 +717,7 @@ def _indexed_detail_end(
         and item.region.metric_span[0] > region.header_end
         and _spans_overlap(left, right, item.region.metric_span[1], item.region.metric_span[3])
     ]
-    return min(starts) - 1 if starts else max(rows, default=region.header_end)
+    return min(starts) - 1 if starts else max(last_sparse_row, region.header_end)
 
 
 def _canonical_index_rows(

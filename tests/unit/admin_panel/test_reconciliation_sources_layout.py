@@ -283,6 +283,7 @@ def test_direct_roles_merged_vertically_cover_the_full_header_band() -> None:
     sheet.append(("", "Наименование работ", "Ед. изм.", "", ""))
     sheet.append(("", "", "", "", ""))
     sheet.append(("", "", "", "Количество", "Общая стоимость"))
+    sheet.append(("", "", "", "", ""))
     sheet.append(("1", "Монтаж", "м", 2, 10))
     sheet.merge_cells("B1:B3")
     sheet.merge_cells("C1:C3")
@@ -318,23 +319,25 @@ def test_sparse_band_start_jumps_over_tall_merged_coverage(monkeypatch: pytest.M
 
     spans = ((1, 2, 1_000_000, 2), (1, 3, 1_000_000, 3))
     index = sources._SparseRegionIndex(
-        {},
-        frozenset(),
-        spans,
-        {},
-        {},
-        {},
-        frozenset(),
-        ((1, 1_000_000),),
-        {1: spans},
-        {1_000_000: spans},
-        {(1, 2): spans[0], (1, 3): spans[1]},
-        (2, 3),
-        spans,
-        {},
-        [0],
-        (),
-        (),
+        values={},
+        formula_cells=frozenset(),
+        spans=spans,
+        row_values={},
+        column_values={},
+        column_rows={},
+        occupied_rows=frozenset(),
+        occupied_merge_rows=((1, 1_000_000),),
+        spans_by_top={1: spans},
+        spans_by_bottom={1_000_000: spans},
+        span_by_origin={(1, 2): spans[0], (1, 3): spans[1]},
+        span_starts=(2, 3),
+        spans_by_left=spans,
+        covering_span_cache={},
+        visit_count=[0],
+        columns=(),
+        rows=(),
+        max_column=3,
+        last_sparse_row=1_000_000,
     )
     calls = 0
     original = sources._merge_interval_containing
@@ -383,4 +386,100 @@ def test_sparse_region_visit_budget_fails_before_role_cartesian_work(
     with pytest.raises(SourceLayoutAmbiguousError):
         _extract_ks2_rows(sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx"))
 
+    workbook.close()
+
+
+def test_horizontal_work_merge_nominates_each_material_detail_column() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("", "Наименование работ", "", "Количество", "Общая стоимость", "Ед. изм."))
+    sheet.append(("1", "Первая", "Вторая", 1, 10, "м"))
+    sheet.merge_cells("B1:C1")
+
+    assert (
+        _extract_ks2_rows(sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx"))
+        == ()
+    )
+    workbook.close()
+
+
+def test_vertically_merged_direct_metric_leaves_end_after_their_spans() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("", "", "", "Количество", "Общая стоимость"))
+    sheet.append(("", "Наименование работ", "Ед. изм.", "", ""))
+    sheet.append(("1", "Монтаж", "м", 2, 10))
+    sheet.merge_cells("D1:D2")
+    sheet.merge_cells("E1:E2")
+
+    rows = _extract_ks2_rows(
+        sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx")
+    )
+
+    workbook.close()
+    assert len(rows) == 1
+
+
+def test_vertically_merged_cumulative_metric_leaves_end_after_their_spans() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["B1"] = "Наименование работ"
+    sheet["C1"] = "Ед. изм."
+    sheet["D1"] = "Выполнено нарастающим итогом"
+    sheet["D2"] = "Количество"
+    sheet["E2"] = "Общая стоимость"
+    sheet.append(("", "", "", "", ""))
+    sheet.append(("1", "Монтаж", "м", 2, 10))
+    sheet.merge_cells("B1:B3")
+    sheet.merge_cells("C1:C3")
+    sheet.merge_cells("D1:E1")
+    sheet.merge_cells("D2:D3")
+    sheet.merge_cells("E2:E3")
+
+    rows = _extract_ks6a_rows(
+        sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx")
+    )
+
+    workbook.close()
+    assert len(rows) == 1
+
+
+def test_metric_pair_scan_charges_only_the_adjacent_material_columns() -> None:
+    import report_processor.admin_panel.reconciliation_sources as sources
+
+    workbook = Workbook()
+    sheet = workbook.active
+    for column in range(1, 81, 2):
+        sheet.cell(row=1, column=column, value="Количество")
+        sheet.cell(row=1, column=column + 1, value="Общая стоимость")
+    index = _sparse_region_index(sheet, sheet)
+
+    assert len(sources._indexed_metric_pairs(index, 1, 1, index.max_column)) == 40
+    assert index.visit_count[0] == 80
+    workbook.close()
+
+
+def test_sparse_band_start_jumps_over_consecutive_material_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import report_processor.admin_panel.reconciliation_sources as sources
+
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in range(1, 129):
+        sheet.cell(row=row, column=1, value=row)
+    index = _sparse_region_index(sheet, sheet)
+    calls = 0
+    original = sources._merge_interval_containing
+
+    def counted(intervals, row):
+        nonlocal calls
+        calls += 1
+        return original(intervals, row)
+
+    monkeypatch.setattr(sources, "_merge_interval_containing", counted)
+
+    assert sources._indexed_band_start(index, 129) == 1
+    assert calls <= 2
+    assert index.visit_count[0] <= 2
     workbook.close()
