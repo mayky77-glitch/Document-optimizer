@@ -52,6 +52,8 @@ source-layout extraction changes and found no release blocker.
   input artifacts remained unchanged.
 - Full suite: 2,225 passed and 25 opt-in checks skipped. Ruff check, Ruff
   format and `git diff --check` were green.
+- Publication `2151751` reached `origin/main`; GitHub CI run `31949344330`
+  passed Ruff and tests in 1m41s.
 - The final review returned `MERGE YES`.
 
 ## Residual risk

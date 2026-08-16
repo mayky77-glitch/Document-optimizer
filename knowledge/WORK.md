@@ -39,8 +39,14 @@ updated: 2026-08-16
 
 ## Next executable step
 
-Publish the knowledge checkpoint, push `main`, and verify remote CI. Do not weaken controlled
-ambiguity or remove adversarial tests merely to reduce the test count.
+No reconciliation product change is pending. Preserve the fail-closed contracts and rerun the
+opt-in private shadow whenever the source parser, workbook runtime, period transformer, or semantic
+versions change. Do not weaken controlled ambiguity or remove adversarial tests merely to reduce
+the test count.
+
+Publication commit `2151751` is on `origin/main`; GitHub CI run `31949344330` passed Ruff and tests
+in `1m41s`. Its only annotation is the upstream Node-runtime deprecation notice for standard GitHub
+Actions.
 
 ## Completed context
 

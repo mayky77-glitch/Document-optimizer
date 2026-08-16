@@ -30,6 +30,8 @@ Keep only the two latest completed runs relevant to active work.
   performance, local-model, or fixture-condition opt-ins in `28.07s`.
 - `nice -n 10 .venv/bin/ruff check src tests`, `ruff format --check src tests`, and
   `git diff --check` passed.
+- GitHub CI run `31949344330` passed its Ruff and test job in `1m41s`. The sole annotation is an
+  upstream Node-runtime deprecation notice for standard GitHub Actions, not a repository failure.
 - The measured full-suite runtime remains healthy; no proven redundant or useless test was removed.
   Boundary and adversarial tests remain part of the fail-closed contract.
 

@@ -9,16 +9,16 @@ updated: 2026-08-16
 
 # Active work
 
-The reconciliation accuracy release is at the publication gate:
+The reconciliation accuracy release is published and CI-verified:
 
 - [[../tasks/reconciliation-real-release-audit|Final release audit]] — accepted at product
-  checkpoint `4294c15`; knowledge publication and remote CI remain.
+  checkpoint `4294c15`; publication `2151751` and CI run `31949344330` passed.
 - [[../tasks/reconciliation-source-region-implementation|Region-local source parser]] — accepted
   after private shadow and independent review.
 - [[../tasks/reconciliation-zip-local-flags|ZIP local-header metadata]] — accepted after focused
   metadata and LZMA regressions.
 
-No product implementation wave remains active for reporting-period reconciliation. The following
+No product implementation or release wave remains active for reporting-period reconciliation. The following
 are completed dependencies retained for traceability:
 
 - [[../tasks/reconciliation-period-ui|Reporting-period API/UI]].
