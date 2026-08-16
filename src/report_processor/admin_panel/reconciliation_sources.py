@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from bisect import bisect_right
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -98,6 +99,12 @@ class _SparseRegionIndex:
     column_values: dict[int, tuple[tuple[int, object], ...]]
     occupied_rows: frozenset[int]
     occupied_merge_rows: tuple[tuple[int, int], ...]
+    spans_by_top: dict[int, tuple[tuple[int, int, int, int], ...]]
+    spans_by_bottom: dict[int, tuple[tuple[int, int, int, int], ...]]
+    span_by_origin: dict[tuple[int, int], tuple[int, int, int, int]]
+    span_starts: tuple[int, ...]
+    spans_by_left: tuple[tuple[int, int, int, int], ...]
+    covering_span_cache: dict[int, tuple[tuple[int, int, int, int], ...]]
     columns: tuple[int, ...]
     rows: tuple[int, ...]
 
@@ -372,6 +379,12 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
     for (row, column), value in cells.items():
         row_values.setdefault(row, {})[column] = value
         column_values.setdefault(column, []).append((row, value))
+    spans_by_top: dict[int, list[tuple[int, int, int, int]]] = {}
+    spans_by_bottom: dict[int, list[tuple[int, int, int, int]]] = {}
+    for span in spans:
+        spans_by_top.setdefault(span[0], []).append(span)
+        spans_by_bottom.setdefault(span[2], []).append(span)
+    spans_by_left = tuple(sorted(spans, key=lambda item: (item[1], item[3], item[0], item[2])))
     return _SparseRegionIndex(
         cells,
         formulas,
@@ -379,10 +392,28 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
         row_values,
         {column: tuple(sorted(values)) for column, values in column_values.items()},
         frozenset(row_values),
-        tuple(sorted((top, bottom) for top, _left, bottom, _right in spans)),
+        _coalesced_row_intervals(spans),
+        {row: tuple(items) for row, items in spans_by_top.items()},
+        {row: tuple(items) for row, items in spans_by_bottom.items()},
+        {(top, left): span for span in spans for top, left, _bottom, _right in (span,)},
+        tuple(span[1] for span in spans_by_left),
+        spans_by_left,
+        {},
         tuple(columns),
         tuple(sorted(row_values)),
     )
+
+
+def _coalesced_row_intervals(
+    spans: tuple[tuple[int, int, int, int], ...],
+) -> tuple[tuple[int, int], ...]:
+    intervals: list[tuple[int, int]] = []
+    for top, _left, bottom, _right in spans:
+        if intervals and top <= intervals[-1][1] + 1:
+            intervals[-1] = (intervals[-1][0], max(intervals[-1][1], bottom))
+        else:
+            intervals.append((top, bottom))
+    return tuple(intervals)
 
 
 def _indexed_structural_layouts(index: _SparseRegionIndex) -> tuple[_StreamedLayout, ...]:
@@ -449,7 +480,7 @@ def _indexed_cumulative_leaves(
         (quantity, cost, leaf_row)
         for quantity, cost in _indexed_metric_pairs(index, leaf_row, left, right)
     ]
-    for nested in index.spans:
+    for nested in index.spans_by_top.get(leaf_row, ()):
         if nested != current and nested[0] == leaf_row and left <= nested[1] <= nested[3] <= right:
             leaves.extend(_indexed_cumulative_leaves(index, nested, seen | {current}))
     return leaves
@@ -490,14 +521,7 @@ def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: in
     for row, value in index.column_values.get(column, ()):
         if not start <= row <= end:
             continue
-        span = next(
-            (
-                item
-                for item in index.spans
-                if item[0] <= row <= item[2] and item[1] <= column <= item[3]
-            ),
-            None,
-        )
+        span = index.span_by_origin.get((row, column))
         origin = (span[0], span[1]) if span else (row, column)
         if origin in seen:
             continue
@@ -505,7 +529,7 @@ def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: in
         text = _text(index.values.get(origin, value))
         if text:
             values.append(text)
-    for top, left, bottom, right in index.spans:
+    for top, left, bottom, right in _covering_spans(index, column):
         if not (left <= column <= right and top <= end and bottom >= start):
             continue
         origin = (top, left)
@@ -519,15 +543,43 @@ def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: in
 
 
 def _indexed_band_start(index: _SparseRegionIndex, row: int) -> int:
-    while _indexed_row_occupied(index, row - 1):
-        row -= 1
+    while row > 1:
+        previous = row - 1
+        if previous in index.occupied_rows:
+            row = previous
+            continue
+        interval = _merge_interval_containing(index.occupied_merge_rows, previous)
+        if interval is None:
+            return row
+        row = interval[0]
     return row
 
 
 def _indexed_row_occupied(index: _SparseRegionIndex, row: int) -> bool:
-    return row in index.occupied_rows or any(
-        top <= row <= bottom for top, bottom in index.occupied_merge_rows
-    )
+    if row in index.occupied_rows:
+        return True
+    return _merge_interval_containing(index.occupied_merge_rows, row) is not None
+
+
+def _merge_interval_containing(
+    intervals: tuple[tuple[int, int], ...], row: int
+) -> tuple[int, int] | None:
+    position = bisect_right(intervals, (row, float("inf"))) - 1
+    if position >= 0 and intervals[position][0] <= row <= intervals[position][1]:
+        return intervals[position]
+    return None
+
+
+def _covering_spans(
+    index: _SparseRegionIndex, column: int
+) -> tuple[tuple[int, int, int, int], ...]:
+    cached = index.covering_span_cache.get(column)
+    if cached is not None:
+        return cached
+    cutoff = bisect_right(index.span_starts, column)
+    result = tuple(span for span in index.spans_by_left[:cutoff] if span[3] >= column)
+    index.covering_span_cache[column] = result
+    return result
 
 
 def _indexed_cumulative_ancestor(
@@ -540,8 +592,8 @@ def _indexed_cumulative_ancestor(
         top, left, _bottom, right = current
         parents = [
             span
-            for span in index.spans
-            if span[0] >= band_start and span[2] == top - 1 and span[1] <= left <= right <= span[3]
+            for span in index.spans_by_bottom.get(top - 1, ())
+            if span[0] >= band_start and span[1] <= left <= right <= span[3]
         ]
         if len(parents) != 1:
             return bool(parents)

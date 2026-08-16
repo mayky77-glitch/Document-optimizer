@@ -311,3 +311,38 @@ def test_formula_only_materialized_coordinates_obey_sparse_cap(
 
     data.close()
     formulas.close()
+
+
+def test_sparse_band_start_jumps_over_tall_merged_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
+    import report_processor.admin_panel.reconciliation_sources as sources
+
+    spans = ((1, 2, 1_000_000, 2), (1, 3, 1_000_000, 3))
+    index = sources._SparseRegionIndex(
+        {},
+        frozenset(),
+        spans,
+        {},
+        {},
+        frozenset(),
+        ((1, 1_000_000),),
+        {1: spans},
+        {1_000_000: spans},
+        {(1, 2): spans[0], (1, 3): spans[1]},
+        (2, 3),
+        spans,
+        {},
+        (),
+        (),
+    )
+    calls = 0
+    original = sources._merge_interval_containing
+
+    def counted(intervals, row):
+        nonlocal calls
+        calls += 1
+        return original(intervals, row)
+
+    monkeypatch.setattr(sources, "_merge_interval_containing", counted)
+
+    assert sources._indexed_band_start(index, 1_000_001) == 1
+    assert calls <= 2
