@@ -286,6 +286,58 @@ def test_total_cost_leaf_with_vsego_is_not_a_historical_conflict() -> None:
     assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
 
 
+@pytest.mark.parametrize(
+    "cost",
+    ("тыс. руб.", "миллионов рублей", "миллиардах рублей"),
+)
+def test_scaled_rub_leaf_without_cost_word_is_a_total_cost(cost: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    (pair,) = discover_target_measures(workbook, {sheet.title: 3})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+def test_scaled_rub_leaf_under_historical_parent_does_not_become_current() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Документальная отчетность за весь период", cost="млн рублей")
+    sheet["N3"] = "suffix"
+
+    (historical,) = discover_historical_target_measures(workbook, {sheet.title: 3})
+
+    assert (historical.quantity_letter, historical.cost_letter) == ("L", "M")
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize(
+    "cost",
+    ("Цена тыс. руб./м2", "Тариф миллионов рублей / шт.", "тыс. руб. / пог.м."),
+)
+def test_price_or_per_unit_scaled_rub_is_not_a_total_cost(cost: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+def test_competing_scaled_rub_pairs_fail_closed() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost="тыс. рублей")
+    _pair(sheet, 14, "Текущий отчетный период", cost="млрд руб.")
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_AMBIGUOUS"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
 def test_two_distinct_current_period_pairs_are_ambiguous() -> None:
     workbook, sheet = _workbook()
     _pair(sheet, 12, "Текущий отчетный период")

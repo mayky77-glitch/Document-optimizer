@@ -53,6 +53,22 @@ _RUSSIAN_MONTH_TOKENS = {
 _YEAR_MONTH = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[-./]\s*(0?[1-9]|1[0-2])(?!\d)")
 _MONTH_YEAR = re.compile(r"(?<!\d)(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|20)\d{2})(?!\d)")
 _DATE = re.compile(r"(?<!\d)\d{1,2}\s*[./-]\s*(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|20)\d{2})(?!\d)")
+_RUB_CURRENCY = re.compile(r"\bруб\w*\b", flags=re.UNICODE)
+_SCALED_RUB = re.compile(
+    r"\b(?:тыс(?:яч\w*)?|млн|миллион\w*|млрд|миллиард\w*)\b",
+    flags=re.UNICODE,
+)
+_UNIT_DENOMINATOR = re.compile(
+    r"/\s*(?:"
+    r"м(?:\d+)?|мм|см|дм|км|"
+    r"п\.?м\.?|пог\.?м\.?|"
+    r"шт\.?|штук\w*|ед\.?|единиц\w*|"
+    r"ч|час\w*|день\w*|сут\w*|"
+    r"т|кг|г|л|"
+    r"unit\w*|piece\w*|pcs?"
+    r")\b",
+    flags=re.UNICODE,
+)
 
 
 class ReconciliationTargetMeasureError(ValueError):
@@ -660,11 +676,16 @@ def _quantity_leaf(value: str) -> bool:
 
 
 def _total_cost_leaf(value: str) -> bool:
-    return any(stem in value for stem in ("стоим", "сумм", "затрат")) and not _unit_price(value)
+    return (
+        any(stem in value for stem in ("стоим", "сумм", "затрат"))
+        or bool(_SCALED_RUB.search(value) and _RUB_CURRENCY.search(value))
+    ) and not _unit_price(value)
 
 
 def _unit_price(value: str) -> bool:
-    return any(stem in value for stem in ("цен", "тариф", "расцен", "единиц"))
+    return any(stem in value for stem in ("цен", "тариф", "расцен", "единиц")) or bool(
+        _RUB_CURRENCY.search(value) and _UNIT_DENOMINATOR.search(value)
+    )
 
 
 def _historical(value: str) -> bool:
