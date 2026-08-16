@@ -316,10 +316,17 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
         formula_snapshots, value_snapshots = _session_snapshots(adapted, roles)
         stages = _enumerate_stages(adapted.formula_workbook, roles, formula_snapshots)
         selected_stage = resolve_reconciliation_stage(stages, stage)
-        detail_rows = _first_detail_rows(
+        selected_detail_rows = _first_detail_rows(
             adapted.formula_workbook, selected_stage, roles, formula_snapshots
         )
-        if not detail_rows:
+        detail_rows = _physical_detail_rows(
+            adapted.formula_workbook,
+            selected_stage,
+            roles,
+            formula_snapshots,
+            selected_detail_rows=selected_detail_rows,
+        )
+        if not selected_detail_rows:
             raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_STAGE_EMPTY")
         merged_ranges = {
             sheet_name: raw_worksheet_merge_ranges(session.source.local_path, sheet_name)
@@ -958,7 +965,7 @@ def _nonempty(value: object) -> bool:
     return value is not None and bool(str(value).strip())
 
 
-def _first_detail_rows(workbook, selected_stage: str, roles, snapshots) -> dict[str, int]:
+def _first_detail_rows(workbook, selected_stage: str | None, roles, snapshots) -> dict[str, int]:
     rows: dict[str, int] = {}
     for sheet in workbook.worksheets:
         if sheet.title not in roles:
@@ -974,6 +981,32 @@ def _first_detail_rows(workbook, selected_stage: str, roles, snapshots) -> dict[
                 rows[sheet.title] = row_number
                 break
     return rows
+
+
+def _physical_detail_rows(
+    workbook,
+    selected_stage: str,
+    roles,
+    snapshots,
+    *,
+    selected_detail_rows: dict[str, int] | None = None,
+) -> dict[str, int]:
+    """Return layout boundaries only for sheets proved to contain selected-stage rows.
+
+    Stage participation and table structure are distinct facts.  The selected
+    stage proves which sheets belong to the request; the earliest semantic row
+    on each such sheet fixes the physical header boundary for measure discovery
+    and insertion planning.  Both scans use the same immutable snapshots and
+    carried document/stage state.
+    """
+
+    selected = (
+        selected_detail_rows
+        if selected_detail_rows is not None
+        else _first_detail_rows(workbook, selected_stage, roles, snapshots)
+    )
+    physical = _first_detail_rows(workbook, None, roles, snapshots)
+    return {sheet_name: physical[sheet_name] for sheet_name in selected}
 
 
 def _rows(

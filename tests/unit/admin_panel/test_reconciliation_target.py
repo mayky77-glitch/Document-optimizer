@@ -217,6 +217,69 @@ def test_read_only_role_projection_opens_each_view_once_for_many_rows(tmp_path) 
     assert rows[0].cell_for(LogicalColumn.CURRENT_PERIOD_COST).formula.formula == "=L3*2"
 
 
+def test_late_selected_stage_uses_earliest_physical_table_boundary(tmp_path) -> None:
+    target = tmp_path / "late-stage-current.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["C1"], sheet["D1"], sheet["E1"], sheet["F1"], sheet["G1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    sheet.merge_cells("L1:M1")
+    sheet["L1"], sheet["L2"], sheet["M2"] = "Отчетный период", "Количество", "Стоимость"
+    sheet["C3"], sheet["D3"], sheet["E3"], sheet["F3"], sheet["G3"] = (
+        "1234",
+        "Этап 13.1",
+        "1",
+        "Ранняя строка",
+        "м",
+    )
+    sheet["C84"], sheet["D84"], sheet["E84"], sheet["F84"], sheet["G84"] = (
+        "5678",
+        "Этап 13.2",
+        "2",
+        "Поздняя строка",
+        "м",
+    )
+    sheet["L3"], sheet["M3"], sheet["L84"], sheet["M84"] = 1, 2, 3, 4
+    unrelated = workbook.create_sheet("Без этапа")
+    unrelated["C1"], unrelated["D1"], unrelated["E1"], unrelated["F1"], unrelated["G1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    unrelated.merge_cells("L1:M1")
+    unrelated["L1"], unrelated["L2"], unrelated["M2"] = (
+        "Отчетный период",
+        "Количество",
+        "Стоимость",
+    )
+    unrelated["C3"], unrelated["E3"], unrelated["F3"], unrelated["G3"] = (
+        "9999",
+        "1",
+        "Не участник",
+        "м",
+    )
+    workbook.save(target)
+    workbook.close()
+
+    schema, rows = read_reconciliation_target(
+        target, sha256(target.read_bytes()).hexdigest(), "13.2"
+    )
+
+    assert schema.pair_cardinality == "1"
+    assert [(row.sheet_name, row.row_number, row.work_name) for row in rows] == [
+        ("Отчёт", 84, "Поздняя строка")
+    ]
+    assert rows[0].cell_for(LogicalColumn.CURRENT_PERIOD_QUANTITY).coordinate == "L84"
+
+
 @pytest.mark.parametrize("stage", ("13.1", None), ids=("selected", "no-selected"))
 def test_macro_enabled_target_is_rejected_before_reconciliation_review(tmp_path, stage) -> None:
     target = tmp_path / "target.xlsm"

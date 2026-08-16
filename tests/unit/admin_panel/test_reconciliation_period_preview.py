@@ -148,6 +148,74 @@ def test_historical_preview_maps_each_sheet_to_its_own_anchor(tmp_path) -> None:
     ].count(LogicalColumn.DOCUMENT_INDEX) == 1
 
 
+def test_historical_plan_uses_physical_boundary_and_is_stage_independent(tmp_path) -> None:
+    target = tmp_path / "late-stage-historical.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Отчёт"
+    sheet["C1"], sheet["D1"], sheet["E1"], sheet["F1"], sheet["G1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    sheet.merge_cells("L1:M1")
+    sheet["L1"], sheet["L2"], sheet["M2"], sheet["N1"] = (
+        "Документальная отчетность за весь период",
+        "Количество",
+        "Стоимость",
+        "Следующий раздел",
+    )
+    for row, index, stage, name in (
+        (3, "1234", "Этап 13.1", "Ранняя строка"),
+        (84, "5678", "Этап 13.2", "Поздняя строка"),
+    ):
+        sheet.cell(row, 3).value = index
+        sheet.cell(row, 4).value = stage
+        sheet.cell(row, 5).value = str(row - 2)
+        sheet.cell(row, 6).value = name
+        sheet.cell(row, 7).value = "м"
+    unrelated = workbook.create_sheet("Без этапа")
+    unrelated["C1"], unrelated["D1"], unrelated["E1"], unrelated["F1"], unrelated["G1"] = (
+        "Индекс документа",
+        "Номер этапа",
+        "Номер п/п",
+        "Наименование работ",
+        "Единица измерения",
+    )
+    unrelated.merge_cells("L1:M1")
+    unrelated["L1"], unrelated["L2"], unrelated["M2"], unrelated["N1"] = (
+        "Документальная отчетность за весь период",
+        "Количество",
+        "Стоимость",
+        "Следующий раздел",
+    )
+    unrelated["C3"], unrelated["E3"], unrelated["F3"], unrelated["G3"] = (
+        "9999",
+        "1",
+        "Не участник",
+        "м",
+    )
+    workbook.save(target)
+    workbook.close()
+    digest = sha256(target.read_bytes()).hexdigest()
+
+    early = preview_reconciliation_target(target, digest, "13.1", "2026-08")
+    late = preview_reconciliation_target(target, digest, "13.2", "2026-08")
+
+    assert early.plan is not None
+    assert late.plan is not None
+    assert early.plan.plan_digest == late.plan.plan_digest
+    assert [(anchor.sheet_name, anchor.first_detail_row) for anchor in late.plan.anchors] == [
+        ("Отчёт", 3)
+    ]
+    assert [(row.sheet_name, row.row_number, row.work_name) for row in late.rows] == [
+        ("Отчёт", 84, "Поздняя строка")
+    ]
+    assert late.rows[0].cell_for(LogicalColumn.CURRENT_PERIOD_QUANTITY).coordinate == "N84"
+
+
 def test_partial_unrelated_sheet_is_ignored_but_heterogeneous_participant_fails(tmp_path) -> None:
     target = tmp_path / "historical.xlsx"
     _target(target, second_sheet=True)

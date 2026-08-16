@@ -17,6 +17,7 @@ from .reconciliation_target import (
     _current_pair_period_identity,
     _enumerate_stages,
     _first_detail_rows,
+    _physical_detail_rows,
     _preview_bindings,
     _preview_rows,
     _reconciliation_metadata_schema,
@@ -55,10 +56,17 @@ def preview_reconciliation_target(path, digest: str, stage: str | None, period):
         selected_stage = resolve_reconciliation_stage(
             _enumerate_stages(adapted.formula_workbook, roles, formula_snapshots), stage
         )
-        detail_rows = _first_detail_rows(
+        selected_detail_rows = _first_detail_rows(
             adapted.formula_workbook, selected_stage, roles, formula_snapshots
         )
-        if not detail_rows:
+        detail_rows = _physical_detail_rows(
+            adapted.formula_workbook,
+            selected_stage,
+            roles,
+            formula_snapshots,
+            selected_detail_rows=selected_detail_rows,
+        )
+        if not selected_detail_rows:
             raise ValueError("RECONCILIATION_TARGET_STAGE_EMPTY")
         merged_ranges = {
             sheet_name: raw_worksheet_merge_ranges(session.source.local_path, sheet_name)
