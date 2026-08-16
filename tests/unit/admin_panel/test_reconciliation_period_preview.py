@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import zipfile
 from contextlib import contextmanager
 from hashlib import sha256
@@ -21,8 +22,16 @@ from report_processor.admin_panel.reconciliation_target import (
     ReconciliationTargetScopeError,
     read_reconciliation_target,
 )
+from report_processor.admin_panel.reconciliation_target_measure import (
+    TARGET_MEASURE_SEMANTICS_VERSION,
+)
 from report_processor.excel_writer import engine as writer_engine
 from report_processor.schema import LogicalColumn, SheetType
+from report_processor.work_semantics import (
+    REPORTING_SCOPE_VERSION,
+    TERM_CANONICALIZATION_VERSION,
+    UNIT_ONTOLOGY_VERSION,
+)
 
 
 def _digest(value: str) -> str:
@@ -330,6 +339,32 @@ def test_target_identity_is_canonical_and_period_plan_bound() -> None:
         first.target_identity_digest
         != ReconciliationTargetIdentity(original, "13.2", "2026-08", plan).target_identity_digest
     )
+
+
+def test_target_identity_binds_semantic_contract_versions() -> None:
+    original, plan = _digest("original"), _digest("plan")
+    identity = ReconciliationTargetIdentity(original, "13.1", "2026-08", plan)
+
+    assert json.loads(identity.canonical_bytes()) == {
+        "contract_version": "ReconciliationTargetIdentity-2.0",
+        "original_target_digest": original,
+        "period": "2026-08",
+        "plan_digest": plan,
+        "reporting_scope_version": REPORTING_SCOPE_VERSION,
+        "selected_stage": "13.1",
+        "target_measure_semantics_version": TARGET_MEASURE_SEMANTICS_VERSION,
+        "term_canonicalization_version": TERM_CANONICALIZATION_VERSION,
+        "unit_ontology_version": UNIT_ONTOLOGY_VERSION,
+    }
+
+
+def test_target_identity_rejects_v1_contract() -> None:
+    with pytest.raises(ValueError, match="TARGET_IDENTITY_INVALID"):
+        ReconciliationTargetIdentity(
+            _digest("original"),
+            "13.1",
+            contract_version="ReconciliationTargetIdentity-1.0",
+        )
 
 
 @pytest.mark.parametrize(

@@ -29,6 +29,7 @@ _MAX_SUFFIX_COLUMN = 16_384
 _MAX_VALIDATED_MERGE_RANGES = 4_096
 _MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _Q = lambda name: f"{{{_MAIN_NS}}}{name}"  # noqa: E731
+TARGET_MEASURE_SEMANTICS_VERSION = "ReconciliationTargetMeasure-3.0"
 _RUSSIAN_MONTH_TOKENS = {
     "январь": 1,
     "января": 1,

@@ -41,7 +41,7 @@ MAX_SOURCES = 32
 MAX_RETAINED_TERMINAL_JOBS = 64
 MAX_MANUAL_DISCREPANCY_DECISIONS = 5_000
 MAX_STAGE_OPTIONS = 64
-RECONCILIATION_MANIFEST_CONTRACT = "AdminReconciliationJobManifest-3.0"
+RECONCILIATION_MANIFEST_CONTRACT = "AdminReconciliationJobManifest-4.0"
 _RECOVERABLE_MANIFEST_STATUSES = frozenset(
     {"ready", "review_required", "applying", "pending", "running"}
 )

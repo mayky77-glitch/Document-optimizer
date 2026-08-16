@@ -45,9 +45,15 @@ from report_processor.target_report.ooxml import (
     read_sheet_structure,
 )
 from report_processor.target_report.reader import _cell_snapshot
+from report_processor.work_semantics import (
+    REPORTING_SCOPE_VERSION,
+    TERM_CANONICALIZATION_VERSION,
+    UNIT_ONTOLOGY_VERSION,
+)
 
 from .reconciliation_identity import terminal_identity
 from .reconciliation_target_measure import (
+    TARGET_MEASURE_SEMANTICS_VERSION,
     TargetMeasurePair,
     discover_target_measures,
     raw_worksheet_merge_ranges,
@@ -183,10 +189,10 @@ class ReconciliationTargetIdentity:
     selected_stage: str
     period: object | None = None
     plan_digest: str | None = None
-    contract_version: str = "ReconciliationTargetIdentity-1.0"
+    contract_version: str = "ReconciliationTargetIdentity-2.0"
 
     def __post_init__(self) -> None:
-        if self.contract_version != "ReconciliationTargetIdentity-1.0":
+        if self.contract_version != "ReconciliationTargetIdentity-2.0":
             raise ValueError("RECONCILIATION_TARGET_IDENTITY_INVALID")
         if not isinstance(self.original_target_digest, str) or not _SHA256_RE.fullmatch(
             self.original_target_digest
@@ -219,7 +225,11 @@ class ReconciliationTargetIdentity:
                 "original_target_digest": self.original_target_digest,
                 "period": getattr(self.period, "value", self.period),
                 "plan_digest": self.plan_digest,
+                "reporting_scope_version": REPORTING_SCOPE_VERSION,
                 "selected_stage": self.selected_stage,
+                "target_measure_semantics_version": TARGET_MEASURE_SEMANTICS_VERSION,
+                "term_canonicalization_version": TERM_CANONICALIZATION_VERSION,
+                "unit_ontology_version": UNIT_ONTOLOGY_VERSION,
             },
             ensure_ascii=True,
             sort_keys=True,

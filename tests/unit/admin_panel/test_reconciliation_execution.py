@@ -6,9 +6,12 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import Workbook, load_workbook
 
+from report_processor.admin_panel import reconciliation_execution
 from report_processor.admin_panel.reconciliation_execution import (
     _Catalog,
     _catalog,
+    _catalog_digest,
+    _catalog_version,
     _feedback_records,
     _finalize_apply_plan,
     _normalized_source_digests,
@@ -134,6 +137,22 @@ def test_catalog_rejects_duplicate_document_index_and_category() -> None:
 
     with pytest.raises(ValueError, match="DUPLICATE_TARGET_CATEGORY"):
         _catalog((first, second))
+
+
+def test_catalog_digest_binds_target_identity_and_measure_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = _Catalog({"target-1": "Монтаж"}, {})
+    original_version = _catalog_version(catalog)
+
+    assert _catalog_digest(catalog, "a" * 64) != _catalog_digest(catalog, "b" * 64)
+
+    monkeypatch.setattr(
+        reconciliation_execution,
+        "TARGET_MEASURE_SEMANTICS_VERSION",
+        "ReconciliationTargetMeasure-test",
+    )
+    assert _catalog_version(catalog) != original_version
 
 
 def test_prepare_review_projects_duplicate_target_category_as_controlled_target_error(

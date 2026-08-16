@@ -89,7 +89,7 @@ def _blocked_result():
     )
 
 
-def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
+def test_reporting_period_is_canonical_in_v4_manifest_and_forbidden_for_verify(
     tmp_path: Path,
 ) -> None:
     service = AdminPanelService(
@@ -109,7 +109,7 @@ def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
     manifest = service._job_store.load(job.job_id)
     assert job.reporting_period == "2026-08"
     assert manifest is not None
-    assert manifest["contract"] == "AdminReconciliationJobManifest-3.0"
+    assert manifest["contract"] == "AdminReconciliationJobManifest-4.0"
     assert manifest["reporting_period"] == "2026-08"
 
     for required_key in ("reporting_period", "target_identity_digest"):
@@ -120,10 +120,14 @@ def test_reporting_period_is_canonical_in_v3_manifest_and_forbidden_for_verify(
             AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
 
     legacy = dict(manifest)
-    legacy["contract"] = "AdminReconciliationJobManifest-2.0"
-    (job.directory / "job-manifest.json").write_text(json.dumps(legacy), encoding="utf-8")
-    with pytest.raises(KeyError):
-        AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
+    for obsolete_contract in (
+        "AdminReconciliationJobManifest-2.0",
+        "AdminReconciliationJobManifest-3.0",
+    ):
+        legacy["contract"] = obsolete_contract
+        (job.directory / "job-manifest.json").write_text(json.dumps(legacy), encoding="utf-8")
+        with pytest.raises(KeyError):
+            AdminPanelService(tmp_path / "jobs").get_job(job.job_id)
 
     with pytest.raises(ValueError, match="REPORTING_PERIOD_INVALID"):
         service.create_job(

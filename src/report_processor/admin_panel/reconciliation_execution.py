@@ -45,7 +45,10 @@ from .reconciliation_target import (
     terminal_index,
     writer_calculations,
 )
-from .reconciliation_target_measure import ReconciliationTargetMeasureError
+from .reconciliation_target_measure import (
+    TARGET_MEASURE_SEMANTICS_VERSION,
+    ReconciliationTargetMeasureError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -529,7 +532,7 @@ def _catalog_version(catalog: _Catalog) -> str:
     return sha256(
         json.dumps(
             {
-                "contract": "ReconciliationTargetMeasure-2.0",
+                "contract": TARGET_MEASURE_SEMANTICS_VERSION,
                 "labels": sorted(catalog.labels.items()),
                 "targets": sorted(
                     (

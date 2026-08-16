@@ -269,6 +269,35 @@ def test_v1_manifest_is_invalidated_before_recovery(tmp_path: Path) -> None:
         recovered.get_job(job.job_id)
 
 
+def test_v3_applying_manifest_is_rejected_before_writer_or_feedback_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _ready_service(tmp_path / "jobs")
+    job = _ready_job(service)
+    manifest_path = job.directory / "job-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        contract="AdminReconciliationJobManifest-3.0",
+        status="applying",
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    invoked: list[str] = []
+    monkeypatch.setattr(
+        "report_processor.admin_panel.service.apply_review",
+        lambda *_args: invoked.append("writer"),
+    )
+    monkeypatch.setattr(
+        "report_processor.admin_panel.reconciliation_feedback_store.ReconciliationFeedbackStore.commit_apply",
+        lambda *_args, **_kwargs: invoked.append("feedback"),
+    )
+
+    recovered = AdminPanelService(service.workspace_root)
+
+    with pytest.raises(KeyError):
+        recovered.get_job(job.job_id)
+    assert invoked == []
+
+
 def test_interrupted_apply_fails_closed_without_a_download(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
