@@ -151,6 +151,52 @@ def test_price_lineage_cannot_supply_role_like_unit_descendant() -> None:
     workbook.close()
 
 
+def test_shared_schema_selects_canonical_work_role_among_broad_work_headers() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        (
+            "",
+            "Код работ",
+            "Наименование работ и затрат",
+            "Ед. изм.",
+            "Количество",
+            "Общая стоимость",
+        )
+    )
+    sheet.append(("1", "A-01", "Монтаж", "м", 2, 10))
+
+    rows = _extract_ks2_rows(
+        sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx")
+    )
+
+    workbook.close()
+    assert len(rows) == 1
+    assert rows[0].work_name_raw == "монтаж"
+
+
+def test_equal_shared_work_role_candidates_fail_closed() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        (
+            "",
+            "Наименование работ",
+            "Наименование работ",
+            "Ед. изм.",
+            "Количество",
+            "Общая стоимость",
+        )
+    )
+    sheet.append(("1", "Монтаж 1", "Монтаж 2", "м", 2, 10))
+
+    assert (
+        _extract_ks2_rows(sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx"))
+        == ()
+    )
+    workbook.close()
+
+
 def test_direct_metric_leaves_below_cumulative_parent_are_rejected() -> None:
     workbook = Workbook()
     sheet = workbook.active

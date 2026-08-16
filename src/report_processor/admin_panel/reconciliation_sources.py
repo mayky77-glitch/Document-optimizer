@@ -9,10 +9,19 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils.cell import get_column_letter
 
 from report_processor.extraction.models import CanonicalSourceRow, SourceLocation
 from report_processor.metadata.periods import extract_period_from_filename
 from report_processor.normalization import NormalizedSourceRow, normalize_training_rows
+from report_processor.schema import (
+    ComposedHeader,
+    LogicalColumn,
+    SheetType,
+    resolve_logical_columns,
+)
+from report_processor.schema.column_aliases import DEFAULT_COLUMN_ALIASES
+from report_processor.schema.text_normalization import normalize_header_text
 from report_processor.training_data import prepare_training_data
 
 from .reconciliation_identity import resolve_source_identity, source_basename_identities
@@ -258,7 +267,11 @@ def _physical_layouts(
     """Bind roles only after a physical metric region has been identified."""
     candidates = []
     for region in _physical_metric_regions(header, cumulative=cumulative):
-        roles = _region_roles(header, region)
+        roles = _region_roles(
+            header,
+            region,
+            sheet_type=SheetType.KS6A if cumulative else SheetType.KS2,
+        )
         if roles is None:
             continue
         work_column, unit_column = roles
@@ -407,25 +420,55 @@ def _header_band_start(header: _HeaderGraph, leaf_row: int) -> int:
     return 1
 
 
-def _region_roles(header: _HeaderGraph, region: _MetricRegion) -> tuple[int, int] | None:
-    """Require exactly one physical work and non-price unit lineage in this band."""
+def _region_roles(
+    header: _HeaderGraph,
+    region: _MetricRegion,
+    *,
+    sheet_type: SheetType,
+) -> tuple[int, int] | None:
+    """Resolve unique work/unit roles through the public shared schema ontology."""
     _top, metric_left, _bottom, metric_right = region.metric_span
-    work_columns: list[int] = []
-    unit_columns: list[int] = []
+    candidates: list[ComposedHeader] = []
     for column in range(1, len(header.rows[0]) + 1):
         if metric_left <= column <= metric_right:
             continue
         lineage = _physical_lineage(header, column, region.band_start, region.header_end)
         if not lineage or _price_lineage(lineage):
             continue
-        if _role_text(lineage, "work"):
-            work_columns.append(column)
-        if _unit_text(lineage):
-            unit_columns.append(column)
-    if len(work_columns) != 1 or len(unit_columns) != 1:
+        candidates.append(
+            ComposedHeader(
+                column_index=column,
+                column_letter=get_column_letter(column),
+                parts=(lineage,),
+                raw_text=lineage,
+                normalized_text=normalize_header_text(lineage),
+                is_empty=False,
+                source_coordinates=(),
+                merged_sources=(),
+            )
+        )
+    role_rules = tuple(
+        rule
+        for rule in DEFAULT_COLUMN_ALIASES
+        if rule.logical_column in {LogicalColumn.WORK_NAME, LogicalColumn.UNIT}
+    )
+    resolutions = {
+        resolution.logical_column: resolution
+        for resolution in resolve_logical_columns(tuple(candidates), sheet_type, role_rules)
+    }
+    work = resolutions.get(LogicalColumn.WORK_NAME)
+    unit = resolutions.get(LogicalColumn.UNIT)
+    if (
+        work is None
+        or unit is None
+        or work.status != "OK"
+        or unit.status != "OK"
+        or work.column_index is None
+        or unit.column_index is None
+        or work.column_index == unit.column_index
+    ):
         return None
-    work_column, unit_column = work_columns[0], unit_columns[0]
-    return (work_column, unit_column) if work_column != unit_column else None
+    return work.column_index, unit.column_index
 
 
 def _physical_lineage(header: _HeaderGraph, column: int, start: int, end: int) -> str:
