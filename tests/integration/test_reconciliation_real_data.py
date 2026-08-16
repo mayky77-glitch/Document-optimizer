@@ -228,6 +228,58 @@ def test_cumulative_detail_interval_streams_past_initial_header_window(
     assert batch.rows[0].work_name == "первая работа"
 
 
+def test_later_cumulative_region_past_header_window_fails_controlled_ambiguity(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Выполнено нарастающим итогом", ""),
+        ("", "", "", "Количество", "Общая стоимость"),
+        ("1", "Первая работа", "м", "1", "10"),
+    ):
+        sheet.append(row)
+    sheet.merge_cells("D1:E1")
+    sheet.cell(row=58, column=1, value="")
+    sheet.append(("", "Наименование работ", "Ед. изм.", "Выполнено нарастающим итогом", ""))
+    sheet.append(("", "", "", "Количество", "Общая стоимость"))
+    sheet.append(("2", "Вторая работа", "м", "2", "20"))
+    assert sheet.max_row == 61
+    sheet.merge_cells("D59:E59")
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
+
+
+def test_later_direct_region_past_header_window_fails_controlled_ambiguity(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("1", "Первая работа", "м", "1", "10"),
+    ):
+        sheet.append(row)
+    sheet.cell(row=89, column=1, value="")
+    sheet.append(("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"))
+    sheet.append(("2", "Вторая работа", "м", "2", "20"))
+    assert sheet.max_row == 91
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
+
+
 def test_metric_shaped_noise_without_roles_does_not_truncate_cumulative_detail(
     tmp_path: Path,
 ) -> None:

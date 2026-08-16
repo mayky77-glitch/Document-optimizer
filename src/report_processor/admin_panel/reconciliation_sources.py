@@ -78,6 +78,16 @@ class _MetricRegion:
     band_start: int
 
 
+@dataclass(frozen=True, slots=True)
+class _StreamedLayout:
+    """A later bounded-column layout promoted into normal candidate evaluation."""
+
+    region: _MetricRegion
+    work_column: int
+    unit_column: int
+    cumulative: bool
+
+
 def descriptor_from_upload_basename(safe_basename: str) -> ReconciliationSourceDescriptor:
     """Infer optional metadata solely from one validated upload basename."""
     period = extract_period_from_filename(safe_basename).value
@@ -267,6 +277,7 @@ def _physical_layouts(
     """Bind roles only after a physical metric region has been identified."""
     candidates = []
     all_regions = _all_physical_metric_regions(header)
+    streamed_layouts = _streamed_layouts(sheet, header)
     for region in _physical_metric_regions(header, cumulative=cumulative):
         roles = _region_roles(
             header,
@@ -296,6 +307,39 @@ def _physical_layouts(
                     (
                         work_column,
                         unit_column,
+                        region.metric_span,
+                        region.quantity_column,
+                        region.cost_column,
+                        region.header_end,
+                    ),
+                    rows,
+                )
+            )
+    streamed_regions = tuple(item.region for item in streamed_layouts)
+    for layout in streamed_layouts:
+        if layout.cumulative != cumulative:
+            continue
+        region = layout.region
+        rows = _canonical_rows(
+            sheet,
+            source_id,
+            descriptor,
+            source_type=source_type,
+            start_row=region.header_end + 1,
+            end_row=_streamed_detail_end(sheet, region, (*all_regions, *streamed_regions)),
+            work_column=layout.work_column,
+            unit_column=layout.unit_column,
+            quantity_column=region.quantity_column,
+            cost_column=region.cost_column,
+            cumulative=cumulative,
+            formula_sheet=formula_sheet,
+        )
+        if rows:
+            candidates.append(
+                (
+                    (
+                        layout.work_column,
+                        layout.unit_column,
                         region.metric_span,
                         region.quantity_column,
                         region.cost_column,
@@ -518,6 +562,150 @@ def _detail_end(
         stop_before=bounded_start,
     )
     starts = [start for start in (bounded_start, streamed_start) if start is not None]
+    return min(starts) - 1 if starts else int(sheet.max_row or 0)
+
+
+def _streamed_layouts(sheet, header: _HeaderGraph) -> tuple[_StreamedLayout, ...]:
+    """Promote viable regions after the initial bounded header window to candidates."""
+    column_limit = len(header.rows[0])
+    first_row = len(header.rows) + 1
+    merged_ranges = tuple(sheet.merged_cells.ranges)
+    layouts: list[_StreamedLayout] = []
+    for root in merged_ranges:
+        if (
+            root.min_row < first_row
+            or root.max_col > column_limit
+            or root.max_col <= root.min_col
+            or not _role_text(_text(sheet.cell(root.min_row, root.min_col).value), "cumulative")
+        ):
+            continue
+        for quantity, cost, header_end in _streamed_cumulative_leaves(
+            sheet, merged_ranges, root, column_limit=column_limit, seen=frozenset()
+        ):
+            roles = _streamed_region_roles(
+                sheet,
+                merged_ranges,
+                band_start=root.min_row,
+                header_end=header_end,
+                metric_left=root.min_col,
+                metric_right=root.max_col,
+                column_limit=column_limit,
+                sheet_type=SheetType.KS6A,
+            )
+            if roles is None or not _streamed_detail_viable(
+                sheet,
+                start_row=header_end + 1,
+                work_column=roles[0],
+                unit_column=roles[1],
+                quantity_column=quantity,
+                cost_column=cost,
+                column_limit=column_limit,
+            ):
+                continue
+            layouts.append(
+                _StreamedLayout(
+                    _MetricRegion(
+                        quantity,
+                        cost,
+                        header_end,
+                        (root.min_row, root.min_col, root.max_row, root.max_col),
+                        root.min_row,
+                    ),
+                    roles[0],
+                    roles[1],
+                    True,
+                )
+            )
+    band_start = first_row
+    for row_number, values in enumerate(
+        sheet.iter_rows(min_row=first_row, max_col=column_limit, values_only=True), first_row
+    ):
+        if not any(_text(value) for value in values):
+            band_start = row_number + 1
+            continue
+        for quantity, cost in _metric_pairs(values, 1, column_limit):
+            if _streamed_has_cumulative_ancestor(
+                sheet, merged_ranges, row_number, quantity, band_start=band_start
+            ) or _streamed_has_cumulative_ancestor(
+                sheet, merged_ranges, row_number, cost, band_start=band_start
+            ):
+                continue
+            roles = _streamed_region_roles(
+                sheet,
+                merged_ranges,
+                band_start=band_start,
+                header_end=row_number,
+                metric_left=quantity,
+                metric_right=cost,
+                column_limit=column_limit,
+                sheet_type=SheetType.KS2,
+            )
+            if roles is None or not _streamed_detail_viable(
+                sheet,
+                start_row=row_number + 1,
+                work_column=roles[0],
+                unit_column=roles[1],
+                quantity_column=quantity,
+                cost_column=cost,
+                column_limit=column_limit,
+            ):
+                continue
+            layouts.append(
+                _StreamedLayout(
+                    _MetricRegion(
+                        quantity,
+                        cost,
+                        row_number,
+                        (row_number, quantity, row_number, cost),
+                        band_start,
+                    ),
+                    roles[0],
+                    roles[1],
+                    False,
+                )
+            )
+    return tuple(dict.fromkeys(layouts))
+
+
+def _streamed_has_cumulative_ancestor(
+    sheet, merged_ranges, row: int, column: int, *, band_start: int
+) -> bool:
+    """Apply the same exact adjacent-span ancestry exclusion to streamed leaves."""
+    current = (row, column, row, column)
+    seen: set[tuple[int, int, int, int]] = set()
+    while current not in seen:
+        seen.add(current)
+        top, left, _bottom, right = current
+        parents = tuple(
+            sorted(
+                (
+                    item
+                    for item in merged_ranges
+                    if item.min_row >= band_start
+                    and item.max_row == top - 1
+                    and item.min_col <= left <= right <= item.max_col
+                ),
+                key=lambda item: (item.min_row, item.min_col, item.max_row, item.max_col),
+            )
+        )
+        if len(parents) != 1:
+            return bool(parents)
+        parent = parents[0]
+        current = (parent.min_row, parent.min_col, parent.max_row, parent.max_col)
+        if _role_text(_text(sheet.cell(parent.min_row, parent.min_col).value), "cumulative"):
+            return True
+    return True
+
+
+def _streamed_detail_end(sheet, region: _MetricRegion, regions: tuple[_MetricRegion, ...]) -> int:
+    _top, left, _bottom, right = region.metric_span
+    starts = [
+        other.metric_span[0]
+        for other in regions
+        if other != region
+        and other.metric_span[0] > region.header_end
+        and _spans_overlap(left, right, other.metric_span[1], other.metric_span[3])
+    ]
     return min(starts) - 1 if starts else int(sheet.max_row or 0)
 
 
