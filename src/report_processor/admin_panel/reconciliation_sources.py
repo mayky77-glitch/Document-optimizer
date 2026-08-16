@@ -54,6 +54,20 @@ class _HeaderGraph:
         _top, left, _bottom, right = self.spans.get((row, column), (row, column, row, column))
         return left, right
 
+    def span_at(self, row: int, column: int) -> tuple[int, int, int, int]:
+        return self.spans.get((row, column), (row, column, row, column))
+
+
+@dataclass(frozen=True, slots=True)
+class _MetricRegion:
+    """One physical quantity/total-cost region in a bounded header band."""
+
+    quantity_column: int
+    cost_column: int
+    header_end: int
+    metric_span: tuple[int, int, int, int]
+    band_start: int
+
 
 def descriptor_from_upload_basename(safe_basename: str) -> ReconciliationSourceDescriptor:
     """Infer optional metadata solely from one validated upload basename."""
@@ -179,11 +193,12 @@ def _extract_one(
         candidates: list[tuple[str, str, tuple[NormalizedSourceRow, ...]]] = []
         for sheet in workbook.worksheets:
             for extractor, source_type in (
-                (_extract_ks6a_rows, "ks6a"),
-                (_extract_ks2_rows, "ks2"),
+                (_ks6a_layouts, "ks6a"),
+                (_ks2_layouts, "ks2"),
             ):
-                canonical = extractor(sheet, formulas[sheet.title], source_id, descriptor)
-                if canonical:
+                for _physical_key, canonical in extractor(
+                    sheet, formulas[sheet.title], source_id, descriptor
+                ):
                     normalized = normalize_training_rows(prepare_training_data(canonical).rows).rows
                     if normalized:
                         candidates.append((source_type, sheet.title, normalized))
@@ -204,102 +219,77 @@ def _extract_ks6a_rows(
     sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor
 ):
     """Read the cumulative pair from a structural multi-row КС-6а header."""
-    header_rows = _header_graph(sheet, maximum=50)
-    candidates = []
-    for work_column, unit_column, anchor in _layout_columns(header_rows, cumulative=True):
-        for quantity_column, cost_column, header_end, parent_span in _metric_regions_for_anchor(
-            header_rows, anchor
-        ):
-            parent_top, parent_left, _parent_bottom, parent_right = parent_span
-            if (
-                parent_left <= work_column <= parent_right
-                or parent_left <= unit_column <= parent_right
-            ):
-                continue
-            rows = _canonical_rows(
-                sheet,
-                source_id,
-                descriptor,
-                source_type="ks6a",
-                start_row=_detail_start(
-                    sheet,
-                    formula_sheet,
-                    header_end,
-                    work_column,
-                    unit_column,
-                    quantity_column,
-                    cost_column,
-                ),
-                work_column=work_column,
-                unit_column=unit_column,
-                quantity_column=quantity_column,
-                cost_column=cost_column,
-                cumulative=True,
-                formula_sheet=formula_sheet,
-            )
-            if rows:
-                candidates.append(
-                    (
-                        (
-                            work_column,
-                            unit_column,
-                            parent_top,
-                            parent_left,
-                            parent_right,
-                            quantity_column,
-                            cost_column,
-                            header_end,
-                        ),
-                        rows,
-                    )
-                )
-    return _unique_layout_rows(candidates)
+    return _unique_layout_rows(_ks6a_layouts(sheet, formula_sheet, source_id, descriptor))
 
 
 def _extract_ks2_rows(
     sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor
 ):
     """Read a structural КС-2 detail table only when its direct metrics are explicit."""
-    header_rows = _header_graph(sheet, maximum=80)
+    return _unique_layout_rows(_ks2_layouts(sheet, formula_sheet, source_id, descriptor))
+
+
+def _ks6a_layouts(sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor):
+    """Return each physical cumulative layout; normalization is deliberately deferred."""
+    header = _header_graph(sheet, maximum=50)
+    return _physical_layouts(
+        sheet, formula_sheet, source_id, descriptor, header, cumulative=True, source_type="ks6a"
+    )
+
+
+def _ks2_layouts(sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor):
+    """Return each physical direct layout; normalization is deliberately deferred."""
+    header = _header_graph(sheet, maximum=80)
+    return _physical_layouts(
+        sheet, formula_sheet, source_id, descriptor, header, cumulative=False, source_type="ks2"
+    )
+
+
+def _physical_layouts(
+    sheet,
+    formula_sheet,
+    source_id: str,
+    descriptor: ReconciliationSourceDescriptor,
+    header: _HeaderGraph,
+    *,
+    cumulative: bool,
+    source_type: str,
+):
+    """Bind roles only after a physical metric region has been identified."""
     candidates = []
-    for work_column, unit_column, _anchor in _layout_columns(header_rows, cumulative=False):
-        for quantity_column, cost_column, metric_row in _metric_pairs_for_row(header_rows):
-            if work_column in (quantity_column, cost_column) or unit_column in (
-                quantity_column,
-                cost_column,
-            ):
-                continue
-            header_end = max(
-                _role_header_row(header_rows, work_column, "work"),
-                _unit_header_row(header_rows, unit_column),
-                metric_row,
-            )
-            rows = _canonical_rows(
-                sheet,
-                source_id,
-                descriptor,
-                source_type="ks2",
-                start_row=_detail_start(
-                    sheet,
-                    formula_sheet,
-                    header_end,
-                    work_column,
-                    unit_column,
-                    quantity_column,
-                    cost_column,
-                ),
-                work_column=work_column,
-                unit_column=unit_column,
-                quantity_column=quantity_column,
-                cost_column=cost_column,
-                cumulative=False,
-                formula_sheet=formula_sheet,
-            )
-            if rows:
-                candidates.append(
-                    ((work_column, unit_column, quantity_column, cost_column, metric_row), rows)
+    for region in _physical_metric_regions(header, cumulative=cumulative):
+        roles = _region_roles(header, region)
+        if roles is None:
+            continue
+        work_column, unit_column = roles
+        rows = _canonical_rows(
+            sheet,
+            source_id,
+            descriptor,
+            source_type=source_type,
+            start_row=region.header_end + 1,
+            work_column=work_column,
+            unit_column=unit_column,
+            quantity_column=region.quantity_column,
+            cost_column=region.cost_column,
+            cumulative=cumulative,
+            formula_sheet=formula_sheet,
+        )
+        if rows:
+            candidates.append(
+                (
+                    (
+                        work_column,
+                        unit_column,
+                        region.metric_span,
+                        region.quantity_column,
+                        region.cost_column,
+                        region.header_end,
+                    ),
+                    rows,
                 )
-    return _unique_layout_rows(candidates)
+            )
+    return candidates
 
 
 def _header_graph(sheet, *, maximum: int) -> _HeaderGraph:
@@ -322,6 +312,145 @@ def _header_graph(sheet, *, maximum: int) -> _HeaderGraph:
                 values[row - 1][column - 1] = value
                 spans[(row, column)] = (top, left, bottom, right)
     return _HeaderGraph(tuple(tuple(row) for row in values), spans)
+
+
+def _physical_metric_regions(header: _HeaderGraph, *, cumulative: bool) -> list[_MetricRegion]:
+    """Find physical metric leaves before considering descriptive header columns."""
+    regions = _cumulative_metric_regions(header) if cumulative else _direct_metric_regions(header)
+    return list(dict.fromkeys(regions))
+
+
+def _cumulative_metric_regions(header: _HeaderGraph) -> list[_MetricRegion]:
+    regions: list[_MetricRegion] = []
+    for parent in sorted(set(header.spans.values())):
+        top, left, bottom, right = parent
+        if right == left or bottom >= len(header.rows):
+            continue
+        # A cumulative region must be nominated by the actual merged-cell origin,
+        # not by a word inherited into one of its metric descendants.
+        if not _role_text(_text_at(header.rows[top - 1], left), "cumulative"):
+            continue
+        leaf_row = bottom + 1
+        for quantity, cost in _physical_metric_pairs(header, leaf_row, left, right):
+            regions.append(
+                _MetricRegion(
+                    quantity,
+                    cost,
+                    leaf_row,
+                    parent,
+                    top,
+                )
+            )
+    return regions
+
+
+def _direct_metric_regions(header: _HeaderGraph) -> list[_MetricRegion]:
+    regions: list[_MetricRegion] = []
+    for row_number, row in enumerate(header.rows, 1):
+        for quantity, cost in _physical_metric_pairs(header, row_number, 1, len(row)):
+            if _under_cumulative_parent(header, row_number, quantity) or _under_cumulative_parent(
+                header, row_number, cost
+            ):
+                continue
+            quantity_span = header.span_at(row_number, quantity)
+            cost_span = header.span_at(row_number, cost)
+            regions.append(
+                _MetricRegion(
+                    quantity,
+                    cost,
+                    max(quantity_span[2], cost_span[2]),
+                    (
+                        min(quantity_span[0], cost_span[0]),
+                        quantity,
+                        max(quantity_span[2], cost_span[2]),
+                        cost,
+                    ),
+                    _header_band_start(header, row_number),
+                )
+            )
+    return regions
+
+
+def _physical_metric_pairs(
+    header: _HeaderGraph, row_number: int, start: int, end: int
+) -> list[tuple[int, int]]:
+    """Return adjacent leaves whose labels live at their physical origins."""
+    row = header.rows[row_number - 1]
+    return [
+        (quantity, cost)
+        for quantity, cost in _metric_pairs(row, start, end)
+        if _is_origin(header, row_number, quantity) and _is_origin(header, row_number, cost)
+    ]
+
+
+def _is_origin(header: _HeaderGraph, row: int, column: int) -> bool:
+    top, left, _bottom, _right = header.span_at(row, column)
+    return (top, left) == (row, column)
+
+
+def _under_cumulative_parent(header: _HeaderGraph, row: int, column: int) -> bool:
+    """A direct layout cannot reuse leaves directly below a cumulative parent."""
+    return any(
+        bottom == row - 1
+        and left <= column <= right
+        and right > left
+        and _role_text(_text_at(header.rows[top - 1], left), "cumulative")
+        for top, left, bottom, right in set(header.spans.values())
+    )
+
+
+def _header_band_start(header: _HeaderGraph, leaf_row: int) -> int:
+    """Use the contiguous physical header block, rather than a row-distance guess."""
+    for row_number in range(leaf_row - 1, 0, -1):
+        if not any(_text(value) for value in header.rows[row_number - 1]):
+            return row_number + 1
+    return 1
+
+
+def _region_roles(header: _HeaderGraph, region: _MetricRegion) -> tuple[int, int] | None:
+    """Require exactly one physical work and non-price unit lineage in this band."""
+    _top, metric_left, _bottom, metric_right = region.metric_span
+    work_columns: list[int] = []
+    unit_columns: list[int] = []
+    for column in range(1, len(header.rows[0]) + 1):
+        if metric_left <= column <= metric_right:
+            continue
+        lineage = _physical_lineage(header, column, region.band_start, region.header_end)
+        if not lineage or _price_lineage(lineage):
+            continue
+        if _role_text(lineage, "work"):
+            work_columns.append(column)
+        if _unit_text(lineage):
+            unit_columns.append(column)
+    if len(work_columns) != 1 or len(unit_columns) != 1:
+        return None
+    work_column, unit_column = work_columns[0], unit_columns[0]
+    return (work_column, unit_column) if work_column != unit_column else None
+
+
+def _physical_lineage(header: _HeaderGraph, column: int, start: int, end: int) -> str:
+    """Join physical origins touching one column inside one exact header band."""
+    values: list[str] = []
+    seen: set[tuple[int, int]] = set()
+    for row in range(start, end + 1):
+        top, left, bottom, right = header.span_at(row, column)
+        origin = (top, left)
+        if origin in seen or not (start <= top <= end) or not (left <= column <= right):
+            continue
+        if bottom < start or top > end:
+            continue
+        seen.add(origin)
+        value = _text_at(header.rows[top - 1], left)
+        if value:
+            values.append(value)
+    return " ".join(values)
+
+
+def _price_lineage(lineage: str) -> bool:
+    return any(
+        token in lineage
+        for token in ("цен", "тариф", "расцен", "unit price", "unit cost", "стоимост единиц")
+    )
 
 
 def _rows(header: _HeaderGraph | tuple[tuple[object, ...], ...]):

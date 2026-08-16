@@ -211,6 +211,32 @@ def test_two_direct_regions_in_one_sheet_fail_controlled_ambiguity(tmp_path: Pat
     assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
 
 
+def test_empty_physical_candidate_does_not_compete_with_one_normalized_layout(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    rejected = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("1", "Итого", "м", "1", "10"),
+    ):
+        rejected.append(row)
+    viable = workbook.create_sheet("Данные")
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("1", "Учитывать", "м", "2", "20"),
+    ):
+        viable.append(row)
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert len(batch.rows) == 1
+    assert batch.rows[0].work_name == "учитывать"
+
+
 def test_footer_formula_does_not_invalidate_eligible_source_rows(tmp_path: Path) -> None:
     path = tmp_path / "source.xlsx"
     workbook = Workbook()
