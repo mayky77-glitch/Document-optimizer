@@ -73,7 +73,7 @@ def write_corpus(
     versions = {
         "term_canonicalization": "TermCanonicalization-2.0",
         "domain_ontology": "DomainOntology-1.0",
-        "unit_ontology": "UnitOntology-1.0",
+        "unit_ontology": "UnitOntology-1.1",
         "typed_slots": "TypedSlots-1.0",
         "semantic_skeleton": "SemanticSkeleton-1.0",
         "category_catalog": "synthetic-catalog",
@@ -147,6 +147,19 @@ def test_loader_rejects_unknown_fields_versions_and_duplicate_ids(tmp_path: Path
     payload = write_corpus(source, [row])
     source.write_bytes(payload + payload.splitlines()[1] + b"\n")
     with pytest.raises(offline.OfflineContractError, match="input schema"):
+        offline.load_corpus_jsonl(source)
+
+
+def test_loader_rejects_legacy_unit_ontology_corpus(tmp_path: Path) -> None:
+    source = tmp_path / "corpus.jsonl"
+    write_corpus(source, [_row(1)])
+    source.write_bytes(
+        source.read_bytes().replace(
+            b'"unit_ontology":"UnitOntology-1.1"', b'"unit_ontology":"UnitOntology-1.0"', 1
+        )
+    )
+
+    with pytest.raises(offline.OfflineContractError, match="input version is unsupported"):
         offline.load_corpus_jsonl(source)
 
 

@@ -286,6 +286,267 @@ def test_total_cost_leaf_with_vsego_is_not_a_historical_conflict() -> None:
     assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
 
 
+@pytest.mark.parametrize(
+    "cost",
+    ("тыс. руб.", "миллионов рублей", "миллиардах рублей", "млн RUB", "тыс. ₽"),
+)
+def test_scaled_rub_leaf_without_cost_word_is_a_total_cost(cost: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    (pair,) = discover_target_measures(workbook, {sheet.title: 3})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+def test_scaled_rub_leaf_under_historical_parent_does_not_become_current() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Документальная отчетность за весь период", cost="млн рублей")
+    sheet["N3"] = "suffix"
+
+    (historical,) = discover_historical_target_measures(workbook, {sheet.title: 3})
+
+    assert (historical.quantity_letter, historical.cost_letter) == ("L", "M")
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Цена тыс. руб./м2",
+        "Тариф миллионов рублей / шт.",
+        "тыс. руб. / пог.м.",
+        "млн руб./комплект",
+        "млн рублей / маш.-час",
+        "млн RUB/кВт·ч",
+        "тыс. руб. / 1 м³",
+        "млн рублей за машино-час",
+        "тыс. руб. на 1 м2",
+        "млн руб. на квт ч",
+        "млн руб. за квадратный метр",
+        "млн руб. за кубический метр",
+        "млн руб. за погонный метр",
+        "млн руб. за Гкал",
+        "млн руб. за человеко-час",
+        "Единичная стоимость, млн руб.",
+    ),
+)
+def test_price_or_per_unit_scaled_rub_is_not_a_total_cost(cost: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize(
+    "price_label",
+    ("Цена", "Цены", "Цену", "Ценой", "Цене", "Ценам", "Ценами", "цен."),
+)
+def test_standalone_price_label_inflections_are_not_total_costs(price_label: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=f"{price_label}, млн руб.")
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Цена в текущих ценах, млн руб.",
+        "Тариф в базисных ценах, млн руб.",
+        "Расценка в текущих ценах, млн руб.",
+        "Единичная стоимость в базисных ценах, млн руб.",
+    ),
+)
+def test_direct_price_labels_are_not_masked_by_context(cost: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Стоимость в текущих ценах",
+        "Сумма в базисных ценах",
+        "Стоимость в ценах 2026",
+        "Сумма в базисном уровне цен",
+    ),
+)
+def test_contextual_prices_are_not_unit_prices(cost: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    (pair,) = discover_target_measures(workbook, {sheet.title: 3})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+@pytest.mark.parametrize(
+    "cost", ("Стоимость, млн руб. за отчетный период", "Стоимость, млн руб. за весь период")
+)
+def test_currency_over_a_reporting_scope_is_not_a_unit_rate(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._total_cost_leaf(normalized)
+    assert not reconciliation_target_measure._unit_price(normalized)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Стоимость, млн руб. за месяц",
+        "Стоимость, млн руб. за квартал",
+        "Стоимость, млн руб. за год",
+        "Стоимость, млн руб. за выполненные работы",
+        "Стоимость, млн руб. за выполнённые работы",
+        "Стоимость, млн руб. на дату отчета",
+        "Стоимость, млн руб. за все СМР",
+        "Стоимость, млн руб. за два дня",
+        "Стоимость, млн руб. за шесть дней",
+        "Стоимость, млн руб. за десять дней",
+        "Стоимость, млн руб. за 1 этап",
+        "Стоимость, млн руб. за шесть этапов",
+        "Стоимость, млн руб. за тридцать дней",
+        "Стоимость, млн руб. за первый квартал",
+        "Стоимость, млн руб. на отчетную дату",
+        "Стоимость, млн руб. за выполненные сложные работы",
+        "Стоимость, млн руб. за сто дней",
+        "Стоимость, млн руб. за отчетность",
+        "Стоимость, млн руб. на дату итогового отчета",
+        "Стоимость, млн руб. за весь производственный этап",
+        "Стоимость, млн руб. за август 2026",
+        "Стоимость, млн руб. за весь отчетный период",
+        "Стоимость, млн руб. за текущий отчетный период",
+        "Стоимость, млн руб. за двадцать один этап",
+        "Стоимость, млн руб. за сто этапов",
+        "Стоимость, млн руб. за выполненные работы по текущему этапу",
+        "Стоимость, млн руб. за работы по отчетному периоду",
+        "Стоимость, млн руб. за итоговые работы",
+        "Стоимость, млн руб. за весь месяц",
+        "Стоимость, млн руб. за текущий месяц",
+        "Стоимость, млн руб. за отчетный год",
+        "Стоимость, млн руб. за документальный год",
+        "Стоимость, млн руб. за исторический квартал",
+    ),
+)
+def test_currency_over_a_total_scope_is_not_a_unit_rate(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._total_cost_leaf(normalized)
+    assert not reconciliation_target_measure._unit_price(normalized)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Стоимость, млн руб. за м2 за весь период",
+        "Стоимость, млн руб. за человеко-час за выполненные работы",
+    ),
+)
+def test_mixed_unit_and_scope_fails_closed_instead_of_becoming_rate_or_total(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._currency_preposition_scope(normalized) == "unknown"
+    assert not reconciliation_target_measure._unit_price(normalized)
+    assert not reconciliation_target_measure._total_cost_leaf(normalized)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    ("Стоимость, млн руб. за м2", "Стоимость, млн руб. за человеко-час"),
+)
+def test_whole_canonical_unit_tail_is_a_rate(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._currency_preposition_scope(normalized) == "rate"
+    assert reconciliation_target_measure._unit_price(normalized)
+    assert not reconciliation_target_measure._total_cost_leaf(normalized)
+
+
+def test_unknown_currency_preposition_tail_fails_closed_instead_of_becoming_total_cost() -> None:
+    normalized = reconciliation_target_measure._text("Стоимость, млн руб. за оборудование")
+
+    assert reconciliation_target_measure._currency_preposition_scope(normalized) == "unknown"
+    assert not reconciliation_target_measure._unit_price(normalized)
+    assert not reconciliation_target_measure._total_cost_leaf(normalized)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Стоимость, млн руб. за работника",
+        "Стоимость, млн руб. за работника-час",
+        "Стоимость, млн руб. за дневной прокат",
+        "Стоимость, млн руб. за оборудование для работ",
+        "Стоимость, млн руб. за датчик",
+        "Стоимость, млн руб. за дневник",
+        "Стоимость, млн руб. за оборудование для работ за август",
+        "Стоимость, млн руб. за датчик за отчетный период",
+        "Стоимость, млн руб. за час работы",
+        "Стоимость, млн руб. за смену работы",
+        "Стоимость, млн руб. за тысячу квадратных метров работ",
+        "Стоимость, млн руб. за часовой работы",
+        "Стоимость, млн руб. за сменной работы",
+        "Стоимость, млн руб. за каждый отчет",
+        "Стоимость, млн руб. за каждый этап",
+        "Стоимость, млн руб. за каждый день",
+        "Стоимость, млн руб. за единичный отчет",
+        "Стоимость, млн руб. за любой отчет",
+        "Стоимость, млн руб. за отдельный отчет",
+        "Стоимость, млн руб. за ежедневный день",
+        "Стоимость, млн руб. за ежемесячный месяц",
+        "Стоимость, млн руб. за поэтапный этап",
+        "Стоимость, млн руб. за разовый этап",
+        "Стоимость, млн руб. за один отчет",
+        "Стоимость, млн руб. за датчик отчет",
+        "Стоимость, млн руб. за датчик этап",
+        "Стоимость, млн руб. за датчик работы",
+        "Стоимость, млн руб. за пятно этап",
+        "Стоимость, млн руб. за сотовый этап",
+    ),
+)
+def test_embedded_scope_words_do_not_turn_adversarial_tail_into_total(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._currency_preposition_scope(normalized) == "unknown"
+    assert not reconciliation_target_measure._total_cost_leaf(normalized)
+
+
+def test_rubka_is_not_a_ruble_currency_form() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost="млн рубка")
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+def test_competing_scaled_rub_pairs_fail_closed() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost="тыс. рублей")
+    _pair(sheet, 14, "Текущий отчетный период", cost="млрд руб.")
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_AMBIGUOUS"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
 def test_two_distinct_current_period_pairs_are_ambiguous() -> None:
     workbook, sheet = _workbook()
     _pair(sheet, 12, "Текущий отчетный период")

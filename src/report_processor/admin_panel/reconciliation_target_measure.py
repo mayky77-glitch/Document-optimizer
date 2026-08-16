@@ -14,6 +14,11 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 
 from report_processor.target_report.ooxml import worksheet_parts
+from report_processor.work_semantics import (
+    MAX_REPORTING_SCOPE_TOKENS,
+    canonical_unit,
+    is_reporting_scope,
+)
 
 _HEADER_ROWS = 80
 _MAX_HEADER_WINDOW_CELLS = 500_000
@@ -53,6 +58,29 @@ _RUSSIAN_MONTH_TOKENS = {
 _YEAR_MONTH = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[-./]\s*(0?[1-9]|1[0-2])(?!\d)")
 _MONTH_YEAR = re.compile(r"(?<!\d)(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|20)\d{2})(?!\d)")
 _DATE = re.compile(r"(?<!\d)\d{1,2}\s*[./-]\s*(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|20)\d{2})(?!\d)")
+_RUB_CURRENCY = re.compile(
+    r"(?<!\w)(?:руб\.?|рубль|рубля|рублей|рублю|рублем|рублём|"
+    r"рубли|рублях|рублям|рублями|rub|rur)(?!\w)",
+    flags=re.UNICODE,
+)
+_SCALED_RUB = re.compile(
+    r"\b(?:тыс(?:яч\w*)?|млн|миллион\w*|млрд|миллиард\w*)\b",
+    flags=re.UNICODE,
+)
+_CURRENCY_RATE = re.compile(
+    _RUB_CURRENCY.pattern + r"\s*(?:[.,;:()\-]\s*)*/\s*(?=\S)",
+    flags=re.UNICODE,
+)
+_PRICE_LABEL = re.compile(
+    r"\b(?:цена|цены|цену|ценой|цене|ценам|ценами|тариф\w*|расценк\w*)\b"
+    r"|\bцен\.(?!\w)"
+)
+_UNIT_COST_LABEL = re.compile(r"\bединичн\w*\s+стоим\w*\b")
+_CURRENCY_PER_UNIT = re.compile(
+    _RUB_CURRENCY.pattern + r"\s+(?:за|на)\s+(?P<tail>.+)",
+    flags=re.UNICODE,
+)
+_LEADING_MULTIPLIER = re.compile(r"^\d+(?:[.,]\d+)?\s+")
 
 
 class ReconciliationTargetMeasureError(ValueError):
@@ -660,11 +688,55 @@ def _quantity_leaf(value: str) -> bool:
 
 
 def _total_cost_leaf(value: str) -> bool:
-    return any(stem in value for stem in ("стоим", "сумм", "затрат")) and not _unit_price(value)
+    preposition_scope = _currency_preposition_scope(value)
+    return (
+        preposition_scope != "unknown"
+        and (
+            any(stem in value for stem in ("стоим", "сумм", "затрат"))
+            or bool(_SCALED_RUB.search(value) and _RUB_CURRENCY.search(value))
+        )
+        and not _unit_price(value)
+    )
 
 
 def _unit_price(value: str) -> bool:
-    return any(stem in value for stem in ("цен", "тариф", "расцен", "единиц"))
+    return bool(
+        _PRICE_LABEL.search(value)
+        or _UNIT_COST_LABEL.search(value)
+        or re.search(r"\bза\s+единиц\w*\b", value)
+        or _CURRENCY_RATE.search(value)
+        or _currency_preposition_scope(value) == "rate"
+    )
+
+
+def _currency_preposition_scope(value: str) -> str | None:
+    """Classify a currency ``за``/``на`` tail as proven rate, total scope, or unknown."""
+
+    match = _CURRENCY_PER_UNIT.search(value)
+    if match is None:
+        return None
+    tail = match.group("tail").strip()
+    if not tail:
+        return "unknown"
+    unit_tail = _LEADING_MULTIPLIER.sub("", tail)
+    if not canonical_unit(unit_tail).exact_only:
+        return "rate"
+    tokens = tuple(re.findall(r"\w+", unit_tail.replace("ё", "е"), flags=re.UNICODE))
+    if len(tokens) > MAX_REPORTING_SCOPE_TOKENS:
+        return "unknown"
+    if _contains_canonical_unit_ngram(tokens):
+        return "unknown"
+    if is_reporting_scope(unit_tail):
+        return "total"
+    return "unknown"
+
+
+def _contains_canonical_unit_ngram(tokens: tuple[str, ...]) -> bool:
+    return any(
+        not canonical_unit(" ".join(tokens[start : start + size])).exact_only
+        for size in range(1, len(tokens) + 1)
+        for start in range(len(tokens) - size + 1)
+    )
 
 
 def _historical(value: str) -> bool:
@@ -725,5 +797,7 @@ def _year(value: str) -> bool:
 
 
 def _text(value: object | None) -> str:
-    normalized = unicodedata.normalize("NFKC", str(value or "")).replace("\u00a0", " ")
+    normalized = (
+        unicodedata.normalize("NFKC", str(value or "")).replace("\u00a0", " ").replace("₽", " руб ")
+    )
     return " ".join(re.sub(r"[^\w./-]+", " ", normalized, flags=re.UNICODE).casefold().split())

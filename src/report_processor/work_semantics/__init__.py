@@ -19,10 +19,17 @@ from .ontology import (
     extract_semantic_labels,
     units_compatible,
 )
+from .reporting_scope import (
+    MAX_REPORTING_SCOPE_TOKENS,
+    REPORTING_SCOPE_VERSION,
+    is_reporting_scope,
+)
 
 __all__ = [
     "DEFAULT_ONTOLOGY",
     "DOMAIN_ONTOLOGY_VERSION",
+    "MAX_REPORTING_SCOPE_TOKENS",
+    "REPORTING_SCOPE_VERSION",
     "TERM_CANONICALIZATION_VERSION",
     "UNIT_ONTOLOGY_VERSION",
     "CanonicalTerm",
@@ -33,6 +40,7 @@ __all__ = [
     "canonical_unit",
     "canonicalize_term",
     "extract_semantic_labels",
+    "is_reporting_scope",
     "normalize_audit_text",
     "normalize_semantic_text",
     "units_compatible",

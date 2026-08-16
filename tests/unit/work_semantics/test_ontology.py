@@ -98,6 +98,11 @@ def test_supply_and_installation_are_not_presumed_to_conflict() -> None:
         ("кв м", "square_meter", "area", Decimal("1")),
         ("кубический метр", "cubic_meter", "volume", Decimal("1")),
         ("тонны", "tonne", "mass", Decimal("1000")),
+        ("погонный метр", "linear_meter", "linear_length", Decimal("1")),
+        ("Гкал", "gigacalorie", "energy_gcal", Decimal("1")),
+        ("кВт-ч", "kilowatt_hour", "energy_kwh", Decimal("1")),
+        ("человеко-час", "person_hour", "labor_time", Decimal("1")),
+        ("маш.-час", "machine_hour", "equipment_time", Decimal("1")),
     ],
 )
 def test_unit_identity_exposes_alias_family_and_scale(
@@ -116,6 +121,10 @@ def test_units_keep_piece_and_set_incompatible_while_scaled_families_are_compati
     assert not units_compatible("шт", "комплект")
     assert units_compatible("м", "км")
     assert units_compatible("кг", "т")
+    assert not units_compatible("погонный метр", "м")
+    assert not units_compatible("пм", "км")
+    assert not units_compatible("Гкал", "кВт-ч")
+    assert not units_compatible("человеко-час", "машино-час")
 
 
 def test_unknown_units_are_exact_only_and_cannot_broadly_merge() -> None:
@@ -169,3 +178,8 @@ def test_json_resource_owns_versions_conflicts_and_rejects_invalid_schema() -> N
     unknown_conflict_label["conflict_pairs"]["action"] = [["installation", "not-an-action"]]
     with pytest.raises(ValueError):
         DomainOntology(unknown_conflict_label)
+
+    old_unit_version = copy.deepcopy(payload)
+    old_unit_version["unit_version"] = "UnitOntology-1.0"
+    with pytest.raises(ValueError, match="unsupported unit ontology version"):
+        DomainOntology(old_unit_version)

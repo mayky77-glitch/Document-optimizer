@@ -12,7 +12,7 @@ from typing import Any, Literal
 from .canonicalization import normalize_semantic_text
 
 DOMAIN_ONTOLOGY_VERSION = "DomainOntology-1.0"
-UNIT_ONTOLOGY_VERSION = "UnitOntology-1.0"
+UNIT_ONTOLOGY_VERSION = "UnitOntology-1.1"
 _WORD = re.compile(r"\w+", re.UNICODE)
 _SCHEMA_VERSION = "WorkSemanticsOntology-1.0"
 

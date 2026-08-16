@@ -494,7 +494,7 @@ def _versions(value: object) -> CorpusVersions:
     expected = (
         "TermCanonicalization-2.0",
         "DomainOntology-1.0",
-        "UnitOntology-1.0",
+        "UnitOntology-1.1",
         "TypedSlots-1.0",
         "SemanticSkeleton-1.0",
         CONFIRMED_OUTCOME_VERSION,
