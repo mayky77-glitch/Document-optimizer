@@ -6,7 +6,7 @@ import re
 import unicodedata
 
 MAX_REPORTING_SCOPE_TOKENS = 24
-REPORTING_SCOPE_VERSION = "ReportingScope-1.0"
+REPORTING_SCOPE_VERSION = "ReportingScope-1.1"
 _TOKEN = re.compile(r"\w+", flags=re.UNICODE)
 _FINAL_SCOPE_TOKEN = frozenset(
     {
@@ -166,6 +166,32 @@ _NUMERAL_TOKENS = frozenset(
     }
 )
 _DETERMINER_TOKENS = frozenset({"весь", "вся", "все", "всех"})
+_WORK_SCOPE_HEADS = frozenset(
+    {"работа", "работы", "работ", "работе", "работой", "работам", "работами", "работах", "смр"}
+)
+_WORK_AGGREGATE_EVIDENCE = frozenset(
+    {
+        "весь",
+        "вся",
+        "все",
+        "всех",
+        "выполненный",
+        "выполненная",
+        "выполненное",
+        "выполненные",
+        "выполненных",
+        "совокупный",
+        "совокупная",
+        "совокупное",
+        "совокупные",
+        "совокупных",
+        "итоговый",
+        "итоговая",
+        "итоговое",
+        "итоговые",
+        "итоговых",
+    }
+)
 _MODIFIER = re.compile(
     r"\w*(?:ый|ий|ой|ая|яя|ое|ее|ую|юю|ого|его|ому|ему|ым|им|ыми|ими|ых|их|ые|енн(?:ый|ая|ое|ые|ого|ому|ым|ыми|ых)|анн(?:ый|ая|ое|ые|ого|ому|ым|ыми|ых))"
 )
@@ -191,12 +217,18 @@ def _is_scope_clause(tokens: tuple[str, ...]) -> bool:
         return False
     if _is_calendar_scope(tokens):
         return True
-    return tokens[-1] in _FINAL_SCOPE_TOKEN and all(
+    if tokens[-1] not in _FINAL_SCOPE_TOKEN or not all(
         _is_numeric_token(token)
         or token in _DETERMINER_TOKENS
         or token in _FINAL_SCOPE_TOKEN
         or bool(_MODIFIER.fullmatch(token))
         for token in tokens[:-1]
+    ):
+        return False
+    return (
+        tokens[-1] not in _WORK_SCOPE_HEADS
+        or len(tokens) == 1
+        or bool(_WORK_AGGREGATE_EVIDENCE & set(tokens[:-1]))
     )
 
 

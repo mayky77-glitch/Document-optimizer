@@ -435,6 +435,7 @@ def test_currency_over_a_reporting_scope_is_not_a_unit_rate(cost: str) -> None:
         "Стоимость, млн руб. за сто этапов",
         "Стоимость, млн руб. за выполненные работы по текущему этапу",
         "Стоимость, млн руб. за работы по отчетному периоду",
+        "Стоимость, млн руб. за итоговые работы",
     ),
 )
 def test_currency_over_a_total_scope_is_not_a_unit_rate(cost: str) -> None:
@@ -493,6 +494,8 @@ def test_unknown_currency_preposition_tail_fails_closed_instead_of_becoming_tota
         "Стоимость, млн руб. за час работы",
         "Стоимость, млн руб. за смену работы",
         "Стоимость, млн руб. за тысячу квадратных метров работ",
+        "Стоимость, млн руб. за часовой работы",
+        "Стоимость, млн руб. за сменной работы",
     ),
 )
 def test_embedded_scope_words_do_not_turn_adversarial_tail_into_total(cost: str) -> None:

@@ -18,6 +18,11 @@ from report_processor.work_semantics import REPORTING_SCOPE_VERSION, is_reportin
         "дату итогового отчета",
         "весь производственный этап",
         "выполнённые работы",
+        "все работы",
+        "совокупные работы",
+        "итоговые работы",
+        "работы",
+        "смр",
         "август 2026",
         "весь отчетный период",
         "текущий отчетный период",
@@ -47,6 +52,8 @@ def test_reporting_scope_accepts_bounded_reporting_and_work_phrases(value: str) 
         "час работы",
         "смену работы",
         "тысячу квадратных метров работ",
+        "часовой работы",
+        "сменной работы",
     ),
 )
 def test_reporting_scope_rejects_collisions_and_embedded_objects(value: str) -> None:
@@ -58,4 +65,4 @@ def test_reporting_scope_rejects_over_budget_token_sequences() -> None:
 
 
 def test_reporting_scope_exposes_its_version() -> None:
-    assert REPORTING_SCOPE_VERSION == "ReportingScope-1.0"
+    assert REPORTING_SCOPE_VERSION == "ReportingScope-1.1"
