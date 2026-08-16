@@ -314,6 +314,39 @@ def test_formula_only_materialized_coordinates_obey_sparse_cap(
     formulas.close()
 
 
+def test_styled_empty_cells_do_not_consume_the_sparse_cell_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import report_processor.admin_panel.reconciliation_sources as sources
+
+    workbook = Workbook()
+    sheet = workbook.active
+    for column in range(1, 4):
+        sheet.cell(row=1, column=column).number_format = "0.00"
+    monkeypatch.setattr(sources, "_REGION_CELL_LIMIT", 1)
+
+    index = _sparse_region_index(sheet, sheet)
+
+    workbook.close()
+    assert index.values == {}
+    assert index.columns == ()
+
+
+def test_nonempty_data_coordinates_obey_sparse_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    import report_processor.admin_panel.reconciliation_sources as sources
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "one"
+    sheet["B1"] = "two"
+    monkeypatch.setattr(sources, "_REGION_CELL_LIMIT", 1)
+
+    with pytest.raises(SourceLayoutAmbiguousError):
+        _sparse_region_index(sheet, sheet)
+
+    workbook.close()
+
+
 def test_sparse_band_start_jumps_over_tall_merged_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
     import report_processor.admin_panel.reconciliation_sources as sources
 

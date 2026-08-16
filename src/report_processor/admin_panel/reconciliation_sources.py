@@ -350,13 +350,22 @@ def _indexed_sheet_layouts(
 
 def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
     coordinates: set[tuple[int, int]] = set()
-    for cell_map in (sheet._cells, formula_sheet._cells):
-        for coordinate, cell in cell_map.items():
-            if isinstance(cell, MergedCell):
-                continue
-            coordinates.add(coordinate)
-            if len(coordinates) > _REGION_CELL_LIMIT:
-                raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    cells: dict[tuple[int, int], object] = {}
+    for coordinate, cell in sheet._cells.items():
+        if isinstance(cell, MergedCell) or cell.value is None:
+            continue
+        cells[coordinate] = cell.value
+        coordinates.add(coordinate)
+        if len(coordinates) > _REGION_CELL_LIMIT:
+            raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    formulas: set[tuple[int, int]] = set()
+    for coordinate, cell in formula_sheet._cells.items():
+        if isinstance(cell, MergedCell) or cell.data_type != "f":
+            continue
+        formulas.add(coordinate)
+        coordinates.add(coordinate)
+        if len(coordinates) > _REGION_CELL_LIMIT:
+            raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
     spans = tuple(
         sorted(
             (item.min_row, item.min_col, item.max_row, item.max_col)
@@ -374,16 +383,6 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
         for other_top, other_left, other_bottom, other_right in spans[position + 1 :]
     ):
         raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
-    cells = {
-        (row, column): cell.value
-        for (row, column), cell in sheet._cells.items()
-        if cell.value is not None
-    }
-    formulas = frozenset(
-        (row, column)
-        for (row, column), cell in formula_sheet._cells.items()
-        if cell.data_type == "f"
-    )
     columns = sorted(
         {column for _row, column in coordinates}
         | {span[1] for span in spans}
@@ -402,7 +401,7 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
     spans_by_left = tuple(sorted(spans, key=lambda item: (item[1], item[3], item[0], item[2])))
     return _SparseRegionIndex(
         cells,
-        formulas,
+        frozenset(formulas),
         spans,
         row_values,
         {column: tuple(sorted(values)) for column, values in column_values.items()},
