@@ -6,7 +6,7 @@ import re
 import unicodedata
 
 MAX_REPORTING_SCOPE_TOKENS = 24
-REPORTING_SCOPE_VERSION = "ReportingScope-1.1"
+REPORTING_SCOPE_VERSION = "ReportingScope-1.2"
 _TOKEN = re.compile(r"\w+", flags=re.UNICODE)
 _FINAL_SCOPE_TOKEN = frozenset(
     {
@@ -166,6 +166,32 @@ _NUMERAL_TOKENS = frozenset(
     }
 )
 _DETERMINER_TOKENS = frozenset({"весь", "вся", "все", "всех"})
+_DISTRIBUTIVE_OR_UNITARY_TOKENS = frozenset(
+    {
+        "каждый",
+        "каждая",
+        "каждое",
+        "каждые",
+        "каждого",
+        "каждому",
+        "каждым",
+        "каждой",
+        "каждую",
+        "каждых",
+        "каждыми",
+        "единичный",
+        "единичная",
+        "единичное",
+        "единичные",
+        "единичного",
+        "единичному",
+        "единичным",
+        "единичной",
+        "единичную",
+        "единичных",
+        "единичными",
+    }
+)
 _WORK_SCOPE_HEADS = frozenset(
     {"работа", "работы", "работ", "работе", "работой", "работам", "работами", "работах", "смр"}
 )
@@ -203,6 +229,8 @@ def is_reporting_scope(value: str) -> bool:
     normalized = unicodedata.normalize("NFKC", value).casefold().replace("ё", "е")
     tokens = tuple(_TOKEN.findall(normalized))
     if not tokens or len(tokens) > MAX_REPORTING_SCOPE_TOKENS:
+        return False
+    if _DISTRIBUTIVE_OR_UNITARY_TOKENS & set(tokens):
         return False
     if "по" in tokens:
         if tokens.count("по") != 1:

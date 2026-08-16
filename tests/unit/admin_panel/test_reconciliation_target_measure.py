@@ -496,6 +496,10 @@ def test_unknown_currency_preposition_tail_fails_closed_instead_of_becoming_tota
         "Стоимость, млн руб. за тысячу квадратных метров работ",
         "Стоимость, млн руб. за часовой работы",
         "Стоимость, млн руб. за сменной работы",
+        "Стоимость, млн руб. за каждый отчет",
+        "Стоимость, млн руб. за каждый этап",
+        "Стоимость, млн руб. за каждый день",
+        "Стоимость, млн руб. за единичный отчет",
     ),
 )
 def test_embedded_scope_words_do_not_turn_adversarial_tail_into_total(cost: str) -> None:
