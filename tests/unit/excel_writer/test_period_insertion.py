@@ -123,6 +123,43 @@ def test_verifier_rejects_tampered_output_local_zip_flags(tmp_path: Path) -> Non
         verify_period_insertion(source, output, plan)
 
 
+def test_period_insertion_rejects_lzma_without_eos_flag_without_output(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _rewrite_zip_metadata(
+        source,
+        flag_bits=0,
+        external_attr=0,
+        compression=zipfile.ZIP_LZMA,
+    )
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("flag_bits", (0x0002, 0x0802))
+def test_period_insertion_preserves_lzma_eos_zip_flags_and_zero_external_attr(
+    tmp_path: Path, flag_bits: int
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _rewrite_zip_metadata(
+        source,
+        flag_bits=flag_bits,
+        external_attr=0,
+        compression=zipfile.ZIP_LZMA,
+    )
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    expected = tuple((flag_bits, flag_bits, 0) for _ in _zip_metadata(source))
+    assert _zip_metadata(source) == expected
+    assert _zip_metadata(output) == expected
+
+
 def test_period_insertion_rejects_stored_deflate_option_flags_without_clobbering_output(
     tmp_path: Path,
 ) -> None:

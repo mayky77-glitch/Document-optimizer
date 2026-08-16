@@ -135,6 +135,8 @@ def _zip_flags_are_preservable(info: zipfile.ZipInfo) -> bool:
         allowed |= _ZIP_DEFLATE_OPTION_FLAGS
     elif info.compress_type == zipfile.ZIP_LZMA:
         allowed |= _ZIP_LZMA_EOS_FLAG
+        if not info.flag_bits & _ZIP_LZMA_EOS_FLAG:
+            return False
     elif info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_BZIP2}:
         return False
     return 0 <= info.flag_bits <= 0xFFFF and not info.flag_bits & ~allowed
