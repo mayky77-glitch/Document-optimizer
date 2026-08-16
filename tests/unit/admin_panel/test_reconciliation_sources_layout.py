@@ -332,7 +332,7 @@ def test_sparse_band_start_jumps_over_tall_merged_coverage(monkeypatch: pytest.M
         (2, 3),
         spans,
         {},
-        {},
+        [0],
         (),
         (),
     )
@@ -365,5 +365,22 @@ def test_rejected_metric_shapes_stop_before_unbounded_role_probes(
 
     with pytest.raises(SourceLayoutAmbiguousError):
         sources._indexed_structural_layouts(index)
+
+    workbook.close()
+
+
+def test_sparse_region_visit_budget_fails_before_role_cartesian_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import report_processor.admin_panel.reconciliation_sources as sources
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"))
+    sheet.append(("1", "Монтаж", "м", 2, 10))
+    monkeypatch.setattr(sources, "_REGION_VISIT_LIMIT", 1)
+
+    with pytest.raises(SourceLayoutAmbiguousError):
+        _extract_ks2_rows(sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx"))
 
     workbook.close()

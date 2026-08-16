@@ -105,8 +105,8 @@ class _SparseRegionIndex:
     span_by_origin: dict[tuple[int, int], tuple[int, int, int, int]]
     span_starts: tuple[int, ...]
     spans_by_left: tuple[tuple[int, int, int, int], ...]
-    covering_span_cache: dict[int, tuple[tuple[int, int, int, int], ...]]
-    lineage_cache: dict[tuple[int, int, int], str]
+    covering_span_cache: dict[tuple[int, int, int], tuple[tuple[int, int, int, int], ...]]
+    visit_count: list[int]
     columns: tuple[int, ...]
     rows: tuple[int, ...]
 
@@ -114,7 +114,8 @@ class _SparseRegionIndex:
 _REGION_CELL_LIMIT = 500_000
 _REGION_MERGE_LIMIT = 1_000
 _REGION_CANDIDATE_LIMIT = 256
-_REGION_PROBE_LIMIT = 4_096
+_REGION_PROBE_LIMIT = 512
+_REGION_VISIT_LIMIT = 500_000
 
 
 def descriptor_from_upload_basename(safe_basename: str) -> ReconciliationSourceDescriptor:
@@ -362,6 +363,15 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
     )
     if len(spans) > _REGION_MERGE_LIMIT:
         raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    origins = {(top, left) for top, left, _bottom, _right in spans}
+    if len(origins) != len(spans) or any(
+        _spans_overlap(left, right, other_left, other_right)
+        and top <= other_bottom
+        and other_top <= bottom
+        for position, (top, left, bottom, right) in enumerate(spans)
+        for other_top, other_left, other_bottom, other_right in spans[position + 1 :]
+    ):
+        raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
     cells = {
         (row, column): cell.value
         for (row, column), cell in sheet._cells.items()
@@ -406,7 +416,7 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
         tuple(span[1] for span in spans_by_left),
         spans_by_left,
         {},
-        {},
+        [0],
         tuple(columns),
         tuple(sorted(row_values)),
     )
@@ -512,7 +522,7 @@ def _indexed_roles(
     sheet_type: SheetType,
 ):
     headers = []
-    for column in index.columns:
+    for column in _indexed_band_columns(index, start, end):
         if metric_left <= column <= metric_right:
             continue
         lineage = _indexed_lineage(index, column, start, end)
@@ -532,16 +542,31 @@ def _indexed_roles(
     return _resolved_region_roles(tuple(headers), sheet_type)
 
 
+def _indexed_band_columns(index: _SparseRegionIndex, start: int, end: int) -> tuple[int, ...]:
+    lower = bisect_left(index.rows, start)
+    upper = bisect_right(index.rows, end)
+    columns: set[int] = set()
+    for row in index.rows[lower:upper]:
+        _consume_region_visits(index, len(index.row_values[row]))
+        columns.update(index.row_values[row])
+    for span in _band_spans(index, start, end):
+        columns.add(span[1])
+    return tuple(sorted(columns))
+
+
+def _consume_region_visits(index: _SparseRegionIndex, amount: int = 1) -> None:
+    index.visit_count[0] += amount
+    if index.visit_count[0] > _REGION_VISIT_LIMIT:
+        raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+
+
 def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: int) -> str:
-    key = (column, start, end)
-    cached = index.lineage_cache.get(key)
-    if cached is not None:
-        return cached
     values = []
     seen = set()
     row_keys = index.column_rows.get(column, ())
     lower = bisect_left(row_keys, start)
     upper = bisect_right(row_keys, end)
+    _consume_region_visits(index, upper - lower)
     for row, value in index.column_values.get(column, ())[lower:upper]:
         span = index.span_by_origin.get((row, column))
         origin = (span[0], span[1]) if span else (row, column)
@@ -551,7 +576,7 @@ def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: in
         text = _text(index.values.get(origin, value))
         if text:
             values.append(text)
-    for top, left, bottom, right in _covering_spans(index, column):
+    for top, left, bottom, right in _covering_spans(index, column, start, end):
         if not (left <= column <= right and top <= end and bottom >= start):
             continue
         origin = (top, left)
@@ -561,9 +586,7 @@ def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: in
         text = _text(index.values.get(origin))
         if text:
             values.append(text)
-    result = " ".join(values)
-    index.lineage_cache[key] = result
-    return result
+    return " ".join(values)
 
 
 def _indexed_band_start(index: _SparseRegionIndex, row: int) -> int:
@@ -595,14 +618,37 @@ def _merge_interval_containing(
 
 
 def _covering_spans(
-    index: _SparseRegionIndex, column: int
+    index: _SparseRegionIndex, column: int, start: int, end: int
 ) -> tuple[tuple[int, int, int, int], ...]:
-    cached = index.covering_span_cache.get(column)
+    cache_key = (column, start, end)
+    cached = index.covering_span_cache.get(cache_key)
     if cached is not None:
         return cached
     cutoff = bisect_right(index.span_starts, column)
-    result = tuple(span for span in index.spans_by_left[:cutoff] if span[3] >= column)
-    index.covering_span_cache[column] = result
+    candidates = index.spans_by_left[:cutoff]
+    _consume_region_visits(index, len(candidates))
+    result = tuple(
+        span for span in candidates if span[3] >= column and span[0] <= end and span[2] >= start
+    )
+    index.covering_span_cache[cache_key] = result
+    return result
+
+
+def _band_spans(
+    index: _SparseRegionIndex, start: int, end: int
+) -> tuple[tuple[int, int, int, int], ...]:
+    # Merge count is capped; cache makes each exact physical band visit once.
+    cache_key = (-1, start, end)
+    cached = index.covering_span_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    top_limit = bisect_right(tuple(index.spans_by_top), end)
+    candidates = tuple(
+        span for top in sorted(index.spans_by_top)[:top_limit] for span in index.spans_by_top[top]
+    )
+    _consume_region_visits(index, len(candidates))
+    result = tuple(span for span in candidates if span[2] >= start)
+    index.covering_span_cache[cache_key] = result
     return result
 
 
@@ -657,9 +703,11 @@ def _canonical_index_rows(
     cumulative: bool,
 ) -> tuple[CanonicalSourceRow, ...]:
     rows = []
-    for row_number in index.rows:
-        if not start_row <= row_number <= end_row:
-            continue
+    work_rows = index.column_rows.get(work_column, ())
+    lower = bisect_left(work_rows, start_row)
+    upper = bisect_right(work_rows, end_row)
+    _consume_region_visits(index, upper - lower)
+    for row_number in work_rows[lower:upper]:
         work_name = _text(index.values.get((row_number, work_column)))
         unit = _text(index.values.get((row_number, unit_column)))
         quantity = _decimal(index.values.get((row_number, quantity_column)))
