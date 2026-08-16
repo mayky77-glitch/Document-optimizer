@@ -1,6 +1,7 @@
 """Synthetic direct-OOXML reporting-period insertion regressions."""
 
 import zipfile
+from copy import copy
 from dataclasses import replace
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -35,6 +36,59 @@ def _historical_book(path: Path) -> None:
     sheet["N3"] = "хвост"
     sheet["N4"] = "=L4+M4"
     workbook.save(path)
+
+
+def _rewrite_zip_metadata(path: Path, *, flag_bits: int, external_attr: int) -> None:
+    """Generate a ZIP with deliberate matching local/central metadata."""
+
+    with zipfile.ZipFile(path) as source:
+        entries = [(copy(info), source.read(info.filename)) for info in source.infolist()]
+        comment = source.comment
+    with zipfile.ZipFile(path, "w") as rewritten:
+        rewritten.comment = comment
+        for info, payload in entries:
+            rewritten.writestr(info, payload)
+            info.flag_bits = flag_bits
+            info.external_attr = external_attr
+            position = rewritten.fp.tell()
+            rewritten.fp.seek(info.header_offset + 6)
+            rewritten.fp.write(flag_bits.to_bytes(2, "little"))
+            rewritten.fp.seek(position)
+
+
+def _zip_metadata(path: Path) -> tuple[tuple[int, int, int], ...]:
+    with zipfile.ZipFile(path) as archive, path.open("rb") as stream:
+        result = []
+        for info in archive.infolist():
+            stream.seek(info.header_offset + 6)
+            local_flags = int.from_bytes(stream.read(2), "little")
+            result.append((local_flags, info.flag_bits, info.external_attr))
+    return tuple(result)
+
+
+def test_period_insertion_preserves_zero_external_attr_and_local_zip_flags(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _rewrite_zip_metadata(source, flag_bits=0x0006, external_attr=0)
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    expected = tuple((0x0006, 0x0006, 0) for _ in _zip_metadata(source))
+    assert _zip_metadata(source) == expected
+    assert _zip_metadata(output) == expected
+
+
+def test_period_insertion_rejects_unsupported_zip_flags_without_output(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _rewrite_zip_metadata(source, flag_bits=0x0010, external_attr=0)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_TRANSFORM_INVALID"):
+        prepare_period_insertion(source, output, plan)
+
+    assert not output.exists()
 
 
 def test_inserts_unmerged_period_columns_with_parent_row_labels(tmp_path: Path) -> None:

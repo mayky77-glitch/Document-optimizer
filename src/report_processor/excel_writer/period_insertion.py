@@ -10,6 +10,7 @@ import re
 import tempfile
 import zipfile
 from contextlib import suppress
+from copy import copy
 from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -64,6 +65,62 @@ _THREADED_COMMENT_RELATIONSHIP = (
 _PERSON_RELATIONSHIP = "http://schemas.microsoft.com/office/2017/10/relationships/person"
 _RELATIONSHIPS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+# ZIP general-purpose bits that CPython can reproduce verbatim while rewriting
+# an OOXML member. Encryption, data descriptors, patched data, and reserved
+# bits change how a reader interprets a member, so preserve none of those.
+_PRESERVABLE_ZIP_FLAG_BITS = 0x0806
+
+
+class _MetadataPreservingZipFile(zipfile.ZipFile):
+    """ZipFile writer retaining validated source flags and external attributes.
+
+    CPython's private ``_open_to_write`` resets these fields before it writes
+    local header. Keep implementation in sync with supported CPython version,
+    changing only those two normalisations, so local and central metadata stay
+    identical to frozen source package.
+    """
+
+    def _open_to_write(self, zinfo: zipfile.ZipInfo, force_zip64: bool = False):
+        if force_zip64 and not self._allowZip64:
+            raise ValueError("force_zip64 is True, but allowZip64 was False when opening ZIP file.")
+        if self._writing:
+            raise ValueError("Can't write to ZIP file while another write handle is open.")
+
+        zinfo.compress_size = 0
+        zinfo.CRC = 0
+        # Deliberately retain zinfo.flag_bits and zinfo.external_attr.
+
+        zip64 = force_zip64 or (zinfo.file_size * 1.05 > zipfile.ZIP64_LIMIT)
+        if not self._allowZip64 and zip64:
+            raise zipfile.LargeZipFile("Filesize would require ZIP64 extensions")
+
+        if self._seekable:
+            self.fp.seek(self.start_dir)
+        zinfo.header_offset = self.fp.tell()
+
+        self._writecheck(zinfo)
+        self._didModify = True
+        self.fp.write(zinfo.FileHeader(zip64))
+
+        self._writing = True
+        return zipfile._ZipWriteFile(self, zinfo, zip64)
+
+
+def _write_member_preserving_zip_metadata(
+    archive: _MetadataPreservingZipFile, source_info: zipfile.ZipInfo, payload: bytes
+) -> None:
+    """Write one member only when its ZIP identity is safely reproducible."""
+
+    if source_info.flag_bits & ~_PRESERVABLE_ZIP_FLAG_BITS:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_TRANSFORM_INVALID")
+    written_info = copy(source_info)
+    archive.writestr(written_info, payload)
+    if (
+        archive.getinfo(source_info.filename) is not written_info
+        or written_info.flag_bits != source_info.flag_bits
+        or written_info.external_attr != source_info.external_attr
+    ):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_TRANSFORM_INVALID")
 
 
 def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]]:
@@ -432,7 +489,7 @@ def _transform_package(
     try:
         with (
             zipfile.ZipFile(source) as before,
-            zipfile.ZipFile(temporary, "w", allowZip64=True) as after,
+            _MetadataPreservingZipFile(temporary, "w", allowZip64=True) as after,
         ):
             after.comment = before.comment
             for info in before.infolist():
@@ -451,7 +508,7 @@ def _transform_package(
                     if drawing_anchor is None:
                         raise ReconciliationPeriodError("PERIOD_INSERTION_TRANSFORM_INVALID")
                     payload = _transform_drawing(payload, drawing_anchor.insertion_after_column)
-                after.writestr(info, payload)
+                _write_member_preserving_zip_metadata(after, info, payload)
         _fsync_file(temporary)
     except ReconciliationPeriodError:
         raise
