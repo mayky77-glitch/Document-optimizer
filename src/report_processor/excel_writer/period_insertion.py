@@ -10,6 +10,7 @@ import re
 import tempfile
 import zipfile
 from contextlib import suppress
+from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -62,6 +63,7 @@ _THREADED_COMMENT_RELATIONSHIP = (
 )
 _PERSON_RELATIONSHIP = "http://schemas.microsoft.com/office/2017/10/relationships/person"
 _RELATIONSHIPS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 
 def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]]:
@@ -1658,7 +1660,12 @@ def _validate_workbook_persons(archive: zipfile.ZipFile) -> set[str]:
         if (
             person.tag != _TQ("person")
             or list(person)
+            or set(person.attrib) != {"id", "displayName", "userId", "providerId"}
             or not _bounded_threaded_token(identifier)
+            or any(
+                not _bounded_person_value(person.attrib.get(attribute))
+                for attribute in ("displayName", "userId", "providerId")
+            )
             or identifier in identifiers
         ):
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
@@ -1714,14 +1721,18 @@ def _validate_threaded_comment_part(payload: bytes, boundary: int, person_ids: s
             not reference
             or not _bounded_threaded_token(person_id)
             or not _bounded_threaded_token(comment_id)
-            or not _bounded_threaded_token(date_time)
+            or not _valid_threaded_timestamp(date_time)
             or person_id not in person_ids
             or comment_id in identifiers
             or node.attrib.get("done") not in {None, "0", "1", "true", "false"}
         ):
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
         text = node[0]
-        if text.tag != _TQ("text") or text.attrib or list(text):
+        if (
+            text.tag != _TQ("text")
+            or text.attrib not in ({}, {_XML_SPACE: "preserve"})
+            or list(text)
+        ):
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
         try:
             column, row = coordinate_from_string(reference)
@@ -1757,6 +1768,29 @@ def _bounded_threaded_token(value: str | None) -> bool:
         and value == value.strip()
         and all(" " < character < "\x7f" for character in value)
     )
+
+
+def _bounded_person_value(value: str | None) -> bool:
+    """Bound person metadata while preserving ordinary Unicode display names."""
+
+    return bool(
+        value
+        and len(value) <= 256
+        and value == value.strip()
+        and all(character >= " " and character != "\x7f" for character in value)
+    )
+
+
+def _valid_threaded_timestamp(value: str | None) -> bool:
+    """Accept a timezone-aware ISO-8601 timestamp without fixing one spelling."""
+
+    if not _bounded_threaded_token(value) or "T" not in value:
+        return False
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        return datetime.fromisoformat(normalized).tzinfo is not None
+    except ValueError:
+        return False
 
 
 def _require_insertible_rows(root: ET.Element, anchor: ReconciliationSheetAnchor) -> None:

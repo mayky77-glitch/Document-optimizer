@@ -676,7 +676,7 @@ def _add_threaded_comments(path: Path, reference: str = "A1", *, malformed: bool
         b'<threadedComment ref="'
         + reference.encode()
         + b'" personId="person-1" id="comment-1" dT="2026-08-01T10:00:00Z">'
-        b"<text>left</text></threadedComment>"
+        b'<text xml:space="preserve"> left</text></threadedComment>'
         b"</ThreadedComments>"
     )
     if malformed:
@@ -758,6 +758,9 @@ def test_wholly_left_threaded_comments_and_person_part_are_preserved(tmp_path: P
         "duplicate_rel_id",
         "attribute",
         "person",
+        "text_attribute",
+        "person_attribute",
+        "timestamp",
     ),
 )
 def test_unsafe_threaded_comments_fail_closed_without_output(tmp_path: Path, case: str) -> None:
@@ -828,6 +831,35 @@ def test_unsafe_threaded_comments_fail_closed_without_output(tmp_path: Path, cas
                 "xl/threadedComments/threadedComment1.xml": threaded.replace(
                     b' dT="2026-08-01T10:00:00Z"',
                     b' dT="2026-08-01T10:00:00Z" unexpected="1"',
+                )
+            },
+        )
+    elif case == "text_attribute":
+        with zipfile.ZipFile(source) as archive:
+            threaded = archive.read("xl/threadedComments/threadedComment1.xml")
+        _add_zip_members(
+            source,
+            {
+                "xl/threadedComments/threadedComment1.xml": threaded.replace(
+                    b'xml:space="preserve"', b'xml:space="default"'
+                )
+            },
+        )
+    elif case == "person_attribute":
+        with zipfile.ZipFile(source) as archive:
+            people = archive.read("xl/persons/person.xml")
+        _add_zip_members(
+            source,
+            {"xl/persons/person.xml": people.replace(b"/>", b' unexpected="1"/>')},
+        )
+    elif case == "timestamp":
+        with zipfile.ZipFile(source) as archive:
+            threaded = archive.read("xl/threadedComments/threadedComment1.xml")
+        _add_zip_members(
+            source,
+            {
+                "xl/threadedComments/threadedComment1.xml": threaded.replace(
+                    b"2026-08-01T10:00:00Z", b"not-a-timestamp"
                 )
             },
         )
