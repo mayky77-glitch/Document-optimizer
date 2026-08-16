@@ -323,6 +323,99 @@ def test_missing_or_tied_base_roles_fail_closed(tmp_path) -> None:
         )
 
 
+def _content_recovery_target(path) -> None:
+    _target(path)
+    workbook = load_workbook(path)
+    sheet = workbook["Отчёт 1"]
+    # These labels deliberately carry no global reconciliation alias.  The
+    # detail skeleton remains header-bound, so only document/stage may recover.
+    sheet["C1"], sheet["D1"] = "Код листа", "Раздел исполнения"
+    values = tuple(sheet.cell(3, column).value for column in range(3, 8))
+    for column, value in enumerate(values, start=3):
+        sheet.cell(3, column).value = None
+        sheet.cell(10, column).value = value
+    workbook.save(path)
+    workbook.close()
+
+
+def test_preview_recovers_shifted_document_and_stage_roles_from_one_real_pair(tmp_path) -> None:
+    target = tmp_path / "content-recovery.xlsx"
+    _content_recovery_target(target)
+
+    preview = preview_reconciliation_target(
+        target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+    )
+
+    (row,) = preview.rows
+    assert row.document_index_normalized == "1214"
+    assert row.stage == "13.1"
+
+
+def test_content_role_recovery_rejects_accidental_numeric_duplicate_pair(tmp_path) -> None:
+    target = tmp_path / "content-ambiguous.xlsx"
+    _content_recovery_target(target)
+    workbook = load_workbook(target)
+    sheet = workbook["Отчёт 1"]
+    # A second numeric column on the same structural anchor must not be guessed
+    # away merely because it looks like an index.
+    sheet["A10"] = "9999"
+    workbook.save(target)
+    workbook.close()
+
+    with pytest.raises(ReconciliationTargetScopeError, match="BASE_ROLE_AMBIGUOUS"):
+        preview_reconciliation_target(
+            target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+        )
+
+
+def test_content_role_recovery_rejects_multiple_and_formula_only_pairs(tmp_path) -> None:
+    target = tmp_path / "content-multiple.xlsx"
+    _content_recovery_target(target)
+    workbook = load_workbook(target)
+    sheet = workbook["Отчёт 1"]
+    sheet["A11"], sheet["B11"], sheet["E11"], sheet["F11"], sheet["G11"] = (
+        "5678",
+        "Этап 13.2",
+        "2",
+        "Монтаж 2",
+        "м",
+    )
+    workbook.save(target)
+    workbook.close()
+    with pytest.raises(ReconciliationTargetScopeError, match="BASE_ROLE_AMBIGUOUS"):
+        preview_reconciliation_target(
+            target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+        )
+
+    _content_recovery_target(target)
+    workbook = load_workbook(target)
+    workbook["Отчёт 1"]["C10"] = '="1214"'
+    workbook.save(target)
+    workbook.close()
+    with pytest.raises(ReconciliationTargetScopeError, match="BASE_ROLE_MISSING"):
+        preview_reconciliation_target(
+            target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+        )
+
+    _content_recovery_target(target)
+    workbook = load_workbook(target)
+    sheet = workbook["Отчёт 1"]
+    sheet["C10"], sheet["D10"] = None, None
+    sheet["A10"], sheet["B11"], sheet["E11"], sheet["F11"], sheet["G11"] = (
+        "1214",
+        "Этап 13.1",
+        "1",
+        "Монтаж",
+        "м",
+    )
+    workbook.save(target)
+    workbook.close()
+    with pytest.raises(ReconciliationTargetScopeError, match="BASE_ROLE_MISSING"):
+        preview_reconciliation_target(
+            target, sha256(target.read_bytes()).hexdigest(), "13.1", "2026-08"
+        )
+
+
 def test_preview_rejects_target_mutated_during_planning(tmp_path, monkeypatch) -> None:
     target = tmp_path / "historical.xlsx"
     _target(target)

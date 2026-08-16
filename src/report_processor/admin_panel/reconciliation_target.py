@@ -22,6 +22,7 @@ from openpyxl.worksheet._reader import WorkSheetParser
 from report_processor.excel import WorkbookOpenRequest, open_dual_workbook
 from report_processor.processing.adapters import _materialized
 from report_processor.schema import (
+    ColumnResolution,
     LogicalColumn,
     SheetType,
     analyze_workbook_schema,
@@ -310,7 +311,7 @@ def read_reconciliation_target(path, digest: str, stage: str | None):
         adapted = _snapshot_session(session, formula_all, value_all)
         generic = __import__("report_processor.target_report", fromlist=["read_target_report"])
         workbook_schema = analyze_workbook_schema(adapted)
-        roles = _base_roles(workbook_schema)
+        roles = _base_roles(workbook_schema, formula_all)
         metadata_schema = _reconciliation_metadata_schema(workbook_schema, roles)
         formula_snapshots, value_snapshots = _session_snapshots(adapted, roles)
         stages = _enumerate_stages(adapted.formula_workbook, roles, formula_snapshots)
@@ -365,7 +366,7 @@ def enumerate_reconciliation_stages(session) -> tuple[str, ...]:
     """Return stages only after logical role binding succeeds."""
     formula_all, value_all = _request_snapshots(session)
     adapted = _snapshot_session(session, formula_all, value_all)
-    roles = _base_roles(analyze_workbook_schema(adapted))
+    roles = _base_roles(analyze_workbook_schema(adapted), formula_all)
     formula_snapshots, _value_snapshots = _session_snapshots(adapted, roles)
     return _enumerate_stages(adapted.formula_workbook, roles, formula_snapshots)
 
@@ -382,7 +383,7 @@ def structurally_valid_reconciliation_stages(session, *, maximum: int) -> tuple[
         raise ValueError("maximum must be positive")
     formula_all, value_all = _request_snapshots(session)
     adapted = _snapshot_session(session, formula_all, value_all)
-    roles = _base_roles(analyze_workbook_schema(adapted))
+    roles = _base_roles(analyze_workbook_schema(adapted), formula_all)
     formula_snapshots, _value_snapshots = _session_snapshots(adapted, roles)
     return _valid_stages(adapted.formula_workbook, roles, formula_snapshots, maximum)
 
@@ -494,7 +495,9 @@ def _preview_bindings(roles, plan) -> tuple[TargetColumnBinding, ...]:
     return _bindings(roles, pairs)
 
 
-def _base_roles(workbook_schema) -> dict[str, dict[LogicalColumn, object]]:
+def _base_roles(
+    workbook_schema, formula_snapshots: dict[str, _PhysicalWorksheetSnapshot] | None = None
+) -> dict[str, dict[LogicalColumn, object]]:
     """Bind reconciliation facts only through existing logical schema evidence."""
 
     result: dict[str, dict[LogicalColumn, object]] = {}
@@ -514,6 +517,13 @@ def _base_roles(workbook_schema) -> dict[str, dict[LogicalColumn, object]]:
         core_count = len(bound_roles.intersection(_CORE_ROLES))
         if not (core_count >= 2 or (core_count >= 1 and len(bound_roles) >= 3)):
             continue
+        recovered = _recover_content_roles(
+            worksheet,
+            by_role,
+            None if formula_snapshots is None else formula_snapshots.get(worksheet.sheet_name),
+        )
+        if recovered is not None:
+            by_role.update(recovered)
         resolved: dict[LogicalColumn, object] = {}
         for role in _BASE_ROLES:
             resolution = by_role.get(role)
@@ -540,6 +550,140 @@ def _base_roles(workbook_schema) -> dict[str, dict[LogicalColumn, object]]:
     if len(mappings) != 1:
         raise ReconciliationTargetScopeError("RECONCILIATION_TARGET_BASE_ROLE_HETEROGENEOUS")
     return result
+
+
+def _recover_content_roles(
+    worksheet, by_role, snapshot
+) -> dict[LogicalColumn, ColumnResolution] | None:
+    """Recover only an absent document/stage pair from bounded physical evidence.
+
+    Header bindings always win.  Content recovery exists solely for real target
+    layouts whose two administrative headers are absent while the three detail
+    skeleton roles remain uniquely bound by headers.  It intentionally produces
+    no best guess: exactly one non-formula document/stage pair must share the
+    same anchor rows and every anchor block must contain a detail skeleton.
+    """
+
+    document = by_role.get(LogicalColumn.DOCUMENT_INDEX)
+    stage = by_role.get(LogicalColumn.STAGE)
+    if not (
+        document is not None
+        and stage is not None
+        and document.status == stage.status == "COLUMN_NOT_FOUND"
+    ):
+        return None
+    skeleton = tuple(by_role.get(role) for role in _BASE_ROLES[2:])
+    if (
+        snapshot is None
+        or any(
+            item is None
+            or item.status != "OK"
+            or item.column_index is None
+            or item.column_letter is None
+            for item in skeleton
+        )
+        or len({item.column_index for item in skeleton}) != len(skeleton)
+    ):
+        return None
+
+    skeleton_columns = {item.column_index for item in skeleton}
+    document_candidates: dict[int, set[int]] = {}
+    stage_candidates: dict[int, set[int]] = {}
+    for (row_number, column), cell in snapshot.cells.items():
+        if column in skeleton_columns or _is_formula_cell(cell):
+            continue
+        value = getattr(cell, "value", None)
+        if terminal_index(value) is not None:
+            document_candidates.setdefault(column, set()).add(row_number)
+        if isinstance(value, str) and _STAGE_RE.search(value.strip()):
+            stage_candidates.setdefault(column, set()).add(row_number)
+    document_anchor_sets = {
+        column: frozenset(rows) for column, rows in document_candidates.items() if rows
+    }
+    stage_anchor_sets = {
+        column: frozenset(rows) for column, rows in stage_candidates.items() if rows
+    }
+    documents_by_rows = _columns_by_anchor_rows(document_anchor_sets)
+    stages_by_rows = _columns_by_anchor_rows(stage_anchor_sets)
+    valid_pairs: list[tuple[int, int, frozenset[int]]] = []
+    for anchor_rows, document_columns in documents_by_rows.items():
+        stage_columns = stages_by_rows.get(anchor_rows, ())
+        if not stage_columns or not _anchor_blocks_have_detail_skeleton(
+            snapshot, anchor_rows, skeleton
+        ):
+            continue
+        for document_column in document_columns:
+            for stage_column in stage_columns:
+                if document_column != stage_column:
+                    valid_pairs.append((document_column, stage_column, anchor_rows))
+                    if len(valid_pairs) > 1:
+                        raise ReconciliationTargetScopeError(
+                            "RECONCILIATION_TARGET_BASE_ROLE_AMBIGUOUS"
+                        )
+    if not valid_pairs:
+        return None
+    document_column, stage_column, anchor_rows = valid_pairs[0]
+    headers = {item.column_index: item.raw_text for item in worksheet.headers}
+    return {
+        LogicalColumn.DOCUMENT_INDEX: _content_role_resolution(
+            LogicalColumn.DOCUMENT_INDEX,
+            document_column,
+            headers.get(document_column),
+            anchor_rows,
+        ),
+        LogicalColumn.STAGE: _content_role_resolution(
+            LogicalColumn.STAGE,
+            stage_column,
+            headers.get(stage_column),
+            anchor_rows,
+        ),
+    }
+
+
+def _columns_by_anchor_rows(candidates) -> dict[frozenset[int], tuple[int, ...]]:
+    grouped: dict[frozenset[int], list[int]] = {}
+    for column, rows in candidates.items():
+        grouped.setdefault(rows, []).append(column)
+    return {rows: tuple(sorted(columns)) for rows, columns in grouped.items()}
+
+
+def _is_formula_cell(cell) -> bool:
+    return getattr(cell, "data_type", None) == "f"
+
+
+def _anchor_blocks_have_detail_skeleton(snapshot, anchor_rows, skeleton) -> bool:
+    ordered_anchors = tuple(sorted(anchor_rows))
+    physical_rows = snapshot.rows
+    for position, start in enumerate(ordered_anchors):
+        stop = ordered_anchors[position + 1] if position + 1 < len(ordered_anchors) else None
+        if not any(
+            (stop is None or row_number < stop)
+            and all(
+                not _is_formula_cell(snapshot.cells.get((row_number, resolution.column_index)))
+                and _nonempty(_cell_value(snapshot, row_number, resolution.column_index))
+                for resolution in skeleton
+            )
+            for row_number in physical_rows
+            if row_number >= start
+        ):
+            return False
+    return True
+
+
+def _content_role_resolution(logical_column, column, header_text, anchor_rows) -> ColumnResolution:
+    from openpyxl.utils import get_column_letter
+
+    return ColumnResolution(
+        logical_column=logical_column,
+        column_index=column,
+        column_letter=get_column_letter(column),
+        header_text=header_text,
+        confidence=1.0,
+        matched_rule="reconciliation_content_anchor_pair",
+        alternatives=(),
+        status="OK",
+        warnings=("RECONCILIATION_CONTENT_ROLE_RECOVERY", f"ANCHOR_ROWS={len(anchor_rows)}"),
+    )
 
 
 def _enumerate_stages(workbook, roles, snapshots) -> tuple[str, ...]:
