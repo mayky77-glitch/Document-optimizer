@@ -323,6 +323,7 @@ def test_sparse_band_start_jumps_over_tall_merged_coverage(monkeypatch: pytest.M
         spans,
         {},
         {},
+        {},
         frozenset(),
         ((1, 1_000_000),),
         {1: spans},
@@ -330,6 +331,7 @@ def test_sparse_band_start_jumps_over_tall_merged_coverage(monkeypatch: pytest.M
         {(1, 2): spans[0], (1, 3): spans[1]},
         (2, 3),
         spans,
+        {},
         {},
         (),
         (),
@@ -346,3 +348,22 @@ def test_sparse_band_start_jumps_over_tall_merged_coverage(monkeypatch: pytest.M
 
     assert sources._indexed_band_start(index, 1_000_001) == 1
     assert calls <= 2
+
+
+def test_rejected_metric_shapes_stop_before_unbounded_role_probes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import report_processor.admin_panel.reconciliation_sources as sources
+
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in range(1, 6):
+        sheet.cell(row=row, column=4, value="Количество")
+        sheet.cell(row=row, column=5, value="Общая стоимость")
+    monkeypatch.setattr(sources, "_REGION_PROBE_LIMIT", 2)
+    index = _sparse_region_index(sheet, sheet)
+
+    with pytest.raises(SourceLayoutAmbiguousError):
+        sources._indexed_structural_layouts(index)
+
+    workbook.close()

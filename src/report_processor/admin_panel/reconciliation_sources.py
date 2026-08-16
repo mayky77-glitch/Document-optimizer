@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -97,6 +97,7 @@ class _SparseRegionIndex:
     spans: tuple[tuple[int, int, int, int], ...]
     row_values: dict[int, dict[int, object]]
     column_values: dict[int, tuple[tuple[int, object], ...]]
+    column_rows: dict[int, tuple[int, ...]]
     occupied_rows: frozenset[int]
     occupied_merge_rows: tuple[tuple[int, int], ...]
     spans_by_top: dict[int, tuple[tuple[int, int, int, int], ...]]
@@ -105,6 +106,7 @@ class _SparseRegionIndex:
     span_starts: tuple[int, ...]
     spans_by_left: tuple[tuple[int, int, int, int], ...]
     covering_span_cache: dict[int, tuple[tuple[int, int, int, int], ...]]
+    lineage_cache: dict[tuple[int, int, int], str]
     columns: tuple[int, ...]
     rows: tuple[int, ...]
 
@@ -112,6 +114,7 @@ class _SparseRegionIndex:
 _REGION_CELL_LIMIT = 500_000
 _REGION_MERGE_LIMIT = 1_000
 _REGION_CANDIDATE_LIMIT = 256
+_REGION_PROBE_LIMIT = 4_096
 
 
 def descriptor_from_upload_basename(safe_basename: str) -> ReconciliationSourceDescriptor:
@@ -391,6 +394,10 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
         spans,
         row_values,
         {column: tuple(sorted(values)) for column, values in column_values.items()},
+        {
+            column: tuple(row for row, _value in sorted(values))
+            for column, values in column_values.items()
+        },
         frozenset(row_values),
         _coalesced_row_intervals(spans),
         {row: tuple(items) for row, items in spans_by_top.items()},
@@ -398,6 +405,7 @@ def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
         {(top, left): span for span in spans for top, left, _bottom, _right in (span,)},
         tuple(span[1] for span in spans_by_left),
         spans_by_left,
+        {},
         {},
         tuple(columns),
         tuple(sorted(row_values)),
@@ -418,11 +426,13 @@ def _coalesced_row_intervals(
 
 def _indexed_structural_layouts(index: _SparseRegionIndex) -> tuple[_StreamedLayout, ...]:
     layouts: list[_StreamedLayout] = []
+    probe_count = 0
     for root in index.spans:
         top, left, _bottom, right = root
         if right <= left or not _role_text(_text(index.values.get((top, left))), "cumulative"):
             continue
         for quantity, cost, header_end in _indexed_cumulative_leaves(index, root, frozenset()):
+            probe_count = _next_region_probe(probe_count)
             roles = _indexed_roles(index, top, header_end, left, right, SheetType.KS6A)
             if roles is not None:
                 layouts.append(
@@ -437,6 +447,7 @@ def _indexed_structural_layouts(index: _SparseRegionIndex) -> tuple[_StreamedLay
                 index, row, quantity, band_start
             ) or _indexed_cumulative_ancestor(index, row, cost, band_start):
                 continue
+            probe_count = _next_region_probe(probe_count)
             roles = _indexed_roles(index, band_start, row, quantity, cost, SheetType.KS2)
             if roles is not None:
                 layouts.append(
@@ -450,6 +461,12 @@ def _indexed_structural_layouts(index: _SparseRegionIndex) -> tuple[_StreamedLay
     if len(unique) > _REGION_CANDIDATE_LIMIT:
         raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
     return unique
+
+
+def _next_region_probe(count: int) -> int:
+    if count >= _REGION_PROBE_LIMIT:
+        raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    return count + 1
 
 
 def _indexed_metric_pairs(
@@ -516,11 +533,16 @@ def _indexed_roles(
 
 
 def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: int) -> str:
+    key = (column, start, end)
+    cached = index.lineage_cache.get(key)
+    if cached is not None:
+        return cached
     values = []
     seen = set()
-    for row, value in index.column_values.get(column, ()):
-        if not start <= row <= end:
-            continue
+    row_keys = index.column_rows.get(column, ())
+    lower = bisect_left(row_keys, start)
+    upper = bisect_right(row_keys, end)
+    for row, value in index.column_values.get(column, ())[lower:upper]:
         span = index.span_by_origin.get((row, column))
         origin = (span[0], span[1]) if span else (row, column)
         if origin in seen:
@@ -539,7 +561,9 @@ def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: in
         text = _text(index.values.get(origin))
         if text:
             values.append(text)
-    return " ".join(values)
+    result = " ".join(values)
+    index.lineage_cache[key] = result
+    return result
 
 
 def _indexed_band_start(index: _SparseRegionIndex, row: int) -> int:
