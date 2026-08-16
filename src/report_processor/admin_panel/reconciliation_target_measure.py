@@ -14,7 +14,11 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 
 from report_processor.target_report.ooxml import worksheet_parts
-from report_processor.work_semantics import canonical_unit
+from report_processor.work_semantics import (
+    MAX_REPORTING_SCOPE_TOKENS,
+    canonical_unit,
+    is_reporting_scope,
+)
 
 _HEADER_ROWS = 80
 _MAX_HEADER_WINDOW_CELLS = 500_000
@@ -77,104 +81,6 @@ _CURRENCY_PER_UNIT = re.compile(
     flags=re.UNICODE,
 )
 _LEADING_MULTIPLIER = re.compile(r"^\d+(?:[.,]\d+)?\s+")
-_MAX_SCOPE_NGRAM_TOKENS = 4
-_SCOPE_NOUNS = frozenset(
-    {
-        "день",
-        "дня",
-        "дней",
-        "дню",
-        "днем",
-        "неделя",
-        "недели",
-        "недель",
-        "неделю",
-        "месяц",
-        "месяца",
-        "месяцев",
-        "месяце",
-        "квартал",
-        "квартала",
-        "кварталов",
-        "квартале",
-        "год",
-        "года",
-        "лет",
-        "работа",
-        "работы",
-        "работ",
-        "работе",
-        "работой",
-        "работам",
-        "работами",
-        "работах",
-        "смр",
-        "этап",
-        "этапа",
-        "этапов",
-        "этапе",
-        "этапы",
-        "дата",
-        "дату",
-        "даты",
-        "дате",
-        "датой",
-        "отчет",
-        "отчета",
-        "отчету",
-        "отчете",
-        "отчетом",
-        "период",
-        "периода",
-        "периоде",
-        *_RUSSIAN_MONTH_TOKENS,
-    }
-)
-_SCOPE_MODIFIERS = frozenset(
-    {
-        "все",
-        "весь",
-        "всех",
-        "всем",
-        "выполненные",
-        "выполненных",
-        "выполненная",
-        "выполненный",
-        "выполнено",
-        "отчетный",
-        "текущий",
-        "документальный",
-        "исторический",
-    }
-)
-_NUMBER_WORDS = frozenset(
-    {
-        "ноль",
-        "один",
-        "одна",
-        "одно",
-        "два",
-        "две",
-        "три",
-        "четыре",
-        "пять",
-        "шесть",
-        "семь",
-        "восемь",
-        "девять",
-        "десять",
-        "одиннадцать",
-        "двенадцать",
-        "тринадцать",
-        "четырнадцать",
-        "пятнадцать",
-        "шестнадцать",
-        "семнадцать",
-        "восемнадцать",
-        "девятнадцать",
-        "двадцать",
-    }
-)
 
 
 class ReconciliationTargetMeasureError(ValueError):
@@ -816,9 +722,11 @@ def _currency_preposition_scope(value: str) -> str | None:
     if not canonical_unit(unit_tail).exact_only:
         return "rate"
     tokens = tuple(re.findall(r"\w+", unit_tail.replace("ё", "е"), flags=re.UNICODE))
+    if len(tokens) > MAX_REPORTING_SCOPE_TOKENS:
+        return "unknown"
     if _contains_canonical_unit_ngram(tokens):
         return "unknown"
-    if _is_total_scope_tokens(tokens):
+    if is_reporting_scope(unit_tail):
         return "total"
     return "unknown"
 
@@ -826,17 +734,8 @@ def _currency_preposition_scope(value: str) -> str | None:
 def _contains_canonical_unit_ngram(tokens: tuple[str, ...]) -> bool:
     return any(
         not canonical_unit(" ".join(tokens[start : start + size])).exact_only
-        for size in range(1, min(_MAX_SCOPE_NGRAM_TOKENS, len(tokens)) + 1)
+        for size in range(1, len(tokens) + 1)
         for start in range(len(tokens) - size + 1)
-    )
-
-
-def _is_total_scope_tokens(tokens: tuple[str, ...]) -> bool:
-    allowed = _SCOPE_NOUNS | _SCOPE_MODIFIERS | _NUMBER_WORDS
-    return (
-        bool(tokens)
-        and bool(set(tokens) & _SCOPE_NOUNS)
-        and all(token in allowed or token.isdecimal() for token in tokens)
     )
 
 
