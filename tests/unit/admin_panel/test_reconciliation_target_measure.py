@@ -288,7 +288,7 @@ def test_total_cost_leaf_with_vsego_is_not_a_historical_conflict() -> None:
 
 @pytest.mark.parametrize(
     "cost",
-    ("тыс. руб.", "миллионов рублей", "миллиардах рублей"),
+    ("тыс. руб.", "миллионов рублей", "миллиардах рублей", "млн RUB", "тыс. ₽"),
 )
 def test_scaled_rub_leaf_without_cost_word_is_a_total_cost(cost: str) -> None:
     workbook, sheet = _workbook()
@@ -315,11 +315,40 @@ def test_scaled_rub_leaf_under_historical_parent_does_not_become_current() -> No
 
 @pytest.mark.parametrize(
     "cost",
-    ("Цена тыс. руб./м2", "Тариф миллионов рублей / шт.", "тыс. руб. / пог.м."),
+    (
+        "Цена тыс. руб./м2",
+        "Тариф миллионов рублей / шт.",
+        "тыс. руб. / пог.м.",
+        "млн руб./комплект",
+        "млн рублей / маш.-час",
+        "млн RUB/кВт·ч",
+        "тыс. руб. / 1 м³",
+        "млн рублей за машино-час",
+    ),
 )
 def test_price_or_per_unit_scaled_rub_is_not_a_total_cost(cost: str) -> None:
     workbook, sheet = _workbook()
     _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize("cost", ("Стоимость в текущих ценах", "Сумма в базисных ценах"))
+def test_contextual_prices_are_not_unit_prices(cost: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    (pair,) = discover_target_measures(workbook, {sheet.title: 3})
+
+    assert (pair.quantity_letter, pair.cost_letter) == ("L", "M")
+
+
+def test_rubka_is_not_a_ruble_currency_form() -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost="млн рубка")
 
     with pytest.raises(
         ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"

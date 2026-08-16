@@ -53,20 +53,22 @@ _RUSSIAN_MONTH_TOKENS = {
 _YEAR_MONTH = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[-./]\s*(0?[1-9]|1[0-2])(?!\d)")
 _MONTH_YEAR = re.compile(r"(?<!\d)(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|20)\d{2})(?!\d)")
 _DATE = re.compile(r"(?<!\d)\d{1,2}\s*[./-]\s*(0?[1-9]|1[0-2])\s*[./-]\s*((?:19|20)\d{2})(?!\d)")
-_RUB_CURRENCY = re.compile(r"\bруб\w*\b", flags=re.UNICODE)
+_RUB_CURRENCY = re.compile(
+    r"(?<!\w)(?:руб\.?|рубль|рубля|рублей|рублю|рублем|рублём|"
+    r"рубли|рублях|рублям|рублями|rub|rur)(?!\w)",
+    flags=re.UNICODE,
+)
 _SCALED_RUB = re.compile(
     r"\b(?:тыс(?:яч\w*)?|млн|миллион\w*|млрд|миллиард\w*)\b",
     flags=re.UNICODE,
 )
-_UNIT_DENOMINATOR = re.compile(
-    r"/\s*(?:"
-    r"м(?:\d+)?|мм|см|дм|км|"
-    r"п\.?м\.?|пог\.?м\.?|"
-    r"шт\.?|штук\w*|ед\.?|единиц\w*|"
-    r"ч|час\w*|день\w*|сут\w*|"
-    r"т|кг|г|л|"
-    r"unit\w*|piece\w*|pcs?"
-    r")\b",
+_CURRENCY_RATE = re.compile(
+    _RUB_CURRENCY.pattern + r"\s*(?:[.,;:()\-]\s*)*/\s*(?=\S)",
+    flags=re.UNICODE,
+)
+_PRICE_LABEL = re.compile(r"\b(?:цена|цену|ценой|цене|цен\.?|тариф\w*|расценк\w*)\b")
+_CURRENCY_PER_UNIT = re.compile(
+    _RUB_CURRENCY.pattern + r"\s+за\s+\S+",
     flags=re.UNICODE,
 )
 
@@ -683,8 +685,11 @@ def _total_cost_leaf(value: str) -> bool:
 
 
 def _unit_price(value: str) -> bool:
-    return any(stem in value for stem in ("цен", "тариф", "расцен", "единиц")) or bool(
-        _RUB_CURRENCY.search(value) and _UNIT_DENOMINATOR.search(value)
+    return bool(
+        _PRICE_LABEL.search(value)
+        or re.search(r"\bза\s+единиц\w*\b", value)
+        or _CURRENCY_RATE.search(value)
+        or _CURRENCY_PER_UNIT.search(value)
     )
 
 
@@ -746,5 +751,7 @@ def _year(value: str) -> bool:
 
 
 def _text(value: object | None) -> str:
-    normalized = unicodedata.normalize("NFKC", str(value or "")).replace("\u00a0", " ")
+    normalized = (
+        unicodedata.normalize("NFKC", str(value or "")).replace("\u00a0", " ").replace("₽", " руб ")
+    )
     return " ".join(re.sub(r"[^\w./-]+", " ", normalized, flags=re.UNICODE).casefold().split())
