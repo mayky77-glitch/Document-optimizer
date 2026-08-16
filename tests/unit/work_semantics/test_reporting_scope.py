@@ -31,6 +31,11 @@ from report_processor.work_semantics import REPORTING_SCOPE_VERSION, is_reportin
         "сто этапов",
         "выполненные работы по текущему этапу",
         "работы по отчетному периоду",
+        "весь месяц",
+        "текущий месяц",
+        "отчетный год",
+        "документальный год",
+        "исторический квартал",
     ),
 )
 def test_reporting_scope_accepts_bounded_reporting_and_work_phrases(value: str) -> None:
@@ -65,6 +70,11 @@ def test_reporting_scope_accepts_bounded_reporting_and_work_phrases(value: str) 
         "поэтапный этап",
         "разовый этап",
         "один отчет",
+        "датчик отчет",
+        "датчик этап",
+        "датчик работы",
+        "пятно этап",
+        "сотовый этап",
     ),
 )
 def test_reporting_scope_rejects_collisions_and_embedded_objects(value: str) -> None:
@@ -76,4 +86,4 @@ def test_reporting_scope_rejects_over_budget_token_sequences() -> None:
 
 
 def test_reporting_scope_exposes_its_version() -> None:
-    assert REPORTING_SCOPE_VERSION == "ReportingScope-2.0"
+    assert REPORTING_SCOPE_VERSION == "ReportingScope-2.1"

@@ -6,7 +6,7 @@ import re
 import unicodedata
 
 MAX_REPORTING_SCOPE_TOKENS = 24
-REPORTING_SCOPE_VERSION = "ReportingScope-2.0"
+REPORTING_SCOPE_VERSION = "ReportingScope-2.1"
 _TOKEN = re.compile(r"\w+", flags=re.UNICODE)
 _FINAL_SCOPE_TOKEN = frozenset(
     {
@@ -205,12 +205,16 @@ _REPORT_SCOPE_HEADS = (
 )
 _EXPLICIT_SCOPE_MARKER = re.compile(
     r"(?:весь|вся|все|всех|выполненн\w*|совокупн\w*|итогов\w*|"
-    r"текущ\w*|отчетн\w*|историч\w*|документальн\w*|накопленн\w*|дат\w*)"
+    r"текущ\w*|отчетн\w*|историч\w*|документальн\w*|накопленн\w*)"
 )
+_DATE_MARKER_TOKENS = frozenset({"дата", "дату", "даты", "дате", "датой"})
 _ORDINAL_NUMERAL = re.compile(
     r"(?:перв|втор|трет|четверт|пят|шест|седьм|восьм|девят|десят|"
     r"одиннадцат|двенадцат|тринадцат|четырнадцат|пятнадцат|шестнадцат|"
-    r"семнадцат|восемнадцат|девятнадцат|двадцат|тридцат|сот|тысячн)\w*"
+    r"семнадцат|восемнадцат|девятнадцат|двадцат|тридцат|сороков|"
+    r"пятидесят|шестидесят|семидесят|восьмидесят|девяност|сот|тысячн|"
+    r"миллионн|миллиардн)(?:ый|ий|ой|ая|яя|ое|ее|ые|ие|ого|его|ому|ему|"
+    r"ым|им|ей|ую|юю|ых|их|ыми|ими)"
 )
 
 
@@ -236,7 +240,7 @@ def _is_scope_clause(tokens: tuple[str, ...]) -> bool:
         return True
     head, prefix = tokens[-1], tokens[:-1]
     if head in _TIME_SCOPE_HEADS:
-        return not prefix or _is_numeral_phrase(prefix)
+        return not prefix or _is_numeral_phrase(prefix) or _has_explicit_marker(prefix)
     if head in _STAGE_SCOPE_HEADS:
         return not prefix or _is_numeral_phrase(prefix) or _has_explicit_marker(prefix)
     if head in _WORK_SCOPE_HEADS or head in _REPORT_SCOPE_HEADS:
@@ -253,7 +257,9 @@ def _is_numeral_phrase(tokens: tuple[str, ...]) -> bool:
 
 
 def _has_explicit_marker(tokens: tuple[str, ...]) -> bool:
-    return any(_EXPLICIT_SCOPE_MARKER.fullmatch(token) for token in tokens)
+    return any(
+        token in _DATE_MARKER_TOKENS or _EXPLICIT_SCOPE_MARKER.fullmatch(token) for token in tokens
+    )
 
 
 def _is_calendar_scope(tokens: tuple[str, ...]) -> bool:
