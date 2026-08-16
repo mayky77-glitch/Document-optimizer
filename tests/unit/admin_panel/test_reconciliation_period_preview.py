@@ -339,6 +339,12 @@ def test_target_identity_is_canonical_and_period_plan_bound() -> None:
         first.target_identity_digest
         != ReconciliationTargetIdentity(original, "13.2", "2026-08", plan).target_identity_digest
     )
+    assert (
+        first.target_identity_digest
+        != ReconciliationTargetIdentity(
+            original, "13.1", "2026-08", _digest("changed-plan")
+        ).target_identity_digest
+    )
 
 
 def test_target_identity_binds_semantic_contract_versions() -> None:
@@ -356,6 +362,21 @@ def test_target_identity_binds_semantic_contract_versions() -> None:
         "term_canonicalization_version": TERM_CANONICALIZATION_VERSION,
         "unit_ontology_version": UNIT_ONTOLOGY_VERSION,
     }
+    assert identity.canonical_bytes() == (
+        b'{"contract_version":"ReconciliationTargetIdentity-2.0",'
+        b'"original_target_digest":"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5",'
+        b'"period":"2026-08",'
+        b'"plan_digest":"64879f7d6b960a01909762d911a32d4582c20010c5641ee90278b644a9e3b525",'
+        b'"reporting_scope_version":"ReportingScope-2.1",'
+        b'"selected_stage":"13.1",'
+        b'"target_measure_semantics_version":"ReconciliationTargetMeasure-3.0",'
+        b'"term_canonicalization_version":"TermCanonicalization-2.0",'
+        b'"unit_ontology_version":"UnitOntology-1.1"}'
+    )
+    assert (
+        identity.target_identity_digest
+        == "f14390610bffd4d34229782a5f23b0428526b4e6db7a4895ea1fda85c5693b33"
+    )
 
 
 def test_target_identity_rejects_v1_contract() -> None:
