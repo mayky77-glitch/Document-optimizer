@@ -14,6 +14,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 
 from report_processor.target_report.ooxml import worksheet_parts
+from report_processor.training_data.normalization import normalize_unit as normalize_training_unit
 
 _HEADER_ROWS = 80
 _MAX_HEADER_WINDOW_CELLS = 500_000
@@ -67,15 +68,26 @@ _CURRENCY_RATE = re.compile(
     flags=re.UNICODE,
 )
 _PRICE_LABEL = re.compile(
-    r"\b(?:цена|цены|цену|ценой|цене|ценам|ценами|ценах|цен\.?|"
-    r"тариф\w*|расценк\w*)\b"
+    r"\b(?:цена|цены|цену|ценой|цене|ценам|ценами|тариф\w*|расценк\w*)\b"
+    r"|\bцен\.(?!\w)"
 )
-_CONTEXTUAL_PRICES = re.compile(r"\bв(?:\s+\w+){1,4}\s+ценах\b")
 _UNIT_COST_LABEL = re.compile(r"\bединичн\w*\s+стоим\w*\b")
 _CURRENCY_PER_UNIT = re.compile(
-    _RUB_CURRENCY.pattern + r"\s+(?:за|на)\s+\S+",
+    _RUB_CURRENCY.pattern + r"\s+(?:за|на)\s+(?P<tail>.+)",
     flags=re.UNICODE,
 )
+_CANONICAL_TRAINING_UNITS = frozenset({"м", "м²", "м³", "шт", "кг", "т", "л", "компл.", "ед.", "%"})
+_TOTAL_SCOPE_TAIL = re.compile(
+    r"^(?:месяц|квартал|год|выполненн\w*\s+работ\w*|дат\w*\s+отчет\w*)\b"
+)
+_COMPACT_MEASUREMENT = re.compile(
+    r"^(?:"
+    r"[a-zа-яё]+(?:[-./][a-zа-яё0-9²³]+)+|"
+    r"[a-zа-яё]{1,4}\s+[a-zа-яё]{1,3}|"
+    r"(?:час\w*|смен\w*|машиночас\w*|квтч\w*)"
+    r")\b"
+)
+_NUMBER_AND_UNIT = re.compile(r"^\d+(?:[.,]\d+)?\s+\S+")
 
 
 class ReconciliationTargetMeasureError(ValueError):
@@ -691,7 +703,7 @@ def _total_cost_leaf(value: str) -> bool:
 
 def _unit_price(value: str) -> bool:
     return bool(
-        (_PRICE_LABEL.search(value) and not _CONTEXTUAL_PRICES.search(value))
+        _PRICE_LABEL.search(value)
         or _UNIT_COST_LABEL.search(value)
         or re.search(r"\bза\s+единиц\w*\b", value)
         or _CURRENCY_RATE.search(value)
@@ -700,17 +712,23 @@ def _unit_price(value: str) -> bool:
 
 
 def _currency_preposition_rate(value: str) -> bool:
-    """Recognise currency ``за``/``на`` a unit without mistaking a period scope for a rate."""
+    """Recognise currency ``за``/``на`` only when its tail is a proven measurement."""
 
     match = _CURRENCY_PER_UNIT.search(value)
     if match is None:
         return False
-    currency_phrase = value[match.start() :]
-    return not (
-        _current_scope(currency_phrase)
-        or _historical(currency_phrase)
-        or _period_mentions(currency_phrase)
-    )
+    tail = match.group("tail").strip()
+    if not tail or _TOTAL_SCOPE_TAIL.search(tail):
+        return False
+    if _current_scope(tail) or _historical(tail) or _period_mentions(tail):
+        return False
+    tokens = tail.split()
+    candidates = (tokens[0], " ".join(tokens[:2]), " ".join(tokens[:3]))
+    if any(
+        normalize_training_unit(candidate) in _CANONICAL_TRAINING_UNITS for candidate in candidates
+    ):
+        return True
+    return bool(_NUMBER_AND_UNIT.search(tail) or _COMPACT_MEASUREMENT.search(tail))
 
 
 def _historical(value: str) -> bool:

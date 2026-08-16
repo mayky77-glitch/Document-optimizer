@@ -325,6 +325,7 @@ def test_scaled_rub_leaf_under_historical_parent_does_not_become_current() -> No
         "тыс. руб. / 1 м³",
         "млн рублей за машино-час",
         "тыс. руб. на 1 м2",
+        "млн руб. на квт ч",
         "Единичная стоимость, млн руб.",
     ),
 )
@@ -340,7 +341,7 @@ def test_price_or_per_unit_scaled_rub_is_not_a_total_cost(cost: str) -> None:
 
 @pytest.mark.parametrize(
     "price_label",
-    ("Цена", "Цены", "Цену", "Ценой", "Цене", "Ценам", "Ценами", "Ценах"),
+    ("Цена", "Цены", "Цену", "Ценой", "Цене", "Ценам", "Ценами", "цен."),
 )
 def test_standalone_price_label_inflections_are_not_total_costs(price_label: str) -> None:
     workbook, sheet = _workbook()
@@ -355,8 +356,29 @@ def test_standalone_price_label_inflections_are_not_total_costs(price_label: str
 @pytest.mark.parametrize(
     "cost",
     (
+        "Цена в текущих ценах, млн руб.",
+        "Тариф в базисных ценах, млн руб.",
+        "Расценка в текущих ценах, млн руб.",
+        "Единичная стоимость в базисных ценах, млн руб.",
+    ),
+)
+def test_direct_price_labels_are_not_masked_by_context(cost: str) -> None:
+    workbook, sheet = _workbook()
+    _pair(sheet, 12, "Текущий отчетный период", cost=cost)
+
+    with pytest.raises(
+        ReconciliationTargetMeasureError, match="TARGET_CURRENT_PERIOD_PAIR_MISSING"
+    ):
+        discover_target_measures(workbook, {sheet.title: 3})
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
         "Стоимость в текущих ценах",
         "Сумма в базисных ценах",
+        "Стоимость в ценах 2026",
+        "Сумма в базисном уровне цен",
     ),
 )
 def test_contextual_prices_are_not_unit_prices(cost: str) -> None:
@@ -372,6 +394,23 @@ def test_contextual_prices_are_not_unit_prices(cost: str) -> None:
     "cost", ("Стоимость, млн руб. за отчетный период", "Стоимость, млн руб. за весь период")
 )
 def test_currency_over_a_reporting_scope_is_not_a_unit_rate(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._total_cost_leaf(normalized)
+    assert not reconciliation_target_measure._unit_price(normalized)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Стоимость, млн руб. за месяц",
+        "Стоимость, млн руб. за квартал",
+        "Стоимость, млн руб. за год",
+        "Стоимость, млн руб. за выполненные работы",
+        "Стоимость, млн руб. на дату отчета",
+    ),
+)
+def test_currency_over_a_total_scope_is_not_a_unit_rate(cost: str) -> None:
     normalized = reconciliation_target_measure._text(cost)
 
     assert reconciliation_target_measure._total_cost_leaf(normalized)
