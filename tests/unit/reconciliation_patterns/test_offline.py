@@ -150,6 +150,19 @@ def test_loader_rejects_unknown_fields_versions_and_duplicate_ids(tmp_path: Path
         offline.load_corpus_jsonl(source)
 
 
+def test_loader_rejects_legacy_unit_ontology_corpus(tmp_path: Path) -> None:
+    source = tmp_path / "corpus.jsonl"
+    write_corpus(source, [_row(1)])
+    source.write_bytes(
+        source.read_bytes().replace(
+            b'"unit_ontology":"UnitOntology-1.1"', b'"unit_ontology":"UnitOntology-1.0"', 1
+        )
+    )
+
+    with pytest.raises(offline.OfflineContractError, match="input version is unsupported"):
+        offline.load_corpus_jsonl(source)
+
+
 def test_profile_is_complete_deterministic_and_private(tmp_path: Path) -> None:
     source = tmp_path / "corpus.jsonl"
     original = write_corpus(

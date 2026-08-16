@@ -76,11 +76,105 @@ _CURRENCY_PER_UNIT = re.compile(
     _RUB_CURRENCY.pattern + r"\s+(?:за|на)\s+(?P<tail>.+)",
     flags=re.UNICODE,
 )
-_TOTAL_SCOPE_TAIL = re.compile(
-    r"\b(?:дн\w*|недел\w*|месяц\w*|квартал\w*|год\w*|"
-    r"смр|работ\w*|этап\w*|дат\w*|отчет\w*)\b"
-)
 _LEADING_MULTIPLIER = re.compile(r"^\d+(?:[.,]\d+)?\s+")
+_MAX_SCOPE_NGRAM_TOKENS = 4
+_SCOPE_NOUNS = frozenset(
+    {
+        "день",
+        "дня",
+        "дней",
+        "дню",
+        "днем",
+        "неделя",
+        "недели",
+        "недель",
+        "неделю",
+        "месяц",
+        "месяца",
+        "месяцев",
+        "месяце",
+        "квартал",
+        "квартала",
+        "кварталов",
+        "квартале",
+        "год",
+        "года",
+        "лет",
+        "работа",
+        "работы",
+        "работ",
+        "работе",
+        "работой",
+        "работам",
+        "работами",
+        "работах",
+        "смр",
+        "этап",
+        "этапа",
+        "этапов",
+        "этапе",
+        "этапы",
+        "дата",
+        "дату",
+        "даты",
+        "дате",
+        "датой",
+        "отчет",
+        "отчета",
+        "отчету",
+        "отчете",
+        "отчетом",
+        "период",
+        "периода",
+        "периоде",
+        *_RUSSIAN_MONTH_TOKENS,
+    }
+)
+_SCOPE_MODIFIERS = frozenset(
+    {
+        "все",
+        "весь",
+        "всех",
+        "всем",
+        "выполненные",
+        "выполненных",
+        "выполненная",
+        "выполненный",
+        "выполнено",
+        "отчетный",
+        "текущий",
+        "документальный",
+        "исторический",
+    }
+)
+_NUMBER_WORDS = frozenset(
+    {
+        "ноль",
+        "один",
+        "одна",
+        "одно",
+        "два",
+        "две",
+        "три",
+        "четыре",
+        "пять",
+        "шесть",
+        "семь",
+        "восемь",
+        "девять",
+        "десять",
+        "одиннадцать",
+        "двенадцать",
+        "тринадцать",
+        "четырнадцать",
+        "пятнадцать",
+        "шестнадцать",
+        "семнадцать",
+        "восемнадцать",
+        "девятнадцать",
+        "двадцать",
+    }
+)
 
 
 class ReconciliationTargetMeasureError(ValueError):
@@ -717,19 +811,33 @@ def _currency_preposition_scope(value: str) -> str | None:
         return None
     tail = match.group("tail").strip()
     if not tail:
-        return "total"
+        return "unknown"
     unit_tail = _LEADING_MULTIPLIER.sub("", tail)
     if not canonical_unit(unit_tail).exact_only:
         return "rate"
-    tokens = unit_tail.split()
-    prefixes = tuple(" ".join(tokens[:size]) for size in range(1, min(len(tokens), 3) + 1))
-    if any(not canonical_unit(prefix).exact_only for prefix in prefixes):
+    tokens = tuple(re.findall(r"\w+", unit_tail.replace("ё", "е"), flags=re.UNICODE))
+    if _contains_canonical_unit_ngram(tokens):
         return "unknown"
-    if _TOTAL_SCOPE_TAIL.search(tail):
-        return "total"
-    if _current_scope(tail) or _historical(tail) or _period_mentions(tail):
+    if _is_total_scope_tokens(tokens):
         return "total"
     return "unknown"
+
+
+def _contains_canonical_unit_ngram(tokens: tuple[str, ...]) -> bool:
+    return any(
+        not canonical_unit(" ".join(tokens[start : start + size])).exact_only
+        for size in range(1, min(_MAX_SCOPE_NGRAM_TOKENS, len(tokens)) + 1)
+        for start in range(len(tokens) - size + 1)
+    )
+
+
+def _is_total_scope_tokens(tokens: tuple[str, ...]) -> bool:
+    allowed = _SCOPE_NOUNS | _SCOPE_MODIFIERS | _NUMBER_WORDS
+    return (
+        bool(tokens)
+        and bool(set(tokens) & _SCOPE_NOUNS)
+        and all(token in allowed or token.isdecimal() for token in tokens)
+    )
 
 
 def _historical(value: str) -> bool:

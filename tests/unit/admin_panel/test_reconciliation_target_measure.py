@@ -412,6 +412,7 @@ def test_currency_over_a_reporting_scope_is_not_a_unit_rate(cost: str) -> None:
         "Стоимость, млн руб. за квартал",
         "Стоимость, млн руб. за год",
         "Стоимость, млн руб. за выполненные работы",
+        "Стоимость, млн руб. за выполнённые работы",
         "Стоимость, млн руб. на дату отчета",
         "Стоимость, млн руб. за все СМР",
         "Стоимость, млн руб. за два дня",
@@ -460,6 +461,22 @@ def test_unknown_currency_preposition_tail_fails_closed_instead_of_becoming_tota
 
     assert reconciliation_target_measure._currency_preposition_scope(normalized) == "unknown"
     assert not reconciliation_target_measure._unit_price(normalized)
+    assert not reconciliation_target_measure._total_cost_leaf(normalized)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    (
+        "Стоимость, млн руб. за работника",
+        "Стоимость, млн руб. за работника-час",
+        "Стоимость, млн руб. за дневной прокат",
+        "Стоимость, млн руб. за оборудование для работ",
+    ),
+)
+def test_embedded_scope_words_do_not_turn_adversarial_tail_into_total(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._currency_preposition_scope(normalized) == "unknown"
     assert not reconciliation_target_measure._total_cost_leaf(normalized)
 
 
