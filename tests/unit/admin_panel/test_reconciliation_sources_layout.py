@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from openpyxl import Workbook
 
 from report_processor.admin_panel.reconciliation_sources import (
     ReconciliationSourceDescriptor,
+    SourceLayoutAmbiguousError,
     _extract_ks2_rows,
     _extract_ks6a_rows,
 )
@@ -237,6 +239,26 @@ def test_nested_cumulative_span_chain_is_not_admitted_as_direct() -> None:
     workbook.close()
     assert len(cumulative) == 1
     assert direct == ()
+
+
+def test_cumulative_direct_and_nested_metric_branches_fail_closed_as_ambiguous() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Выполнено нарастающим итогом", "", "", ""),
+        ("", "", "", "Количество", "Общая стоимость", "Подгруппа", ""),
+        ("", "", "", "", "", "Количество", "Общая стоимость"),
+        ("1", "Монтаж", "м", 1, 10, 2, 20),
+    ):
+        sheet.append(row)
+    sheet.merge_cells("D1:G1")
+    sheet.merge_cells("F2:G2")
+
+    with pytest.raises(SourceLayoutAmbiguousError):
+        _extract_ks6a_rows(
+            sheet, sheet, "source:one", ReconciliationSourceDescriptor("source.xlsx")
+        )
+    workbook.close()
 
 
 def test_column_permutation_does_not_change_physical_role_binding() -> None:

@@ -282,7 +282,7 @@ def _physical_layouts(
             descriptor,
             source_type=source_type,
             start_row=region.header_end + 1,
-            end_row=_detail_end(sheet, region, all_regions),
+            end_row=_detail_end(sheet, header, region, all_regions),
             work_column=work_column,
             unit_column=unit_column,
             quantity_column=region.quantity_column,
@@ -372,23 +372,29 @@ def _cumulative_metric_regions(header: _HeaderGraph) -> list[_MetricRegion]:
 def _cumulative_metric_leaves(
     header: _HeaderGraph, root: tuple[int, int, int, int]
 ) -> list[tuple[int, int, int]]:
-    """Follow one exact nested merged-span chain from a cumulative root to its leaves."""
-    current = root
-    seen: set[tuple[int, int, int, int]] = set()
-    while current not in seen:
-        seen.add(current)
-        _top, left, bottom, right = current
-        if bottom >= len(header.rows):
-            return []
-        leaf_row = bottom + 1
-        pairs = _physical_metric_pairs(header, leaf_row, left, right)
-        if pairs:
-            return [(quantity, cost, leaf_row) for quantity, cost in pairs]
-        nested = _adjacent_nested_spans(header, current)
-        if len(nested) != 1:
-            return []
-        current = nested[0]
-    return []
+    """Enumerate every exact nested path; viability later decides physical ambiguity."""
+    return _cumulative_metric_leaves_from(header, root, seen=frozenset())
+
+
+def _cumulative_metric_leaves_from(
+    header: _HeaderGraph,
+    current: tuple[int, int, int, int],
+    *,
+    seen: frozenset[tuple[int, int, int, int]],
+) -> list[tuple[int, int, int]]:
+    if current in seen:
+        return []
+    _top, left, bottom, right = current
+    if bottom >= len(header.rows):
+        return []
+    leaf_row = bottom + 1
+    leaves = [
+        (quantity, cost, leaf_row)
+        for quantity, cost in _physical_metric_pairs(header, leaf_row, left, right)
+    ]
+    for nested in _adjacent_nested_spans(header, current):
+        leaves.extend(_cumulative_metric_leaves_from(header, nested, seen=seen | {current}))
+    return leaves
 
 
 def _adjacent_nested_spans(
@@ -489,7 +495,12 @@ def _adjacent_containing_spans(
     )
 
 
-def _detail_end(sheet, region: _MetricRegion, regions: tuple[_MetricRegion, ...]) -> int:
+def _detail_end(
+    sheet,
+    header: _HeaderGraph,
+    region: _MetricRegion,
+    regions: tuple[_MetricRegion, ...],
+) -> int:
     """Stop before the next overlapping physical metric region on this worksheet."""
     _top, left, _bottom, right = region.metric_span
     next_starts = [
@@ -497,8 +508,271 @@ def _detail_end(sheet, region: _MetricRegion, regions: tuple[_MetricRegion, ...]
         for other in regions
         if other.metric_span[0] > region.header_end
         and _spans_overlap(left, right, other.metric_span[1], other.metric_span[3])
+        and _bounded_region_viable(sheet, header, other)
     ]
-    return min(next_starts) - 1 if next_starts else int(sheet.max_row or 0)
+    bounded_start = min(next_starts) if next_starts else None
+    streamed_start = _next_streamed_region_start(
+        sheet,
+        header,
+        region,
+        stop_before=bounded_start,
+    )
+    starts = [start for start in (bounded_start, streamed_start) if start is not None]
+    return min(starts) - 1 if starts else int(sheet.max_row or 0)
+
+
+def _bounded_region_viable(sheet, header: _HeaderGraph, region: _MetricRegion) -> bool:
+    """A physical header becomes a boundary only with exact roles and one detail row."""
+    cumulative = any(
+        span == region.metric_span
+        and _role_text(_text_at(header.rows[span[0] - 1], span[1]), "cumulative")
+        for span in set(header.spans.values())
+    )
+    roles = _region_roles(
+        header,
+        region,
+        sheet_type=SheetType.KS6A if cumulative else SheetType.KS2,
+    )
+    return roles is not None and _streamed_detail_viable(
+        sheet,
+        start_row=region.header_end + 1,
+        work_column=roles[0],
+        unit_column=roles[1],
+        quantity_column=region.quantity_column,
+        cost_column=region.cost_column,
+        column_limit=len(header.rows[0]),
+    )
+
+
+def _next_streamed_region_start(
+    sheet,
+    header: _HeaderGraph,
+    region: _MetricRegion,
+    *,
+    stop_before: int | None,
+) -> int | None:
+    """Stream established columns and bound only structurally viable later regions."""
+    _top, left, _bottom, right = region.metric_span
+    column_limit = len(header.rows[0])
+    merged_ranges = tuple(sheet.merged_cells.ranges)
+    cumulative_start = _next_streamed_cumulative_start(
+        sheet,
+        merged_ranges,
+        region,
+        column_limit=column_limit,
+    )
+    limits = [value - 1 for value in (stop_before, cumulative_start) if value is not None]
+    upper = min(limits) if limits else None
+    band_start = region.header_end + 1
+    for row_number, values in enumerate(
+        sheet.iter_rows(
+            min_row=region.header_end + 1,
+            max_row=upper,
+            max_col=column_limit,
+            values_only=True,
+        ),
+        region.header_end + 1,
+    ):
+        if not any(_text(value) for value in values):
+            band_start = row_number + 1
+            continue
+        for quantity, cost in _metric_pairs(values, 1, column_limit):
+            if _spans_overlap(left, right, quantity, cost) and _streamed_direct_region_viable(
+                sheet,
+                merged_ranges,
+                band_start=band_start,
+                header_row=row_number,
+                quantity_column=quantity,
+                cost_column=cost,
+                column_limit=column_limit,
+            ):
+                return row_number
+    return cumulative_start
+
+
+def _next_streamed_cumulative_start(
+    sheet, merged_ranges, region: _MetricRegion, *, column_limit: int
+):
+    """Validate later cumulative roots before using them as an immutable boundary."""
+    _top, left, _bottom, right = region.metric_span
+    starts = []
+    for root in merged_ranges:
+        if (
+            root.min_row <= region.header_end
+            or root.max_col > column_limit
+            or root.max_col <= root.min_col
+            or not _spans_overlap(left, right, root.min_col, root.max_col)
+            or not _role_text(_text(sheet.cell(root.min_row, root.min_col).value), "cumulative")
+        ):
+            continue
+        for quantity, cost, header_end in _streamed_cumulative_leaves(
+            sheet, merged_ranges, root, column_limit=column_limit, seen=frozenset()
+        ):
+            roles = _streamed_region_roles(
+                sheet,
+                merged_ranges,
+                band_start=root.min_row,
+                header_end=header_end,
+                metric_left=root.min_col,
+                metric_right=root.max_col,
+                column_limit=column_limit,
+                sheet_type=SheetType.KS6A,
+            )
+            if roles is not None and _streamed_detail_viable(
+                sheet,
+                start_row=header_end + 1,
+                work_column=roles[0],
+                unit_column=roles[1],
+                quantity_column=quantity,
+                cost_column=cost,
+                column_limit=column_limit,
+            ):
+                starts.append(root.min_row)
+    return min(starts) if starts else None
+
+
+def _streamed_cumulative_leaves(
+    sheet,
+    merged_ranges,
+    current,
+    *,
+    column_limit: int,
+    seen: frozenset[object],
+) -> list[tuple[int, int, int]]:
+    if current in seen:
+        return []
+    leaf_row = current.max_row + 1
+    values = tuple(sheet.cell(leaf_row, column).value for column in range(1, column_limit + 1))
+    leaves = [
+        (quantity, cost, leaf_row)
+        for quantity, cost in _metric_pairs(values, current.min_col, current.max_col)
+    ]
+    for nested in merged_ranges:
+        if (
+            nested != current
+            and nested.min_row == leaf_row
+            and current.min_col <= nested.min_col <= nested.max_col <= current.max_col
+        ):
+            leaves.extend(
+                _streamed_cumulative_leaves(
+                    sheet,
+                    merged_ranges,
+                    nested,
+                    column_limit=column_limit,
+                    seen=seen | {current},
+                )
+            )
+    return leaves
+
+
+def _streamed_direct_region_viable(
+    sheet,
+    merged_ranges,
+    *,
+    band_start: int,
+    header_row: int,
+    quantity_column: int,
+    cost_column: int,
+    column_limit: int,
+) -> bool:
+    roles = _streamed_region_roles(
+        sheet,
+        merged_ranges,
+        band_start=band_start,
+        header_end=header_row,
+        metric_left=quantity_column,
+        metric_right=cost_column,
+        column_limit=column_limit,
+        sheet_type=SheetType.KS2,
+    )
+    return roles is not None and _streamed_detail_viable(
+        sheet,
+        start_row=header_row + 1,
+        work_column=roles[0],
+        unit_column=roles[1],
+        quantity_column=quantity_column,
+        cost_column=cost_column,
+        column_limit=column_limit,
+    )
+
+
+def _streamed_region_roles(
+    sheet,
+    merged_ranges,
+    *,
+    band_start: int,
+    header_end: int,
+    metric_left: int,
+    metric_right: int,
+    column_limit: int,
+    sheet_type: SheetType,
+) -> tuple[int, int] | None:
+    candidates = []
+    for column in range(1, column_limit + 1):
+        if metric_left <= column <= metric_right:
+            continue
+        lineage = _streamed_lineage(sheet, merged_ranges, column, band_start, header_end)
+        if lineage and not _price_lineage(lineage):
+            candidates.append(
+                ComposedHeader(
+                    column_index=column,
+                    column_letter=get_column_letter(column),
+                    parts=(lineage,),
+                    raw_text=lineage,
+                    normalized_text=normalize_header_text(lineage),
+                    is_empty=False,
+                    source_coordinates=(),
+                    merged_sources=(),
+                )
+            )
+    return _resolved_region_roles(tuple(candidates), sheet_type)
+
+
+def _streamed_lineage(sheet, merged_ranges, column: int, start: int, end: int) -> str:
+    values: list[str] = []
+    seen: set[tuple[int, int]] = set()
+    for row in range(start, end + 1):
+        merged = next(
+            (
+                item
+                for item in merged_ranges
+                if item.min_row <= row <= item.max_row and item.min_col <= column <= item.max_col
+            ),
+            None,
+        )
+        origin = (merged.min_row, merged.min_col) if merged is not None else (row, column)
+        if origin in seen:
+            continue
+        seen.add(origin)
+        value = sheet.cell(*origin).value
+        text = _text(value)
+        if text:
+            values.append(text)
+    return " ".join(values)
+
+
+def _streamed_detail_viable(
+    sheet,
+    *,
+    start_row: int,
+    work_column: int,
+    unit_column: int,
+    quantity_column: int,
+    cost_column: int,
+    column_limit: int,
+) -> bool:
+    for values in sheet.iter_rows(min_row=start_row, max_col=column_limit, values_only=True):
+        work = _text_at(values, work_column)
+        unit = _text_at(values, unit_column)
+        if (
+            work
+            and unit
+            and _HIERARCHY_VALUE_RE.fullmatch(unit) is None
+            and _decimal(_value_at(values, quantity_column)) is not None
+            and _decimal(_value_at(values, cost_column)) is not None
+        ):
+            return True
+    return False
 
 
 def _spans_overlap(left: int, right: int, other_left: int, other_right: int) -> bool:
@@ -540,6 +814,13 @@ def _region_roles(
                 merged_sources=(),
             )
         )
+    return _resolved_region_roles(tuple(candidates), sheet_type)
+
+
+def _resolved_region_roles(
+    candidates: tuple[ComposedHeader, ...], sheet_type: SheetType
+) -> tuple[int, int] | None:
+    """Accept only unambiguous public-schema work and unit resolutions."""
     role_rules = tuple(
         rule
         for rule in DEFAULT_COLUMN_ALIASES

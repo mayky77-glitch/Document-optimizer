@@ -200,6 +200,59 @@ def test_cumulative_detail_interval_stops_before_later_overlapping_direct_table(
     assert batch.rows[0].work_name == "первая работа"
 
 
+def test_cumulative_detail_interval_streams_past_initial_header_window(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Выполнено нарастающим итогом", ""),
+        ("", "", "", "Количество", "Общая стоимость"),
+        ("1", "Первая работа", "м", "1", "10"),
+    ):
+        sheet.append(row)
+    sheet.merge_cells("D1:E1")
+    sheet.cell(row=59, column=1, value="")
+    assert sheet.max_row == 59
+    sheet.append(("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"))
+    sheet.append(("2", "Вторая работа", "м", "2", "20"))
+    assert sheet.max_row == 61
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert batch.selections[0].source_type == "ks6a"
+    assert len(batch.rows) == 1
+    assert batch.rows[0].work_name == "первая работа"
+
+
+def test_metric_shaped_noise_without_roles_does_not_truncate_cumulative_detail(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Выполнено нарастающим итогом", ""),
+        ("", "", "", "Количество", "Общая стоимость"),
+        ("1", "Первая работа", "м", "1", "10"),
+        (),
+        ("", "Произвольный текст", "", "Количество", "Общая стоимость"),
+        ("2", "Вторая работа", "м", "2", "20"),
+    ):
+        sheet.append(row)
+    sheet.merge_cells("D1:E1")
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert batch.selections[0].source_type == "ks6a"
+    assert {row.work_name for row in batch.rows} == {"первая работа", "вторая работа"}
+
+
 def test_two_cumulative_regions_in_one_sheet_fail_controlled_ambiguity(tmp_path: Path) -> None:
     path = tmp_path / "source.xlsx"
     workbook = Workbook()
