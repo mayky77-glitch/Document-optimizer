@@ -46,7 +46,8 @@
   "units": {
     "piece": {"family": "count", "scale": "1", "aliases": ["шт", "шт.", "штука", "ед", "ед."], "forbidden_conversions": ["set"]},
     "set": {"family": "count", "scale": "1", "aliases": ["комплект", "компл", "компл."], "forbidden_conversions": ["piece"]},
-    "meter": {"family": "length", "scale": "1", "aliases": ["м", "м.", "метр", "метры", "пм", "погонный метр"], "forbidden_conversions": []},
+    "meter": {"family": "length", "scale": "1", "aliases": ["м", "м.", "метр", "метры"], "forbidden_conversions": []},
+    "linear_meter": {"family": "linear_length", "scale": "1", "aliases": ["пм", "п.м", "п.м.", "погонный метр", "пог. метр", "пог.м"], "forbidden_conversions": []},
     "kilometer": {"family": "length", "scale": "1000", "aliases": ["км", "километр"], "forbidden_conversions": []},
     "square_meter": {"family": "area", "scale": "1", "aliases": ["м2", "м²", "кв.м", "кв м", "квадратный метр"], "forbidden_conversions": []},
     "cubic_meter": {"family": "volume", "scale": "1", "aliases": ["м3", "м³", "куб.м", "куб м", "кубический метр"], "forbidden_conversions": []},

@@ -435,7 +435,19 @@ def test_currency_over_a_total_scope_is_not_a_unit_rate(cost: str) -> None:
         "Стоимость, млн руб. за человеко-час за выполненные работы",
     ),
 )
-def test_proven_leading_unit_remains_rate_before_later_total_scope(cost: str) -> None:
+def test_mixed_unit_and_scope_fails_closed_instead_of_becoming_rate_or_total(cost: str) -> None:
+    normalized = reconciliation_target_measure._text(cost)
+
+    assert reconciliation_target_measure._currency_preposition_scope(normalized) == "unknown"
+    assert not reconciliation_target_measure._unit_price(normalized)
+    assert not reconciliation_target_measure._total_cost_leaf(normalized)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    ("Стоимость, млн руб. за м2", "Стоимость, млн руб. за человеко-час"),
+)
+def test_whole_canonical_unit_tail_is_a_rate(cost: str) -> None:
     normalized = reconciliation_target_measure._text(cost)
 
     assert reconciliation_target_measure._currency_preposition_scope(normalized) == "rate"

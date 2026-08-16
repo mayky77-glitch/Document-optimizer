@@ -77,11 +77,8 @@ _CURRENCY_PER_UNIT = re.compile(
     flags=re.UNICODE,
 )
 _TOTAL_SCOPE_TAIL = re.compile(
-    r"^(?:"
-    r"(?:\S+\s+)?(?:дн\w*|недел\w*|месяц\w*|квартал\w*|год\w*|этап\w*)\b|"
-    r"(?:(?:все|весь|выполненн\w*)\s+)?(?:смр|работ\w*)\b|"
-    r"дат\w*\s+отчет\w*"
-    r")"
+    r"\b(?:дн\w*|недел\w*|месяц\w*|квартал\w*|год\w*|"
+    r"смр|работ\w*|этап\w*|дат\w*|отчет\w*)\b"
 )
 _LEADING_MULTIPLIER = re.compile(r"^\d+(?:[.,]\d+)?\s+")
 
@@ -722,10 +719,12 @@ def _currency_preposition_scope(value: str) -> str | None:
     if not tail:
         return "total"
     unit_tail = _LEADING_MULTIPLIER.sub("", tail)
-    tokens = unit_tail.split()
-    candidates = tuple(" ".join(tokens[:size]) for size in range(1, min(len(tokens), 3) + 1))
-    if any(not canonical_unit(candidate).exact_only for candidate in candidates):
+    if not canonical_unit(unit_tail).exact_only:
         return "rate"
+    tokens = unit_tail.split()
+    prefixes = tuple(" ".join(tokens[:size]) for size in range(1, min(len(tokens), 3) + 1))
+    if any(not canonical_unit(prefix).exact_only for prefix in prefixes):
+        return "unknown"
     if _TOTAL_SCOPE_TAIL.search(tail):
         return "total"
     if _current_scope(tail) or _historical(tail) or _period_mentions(tail):
