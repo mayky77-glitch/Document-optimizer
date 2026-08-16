@@ -38,7 +38,14 @@ def _historical_book(path: Path) -> None:
     workbook.save(path)
 
 
-def _rewrite_zip_metadata(path: Path, *, flag_bits: int, external_attr: int) -> None:
+def _rewrite_zip_metadata(
+    path: Path,
+    *,
+    flag_bits: int,
+    external_attr: int,
+    local_flag_bits: int | None = None,
+    compression: int | None = None,
+) -> None:
     """Generate a ZIP with deliberate matching local/central metadata."""
 
     with zipfile.ZipFile(path) as source:
@@ -47,12 +54,15 @@ def _rewrite_zip_metadata(path: Path, *, flag_bits: int, external_attr: int) -> 
     with zipfile.ZipFile(path, "w") as rewritten:
         rewritten.comment = comment
         for info, payload in entries:
+            if compression is not None:
+                info.compress_type = compression
             rewritten.writestr(info, payload)
             info.flag_bits = flag_bits
             info.external_attr = external_attr
             position = rewritten.fp.tell()
             rewritten.fp.seek(info.header_offset + 6)
-            rewritten.fp.write(flag_bits.to_bytes(2, "little"))
+            written_local_flags = flag_bits if local_flag_bits is None else local_flag_bits
+            rewritten.fp.write(written_local_flags.to_bytes(2, "little"))
             rewritten.fp.seek(position)
 
 
@@ -83,12 +93,53 @@ def test_period_insertion_rejects_unsupported_zip_flags_without_output(tmp_path:
     source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
     _historical_book(source)
     _rewrite_zip_metadata(source, flag_bits=0x0010, external_attr=0)
-    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
 
-    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_TRANSFORM_INVALID"):
-        prepare_period_insertion(source, output, plan)
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
 
     assert not output.exists()
+
+
+def test_period_insertion_rejects_mismatched_local_zip_flags_without_output(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _rewrite_zip_metadata(source, flag_bits=0x0006, local_flag_bits=0x0010, external_attr=0)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+    assert not output.exists()
+
+
+def test_verifier_rejects_tampered_output_local_zip_flags(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    _rewrite_zip_metadata(source, flag_bits=0x0006, external_attr=0)
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+    _rewrite_zip_metadata(output, flag_bits=0x0006, local_flag_bits=0x0010, external_attr=0)
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_DELTA_INVALID"):
+        verify_period_insertion(source, output, plan)
+
+
+def test_period_insertion_rejects_stored_deflate_option_flags_without_clobbering_output(
+    tmp_path: Path,
+) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    output.write_bytes(b"user-sentinel")
+    _rewrite_zip_metadata(
+        source,
+        flag_bits=0x0002,
+        external_attr=0,
+        compression=zipfile.ZIP_STORED,
+    )
+
+    with pytest.raises(ReconciliationPeriodError, match="PERIOD_INSERTION_PACKAGE_INVALID"):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+
+    assert output.read_bytes() == b"user-sentinel"
 
 
 def test_inserts_unmerged_period_columns_with_parent_row_labels(tmp_path: Path) -> None:

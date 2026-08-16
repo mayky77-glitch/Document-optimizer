@@ -68,7 +68,11 @@ _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 # ZIP general-purpose bits that CPython can reproduce verbatim while rewriting
 # an OOXML member. Encryption, data descriptors, patched data, and reserved
 # bits change how a reader interprets a member, so preserve none of those.
-_PRESERVABLE_ZIP_FLAG_BITS = 0x0806
+_ZIP_UTF8_FLAG = 0x0800
+_ZIP_DEFLATE_OPTION_FLAGS = 0x0006
+_ZIP_LZMA_EOS_FLAG = 0x0002
+_LOCAL_FILE_HEADER_SIGNATURE = b"PK\x03\x04"
+_LOCAL_FILE_HEADER_SIZE = 30
 
 
 class _MetadataPreservingZipFile(zipfile.ZipFile):
@@ -111,7 +115,7 @@ def _write_member_preserving_zip_metadata(
 ) -> None:
     """Write one member only when its ZIP identity is safely reproducible."""
 
-    if source_info.flag_bits & ~_PRESERVABLE_ZIP_FLAG_BITS:
+    if not _zip_flags_are_preservable(source_info):
         raise ReconciliationPeriodError("PERIOD_INSERTION_TRANSFORM_INVALID")
     written_info = copy(source_info)
     archive.writestr(written_info, payload)
@@ -121,6 +125,52 @@ def _write_member_preserving_zip_metadata(
         or written_info.external_attr != source_info.external_attr
     ):
         raise ReconciliationPeriodError("PERIOD_INSERTION_TRANSFORM_INVALID")
+
+
+def _zip_flags_are_preservable(info: zipfile.ZipInfo) -> bool:
+    """Accept only flag layouts writer can reproduce for compression method."""
+
+    allowed = _ZIP_UTF8_FLAG
+    if info.compress_type == zipfile.ZIP_DEFLATED:
+        allowed |= _ZIP_DEFLATE_OPTION_FLAGS
+    elif info.compress_type == zipfile.ZIP_LZMA:
+        allowed |= _ZIP_LZMA_EOS_FLAG
+    elif info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_BZIP2}:
+        return False
+    return 0 <= info.flag_bits <= 0xFFFF and not info.flag_bits & ~allowed
+
+
+def _local_zip_flag_bits(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> int:
+    """Read general-purpose bits from one raw local file header."""
+
+    stream = archive.fp
+    if stream is None or info.header_offset < 0:
+        raise ValueError("missing local ZIP header")
+    position = stream.tell()
+    try:
+        stream.seek(info.header_offset)
+        header = stream.read(_LOCAL_FILE_HEADER_SIZE)
+    finally:
+        stream.seek(position)
+    if len(header) != _LOCAL_FILE_HEADER_SIZE or header[:4] != _LOCAL_FILE_HEADER_SIGNATURE:
+        raise ValueError("invalid local ZIP header")
+    return int.from_bytes(header[6:8], "little")
+
+
+def _validate_zip_local_headers(archive: zipfile.ZipFile, error_code: str) -> None:
+    """Require raw local flags match valid central-directory ZipInfo flags."""
+
+    try:
+        for info in archive.infolist():
+            if (
+                not _zip_flags_are_preservable(info)
+                or _local_zip_flag_bits(archive, info) != info.flag_bits
+            ):
+                raise ReconciliationPeriodError(error_code)
+    except ReconciliationPeriodError:
+        raise
+    except Exception as error:
+        raise ReconciliationPeriodError(error_code) from error
 
 
 def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]]:
@@ -430,6 +480,8 @@ def verify_period_insertion(
                 raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
             if before.comment != after.comment:
                 raise ReconciliationPeriodError("PERIOD_INSERTION_DELTA_INVALID")
+            _validate_zip_local_headers(before, "PERIOD_INSERTION_DELTA_INVALID")
+            _validate_zip_local_headers(after, "PERIOD_INSERTION_DELTA_INVALID")
             changed = set(plan.affected_parts)
             for info, candidate_info in zip(before.infolist(), after.infolist(), strict=True):
                 # CRC and sizes necessarily change in edited members.  The
@@ -1011,6 +1063,7 @@ def _reject_package(source: Path) -> None:
             names = tuple(archive.namelist())
             if len(names) != len(set(names)) or archive.testzip() is not None:
                 raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID")
+            _validate_zip_local_headers(archive, "PERIOD_INSERTION_PACKAGE_INVALID")
             if any(_UNSUPPORTED_PART.search(name) for name in names):
                 raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     except ReconciliationPeriodError:
