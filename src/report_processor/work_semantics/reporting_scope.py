@@ -6,7 +6,7 @@ import re
 import unicodedata
 
 MAX_REPORTING_SCOPE_TOKENS = 24
-REPORTING_SCOPE_VERSION = "ReportingScope-1.2"
+REPORTING_SCOPE_VERSION = "ReportingScope-2.0"
 _TOKEN = re.compile(r"\w+", flags=re.UNICODE)
 _FINAL_SCOPE_TOKEN = frozenset(
     {
@@ -165,61 +165,52 @@ _NUMERAL_TOKENS = frozenset(
         "миллиардах",
     }
 )
-_DETERMINER_TOKENS = frozenset({"весь", "вся", "все", "всех"})
-_DISTRIBUTIVE_OR_UNITARY_TOKENS = frozenset(
-    {
-        "каждый",
-        "каждая",
-        "каждое",
-        "каждые",
-        "каждого",
-        "каждому",
-        "каждым",
-        "каждой",
-        "каждую",
-        "каждых",
-        "каждыми",
-        "единичный",
-        "единичная",
-        "единичное",
-        "единичные",
-        "единичного",
-        "единичному",
-        "единичным",
-        "единичной",
-        "единичную",
-        "единичных",
-        "единичными",
-    }
-)
 _WORK_SCOPE_HEADS = frozenset(
     {"работа", "работы", "работ", "работе", "работой", "работам", "работами", "работах", "смр"}
 )
-_WORK_AGGREGATE_EVIDENCE = frozenset(
+_TIME_SCOPE_HEADS = _FINAL_SCOPE_TOKEN & frozenset(
     {
-        "весь",
-        "вся",
-        "все",
-        "всех",
-        "выполненный",
-        "выполненная",
-        "выполненное",
-        "выполненные",
-        "выполненных",
-        "совокупный",
-        "совокупная",
-        "совокупное",
-        "совокупные",
-        "совокупных",
-        "итоговый",
-        "итоговая",
-        "итоговое",
-        "итоговые",
-        "итоговых",
+        "день",
+        "дня",
+        "дней",
+        "дню",
+        "днем",
+        "неделя",
+        "недели",
+        "недель",
+        "неделю",
+        "неделей",
+        "месяц",
+        "месяца",
+        "месяцев",
+        "месяце",
+        "месяцем",
+        "квартал",
+        "квартала",
+        "кварталов",
+        "квартале",
+        "кварталом",
+        "год",
+        "года",
+        "лет",
+        "году",
+        "годом",
     }
 )
-_MODIFIER = re.compile(
-    r"\w*(?:ый|ий|ой|ая|яя|ое|ее|ую|юю|ого|его|ому|ему|ым|им|ыми|ими|ых|их|ые|енн(?:ый|ая|ое|ые|ого|ому|ым|ыми|ых)|анн(?:ый|ая|ое|ые|ого|ому|ым|ыми|ых))"
+_STAGE_SCOPE_HEADS = _FINAL_SCOPE_TOKEN & frozenset(
+    {"этап", "этапа", "этапу", "этапов", "этапе", "этапом", "этапы"}
+)
+_REPORT_SCOPE_HEADS = (
+    _FINAL_SCOPE_TOKEN - _TIME_SCOPE_HEADS - _STAGE_SCOPE_HEADS - _WORK_SCOPE_HEADS
+)
+_EXPLICIT_SCOPE_MARKER = re.compile(
+    r"(?:весь|вся|все|всех|выполненн\w*|совокупн\w*|итогов\w*|"
+    r"текущ\w*|отчетн\w*|историч\w*|документальн\w*|накопленн\w*|дат\w*)"
+)
+_ORDINAL_NUMERAL = re.compile(
+    r"(?:перв|втор|трет|четверт|пят|шест|седьм|восьм|девят|десят|"
+    r"одиннадцат|двенадцат|тринадцат|четырнадцат|пятнадцат|шестнадцат|"
+    r"семнадцат|восемнадцат|девятнадцат|двадцат|тридцат|сот|тысячн)\w*"
 )
 
 
@@ -229,8 +220,6 @@ def is_reporting_scope(value: str) -> bool:
     normalized = unicodedata.normalize("NFKC", value).casefold().replace("ё", "е")
     tokens = tuple(_TOKEN.findall(normalized))
     if not tokens or len(tokens) > MAX_REPORTING_SCOPE_TOKENS:
-        return False
-    if _DISTRIBUTIVE_OR_UNITARY_TOKENS & set(tokens):
         return False
     if "по" in tokens:
         if tokens.count("по") != 1:
@@ -245,23 +234,26 @@ def _is_scope_clause(tokens: tuple[str, ...]) -> bool:
         return False
     if _is_calendar_scope(tokens):
         return True
-    if tokens[-1] not in _FINAL_SCOPE_TOKEN or not all(
-        _is_numeric_token(token)
-        or token in _DETERMINER_TOKENS
-        or token in _FINAL_SCOPE_TOKEN
-        or bool(_MODIFIER.fullmatch(token))
-        for token in tokens[:-1]
-    ):
-        return False
-    return (
-        tokens[-1] not in _WORK_SCOPE_HEADS
-        or len(tokens) == 1
-        or bool(_WORK_AGGREGATE_EVIDENCE & set(tokens[:-1]))
-    )
+    head, prefix = tokens[-1], tokens[:-1]
+    if head in _TIME_SCOPE_HEADS:
+        return not prefix or _is_numeral_phrase(prefix)
+    if head in _STAGE_SCOPE_HEADS:
+        return not prefix or _is_numeral_phrase(prefix) or _has_explicit_marker(prefix)
+    if head in _WORK_SCOPE_HEADS or head in _REPORT_SCOPE_HEADS:
+        return not prefix or _has_explicit_marker(prefix)
+    return False
 
 
 def _is_numeric_token(token: str) -> bool:
-    return token.isdecimal() or token in _NUMERAL_TOKENS
+    return token.isdecimal() or token in _NUMERAL_TOKENS or bool(_ORDINAL_NUMERAL.fullmatch(token))
+
+
+def _is_numeral_phrase(tokens: tuple[str, ...]) -> bool:
+    return bool(tokens) and all(_is_numeric_token(token) for token in tokens)
+
+
+def _has_explicit_marker(tokens: tuple[str, ...]) -> bool:
+    return any(_EXPLICIT_SCOPE_MARKER.fullmatch(token) for token in tokens)
 
 
 def _is_calendar_scope(tokens: tuple[str, ...]) -> bool:

@@ -58,6 +58,13 @@ def test_reporting_scope_accepts_bounded_reporting_and_work_phrases(value: str) 
         "каждый этап",
         "каждый день",
         "единичный отчет",
+        "любой отчет",
+        "отдельный отчет",
+        "ежедневный день",
+        "ежемесячный месяц",
+        "поэтапный этап",
+        "разовый этап",
+        "один отчет",
     ),
 )
 def test_reporting_scope_rejects_collisions_and_embedded_objects(value: str) -> None:
@@ -69,4 +76,4 @@ def test_reporting_scope_rejects_over_budget_token_sequences() -> None:
 
 
 def test_reporting_scope_exposes_its_version() -> None:
-    assert REPORTING_SCOPE_VERSION == "ReportingScope-1.2"
+    assert REPORTING_SCOPE_VERSION == "ReportingScope-2.0"
