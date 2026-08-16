@@ -280,6 +280,91 @@ def test_later_direct_region_past_header_window_fails_controlled_ambiguity(
     assert raised.value.issues[0].code == "SOURCE_LAYOUT_AMBIGUOUS"
 
 
+def test_cumulative_root_straddling_initial_window_is_discovered(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.cell(row=49, column=2, value="Наименование работ")
+    sheet.cell(row=49, column=3, value="Ед. изм.")
+    sheet.cell(row=49, column=4, value="Выполнено нарастающим итогом")
+    sheet.merge_cells("D49:E50")
+    sheet.cell(row=51, column=4, value="Количество")
+    sheet.cell(row=51, column=5, value="Общая стоимость")
+    sheet.cell(row=52, column=2, value="Работа")
+    sheet.cell(row=52, column=3, value="м")
+    sheet.cell(row=52, column=4, value=1)
+    sheet.cell(row=52, column=5, value=10)
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert batch.selections[0].source_type == "ks6a"
+    assert len(batch.rows) == 1
+
+
+def test_direct_header_band_straddling_initial_window_is_discovered(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.cell(row=79, column=2, value="Наименование")
+    sheet.cell(row=79, column=3, value="Единица")
+    sheet.cell(row=80, column=2, value="работ")
+    sheet.cell(row=80, column=3, value="измерения")
+    sheet.cell(row=81, column=4, value="Количество")
+    sheet.cell(row=81, column=5, value="Общая стоимость")
+    sheet.cell(row=82, column=2, value="Работа")
+    sheet.cell(row=82, column=3, value="м")
+    sheet.cell(row=82, column=4, value=1)
+    sheet.cell(row=82, column=5, value=10)
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert batch.selections[0].source_type == "ks2"
+    assert len(batch.rows) == 1
+
+
+def test_late_formula_without_cache_remains_controlled_issue(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.cell(row=59, column=2, value="Наименование работ")
+    sheet.cell(row=59, column=3, value="Ед. изм.")
+    sheet.cell(row=59, column=4, value="Количество")
+    sheet.cell(row=59, column=5, value="Общая стоимость")
+    sheet.cell(row=60, column=2, value="Работа")
+    sheet.cell(row=60, column=3, value="м")
+    sheet.cell(row=60, column=4, value="=1+1")
+    sheet.cell(row=60, column=5, value=10)
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(AllReconciliationSourcesUnusableError) as raised:
+        extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert raised.value.issues[0].code == "FORMULA_CACHE_UNAVAILABLE"
+
+
+def test_inflated_worksheet_dimension_uses_sparse_region_index(tmp_path: Path) -> None:
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in (
+        ("", "Наименование работ", "Ед. изм.", "Количество", "Общая стоимость"),
+        ("1", "Работа", "м", 1, 10),
+    ):
+        sheet.append(row)
+    sheet["XFD1048576"] = "dimension sentinel"
+    workbook.save(path)
+    workbook.close()
+
+    batch = extract_reconciliation_sources((_source_input(path, "source:one", "source.xlsx"),))
+
+    assert len(batch.rows) == 1
+
+
 def test_metric_shaped_noise_without_roles_does_not_truncate_cumulative_detail(
     tmp_path: Path,
 ) -> None:

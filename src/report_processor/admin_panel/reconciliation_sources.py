@@ -88,6 +88,20 @@ class _StreamedLayout:
     cumulative: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _SparseRegionIndex:
+    values: dict[tuple[int, int], object]
+    formula_cells: frozenset[tuple[int, int]]
+    spans: tuple[tuple[int, int, int, int], ...]
+    columns: tuple[int, ...]
+    rows: tuple[int, ...]
+
+
+_REGION_CELL_LIMIT = 10_000
+_REGION_MERGE_LIMIT = 1_000
+_REGION_CANDIDATE_LIMIT = 256
+
+
 def descriptor_from_upload_basename(safe_basename: str) -> ReconciliationSourceDescriptor:
     """Infer optional metadata solely from one validated upload basename."""
     period = extract_period_from_filename(safe_basename).value
@@ -211,13 +225,9 @@ def _extract_one(
     try:
         candidates: list[tuple[str, str, tuple[NormalizedSourceRow, ...]]] = []
         for sheet in workbook.worksheets:
-            for extractor, source_type in (
-                (_ks6a_layouts, "ks6a"),
-                (_ks2_layouts, "ks2"),
-            ):
-                for _physical_key, canonical in extractor(
-                    sheet, formulas[sheet.title], source_id, descriptor
-                ):
+            layouts = _indexed_sheet_layouts(sheet, formulas[sheet.title], source_id, descriptor)
+            for source_type, source_layouts in (("ks6a", layouts[0]), ("ks2", layouts[1])):
+                for _physical_key, canonical in source_layouts:
                     normalized = normalize_training_rows(prepare_training_data(canonical).rows).rows
                     if normalized:
                         candidates.append((source_type, sheet.title, normalized))
@@ -250,17 +260,343 @@ def _extract_ks2_rows(
 
 def _ks6a_layouts(sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor):
     """Return each physical cumulative layout; normalization is deliberately deferred."""
-    header = _header_graph(sheet, maximum=50)
-    return _physical_layouts(
-        sheet, formula_sheet, source_id, descriptor, header, cumulative=True, source_type="ks6a"
-    )
+    return _indexed_sheet_layouts(sheet, formula_sheet, source_id, descriptor)[0]
 
 
 def _ks2_layouts(sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor):
     """Return each physical direct layout; normalization is deliberately deferred."""
-    header = _header_graph(sheet, maximum=80)
-    return _physical_layouts(
-        sheet, formula_sheet, source_id, descriptor, header, cumulative=False, source_type="ks2"
+    return _indexed_sheet_layouts(sheet, formula_sheet, source_id, descriptor)[1]
+
+
+def _indexed_sheet_layouts(
+    sheet, formula_sheet, source_id: str, descriptor: ReconciliationSourceDescriptor
+):
+    """Discover every bounded sparse physical layout once, then probe its own interval once."""
+    index = _sparse_region_index(sheet, formula_sheet)
+    structural = _indexed_structural_layouts(index)
+    output: dict[bool, list[tuple[tuple[object, ...], tuple[CanonicalSourceRow, ...]]]] = {
+        True: [],
+        False: [],
+    }
+    probed: list[tuple[_StreamedLayout, tuple[CanonicalSourceRow, ...]]] = []
+    for layout in structural:
+        region = layout.region
+        end_row = _indexed_detail_end(region, structural, index.rows)
+        rows = _canonical_index_rows(
+            index,
+            sheet.title,
+            source_id,
+            descriptor,
+            source_type="ks6a" if layout.cumulative else "ks2",
+            start_row=region.header_end + 1,
+            end_row=end_row,
+            work_column=layout.work_column,
+            unit_column=layout.unit_column,
+            quantity_column=region.quantity_column,
+            cost_column=region.cost_column,
+            cumulative=layout.cumulative,
+        )
+        probed.append((layout, rows))
+    for layout, rows in probed:
+        if not rows and any(
+            other.region.metric_span[0] < layout.region.metric_span[0]
+            and other.region.header_end < layout.region.metric_span[0]
+            and _spans_overlap(
+                other.region.metric_span[1],
+                other.region.metric_span[3],
+                layout.region.metric_span[1],
+                layout.region.metric_span[3],
+            )
+            for other in structural
+        ):
+            raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    for layout, rows in probed:
+        if rows:
+            region = layout.region
+            output[layout.cumulative].append(
+                (
+                    (
+                        layout.cumulative,
+                        layout.work_column,
+                        layout.unit_column,
+                        region.metric_span,
+                        region.quantity_column,
+                        region.cost_column,
+                        region.header_end,
+                    ),
+                    rows,
+                )
+            )
+    return output[True], output[False]
+
+
+def _sparse_region_index(sheet, formula_sheet) -> _SparseRegionIndex:
+    cells = {
+        (row, column): cell.value
+        for (row, column), cell in sheet._cells.items()
+        if cell.value is not None
+    }
+    spans = tuple(
+        sorted(
+            (item.min_row, item.min_col, item.max_row, item.max_col)
+            for item in sheet.merged_cells.ranges
+        )
+    )
+    if len(cells) > _REGION_CELL_LIMIT or len(spans) > _REGION_MERGE_LIMIT:
+        raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    formulas = frozenset(
+        (row, column)
+        for (row, column), cell in formula_sheet._cells.items()
+        if cell.data_type == "f"
+    )
+    columns = sorted(
+        {column for _row, column in cells}
+        | {span[1] for span in spans}
+        | {span[3] for span in spans}
+    )
+    return _SparseRegionIndex(
+        cells, formulas, spans, tuple(columns), tuple(sorted({row for row, _ in cells}))
+    )
+
+
+def _indexed_structural_layouts(index: _SparseRegionIndex) -> tuple[_StreamedLayout, ...]:
+    layouts: list[_StreamedLayout] = []
+    for root in index.spans:
+        top, left, _bottom, right = root
+        if right <= left or not _role_text(_text(index.values.get((top, left))), "cumulative"):
+            continue
+        for quantity, cost, header_end in _indexed_cumulative_leaves(index, root, frozenset()):
+            roles = _indexed_roles(index, top, header_end, left, right, SheetType.KS6A)
+            if roles is not None:
+                layouts.append(
+                    _StreamedLayout(
+                        _MetricRegion(quantity, cost, header_end, root, top), *roles, True
+                    )
+                )
+    for row in index.rows:
+        for quantity, cost in _indexed_metric_pairs(index, row, 1, max(index.columns, default=0)):
+            band_start = _indexed_band_start(index, row)
+            if _indexed_cumulative_ancestor(
+                index, row, quantity, band_start
+            ) or _indexed_cumulative_ancestor(index, row, cost, band_start):
+                continue
+            roles = _indexed_roles(index, band_start, row, quantity, cost, SheetType.KS2)
+            if roles is not None:
+                layouts.append(
+                    _StreamedLayout(
+                        _MetricRegion(quantity, cost, row, (row, quantity, row, cost), band_start),
+                        *roles,
+                        False,
+                    )
+                )
+    unique = tuple(dict.fromkeys(layouts))
+    if len(unique) > _REGION_CANDIDATE_LIMIT:
+        raise SourceLayoutAmbiguousError("SOURCE_LAYOUT_AMBIGUOUS")
+    return unique
+
+
+def _indexed_metric_pairs(
+    index: _SparseRegionIndex, row: int, start: int, end: int
+) -> list[tuple[int, int]]:
+    values = {
+        column: _text(index.values.get((row, column)))
+        for column in index.columns
+        if start <= column <= end
+    }
+    quantities = [
+        column
+        for column, value in values.items()
+        if any(stem in value for stem in ("колич", "объем", "объём"))
+    ]
+    costs = [column for column, value in values.items() if _cost_text(value)]
+    return [(quantity, cost) for quantity in quantities for cost in costs if cost == quantity + 1]
+
+
+def _indexed_cumulative_leaves(
+    index: _SparseRegionIndex, current, seen: frozenset[tuple[int, int, int, int]]
+):
+    if current in seen:
+        return []
+    _top, left, bottom, right = current
+    leaf_row = bottom + 1
+    leaves = [
+        (quantity, cost, leaf_row)
+        for quantity, cost in _indexed_metric_pairs(index, leaf_row, left, right)
+    ]
+    for nested in index.spans:
+        if nested != current and nested[0] == leaf_row and left <= nested[1] <= nested[3] <= right:
+            leaves.extend(_indexed_cumulative_leaves(index, nested, seen | {current}))
+    return leaves
+
+
+def _indexed_roles(
+    index: _SparseRegionIndex,
+    start: int,
+    end: int,
+    metric_left: int,
+    metric_right: int,
+    sheet_type: SheetType,
+):
+    headers = []
+    for column in index.columns:
+        if metric_left <= column <= metric_right:
+            continue
+        lineage = _indexed_lineage(index, column, start, end)
+        if lineage and not _price_lineage(lineage):
+            headers.append(
+                ComposedHeader(
+                    column,
+                    get_column_letter(column),
+                    (lineage,),
+                    lineage,
+                    normalize_header_text(lineage),
+                    False,
+                    (),
+                    (),
+                )
+            )
+    return _resolved_region_roles(tuple(headers), sheet_type)
+
+
+def _indexed_lineage(index: _SparseRegionIndex, column: int, start: int, end: int) -> str:
+    values = []
+    seen = set()
+    for row, candidate_column in sorted(index.values):
+        if candidate_column != column or not start <= row <= end or (row, candidate_column) in seen:
+            continue
+        span = next(
+            (
+                item
+                for item in index.spans
+                if item[0] <= row <= item[2] and item[1] <= column <= item[3]
+            ),
+            None,
+        )
+        origin = (span[0], span[1]) if span else (row, column)
+        if origin in seen:
+            continue
+        seen.add(origin)
+        value = _text(index.values.get(origin))
+        if value:
+            values.append(value)
+    return " ".join(values)
+
+
+def _indexed_band_start(index: _SparseRegionIndex, row: int) -> int:
+    while row - 1 in {item_row for item_row, _column in index.values}:
+        row -= 1
+    return row
+
+
+def _indexed_cumulative_ancestor(
+    index: _SparseRegionIndex, row: int, column: int, band_start: int
+) -> bool:
+    current = (row, column, row, column)
+    seen = set()
+    while current not in seen:
+        seen.add(current)
+        top, left, _bottom, right = current
+        parents = [
+            span
+            for span in index.spans
+            if span[0] >= band_start and span[2] == top - 1 and span[1] <= left <= right <= span[3]
+        ]
+        if len(parents) != 1:
+            return bool(parents)
+        current = parents[0]
+        if _role_text(_text(index.values.get((current[0], current[1]))), "cumulative"):
+            return True
+    return True
+
+
+def _indexed_detail_end(
+    region: _MetricRegion, layouts: tuple[_StreamedLayout, ...], rows: tuple[int, ...]
+) -> int:
+    _top, left, _bottom, right = region.metric_span
+    starts = [
+        item.region.metric_span[0]
+        for item in layouts
+        if item.region != region
+        and item.region.metric_span[0] > region.header_end
+        and _spans_overlap(left, right, item.region.metric_span[1], item.region.metric_span[3])
+    ]
+    return min(starts) - 1 if starts else max(rows, default=region.header_end)
+
+
+def _canonical_index_rows(
+    index: _SparseRegionIndex,
+    sheet_name: str,
+    source_id: str,
+    descriptor: ReconciliationSourceDescriptor,
+    *,
+    source_type: str,
+    start_row: int,
+    end_row: int,
+    work_column: int,
+    unit_column: int,
+    quantity_column: int,
+    cost_column: int,
+    cumulative: bool,
+) -> tuple[CanonicalSourceRow, ...]:
+    rows = []
+    for row_number in index.rows:
+        if not start_row <= row_number <= end_row:
+            continue
+        work_name = _text(index.values.get((row_number, work_column)))
+        unit = _text(index.values.get((row_number, unit_column)))
+        quantity = _decimal(index.values.get((row_number, quantity_column)))
+        cost = _decimal(index.values.get((row_number, cost_column)))
+        quantity_formula = (row_number, quantity_column) in index.formula_cells
+        cost_formula = (row_number, cost_column) in index.formula_cells
+        if not work_name or not unit or _HIERARCHY_VALUE_RE.fullmatch(unit) is not None:
+            continue
+        if (quantity is None and not quantity_formula) or (cost is None and not cost_formula):
+            continue
+        if (quantity_formula and quantity is None) or (cost_formula and cost is None):
+            raise FormulaCacheUnavailableError("FORMULA_CACHE_UNAVAILABLE")
+        location = SourceLocation(
+            source_id, descriptor.safe_basename, sheet_name, source_type, row_number
+        )
+        rows.append(
+            CanonicalSourceRow(
+                row_id=f"{source_id}:{source_type}:{row_number}",
+                source_type=source_type,
+                source_location=location,
+                document_index=descriptor.document_index,
+                document_period=descriptor.document_period,
+                object_code_raw=None,
+                object_name_raw=None,
+                subobject_code_raw=None,
+                subobject_name_raw=None,
+                position_code_raw=_text(index.values.get((row_number, 2))),
+                work_name_raw=work_name,
+                unit_raw=unit,
+                contract_quantity=None,
+                current_period_quantity=None if cumulative else quantity,
+                cumulative_quantity=quantity if cumulative else None,
+                remaining_quantity=None,
+                unit_price=None,
+                contract_cost=None,
+                current_period_cost=None if cumulative else cost,
+                cumulative_cost=cost if cumulative else None,
+                total_cost=None,
+                basis_code_raw=None,
+                drawing_code_raw=_text(index.values.get((row_number, 7))),
+                cost_type_code_raw=_text(index.values.get((row_number, 3))),
+                source_values=(),
+                status="OK",
+                warnings=(),
+            )
+        )
+    return tuple(
+        replace(
+            row,
+            current_period_quantity=row.cumulative_quantity,
+            current_period_cost=row.cumulative_cost,
+        )
+        if cumulative
+        else row
+        for row in rows
     )
 
 
