@@ -671,17 +671,24 @@ def _add_threaded_comments(path: Path, reference: str = "A1", *, malformed: bool
     person_part = "xl/persons/person.xml"
     rels_part = "xl/worksheets/_rels/sheet1.xml.rels"
     threaded = (
-        b"<threadedComments"
+        b"<ThreadedComments"
         b' xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">'
-        b'<threadedComment ref="' + reference.encode() + b'" personId="person-1" id="comment-1"/>'
-        b"</threadedComments>"
+        b'<threadedComment ref="'
+        + reference.encode()
+        + b'" personId="person-1" id="comment-1" dT="2026-08-01T10:00:00Z">'
+        b"<text>left</text></threadedComment>"
+        b"</ThreadedComments>"
     )
     if malformed:
         threaded = threaded[:-1]
     relationship = (
         b'<Relationship Id="rIdThreadedComment" Type="http://schemas.microsoft.com/'
-        b'office/spreadsheetml/2018/threadedComment" '
+        b'office/2017/10/relationships/threadedComment" '
         b'Target="../threadedComments/threadedComment1.xml"/>'
+    )
+    person_relationship = (
+        b'<Relationship Id="rIdPersons" Type="http://schemas.microsoft.com/office/2017/10/'
+        b'relationships/person" Target="persons/person.xml"/>'
     )
     with zipfile.ZipFile(path) as archive:
         rels = (
@@ -690,13 +697,22 @@ def _add_threaded_comments(path: Path, reference: str = "A1", *, malformed: bool
             else b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
             b"</Relationships>"
         )
+        workbook_rels = archive.read("xl/_rels/workbook.xml.rels")
     rels = rels.replace(b"</Relationships>", relationship + b"</Relationships>")
+    workbook_rels = workbook_rels.replace(
+        b"</Relationships>", person_relationship + b"</Relationships>"
+    )
     _add_zip_members(
         path,
         {
             rels_part: rels,
+            "xl/_rels/workbook.xml.rels": workbook_rels,
             threaded_part: threaded,
-            person_part: b'<persons preserved="yes"/>',
+            person_part: (
+                b'<personList xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">'
+                b'<person id="person-1" displayName="Tester" userId="tester" providerId="None"/>'
+                b"</personList>"
+            ),
         },
     )
 
@@ -719,6 +735,7 @@ def test_wholly_left_threaded_comments_and_person_part_are_preserved(tmp_path: P
                 "xl/threadedComments/threadedComment1.xml",
                 "xl/persons/person.xml",
                 "xl/worksheets/_rels/sheet1.xml.rels",
+                "xl/_rels/workbook.xml.rels",
             }
         }
 
@@ -730,7 +747,19 @@ def test_wholly_left_threaded_comments_and_person_part_are_preserved(tmp_path: P
     verify_period_insertion(source, output, plan)
 
 
-@pytest.mark.parametrize("case", ("right", "malformed", "missing", "duplicate"))
+@pytest.mark.parametrize(
+    "case",
+    (
+        "right",
+        "malformed",
+        "missing",
+        "duplicate",
+        "escape",
+        "duplicate_rel_id",
+        "attribute",
+        "person",
+    ),
+)
 def test_unsafe_threaded_comments_fail_closed_without_output(tmp_path: Path, case: str) -> None:
     source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
     _historical_book(source)
@@ -743,7 +772,7 @@ def test_unsafe_threaded_comments_fail_closed_without_output(tmp_path: Path, cas
                 "xl/worksheets/_rels/sheet1.xml.rels": b"<Relationships "
                 b'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
                 b'<Relationship Id="rIdThreadedComment" Type="http://schemas.microsoft.com/'
-                b'office/spreadsheetml/2018/threadedComment" '
+                b'office/2017/10/relationships/threadedComment" '
                 b'Target="../threadedComments/missing.xml"/>'
                 b"</Relationships>"
             },
@@ -757,11 +786,56 @@ def test_unsafe_threaded_comments_fail_closed_without_output(tmp_path: Path, cas
                 "xl/worksheets/_rels/sheet1.xml.rels": rels.replace(
                     b"</Relationships>",
                     b'<Relationship Id="rIdThreadedComment2" Type="http://schemas.microsoft.com/'
-                    b'office/spreadsheetml/2018/threadedComment" '
+                    b'office/2017/10/relationships/threadedComment" '
                     b'Target="../threadedComments/threadedComment1.xml"/>'
                     b"</Relationships>",
                 )
             },
+        )
+    elif case == "escape":
+        with zipfile.ZipFile(source) as archive:
+            rels = archive.read("xl/worksheets/_rels/sheet1.xml.rels")
+        _add_zip_members(
+            source,
+            {
+                "xl/worksheets/_rels/sheet1.xml.rels": rels.replace(
+                    b"../threadedComments/threadedComment1.xml",
+                    b"../../threadedComments/threadedComment1.xml",
+                )
+            },
+        )
+    elif case == "duplicate_rel_id":
+        with zipfile.ZipFile(source) as archive:
+            rels = archive.read("xl/worksheets/_rels/sheet1.xml.rels")
+        _add_zip_members(
+            source,
+            {
+                "xl/worksheets/_rels/sheet1.xml.rels": rels.replace(
+                    b"</Relationships>",
+                    b'<Relationship Id="rIdThreadedComment" Type="http://schemas.openxmlformats.org/'
+                    b'officeDocument/2006/relationships/hyperlink" Target="https://example.test" '
+                    b'TargetMode="External"/>'
+                    b"</Relationships>",
+                )
+            },
+        )
+    elif case == "attribute":
+        with zipfile.ZipFile(source) as archive:
+            threaded = archive.read("xl/threadedComments/threadedComment1.xml")
+        _add_zip_members(
+            source,
+            {
+                "xl/threadedComments/threadedComment1.xml": threaded.replace(
+                    b' dT="2026-08-01T10:00:00Z"',
+                    b' dT="2026-08-01T10:00:00Z" unexpected="1"',
+                )
+            },
+        )
+    elif case == "person":
+        with zipfile.ZipFile(source) as archive:
+            people = archive.read("xl/persons/person.xml")
+        _add_zip_members(
+            source, {"xl/persons/person.xml": people.replace(b"person-1", b"person-2")}
         )
 
     with pytest.raises(ReconciliationPeriodError):

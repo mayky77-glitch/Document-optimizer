@@ -57,7 +57,11 @@ _MAX_RAW_MERGES = 4_096
 _MAX_THREADED_COMMENT_REFS = 4_096
 _THREADED_COMMENTS = "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments"
 _TQ = lambda name: f"{{{_THREADED_COMMENTS}}}{name}"  # noqa: E731
-_THREADED_COMMENT_RELATIONSHIP = "/threadedComment"
+_THREADED_COMMENT_RELATIONSHIP = (
+    "http://schemas.microsoft.com/office/2017/10/relationships/threadedComment"
+)
+_PERSON_RELATIONSHIP = "http://schemas.microsoft.com/office/2017/10/relationships/person"
+_RELATIONSHIPS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
 
 def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]]:
@@ -1005,8 +1009,8 @@ def _affected_parts(
                     _preflight_drawing(drawing, anchor.insertion_after_column)
                     if _drawing_is_affected(drawing, anchor.insertion_after_column):
                         affected.add(target)
-                elif relation_type.endswith(
-                    ("/hyperlink", "/comments", "/vmlDrawing", _THREADED_COMMENT_RELATIONSHIP)
+                elif relation_type.endswith(("/hyperlink", "/comments", "/vmlDrawing")) or (
+                    relation_type == _THREADED_COMMENT_RELATIONSHIP
                 ):
                     continue
                 else:
@@ -1054,16 +1058,26 @@ def _part_relationships(
     rel = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
     if rel not in archive.namelist():
         return ()
+    try:
+        root = ET.fromstring(archive.read(rel))
+    except ET.ParseError as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+    if root.tag != f"{_RELATIONSHIPS}Relationships":
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     result: list[tuple[str, str | None, str, str | None]] = []
-    for node in ET.fromstring(archive.read(rel)):
+    identifiers: set[str] = set()
+    for node in root:
+        if node.tag != f"{_RELATIONSHIPS}Relationship":
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
         identifier = node.attrib.get("Id")
         target, relation_type, target_mode = (
             node.attrib.get("Target"),
             node.attrib.get("Type", ""),
             node.attrib.get("TargetMode"),
         )
-        if not identifier or not target:
+        if not identifier or identifier in identifiers or not target:
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        identifiers.add(identifier)
         if target_mode == "External":
             if not relation_type.endswith("/hyperlink"):
                 raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
@@ -1566,7 +1580,7 @@ def _validate_threaded_comment_relationships(
     threaded = [
         (identifier, target, mode)
         for identifier, target, kind, mode in rels
-        if kind.endswith(_THREADED_COMMENT_RELATIONSHIP)
+        if kind == _THREADED_COMMENT_RELATIONSHIP
     ]
     if not threaded:
         return
@@ -1576,7 +1590,8 @@ def _validate_threaded_comment_relationships(
     if not identifier or mode is not None or target is None or target not in archive.namelist():
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     _require_canonical_threaded_comment_target(archive, anchor.worksheet_part, identifier, target)
-    _validate_threaded_comment_part(archive.read(target), anchor.insertion_after_column)
+    person_ids = _validate_workbook_persons(archive)
+    _validate_threaded_comment_part(archive.read(target), anchor.insertion_after_column, person_ids)
 
 
 def _require_canonical_threaded_comment_target(
@@ -1591,42 +1606,122 @@ def _require_canonical_threaded_comment_target(
         root = ET.fromstring(archive.read(rel_part))
     except (KeyError, ET.ParseError) as error:
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
-    package_relationships = "{http://schemas.openxmlformats.org/package/2006/relationships}"
-    if root.tag != f"{package_relationships}Relationships":
+    if root.tag != f"{_RELATIONSHIPS}Relationships":
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     matches = [
         node
         for node in root
-        if node.tag == f"{package_relationships}Relationship"
+        if node.tag == f"{_RELATIONSHIPS}Relationship"
         and node.attrib.get("Id") == identifier
-        and node.attrib.get("Type", "").endswith(_THREADED_COMMENT_RELATIONSHIP)
+        and node.attrib.get("Type") == _THREADED_COMMENT_RELATIONSHIP
     ]
     if len(matches) != 1:
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
     relationship = matches[0]
     expected = posixpath.relpath(target, posixpath.dirname(worksheet_part))
     if (
-        set(relationship.attrib) != {"Id", "Type", "Target"}
+        not target.startswith("xl/threadedComments/")
+        or set(relationship.attrib) != {"Id", "Type", "Target"}
         or relationship.attrib.get("Target") != expected
     ):
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
 
 
-def _validate_threaded_comment_part(payload: bytes, boundary: int) -> None:
+def _validate_workbook_persons(archive: zipfile.ZipFile) -> set[str]:
+    """Require the one canonical workbook-level people list used by comments."""
+
+    people = [
+        (identifier, target, mode)
+        for identifier, target, kind, mode in _part_relationships(archive, "xl/workbook.xml")
+        if kind == _PERSON_RELATIONSHIP
+    ]
+    if len(people) != 1:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    identifier, target, mode = people[0]
+    if (
+        not identifier
+        or mode is not None
+        or target != "xl/persons/person.xml"
+        or target not in archive.namelist()
+    ):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    _require_canonical_workbook_person_target(archive, identifier)
+    try:
+        root = ET.fromstring(archive.read(target))
+    except ET.ParseError as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+    if root.tag != _TQ("personList") or root.attrib or len(root) > _MAX_THREADED_COMMENT_REFS:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    identifiers: set[str] = set()
+    for person in root:
+        identifier = person.attrib.get("id")
+        if (
+            person.tag != _TQ("person")
+            or list(person)
+            or not _bounded_threaded_token(identifier)
+            or identifier in identifiers
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        identifiers.add(identifier)
+    return identifiers
+
+
+def _require_canonical_workbook_person_target(archive: zipfile.ZipFile, identifier: str) -> None:
+    """Prove the people relationship has no alias, mode or duplicate identity."""
+
+    rel_part = "xl/_rels/workbook.xml.rels"
+    try:
+        root = ET.fromstring(archive.read(rel_part))
+    except (KeyError, ET.ParseError) as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+    matches = [
+        node
+        for node in root
+        if node.tag == f"{_RELATIONSHIPS}Relationship"
+        and node.attrib.get("Id") == identifier
+        and node.attrib.get("Type") == _PERSON_RELATIONSHIP
+    ]
+    if len(matches) != 1 or set(matches[0].attrib) != {"Id", "Type", "Target"}:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    if matches[0].attrib.get("Target") != "persons/person.xml":
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+
+
+def _validate_threaded_comment_part(payload: bytes, boundary: int, person_ids: set[str]) -> None:
     """Strictly prove that an untouched threaded-comment part is wholly left."""
 
     try:
         root = ET.fromstring(payload)
     except ET.ParseError as error:
         raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
-    if root.tag != _TQ("threadedComments") or root.attrib or len(root) > _MAX_THREADED_COMMENT_REFS:
+    if root.tag != _TQ("ThreadedComments") or root.attrib or len(root) > _MAX_THREADED_COMMENT_REFS:
         raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
-    seen: set[str] = set()
+    references: set[str] = set()
+    identifiers: set[str] = set()
+    parent_identifiers: list[str] = []
     for node in root:
-        if node.tag != _TQ("threadedComment") or list(node):
+        if node.tag != _TQ("threadedComment") or len(node) != 1:
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
-        reference = node.attrib.get("ref")
-        if reference is None:
+        if set(node.attrib) - {"ref", "personId", "id", "dT", "done", "parentId"}:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        reference, person_id, comment_id, date_time = (
+            node.attrib.get("ref"),
+            node.attrib.get("personId"),
+            node.attrib.get("id"),
+            node.attrib.get("dT"),
+        )
+        if (
+            not reference
+            or not _bounded_threaded_token(person_id)
+            or not _bounded_threaded_token(comment_id)
+            or not _bounded_threaded_token(date_time)
+            or person_id not in person_ids
+            or comment_id in identifiers
+            or node.attrib.get("done") not in {None, "0", "1", "true", "false"}
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        text = node[0]
+        if text.tag != _TQ("text") or text.attrib or list(text):
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
         try:
             column, row = coordinate_from_string(reference)
@@ -1638,11 +1733,30 @@ def _validate_threaded_comment_part(payload: bytes, boundary: int) -> None:
             reference != canonical
             or not 1 <= column_number <= _MAX_COLUMNS
             or not 1 <= row <= _MAX_ROWS
-            or reference in seen
+            or reference in references
             or column_number > boundary
         ):
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
-        seen.add(reference)
+        references.add(reference)
+        identifiers.add(comment_id)
+        if "parentId" in node.attrib:
+            parent_id = node.attrib["parentId"]
+            if not _bounded_threaded_token(parent_id) or parent_id == comment_id:
+                raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+            parent_identifiers.append(parent_id)
+    if any(parent_id not in identifiers for parent_id in parent_identifiers):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+
+
+def _bounded_threaded_token(value: str | None) -> bool:
+    """Accept only small opaque identifiers without normalising their bytes."""
+
+    return bool(
+        value
+        and len(value) <= 128
+        and value == value.strip()
+        and all(" " < character < "\x7f" for character in value)
+    )
 
 
 def _require_insertible_rows(root: ET.Element, anchor: ReconciliationSheetAnchor) -> None:
