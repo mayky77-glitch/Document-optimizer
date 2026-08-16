@@ -666,6 +666,109 @@ def test_wholly_left_comment_and_external_hyperlink_are_preserved(tmp_path: Path
         assert {name: archive.read(name) for name in related} == related
 
 
+def _add_threaded_comments(path: Path, reference: str = "A1", *, malformed: bool = False) -> None:
+    threaded_part = "xl/threadedComments/threadedComment1.xml"
+    person_part = "xl/persons/person.xml"
+    rels_part = "xl/worksheets/_rels/sheet1.xml.rels"
+    threaded = (
+        b"<threadedComments"
+        b' xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">'
+        b'<threadedComment ref="' + reference.encode() + b'" personId="person-1" id="comment-1"/>'
+        b"</threadedComments>"
+    )
+    if malformed:
+        threaded = threaded[:-1]
+    relationship = (
+        b'<Relationship Id="rIdThreadedComment" Type="http://schemas.microsoft.com/'
+        b'office/spreadsheetml/2018/threadedComment" '
+        b'Target="../threadedComments/threadedComment1.xml"/>'
+    )
+    with zipfile.ZipFile(path) as archive:
+        rels = (
+            archive.read(rels_part)
+            if rels_part in archive.namelist()
+            else b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            b"</Relationships>"
+        )
+    rels = rels.replace(b"</Relationships>", relationship + b"</Relationships>")
+    _add_zip_members(
+        path,
+        {
+            rels_part: rels,
+            threaded_part: threaded,
+            person_part: b'<persons preserved="yes"/>',
+        },
+    )
+
+
+def test_wholly_left_threaded_comments_and_person_part_are_preserved(tmp_path: Path) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    workbook = load_workbook(source)
+    workbook["Отчёт"]["B1"].comment = Comment("classic left", "tester")
+    workbook.save(source)
+    _add_threaded_comments(source)
+    with zipfile.ZipFile(source) as archive:
+        preserved = {
+            name: archive.read(name)
+            for name in archive.namelist()
+            if "comments" in name
+            or "vmlDrawing" in name
+            or name
+            in {
+                "xl/threadedComments/threadedComment1.xml",
+                "xl/persons/person.xml",
+                "xl/worksheets/_rels/sheet1.xml.rels",
+            }
+        }
+
+    plan = build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    prepare_period_insertion(source, output, plan)
+
+    with zipfile.ZipFile(output) as archive:
+        assert {name: archive.read(name) for name in preserved} == preserved
+    verify_period_insertion(source, output, plan)
+
+
+@pytest.mark.parametrize("case", ("right", "malformed", "missing", "duplicate"))
+def test_unsafe_threaded_comments_fail_closed_without_output(tmp_path: Path, case: str) -> None:
+    source, output = tmp_path / "source.xlsx", tmp_path / "output.xlsx"
+    _historical_book(source)
+    output.write_bytes(b"user-sentinel")
+    _add_threaded_comments(source, "N1" if case == "right" else "A1", malformed=case == "malformed")
+    if case == "missing":
+        _add_zip_members(
+            source,
+            {
+                "xl/worksheets/_rels/sheet1.xml.rels": b"<Relationships "
+                b'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                b'<Relationship Id="rIdThreadedComment" Type="http://schemas.microsoft.com/'
+                b'office/spreadsheetml/2018/threadedComment" '
+                b'Target="../threadedComments/missing.xml"/>'
+                b"</Relationships>"
+            },
+        )
+    elif case == "duplicate":
+        with zipfile.ZipFile(source) as archive:
+            rels = archive.read("xl/worksheets/_rels/sheet1.xml.rels")
+        _add_zip_members(
+            source,
+            {
+                "xl/worksheets/_rels/sheet1.xml.rels": rels.replace(
+                    b"</Relationships>",
+                    b'<Relationship Id="rIdThreadedComment2" Type="http://schemas.microsoft.com/'
+                    b'office/spreadsheetml/2018/threadedComment" '
+                    b'Target="../threadedComments/threadedComment1.xml"/>'
+                    b"</Relationships>",
+                )
+            },
+        )
+
+    with pytest.raises(ReconciliationPeriodError):
+        build_period_insertion_plan(source, "2026-08", {"Отчёт": 3})
+    assert output.read_bytes() == b"user-sentinel"
+
+
 @pytest.mark.parametrize("kind", ("comment", "hyperlink"))
 def test_right_comment_or_external_hyperlink_is_rejected(tmp_path: Path, kind: str) -> None:
     source = tmp_path / "source.xlsx"

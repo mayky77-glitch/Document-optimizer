@@ -54,6 +54,10 @@ _XMLNS = re.compile(rb"\s(xmlns(?::[A-Za-z_][\w.-]*)?=\"[^\"]+\")")
 _MAX_ROWS = 1_048_576
 _MAX_COLUMNS = 16_384
 _MAX_RAW_MERGES = 4_096
+_MAX_THREADED_COMMENT_REFS = 4_096
+_THREADED_COMMENTS = "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments"
+_TQ = lambda name: f"{{{_THREADED_COMMENTS}}}{name}"  # noqa: E731
+_THREADED_COMMENT_RELATIONSHIP = "/threadedComment"
 
 
 def _raw_merge_inventory(source: Path, sheet_names) -> dict[str, tuple[str, ...]]:
@@ -1001,7 +1005,9 @@ def _affected_parts(
                     _preflight_drawing(drawing, anchor.insertion_after_column)
                     if _drawing_is_affected(drawing, anchor.insertion_after_column):
                         affected.add(target)
-                elif relation_type.endswith(("/hyperlink", "/comments", "/vmlDrawing")):
+                elif relation_type.endswith(
+                    ("/hyperlink", "/comments", "/vmlDrawing", _THREADED_COMMENT_RELATIONSHIP)
+                ):
                     continue
                 else:
                     raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
@@ -1503,7 +1509,7 @@ def _verify_shared_formula_is_noop(value: str, boundary: int) -> bool:
 def _validate_sheet_relationships(
     archive: zipfile.ZipFile, anchor: ReconciliationSheetAnchor, root: ET.Element
 ) -> None:
-    """Permit only wholly-left comments/VML and external hyperlinks unchanged."""
+    """Permit only wholly-left annotations and external hyperlinks unchanged."""
     rels = _part_relationships(archive, anchor.worksheet_part)
     relationship_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
     hyperlinks = {node.attrib.get(relationship_ns): node for node in root.iter(_Q("hyperlink"))}
@@ -1518,6 +1524,7 @@ def _validate_sheet_relationships(
             # Internal hyperlinks are deliberately unsupported: their target
             # semantics are not a package part and they can encode local refs.
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    _validate_threaded_comment_relationships(archive, anchor, rels)
     legacy = list(root.iter(_Q("legacyDrawing")))
     comment_rels = [
         (identifier, target)
@@ -1547,6 +1554,95 @@ def _validate_sheet_relationships(
         reference = comment.attrib.get("ref")
         if not reference or _range_touches_or_right(reference, anchor.insertion_after_column):
             raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+
+
+def _validate_threaded_comment_relationships(
+    archive: zipfile.ZipFile,
+    anchor: ReconciliationSheetAnchor,
+    rels: tuple[tuple[str, str | None, str, str | None], ...],
+) -> None:
+    """Accept one canonical, wholly-left threaded-comment part without rewriting it."""
+
+    threaded = [
+        (identifier, target, mode)
+        for identifier, target, kind, mode in rels
+        if kind.endswith(_THREADED_COMMENT_RELATIONSHIP)
+    ]
+    if not threaded:
+        return
+    if len(threaded) != 1:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    identifier, target, mode = threaded[0]
+    if not identifier or mode is not None or target is None or target not in archive.namelist():
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    _require_canonical_threaded_comment_target(archive, anchor.worksheet_part, identifier, target)
+    _validate_threaded_comment_part(archive.read(target), anchor.insertion_after_column)
+
+
+def _require_canonical_threaded_comment_target(
+    archive: zipfile.ZipFile, worksheet_part: str, identifier: str, target: str
+) -> None:
+    """Reject relationship aliases so the preserved package identity stays unambiguous."""
+
+    rel_part = posixpath.join(
+        posixpath.dirname(worksheet_part), "_rels", posixpath.basename(worksheet_part) + ".rels"
+    )
+    try:
+        root = ET.fromstring(archive.read(rel_part))
+    except (KeyError, ET.ParseError) as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+    package_relationships = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+    if root.tag != f"{package_relationships}Relationships":
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    matches = [
+        node
+        for node in root
+        if node.tag == f"{package_relationships}Relationship"
+        and node.attrib.get("Id") == identifier
+        and node.attrib.get("Type", "").endswith(_THREADED_COMMENT_RELATIONSHIP)
+    ]
+    if len(matches) != 1:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    relationship = matches[0]
+    expected = posixpath.relpath(target, posixpath.dirname(worksheet_part))
+    if (
+        set(relationship.attrib) != {"Id", "Type", "Target"}
+        or relationship.attrib.get("Target") != expected
+    ):
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+
+
+def _validate_threaded_comment_part(payload: bytes, boundary: int) -> None:
+    """Strictly prove that an untouched threaded-comment part is wholly left."""
+
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as error:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_PACKAGE_INVALID") from error
+    if root.tag != _TQ("threadedComments") or root.attrib or len(root) > _MAX_THREADED_COMMENT_REFS:
+        raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+    seen: set[str] = set()
+    for node in root:
+        if node.tag != _TQ("threadedComment") or list(node):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        reference = node.attrib.get("ref")
+        if reference is None:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        try:
+            column, row = coordinate_from_string(reference)
+            column_number = column_index_from_string(column)
+        except ValueError as error:
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE") from error
+        canonical = f"{get_column_letter(column_number)}{row}"
+        if (
+            reference != canonical
+            or not 1 <= column_number <= _MAX_COLUMNS
+            or not 1 <= row <= _MAX_ROWS
+            or reference in seen
+            or column_number > boundary
+        ):
+            raise ReconciliationPeriodError("PERIOD_INSERTION_UNSUPPORTED_FEATURE")
+        seen.add(reference)
 
 
 def _require_insertible_rows(root: ET.Element, anchor: ReconciliationSheetAnchor) -> None:
